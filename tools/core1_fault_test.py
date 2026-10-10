@@ -8,6 +8,8 @@ Editor command 79 recreates each failure on a healthy unit:
            the first raise the core supply (SYSVDD 15) and keep CPU1, later ones retire it
   null     CPU1 runs a job at address 0 (the idle crash: pc 00000002): its fault is caught
   stall    CPU1 never finishes a job: the 10 ms join timeout
+  crash    CPU0 crashes (as the master_out report), twice: the supply ladder carried across soft
+           resets (1.35 V, then 1.38 V, then one core until power-off; one core after an early crash)
 Each must end with the worker retired (CPU1 held, serial rendering) and the audio still running.
 Test builds also report and set the supply rails (power, sysvdd=N, vdc14=N, count-only).
 A retired worker stays retired until reset, so every mode reboots first and waits out the
@@ -76,21 +78,59 @@ def show_power(r):
           f"worker online {r['online']} rejected {r['rejected']} (last {r['misread']:08X}) faults {r['faults']}")
 
 
-def reboot(name, settle):
-    command(name, 4)
-    time.sleep(2)
+def back(name, wait=2):
+    time.sleep(wait)
     deadline = time.monotonic() + 30
     while True:
         try:
-            r = command(name, 0)
-            break
+            return command(name, 0)
         except (TimeoutError, OSError):
             if time.monotonic() > deadline:
                 raise
             time.sleep(0.5)
-    print(f'rebooted; waiting {settle} s for the boot guard')
-    time.sleep(settle)
+
+
+def reboot(name, settle, keep=False):
+    """keep: the supply ladder as it stands (a soft reset), else as at power-on"""
+    command(name, 4, args=(1,) if keep else ())
+    r = back(name)
+    if settle:
+        print(f'rebooted; waiting {settle} s for the boot guard')
+        time.sleep(settle)
     return r
+
+
+def ladder(name, settle):
+    """CPU0 crashes (the master_out report) walk the supply ladder across soft resets"""
+    def crash():
+        i, o = find_port(name)
+        with mido.open_output(o) as outgoing:
+            outgoing.send(mido.Message('sysex', data=HEADER + [10]))
+        return back(name, 8)                # the crash screen shows for 4 s
+
+    def state(label, online, sysvdd):
+        p = command(name, 5)
+        good = p['online'] == online and p['sysvdd'] == sysvdd
+        print(f"  {label}: online {p['online']} SYSVDD {p['sysvdd']} ({'ok' if good else f'want online {online} SYSVDD {sysvdd}'})")
+        return good
+
+    print('== crash')
+    reboot(name, 0)
+    ok = state('fresh boot', 1, 14)
+    crash()                                 # within 30 s of boot, on 1.35 V
+    ok &= state('after an early crash: one core this boot, the supply up', 0, 15)
+    time.sleep(settle)
+    reboot(name, settle, keep=True)
+    ok &= state('next soft reset: both cores on the boost', 1, 15)
+    crash()                                 # on the highest level, CPU1 working
+    ok &= state('after a crash on the boost: one core', 0, 15)
+    time.sleep(settle)
+    reboot(name, 0, keep=True)
+    ok &= state('until power-off', 0, 15)
+    reboot(name, 0)
+    ok &= state('power-on ladder again', 1, 14)
+    print(f"crash: {'PASS' if ok else 'FAIL'}")
+    return ok
 
 
 def run(name, mode, settle, do_reboot):
@@ -123,6 +163,12 @@ def run(name, mode, settle, do_reboot):
                                       'nobody: the join timeout'))
     elif mode == 'stall':
         ok = ok and after['timeouts'] == 1
+    if mode == 'misread':                   # retired on the highest level: one core until power-off
+        reboot(name, 0, keep=True)
+        power = command(name, 5)
+        carried = power['online'] == 0 and power['sysvdd'] == 15
+        print(f"  next soft reset: {'one core, SYSVDD 15' if carried else 'NOT CARRIED'}")
+        ok = ok and carried
     if mode in ('null', 'stall'):           # a retired worker leaves CPU0 on the raised supply
         time.sleep(0.2)
         power = command(name, 5)
@@ -136,7 +182,7 @@ def run(name, mode, settle, do_reboot):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('modes', nargs='*', default=['misread', 'null', 'stall'],
-                        choices=[*MODES, 'reboot', 'power', 'count-only', 'retire-on-misread', *(f'{r}={l}' for r in RAILS for l in range(16))])
+                        choices=[*MODES, 'crash', 'reboot', 'power', 'count-only', 'retire-on-misread', *(f'{r}={l}' for r in RAILS for l in range(16))])
     parser.add_argument('--port', help='MIDI port name (default: Melodee or Felucca)')
     parser.add_argument('--settle', type=float, default=31, help='seconds after a reboot before injecting')
     parser.add_argument('--no-reboot', action='store_true', help='inject into the running session')
@@ -147,6 +193,8 @@ def main():
             show('report', command(args.port, 0))
         elif mode == 'reboot':
             show('report', reboot(args.port, 0))
+        elif mode == 'crash':
+            results.append(ladder(args.port, args.settle))
         elif mode == 'power':
             show_power(command(args.port, 5))
         elif mode in ('count-only', 'retire-on-misread'):

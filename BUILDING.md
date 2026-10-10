@@ -278,7 +278,7 @@ So, with both cores kept for everyone:
 
 - `fm1_power_init` (hal/fm1_power.h) raises SYSVDD to 14 (1.35 V) and VDC14 to
   4 (1.45 V) at boot, before CPU1 starts, a step at a time; it never lowers a
-  rail. `MELODEE_DUAL_CORE=0` builds get it too (CPU0 at 360 MHz).
+  rail. `MELODEE_DUAL_CORE=0` builds leave the rails as the boot loader set them.
 - The worker runs a request only when it is exactly the next one and its check
   word (`fn`, `context` and the request number, written by CPU0 before the
   request) matches; the count of finished requests stays in a CPU1 register.
@@ -295,12 +295,20 @@ So, with both cores kept for everyone:
   block, otherwise the next render retires the worker; the supply goes up too.
 - A job that does not finish in 10 ms: held, the job dropped (a partly advanced
   voice is never rerun), retired, supply up. Before, this reset the device.
+- The ladder carries across soft resets (a crash, the watchdog, an update) in
+  `.noinit` (`fm1_carry`), never in flash, and starts over at power-off. Any
+  crash, boost or retirement starts the next boot on 1.38 V; a crash or a
+  retirement already on 1.38 V with CPU1 working keeps CPU1 out of every boot
+  until power-off. A boot after a crash in the first 30 s runs on one core, so
+  a unit whose CPU0 data goes bad (the `master_out` report, which no check can
+  catch) does not crash twice into UBOOT.
 
 `core1_rejected` and `core1_faults` (AUDIO_STATS fields 22 and 23) stay 0 on a
 healthy unit. `MELODEE_CORE1_TEST=1 ./build.sh` adds editor command 79
 (`tools/core1_fault_test.py`): it injects each failure (misread, null job,
 stall; each must end with audio running, the misread first with CPU1 kept at
-SYSVDD 15), reports the rails, the clock registers and a measured CPU rate
+SYSVDD 15, then one core after a soft reset), crashes CPU0 twice to walk the
+ladder (`crash`), reports the rails, the clock registers and a measured CPU rate
 (`power`), sets a rail (`sysvdd=N`, never below 6), counts misreads without
 answering them (`count-only`), holds an eight-note chord on track 0 (mode 8) and
 dumps P33 (mode 9). Never release a `MELODEE_CORE1_TEST` build.

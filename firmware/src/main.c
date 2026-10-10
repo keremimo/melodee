@@ -94,6 +94,9 @@ static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
+#if MELODEE_DUAL_CORE
+    fm1_carry_failed(audio_worker_online);            /* the next boot: the supply up, or one core */
+#endif
     fm1_audio_stop();
     scr_wake_now();
     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
@@ -173,7 +176,10 @@ static void fm1_main(void)
     panel_init();
     melodee_init();
 #if MELODEE_DUAL_CORE
-    fm1_multicore_start();                  /* bounded handshake; failure keeps serial rendering */
+    /* One core after a crash in the first 30 s (a second would enter UBOOT),
+     * or until power-off once CPU1 failed on the highest supply (fm1_carry). */
+    if (!bootguard.failed && !fm1_carry.single)
+        fm1_multicore_start();              /* bounded handshake; failure keeps serial rendering */
     /* CPU1 starts through mask-ROM before it reaches our RAM worker. Restrict
      * instruction fetch only after that bootstrap has returned, or stopped
      * the core on timeout. The captured first-device fault was DBG bit 10
@@ -342,7 +348,9 @@ void fm1_cstart(void)
     for (s = _dt_load, d = _dt_start; d < _dt_end; s++, d++)
         *d = *s;                                /* the oscillator correction tables */
     fm1_mailbox_clear();
+#if MELODEE_DUAL_CORE
     fm1_power_init();                       /* core rails up before CPU1 or the audio load (fm1_power.h) */
+#endif
 #if MELODEE_CACHE_RAM
     {   /* XIP-to-SRAM exceeds the direct-call range on pi32v2. */
         void (*volatile init)(uint32_t) = fm1_cache_init;

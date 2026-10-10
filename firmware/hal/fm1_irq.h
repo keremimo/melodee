@@ -109,9 +109,12 @@ static int fm1_core1_fault_c(const uint32_t *f)   /* 1: handled, CPU0 resumes */
     uint32_t cpu = fm1_cnum(), dbg = FM1_DBG_MSG, was;
     if (!cpu && (dbg & FM1_DBG_C0))
         return 0;                                   /* CPU0's own */
-    if (!cpu && !(dbg & FM1_DBG_C1)) {              /* CPU1 took it too and cleared DBG_MSG first: */
+    /* CPU1 took it too and cleared DBG_MSG first. Once per CPU1 fault, so a
+     * genuine CPU0 exception with DBG_MSG clear that lands in that window is
+     * resumed once; it faults again and is reported then. */
+    if (!cpu && !(dbg & FM1_DBG_C1)) {
         if (fm1_core1_fault.echoes >= fm1_core1_fault.count)
-            return 0;                               /* (once per CPU1 fault) else CPU0's own */
+            return 0;                               /* else CPU0's own */
         fm1_core1_fault.echoes++;
         return 1;
     }

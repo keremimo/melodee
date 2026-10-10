@@ -26,16 +26,10 @@ static inline __attribute__((always_inline)) uint32_t fm1_aw_ticks(void) { retur
 #define AW_TIMEOUT_TICKS (10000u * FM1_TICKS_PER_US)
 #define AW_HOLD() fm1_core1_stop()
 #define AW_FAULTS() fm1_core1_fault.count
-/* A misread answered: the core supply goes up a step, to FM1_SYSVDD_BOOST
+/* A misread answered: the core supply goes up to FM1_SYSVDD_BOOST
  * (fm1_power.h). The audio ISR asks; the main loop's fm1_core1_supply_poll
  * owns P33. Misreads seen until then are forgiven, any later one retires the
- * worker. */
-#ifndef FM1_SYSVDD_BOOST
-#define FM1_SYSVDD_BOOST 15u          /* 1.38 V, the highest level */
-#endif
-#ifndef FM1_VDC14_BOOST
-#define FM1_VDC14_BOOST 5u            /* 1.50 V: 100 mV over it, as fm1_power.h's pair */
-#endif
+ * worker. Started on the boost already (fm1_carry), the first one retires it. */
 static volatile uint8_t fm1_core1_boost;     /* 0, 1 asked (audio ISR), 2 applied (main loop) */
 static uint32_t fm1_core1_forgiven;          /* misreads up to the boost */
 #if MELODEE_CORE1_TEST
@@ -109,19 +103,27 @@ static int fm1_multicore_start(void)
     return audio_worker_online;
 }
 
-/* main loop: apply a boost the audio ISR asked for (fm1_core1_misread). A
- * CPU1 fault or stall retired the worker at once; CPU0 gets the boost too. */
+/* main loop: apply a boost the audio ISR asked for (fm1_core1_misread); a
+ * CPU1 fault or stall, which retired the worker at once, asks for it too.
+ * Both carry to the next boot (fm1_carry_failed): a retirement on the highest
+ * level keeps CPU1 out until power-off, any other starts it on the boost. */
+static int8_t fm1_core1_was_online = -1;
 static void fm1_core1_supply_poll(void)
 {
+    if (fm1_core1_was_online < 0)
+        fm1_core1_was_online = (int8_t)audio_worker_online;
+    if (fm1_core1_was_online && !audio_worker_online) {
+        fm1_core1_was_online = 0;
+        fm1_carry_failed(1);                  /* (before this boost: the level it retired on) */
+    }
     if (!fm1_core1_boost && (fm1_core1_fault.count || audio_worker.timeouts) &&
         fm1_power_get_cached(FM1_RAIL_SYSVDD) < FM1_SYSVDD_BOOST)
         fm1_core1_boost = 1;
     if (fm1_core1_boost != 1u)
         return;
     fm1_irq_off();
-    if (fm1_power_get_cached(FM1_RAIL_VDC14) < FM1_VDC14_BOOST)
-        fm1_power_set(FM1_RAIL_VDC14, FM1_VDC14_BOOST);
-    fm1_power_set(FM1_RAIL_SYSVDD, FM1_SYSVDD_BOOST);
+    fm1_power_core(FM1_SYSVDD_BOOST);
+    fm1_carry.sysvdd = FM1_SYSVDD_BOOST;
     fm1_core1_forgiven = fm1_aw_load(&audio_worker.rejected);
     fm1_core1_boost = 2;
     fm1_irq_on();

@@ -431,9 +431,15 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
 #if MELODEE_CORE1_TEST && MELODEE_DUAL_CORE
     case ED_CORE1_TEST: {        /* mode: 0 report, 1 misread request, 2 null job, 3 stalled job, 4 reboot */
         uint32_t mode = na ? a[0] : 0u, rc = 0, waited = 0, v[16];
-        if (mode == 4u) {
+        if (mode == 4u) {                           /* (a[1] 1: keep the supply ladder, else as at power-on) */
             bootguard.pending = 0;                  /* (intentional: not a failed boot) */
+            if (!(na > 1u && a[1]))
+                fm1_carry.magic = 0;
             fm1_reboot();
+        }
+        if (mode == 10u) {                          /* a CPU0 crash (the master_out report): fetch from 0 */
+            void (*volatile crash)(void) = 0;
+            crash();
         }
         if (mode == 9u) {                           /* 9: raw P33 0x00..0x3F, then 0x72 0x74 0x90 0x92 0x9B, 7 bits + 1 */
             static const uint8_t extra[5] = { 0x72, 0x74, 0x90, 0x92, 0x9B };
@@ -471,7 +477,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
                 v[3 + i] = fm1_power_get(i);
             }
             fm1_clock_regs(v + 6);
-            v[11] = audio_worker.misread; v[12] = fm1_core1_fault.count;   /* (in place of PLL_CON0/1) */
+            v[11] = audio_worker.misread; v[12] = fm1_core1_fault.count;
             v[13] = fm1_cpu_ticks();
             fm1_irq_on();
             v[14] = audio_worker.rejected; v[15] = (uint32_t)audio_worker_online;

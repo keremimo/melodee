@@ -953,8 +953,9 @@ exceptions caught); either retires the worker (`core1_online` 0). Both stay 0 on
 a healthy unit. Misreads first raise the core supply a step and keep the worker; only later
 ones retire it (BUILDING.md). Test builds (`MELODEE_CORE1_TEST=1`) add command
 79: argument 0 report, 1 inject a misread request, 2 a job at address 0, 3 a job
-that never returns, 4 reboot; the reply is mode, rc, then eleven 32-bit values
-as five 7-bit bytes each. Arguments 5 (rails and clock), 6 rail level (rail
+that never returns, 4 reboot (a second argument 1 keeps the supply ladder,
+otherwise it starts over as at power-off), 10 crash CPU0 (no reply); the reply
+is mode, rc, then eleven 32-bit values as five 7-bit bytes each. Arguments 5 (rails and clock), 6 rail level (rail
 0 SYSVDD, 1 VDC14, 2 VDDIO; SYSVDD never below 6), 7 count misreads only (0/1)
 and 8 hold/release eight notes on track 0 reply mode, rc and sixteen such values;
 9 replies mode, rc and P33 0x00..0x3F, 0x72, 0x74, 0x90, 0x92, 0x9B as 7-bit
