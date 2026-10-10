@@ -24,11 +24,40 @@ static inline __attribute__((always_inline)) void fm1_aw_store(volatile uint32_t
 static inline __attribute__((always_inline)) uint32_t fm1_aw_ticks(void) { return FM1_T4_CNT; }
 #define AW_TICKS() fm1_aw_ticks()
 #define AW_TIMEOUT_TICKS (10000u * FM1_TICKS_PER_US)
-#define AW_FAULT() fm1_reboot()
+#define AW_HOLD() fm1_core1_stop()
+#define AW_FAULTS() fm1_core1_fault.count
+/* A misread answered: the core supply goes up a step, to FM1_SYSVDD_BOOST
+ * (fm1_power.h). The audio ISR asks; the main loop's fm1_core1_supply_poll
+ * owns P33. Misreads seen until then are forgiven, any later one retires the
+ * worker. */
+#ifndef FM1_SYSVDD_BOOST
+#define FM1_SYSVDD_BOOST 15u          /* 1.38 V, the highest level */
+#endif
+#ifndef FM1_VDC14_BOOST
+#define FM1_VDC14_BOOST 5u            /* 1.50 V: 100 mV over it, as fm1_power.h's pair */
+#endif
+static volatile uint8_t fm1_core1_boost;     /* 0, 1 asked (audio ISR), 2 applied (main loop) */
+static uint32_t fm1_core1_forgiven;          /* misreads up to the boost */
+#if MELODEE_CORE1_TEST
+static int core1_test_count_only;
+#endif
+static int fm1_core1_misread(uint32_t misreads)
+{
+#if MELODEE_CORE1_TEST
+    if (core1_test_count_only)
+        return 1;
+#endif
+    if (fm1_core1_boost == 0u && fm1_power_get_cached(FM1_RAIL_SYSVDD) < FM1_SYSVDD_BOOST)
+        fm1_core1_boost = 1;
+    return fm1_core1_boost == 1u || misreads <= fm1_core1_forgiven;
+}
+#define AW_MISREAD(n) fm1_core1_misread(n)
 #define AW_RAM_LOOP __attribute__((section(".dsp_text"), noinline, noreturn, used))
 #include "audio_worker.h"
 #undef AW_RAM_LOOP
-#undef AW_FAULT
+#undef AW_MISREAD
+#undef AW_FAULTS
+#undef AW_HOLD
 #undef AW_TIMEOUT_TICKS
 #undef AW_TICKS
 #undef AW_STORE
@@ -61,6 +90,7 @@ static int fm1_multicore_start(void)
     fm1_aw_store(&audio_worker.ready, 0);
     fm1_aw_store(&audio_worker.request, 0);
     fm1_aw_store(&audio_worker.complete, 0);
+    fm1_aw_store(&audio_worker.rejected, 0);
     /* CPU1's IRQ bank (CPU0 is at 0x1EEF100); worker stays IRQ-disabled. */
     for (uint32_t i = 0; i < 32u; i++)
         *(volatile uint32_t *)(0x1EEF300u + 4u * i) = 0;
@@ -77,4 +107,22 @@ static int fm1_multicore_start(void)
     if (!audio_worker_online) fm1_core1_stop();
     *(volatile uint32_t *)0x10008u = div;
     return audio_worker_online;
+}
+
+/* main loop: apply a boost the audio ISR asked for (fm1_core1_misread). A
+ * CPU1 fault or stall retired the worker at once; CPU0 gets the boost too. */
+static void fm1_core1_supply_poll(void)
+{
+    if (!fm1_core1_boost && (fm1_core1_fault.count || audio_worker.timeouts) &&
+        fm1_power_get_cached(FM1_RAIL_SYSVDD) < FM1_SYSVDD_BOOST)
+        fm1_core1_boost = 1;
+    if (fm1_core1_boost != 1u)
+        return;
+    fm1_irq_off();
+    if (fm1_power_get_cached(FM1_RAIL_VDC14) < FM1_VDC14_BOOST)
+        fm1_power_set(FM1_RAIL_VDC14, FM1_VDC14_BOOST);
+    fm1_power_set(FM1_RAIL_SYSVDD, FM1_SYSVDD_BOOST);
+    fm1_core1_forgiven = fm1_aw_load(&audio_worker.rejected);
+    fm1_core1_boost = 2;
+    fm1_irq_on();
 }

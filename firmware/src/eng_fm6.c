@@ -852,10 +852,10 @@ static void fm6_worker_kernel(void *unused)
 static void fm6_join(void)
 {
     if (!fm6_pending) return;
-    audio_worker_join();
+    fm6_pending = 0;
+    if (!audio_worker_join()) return;                    /* CPU1 lost: this voice's block is dropped */
     /* Voice addition order is identical to serial FM6, including rounding. */
     for (uint32_t i = 0; i < fm6_job.n; i++) fm6_pending_out[i] += fm6_job.pcm[i];
-    fm6_pending = 0;
 }
 #else
 static inline void fm6_join(void) {}

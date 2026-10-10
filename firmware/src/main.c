@@ -289,6 +289,9 @@ static void fm1_main(void)
         ui_input();
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
         settings_poll();                              /* queued settings save: only while stopped */
+#if MELODEE_DUAL_CORE
+        fm1_core1_supply_poll();                      /* CPU1 misread: core supply up a step (fm1_multicore.h) */
+#endif
         melodee_dbg.stage = 2;
         ui_leds();
         ui_draw();
@@ -339,6 +342,7 @@ void fm1_cstart(void)
     for (s = _dt_load, d = _dt_start; d < _dt_end; s++, d++)
         *d = *s;                                /* the oscillator correction tables */
     fm1_mailbox_clear();
+    fm1_power_init();                       /* core rails up before CPU1 or the audio load (fm1_power.h) */
 #if MELODEE_CACHE_RAM
     {   /* XIP-to-SRAM exceeds the direct-call range on pi32v2. */
         void (*volatile init)(uint32_t) = fm1_cache_init;

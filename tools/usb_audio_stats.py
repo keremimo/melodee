@@ -14,7 +14,7 @@ FIELDS = (
     'poll_max_us', 'service_max_us', 'audio_late', 'feedback_q14',
     'audio_max_us', 'cpu_q8',
 )
-VOICE_FIELDS = ('voices_active', 'voices_held', 'obxf_active', 'obxf_held', 'voices_shed', 'voices_given_up')
+VOICE_FIELDS = ('voices_active', 'voices_held', 'core1_rejected', 'core1_faults', 'voices_shed', 'voices_given_up')
 CORE_FIELDS = ('core1_online', 'core1_jobs', 'core1_max_job_us', 'core1_max_wait_us', 'core1_timeouts', 'fm6_pairs')
 MEMORY_FIELDS = ('cache_status', 'cache_con_before', 'cache_data_before', 'cache_instruction_before',
                  'cache_con_after', 'cache_data_after', 'cache_instruction_after', 'cache_failure_address',

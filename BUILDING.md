@@ -237,11 +237,73 @@ The startup sequence follows `EnableOtherCpu` in the tested AC79 SDK's
 clock-divider bit 3, and `C1_CON` release/hold bits 3/1. CPU1 has separate 4 KiB
 user and supervisor stacks and no enabled interrupts. It polls an internal SRAM
 mailbox while idle; the effect on battery consumption still needs measurement. Startup has a 10 ms
-handshake; a failure retains serial rendering. A running job that stalls for
-10 ms resets the device because rerunning partly advanced voice state is unsafe.
+handshake; a failure retains serial rendering.
 The worker's idle loop is in internal RAM and publishes completion only after
 returning from XIP. Every audio block joins its jobs, so main-loop flash writes
 cannot overlap an XIP worker callback. Update and reset paths stop CPU1.
+
+### Units whose CPU1 misreads SRAM
+
+1.0.0 crashed on some units (keremimo/melodee#17, #18). On those units, with
+CPU1 running, shared SRAM now and then reads wrong (Jangada measured
+`0x00200000` where RAM holds 0, more often under audio, screen and USB load; the
+same image with CPU1 never started is stable). Two crash reports show both
+sides of it:
+
+- `pc 00000002` on a garbled red screen, idle: one misread of the mailbox at
+  rest made the worker call `fn`, null until the first paired job. CPU1 fetched
+  from 0, took the exception itself and drew the crash screen while CPU0 went on
+  drawing the UI; its `fm1_reboot` then held CPU1 before the reset.
+- `00000001 03801494 00000000 00001000 0201257A` (vec, pc, emu, dbg, rets):
+  DBG bit 12 is `c0_pc_limit_err_r`, CPU0's. In 1.0.0, `0x0201257A` follows
+  `call master_out` in `fm1_alnk0_irq`; `master_out` returns with
+  `{pc, r11-r4} = [sp++]`, so the return address popped from CPU0's stack read
+  `0x03801494` (it looks like a packed stereo sample) while `rets` still held the
+  right one. No software check can catch that.
+
+What the FM-1 runs, measured (editor command 79 in a test build, below): the AC79
+at 360 MHz (M-VAVE's `isd_config` SYS_CLK; our package carries no clock key, and
+the SDK SPL runs it as fast: 329 dependent adds a microsecond), above the SDK's
+320 MHz table, on the SPL's core
+rail: SYSVDD 11 (1.26 V), VDC14 3 (1.40 V) on its LDO. The stock firmware is
+single-core: its system library says `modified #define CPU_CORE_NUM 1` (the SDK
+default is 2), so no FM-1 was validated with both cores. JieLi's own profile
+above 320 MHz (`isd_config_rule.c`, `CONFIG_OVERCLOCKING_ENABLE`, 396 MHz) sets
+DVDD 14 (1.35 V) and DCDC14 4 (1.45 V), and its notes say to raise them on chips
+that run low; its exception auto-fix (`debug.c`) raises the supplies after a
+crash. One healthy unit ran both cores under an eight-voice Prophet chord
+without a misread down to SYSVDD 6 (1.11 V): the margin varies from chip to chip.
+
+So, with both cores kept for everyone:
+
+- `fm1_power_init` (hal/fm1_power.h) raises SYSVDD to 14 (1.35 V) and VDC14 to
+  4 (1.45 V) at boot, before CPU1 starts, a step at a time; it never lowers a
+  rail. `MELODEE_DUAL_CORE=0` builds get it too (CPU0 at 360 MHz).
+- The worker runs a request only when it is exactly the next one and its check
+  word (`fn`, `context` and the request number, written by CPU0 before the
+  request) matches; the count of finished requests stays in a CPU1 register.
+  Anything else is counted in `rejected` and never run.
+- The first misreads raise SYSVDD to 15 (1.38 V, the highest) and VDC14 to 5
+  (1.50 V): the audio ISR asks, the main loop (`fm1_core1_supply_poll`, the P33
+  owner) applies it, and CPU1 keeps working. A misread after that retires the
+  worker for the session: CPU1 is held, the Prophet cap returns to five voices
+  and every voice renders on CPU0.
+- A CPU1 fault: `fm1_core1_fault_c` records it (`fm1_core1_fault`). If CPU1
+  took the exception, it holds itself; if the debug unit raised it on CPU0
+  (`DBG_MSG` CPU1 bits only), CPU1 is held and CPU0 resumes through
+  `fm1_fatal_common`'s ISR-style return. A waiting join drops that voice's
+  block, otherwise the next render retires the worker; the supply goes up too.
+- A job that does not finish in 10 ms: held, the job dropped (a partly advanced
+  voice is never rerun), retired, supply up. Before, this reset the device.
+
+`core1_rejected` and `core1_faults` (AUDIO_STATS fields 22 and 23) stay 0 on a
+healthy unit. `MELODEE_CORE1_TEST=1 ./build.sh` adds editor command 79
+(`tools/core1_fault_test.py`): it injects each failure (misread, null job,
+stall; each must end with audio running, the misread first with CPU1 kept at
+SYSVDD 15), reports the rails, the clock registers and a measured CPU rate
+(`power`), sets a rail (`sysvdd=N`, never below 6), counts misreads without
+answering them (`count-only`), holds an eight-note chord on track 0 (mode 8) and
+dumps P33 (mode 9). Never release a `MELODEE_CORE1_TEST` build.
 
 `tests/dual_core_test.c` exercises the actual paired renderer with a host thread,
 comparing samples across all 32 algorithms, three FM6 models, voice counts,
