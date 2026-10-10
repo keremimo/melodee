@@ -202,6 +202,9 @@ static int page_visible(uint32_t i)
 {
     if (list_gone(i))
         return 0;
+    if (PAGES[i].graph == GR_MOTION)                   /* MOTION: once there is motion (Kerem: an empty page; the one
+                                                         * shown stays until it is left) */
+        return motion_count(TSEL) || (!ui.home && ui.page == i);
     if (PAGES[i].fam == FAM_ENV && native_titles(FAM_ENV))   /* (the track's ADSR, ENV DEST: nothing there) */
         return 0;
     if(PAGES[i].scope==SC_DRUM || PAGES[i].scope==SC_DRUMHIT)return drum_track(TSEL);

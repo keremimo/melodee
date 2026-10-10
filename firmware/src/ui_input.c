@@ -703,6 +703,19 @@ static void step_edit(uint32_t slot, int32_t steps)
     fm1_irq_on();
 }
 
+/* REC armed, stopped: a knob that would record its moves says the transport has to run (motion lands on the step
+ * playing) */
+static void motion_unplayed(void)
+{
+    if (((song.rec >> song.sel) & 1u) && !song.playing && !chain_busy())
+        ui_message("PLAY TO RECORD MOTION");
+}
+/* an edit of the engine's own patch (its bytes before: old, under motion_guard): its motion (motion.c) */
+static void native_motion(const uint8_t *old)
+{
+    if (!momentary.active && motion_native_edited(TSEL, old))
+        motion_unplayed();
+}
 static void edit_param(uint32_t slot, int32_t steps)
 {
     int16_t *vp;
@@ -816,21 +829,31 @@ static void edit_param(uint32_t slot, int32_t steps)
         return;
     v = enum_step(d, *vp, clamp(*vp + accel(EN_K1 + slot, steps, desc_range(d)), d->min, d->max));
     *vp = (int16_t)v;
-    if(pg->scope==SC_P5){fm1_irq_off();p5_edit_value(TSEL,pg->id[slot],v-(pg->id[slot]==P5_BEND?1:0));fm1_irq_on();return;}
+    if(pg->scope==SC_P5){
+        uint8_t old[MO_NATIVE_N];uint32_t f=motion_guard();
+        motion_native_peek(TSEL,old);p5_edit_value(TSEL,pg->id[slot],v-(pg->id[slot]==P5_BEND?1:0));native_motion(old);
+        motion_unguard(f);return;
+    }
     if(pg->scope==SC_P5STORE){p5_store_slot=(int16_t)v;return;}
     if (pg->scope == SC_CZ1) {                           /* (a copy of the tone's value: written back there) */
-        uint8_t raw[CZ_BYTES];
-        uint32_t tr = song.sel % NTRK;
+        uint8_t raw[CZ_BYTES], old[MO_NATIVE_N];
+        uint32_t tr = song.sel % NTRK, f = motion_guard();
+        motion_native_peek(TSEL, old);
         if (cz_ed_put(tr, pg->id[slot], (uint32_t)v, raw)) {
-            if(!momentary.active)cz_compare_take(tr);
-            fm1_irq_off();
+            if (!momentary.active) cz_compare_take(tr);
             memcpy(cz_patch[tr].raw, raw, 128u);
-            fm1_irq_on();
+            native_motion(old);
         }
+        motion_unguard(f);
         return;
     }
     if (pg->scope == SC_FM6 || pg->scope == SC_FMOP) {   /* (a copy of FM6's value: written back there) */
+        uint8_t old[MO_NATIVE_N];
+        uint32_t f = motion_guard();
+        motion_native_peek(TSEL, old);
         fm6_page_put(pg, slot, v);
+        native_motion(old);
+        motion_unguard(f);
         return;
     }
     if (pg->scope == SC_GLOBAL && pg->id[slot] == G_BOOT) {   /* BOOT: the device's (settings), saved */
@@ -847,7 +870,11 @@ static void edit_param(uint32_t slot, int32_t steps)
         settings_save();
         return;
     }
-    if (pg->scope != SC_GLOBAL) if(!momentary.active)motion_capture(TSEL, (uint32_t)(vp - TSEL->p), *vp);
+    if (pg->scope != SC_GLOBAL && !momentary.active) {
+        motion_capture(TSEL, (uint32_t)(vp - TSEL->p), *vp);
+        if (motion_param((uint32_t)(vp - TSEL->p)))
+            motion_unplayed();
+    }
     if (pg->scope == SC_TRACK && scale_shared((uint32_t)(vp - TSEL->p)))
         scale_share(TSEL);
 }

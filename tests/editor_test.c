@@ -617,10 +617,26 @@ static int prophet_protocol(void)
     bad+=check("foreign native SysEx is rejected without changing the track",host_wire[6]==1&&!memcmp(p5_patch_of(&trk[2]),&patch,sizeof patch));
     return bad;
 }
+static int native_motion_protocol(void)
+{
+    int bad = 0; reset(); set_engine_of(&trk[0], ENGI_FM6); apply_preset_to(&trk[0], 0);
+    uint32_t id = MO_NATIVE + FP_ALG; int16_t value = (int16_t)(MO_TAG_FM6 << 8 | 23);
+    uint16_t encoded = (uint16_t)(value + 8192);
+    uint8_t a[6] = {0,3,63u | 64u,id & 127u,encoded & 127u,encoded >> 7};
+    request(ED_MOTION, a, 6);
+    bad += check("native motion write retains high parameter bit and tagged value", !host_wire[6] && motion.count == 1u &&
+        motion.event[0].param == id && motion.event[0].place == 63u && motion.event[0].value == value);
+    bad += check("native motion query encodes the high id in the spare step bit", host_wire[10] == 127u && host_wire[11] == (id & 127u));
+    a[1] = 4; request(ED_MOTION, a, 4);
+    bad += check("native motion delete removes the same high parameter id", !host_wire[6] && !motion.count);
+    a[1] = 3; a[2] = 0; a[3] = P_REV; a[4] = 64; a[5] = 64; request(ED_MOTION, a, 6);
+    bad += check("legacy motion wire writes retain the original format", !host_wire[6] && motion.event[0].param == P_REV && motion.event[0].value == 64);
+    return bad;
+}
 #ifndef EDITOR_TEST_NO_MAIN
 int main(void)
 {
-    int bad = prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
+    int bad = native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
               native_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_legacy_saved_sounds() + cz_casio_sysex() + concert_pitch() + scale_catalogue();
     printf("%s\n", bad ? "EDITOR TEST FAILED" : "editor test passed");
     return bad != 0;
