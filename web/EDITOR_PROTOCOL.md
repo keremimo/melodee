@@ -986,3 +986,7 @@ of the step byte: `wire_step = step | ((param & 128) >> 1)`, `wire_param = param
 Decode `step = wire_step & 63`, `param = wire_param | ((wire_step & 64) << 1)`.
 Existing events keep their original wire representation. Values retain the signed 14-bit encoding.
 The web editor displays and edits the raw native byte while preserving its engine tag.
+
+INFO advertises motion capability version 2 (`4D 02 40 01`), so cached v1 editors
+do not offer a motion interface that would truncate native parameter IDs. The current editor
+accepts both versions 1 and 2 and retains all other tagged capabilities.

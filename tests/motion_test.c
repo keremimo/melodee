@@ -266,6 +266,9 @@ static int native_motion_test(void)
     ui.home = 0; ui.page = page; motion_clear(TSEL);
     bad += check("clearing keeps the current page until leaving it", page_visible(page));
     go_home(); bad += check("empty motion disappears after leaving", !page_visible(page));
+    motion_set_event(TSEL, 0, MO_NATIVE + P5_CUTOFF, MO_TAG_P5 << 8 | 60);
+    bad += check("another engine's native events cannot expose an empty motion page", !page_visible(page));
+    motion_clear(TSEL);
     bad += check("invalid native tags, fields and values are refused", !motion_native_ok(MO_NATIVE, 0) &&
         !motion_native_ok(MO_NATIVE + P5_UNISON, MO_TAG_P5 << 8 | 1) &&
         !motion_native_ok(MO_NATIVE + P5_SAW_A, MO_TAG_P5 << 8 | 127) &&

@@ -162,6 +162,16 @@ static uint32_t motion_count(const track_t *t)
     for (i = 0; i < motion.count; i++) n += (motion.event[i].place >> 6) == k && motion_pattern[i] == t->pattern;
     return n;
 }
+static int motion_has_lanes(const track_t *t)
+{
+    uint32_t k = trk_index(t), tag = motion_native_tag(t);
+    for (uint32_t i = 0; i < motion.count; i++) {
+        const motion_event_t *e = &motion.event[i];
+        if ((e->place >> 6) == k && motion_pattern[i] == t->pattern && e->param != P_RECQ &&
+            (e->param < MO_NATIVE || (uint32_t)e->value >> 8 == tag)) return 1;
+    }
+    return 0;
+}
 static int16_t motion_base_value(const track_t *t, uint32_t id)
 {
     uint32_t k = trk_index(t);

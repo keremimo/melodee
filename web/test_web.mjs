@@ -1396,6 +1396,9 @@ async function updater() {
 async function patternProtocol() {
   const base = [65,0,14,92,27,64,84,...Array(14).fill(0),4];
   const info = E.parse[E.CMD.INFO]([...base,0,0x55,1,9,0x4d,1,64,1,0x42,1,3,0x50,1,8,16,0x46,1,8,32]);
+  const nativeInfo = E.parse[E.CMD.INFO]([...base,0,0x55,1,9,0x4d,2,64,1,0x42,1,3,0x50,1,8,16,0x46,1,8,32]);
+  ok(nativeInfo.motionVersion === 2 && nativeInfo.motionMax === 64 && nativeInfo.patterns === 8,
+    "native motion: INFO v2 retains the tagged capabilities, v1 firmware still supported");
   ok(info.patterns === 8 && info.chainRows === 16 && info.backupCaps === 3 && info.fm6.bank === 32,"patterns: tagged INFO preserves preferences, motion, backup and FM6");
   ok(eq(E.req.pattern(2,1,7)[1],[2,1,7]) && E.parse[E.CMD.PATTERN]([2,1,0,7,127,8]).active===7,"patterns: bank selection uses its track and zero-based bank");
   const rows=[{banks:[0,2,4,7],repeat:3},{banks:[7,6,5,4],repeat:1}];

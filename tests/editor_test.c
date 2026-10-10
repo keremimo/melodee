@@ -117,7 +117,7 @@ static int preferences(void)
         ED_SONG == 33 && ED_UI_STATE == 34 && ED_FAV_SET == 38 &&
         host_wire[n - 41] == 0 && host_wire[n - 40] == 0x55 &&
         host_wire[n - 39] == 1 && host_wire[n - 38] == 57 &&
-        host_wire[n - 37] == 0x4d && host_wire[n - 36] == 1 &&
+        host_wire[n - 37] == 0x4d && host_wire[n - 36] == 2 &&
         host_wire[n - 35] == MOTION_MAX && host_wire[n - 34] == 1 &&
         host_wire[n - 33] == 0x42 && host_wire[n - 32] == 1 && host_wire[n - 31] == 3 &&
         host_wire[n - 30] == 0x50 && host_wire[n - 29] == 1 && host_wire[n - 28] == NPAT && host_wire[n - 27] == CHAIN_ROWS &&
