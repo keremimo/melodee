@@ -94,6 +94,10 @@ static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
+#if MELODEE_DUAL_CORE
+    if (audio_worker_online)
+        fm1_core1_bar_set();                          /* one core on every boot until power-off */
+#endif
     fm1_audio_stop();
     scr_wake_now();
     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
@@ -173,7 +177,10 @@ static void fm1_main(void)
     panel_init();
     melodee_init();
 #if MELODEE_DUAL_CORE
-    fm1_multicore_start();                  /* bounded handshake; failure keeps serial rendering */
+    /* One core after a crash in the first 30 s (a second would enter UBOOT),
+     * and until power-off once CPU1 was retired or CPU0 crashed beside it. */
+    if (!bootguard.failed && !fm1_core1_barred())
+        fm1_multicore_start();              /* bounded handshake; failure keeps serial rendering */
     /* CPU1 starts through mask-ROM before it reaches our RAM worker. Restrict
      * instruction fetch only after that bootstrap has returned, or stopped
      * the core on timeout. The captured first-device fault was DBG bit 10
@@ -289,6 +296,9 @@ static void fm1_main(void)
         ui_input();
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
         settings_poll();                              /* queued settings save: only while stopped */
+#if MELODEE_DUAL_CORE
+        fm1_core1_poll();                             /* a retired CPU1 sits out until power-off */
+#endif
         melodee_dbg.stage = 2;
         ui_leds();
         ui_draw();

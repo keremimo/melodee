@@ -237,11 +237,74 @@ The startup sequence follows `EnableOtherCpu` in the tested AC79 SDK's
 clock-divider bit 3, and `C1_CON` release/hold bits 3/1. CPU1 has separate 4 KiB
 user and supervisor stacks and no enabled interrupts. It polls an internal SRAM
 mailbox while idle; the effect on battery consumption still needs measurement. Startup has a 10 ms
-handshake; a failure retains serial rendering. A running job that stalls for
-10 ms resets the device because rerunning partly advanced voice state is unsafe.
+handshake; a failure retains serial rendering.
 The worker's idle loop is in internal RAM and publishes completion only after
 returning from XIP. Every audio block joins its jobs, so main-loop flash writes
 cannot overlap an XIP worker callback. Update and reset paths stop CPU1.
+
+### Units whose CPU1 misreads SRAM
+
+1.0.0 crashed on some units (keremimo/melodee#17, #18). On those units, with
+CPU1 running, shared SRAM now and then reads wrong (Jangada measured
+`0x00200000` where RAM holds 0, more often under audio, screen and USB load; the
+same image with CPU1 never started is stable). Two crash reports show both
+sides of it:
+
+- `pc 00000002` on a garbled red screen, idle: one misread of the mailbox at
+  rest made the worker call `fn`, null until the first paired job. CPU1 fetched
+  from 0, took the exception itself and drew the crash screen while CPU0 went on
+  drawing the UI; its `fm1_reboot` then held CPU1 before the reset.
+- `00000001 03801494 00000000 00001000 0201257A` (vec, pc, emu, dbg, rets):
+  DBG bit 12 is `c0_pc_limit_err_r`, CPU0's. In 1.0.0, `0x0201257A` follows
+  `call master_out` in `fm1_alnk0_irq`; `master_out` returns with
+  `{pc, r11-r4} = [sp++]`, so the return address popped from CPU0's stack read
+  `0x03801494` (it looks like a packed stereo sample) while `rets` still held the
+  right one. No software check can catch that.
+
+What the FM-1 runs, measured (editor command 79 in a test build, below): the AC79
+at 360 MHz (M-VAVE's `isd_config` SYS_CLK; our package carries no clock key, and
+the SDK SPL runs it as fast: 329 dependent adds a microsecond), above the SDK's
+320 MHz table, on the SPL's core
+rail: SYSVDD 11 (1.26 V), VDC14 3 (1.40 V) on its LDO. The stock firmware is
+single-core: its system library says `modified #define CPU_CORE_NUM 1` (the SDK
+default is 2), so no FM-1 was validated with both cores. JieLi's own profile
+above 320 MHz (`isd_config_rule.c`, `CONFIG_OVERCLOCKING_ENABLE`, 396 MHz) sets
+DVDD 14 (1.35 V) and DCDC14 4 (1.45 V), and its notes say to raise them on chips
+that run low. One healthy unit ran both cores under an eight-voice Prophet chord
+without a misread down to SYSVDD 6 (1.11 V): the margin varies from chip to chip.
+Melodee does not change a supply rail: what an FM-1 board and its regulators take
+at other levels is unknown, so the rails stay where the boot loader sets them.
+
+So the second core stays on, and a unit that shows the fault falls back to one:
+
+- The worker runs a request only when it is exactly the next one and its check
+  word (`fn`, `context` and the request number, written by CPU0 before the
+  request) matches; the count of finished requests stays in a CPU1 register.
+  Anything else is counted in `rejected` and never run.
+- A misread, a CPU1 fault or a job that does not finish in 10 ms retires the
+  worker for the session: CPU1 is held, the Prophet cap returns to five voices
+  and every voice renders on CPU0. A misread retires it at the next half-buffer
+  render. A CPU1 fault: `fm1_core1_fault_c` records it (`fm1_core1_fault`). If
+  CPU1 took the exception, it holds itself; if the debug unit raised it on CPU0
+  (`DBG_MSG` CPU1 bits only), CPU1 is held and CPU0 resumes through
+  `fm1_fatal_common`'s ISR-style return. A waiting join drops that voice's
+  block (a partly advanced voice is never rerun). Before, a stall reset the
+  device.
+- A retirement, or a CPU0 crash with CPU1 working (its data can go bad too: the
+  `master_out` report, which no check can catch), keeps CPU1 out of every boot
+  until power-off. The record (`fm1_core1_bar`) is in `.noinit`, never in flash:
+  it survives soft resets (a crash, the watchdog, an update) and is gone at
+  power-off. A boot after a crash in the first 30 s runs on one core too, so
+  such a unit does not crash twice into UBOOT.
+
+`core1_rejected` and `core1_faults` (AUDIO_STATS fields 22 and 23) stay 0 on a
+healthy unit. `MELODEE_CORE1_TEST=1 ./build.sh` adds editor command 79
+(`tools/core1_fault_test.py`): it injects each failure (misread, null job,
+stall; each must end with audio running and CPU1 barred across a soft reset),
+crashes CPU0 beside a working CPU1 (`crash`), reports the rails (read only), the
+clock registers and a measured CPU rate (`power`), counts misreads without
+retiring (`count-only`), holds an eight-note chord on track 0 (mode 8) and dumps
+P33 (mode 9). Never release a `MELODEE_CORE1_TEST` build.
 
 `tests/dual_core_test.c` exercises the actual paired renderer with a host thread,
 comparing samples across all 32 algorithms, three FM6 models, voice counts,

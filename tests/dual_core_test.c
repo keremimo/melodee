@@ -20,10 +20,18 @@ static uint32_t worker_clock(void)
 #define AW_STORE(p,v) atomic_store_explicit(p,v,memory_order_release)
 #define AW_TICKS() worker_clock()
 #define AW_TIMEOUT_TICKS 2000000u
-#define AW_FAULT() abort()
 #define AW_RAM_LOOP static
 #define AW_IDLE() pthread_testcancel()
+/* The host cannot stop the thread mid-job: holding waits until it touches nothing more. */
+static void hold_worker(void);
+static uint32_t injected_faults;
+#define AW_HOLD() hold_worker()
+#define AW_FAULTS() injected_faults
 #include "../firmware/src/audio_worker.h"
+static void hold_worker(void)
+{
+    while (AW_LOAD(&audio_worker.complete) != AW_LOAD(&audio_worker.request)) sched_yield();
+}
 /* Reference rendering keeps the same online allocator/caps as the parallel
  * run, but refuses submissions so the actual kernel executes on CPU0. */
 static int serial_render;
@@ -158,6 +166,37 @@ static void prophet_allocation(void)
     assert(p5_cap(&trk[0])==5 && p5_units(&trk[0])==3);
     audio_worker_online=1;
 }
+/* A CPU1 fault mid-song, as the exception handler reports it: a join still
+ * waiting drops the paired voice's block, else the next block's check (as
+ * audio.c) retires the worker. CPU0 then renders all eight sounding voices;
+ * new notes get the five-voice cap. */
+static void prophet_retire(void)
+{
+    setup_case(0,0,0);
+    memset(p5_ready,0,sizeof p5_ready);
+    audio_worker_online=1;serial_render=0;
+    host_preset(&trk[0],ENGI_PROPHET,0);
+    for(uint32_t i=0;i<8;i++)trk_note_on(&trk[0],48+i*3,100);
+    assert(active_voices(&trk[0])==8);
+    uint32_t jobs=0;int32_t peak=0;
+    for(uint32_t pos=0;pos<CTL*64u;pos+=CTL){
+        int32_t out[2*CTL];
+        audio_worker_check();
+        if(pos==CTL*16u)injected_faults=1;
+        mix_block(out,CTL);
+        assert(!p5_pending && AW_LOAD(&audio_worker.request)==AW_LOAD(&audio_worker.complete));
+        if(pos==CTL*17u){assert(!audio_worker_online);jobs=audio_worker.jobs;}
+        if(pos>CTL*16u)for(uint32_t i=0;i<2u*CTL;i++)if(abs(out[i])>peak)peak=abs(out[i]);
+    }
+    assert(audio_worker.jobs==jobs && peak>0 && active_voices(&trk[0])==8);
+    assert(p5_cap(&trk[0])==5 && p5_units(&trk[0])==3);
+    panic_req=1;events_block(CTL);
+    for(uint32_t i=0;i<8;i++)trk_note_on(&trk[0],60+i,100);
+    uint32_t held=0;
+    for(uint32_t i=0;i<NVOICE;i++)held+=trk[0].v[i].active && trk[0].v[i].gate;
+    assert(held==5);
+    injected_faults=0;audio_worker_online=1;
+}
 static void prophet_case(int parallel,uint32_t preset,uint32_t mode,uint32_t voices,int mixed)
 {
     setup_case(0,0,0);
@@ -258,6 +297,7 @@ int main(void)
         prophet_case(0,0,mode,voices,2);prophet_case(1,0,mode,voices,2);prophet_cases++;
     }
     assert(p5_pairs>0);
+    prophet_retire();
     audio_worker_online = 0;
     assert(!audio_worker_submit(fm6_worker_kernel, 0));
     assert(audio_worker.jobs > 0);
@@ -278,6 +318,6 @@ int main(void)
     assert(AW_LOAD(&audio_worker.request) == 0);
     assert(!pthread_cancel(thread));
     assert(!pthread_join(thread, 0));
-    printf("dual-core: 1536 FM6 + %u Prophet serial/concurrent cases identical; %u FM6 / %u Prophet pairs; eight-voice allocation, busy/offline/wrap ok\n", prophet_cases,fm6_pairs,p5_pairs);
+    printf("dual-core: 1536 FM6 + %u Prophet serial/concurrent cases identical; %u FM6 / %u Prophet pairs; eight-voice allocation, retire mid-song, busy/offline/wrap ok\n", prophet_cases,fm6_pairs,p5_pairs);
     return 0;
 }

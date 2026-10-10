@@ -20,6 +20,10 @@ enum { ED_INFO = 1, ED_GET, ED_SET, ED_DUMP, ED_DESC, ED_STEP_GET, ED_STEP_SET, 
        ED_UI_STATE, ED_UI_SET, ED_UI_PALETTES, ED_FAV_GET, ED_FAV_SET,
        ED_MOTION = 64, ED_BACKUP_LIST, ED_BACKUP_GET, ED_BACKUP_PUT,                               /* v6: song chain */
        ED_AUDIO_STATS = 72, ED_PATTERN, ED_BANK_SONG };                                       /* USB audio diagnostics (68..71: FM6, editor_fm6.c) */
+#if MELODEE_CORE1_TEST && MELODEE_DUAL_CORE
+enum { ED_CORE1_TEST = 79 };                         /* test builds only: CPU1 failure injection */
+static void core1_test_stall(void *unused) { (void)unused; for (;;) ; }
+#endif
 
 static uint8_t ed_out[1024];                        /* the longest: a NAMES page (PROPHET pages its 201) */
 static uint32_t ed_n;
@@ -386,6 +390,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             snapshot[29] = audio_worker.max_wait_ticks / FM1_TICKS_PER_US;
             snapshot[30] = audio_worker.timeouts;
             snapshot[31] = fm6_pairs;
+            snapshot[22] = audio_worker.rejected;    /* (22, 23: OBXF's, retired) misread requests, */
+            snapshot[23] = fm1_core1_fault.count;     /* CPU1 faults: either retires the worker */
         }
 #endif
         if (count == 47u) {
@@ -419,6 +425,90 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         for (i = 0; i < count; i++)
             for (k = 0; k < 5u; k++)
                 ed_b(snapshot[i] >> (7u * k));
+        break;
+    }
+#endif
+#if MELODEE_CORE1_TEST && MELODEE_DUAL_CORE
+    case ED_CORE1_TEST: {        /* mode: 0 report, 1 misread request, 2 null job, 3 stalled job, 4 reboot */
+        uint32_t mode = na ? a[0] : 0u, rc = 0, waited = 0, v[16];
+        if (mode == 4u) {                           /* (a[1] 1: keep fm1_core1_bar, else clear it as power-off does) */
+            bootguard.pending = 0;                  /* (intentional: not a failed boot) */
+            if (!(na > 1u && a[1]))
+                fm1_core1_bar.magic = 0;
+            fm1_reboot();
+        }
+        if (mode == 10u) {                          /* a CPU0 crash (the master_out report): fetch from 0 */
+            void (*volatile crash)(void) = 0;
+            crash();
+        }
+        if (mode == 9u) {                           /* 9: raw P33 0x00..0x3F, then 0x72 0x74 0x90 0x92 0x9B, 7 bits + 1 */
+            static const uint8_t extra[5] = { 0x72, 0x74, 0x90, 0x92, 0x9B };
+            uint8_t r[69];
+            fm1_irq_off();
+            for (i = 0; i < 64u; i++)
+                r[i] = fm1_p33_read(i);
+            for (i = 0; i < 5u; i++)
+                r[64 + i] = fm1_p33_read(extra[i]);
+            fm1_irq_on();
+            ed_b(mode); ed_b(rc);
+            for (i = 0; i < 69u; i++) {
+                ed_b(r[i] & 0x7Fu);
+                ed_b(r[i] >> 7);
+            }
+            break;
+        }
+        if (mode == 5u || mode == 7u || mode == 8u) {   /* 5 rails + clock (read only), 7 count misreads only */
+            fm1_irq_off();                          /* (a[1]), 8 hold (a[1]) / release eight notes on track 0 */
+            if (mode == 8u)
+                for (i = 0; i < 8u; i++) {
+                    if (na > 1u && a[1])
+                        trk_note_on(&trk[0], 41u + 3u * i, 100u);
+                    else
+                        trk_note_off(&trk[0], 41u + 3u * i);
+                }
+            if (mode == 7u)
+                core1_test_count_only = na > 1u && a[1];
+            for (i = 0; i < FM1_RAILS; i++)
+                v[i] = fm1_power_get(i);
+            v[3] = (uint32_t)fm1_core1_barred(); v[4] = bootguard.failed; v[5] = 0;
+            fm1_clock_regs(v + 6);
+            v[11] = audio_worker.misread; v[12] = fm1_core1_fault.count;
+            v[13] = fm1_cpu_ticks();
+            fm1_irq_on();
+            v[14] = audio_worker.rejected; v[15] = (uint32_t)audio_worker_online;
+            ed_b(mode); ed_b(rc);
+            for (i = 0; i < 16u; i++)
+                for (uint32_t k = 0; k < 5u; k++)
+                    ed_b(v[i] >> (7u * k));
+            break;
+        }
+        if (mode >= 1u && mode <= 3u && !audio_worker_online)
+            rc = 1;                                 /* no worker (any more) */
+        else if (mode >= 1u && mode <= 3u) {
+            uint32_t t0 = fm1_ticks();
+            fm1_irq_off();                          /* the audio ISR neither submits nor checks meanwhile */
+            if (mode == 1u) {                       /* what an affected unit's CPU1 reads (#17) */
+                uint32_t r = fm1_aw_load(&audio_worker.request);
+                fm1_aw_store(&audio_worker.request, r + 0x00200000u);
+                while (fm1_ticks() - t0 < 1000u * FM1_TICKS_PER_US)
+                    ;
+                fm1_aw_store(&audio_worker.request, r);
+                audio_worker_check();
+            } else {                                /* a fetch from 0 (#18's idle crash) or a hung job */
+                audio_worker_submit(mode == 2u ? (audio_worker_fn)0 : core1_test_stall, 0);
+                rc = audio_worker_join() ? 2u : 0u; /* 2: it "completed" */
+            }
+            waited = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
+            fm1_irq_on();                           /* (a masked exception would be taken here) */
+        }
+        v[0] = (uint32_t)audio_worker_online; v[1] = audio_worker.rejected; v[2] = fm1_core1_fault.count;
+        v[3] = fm1_core1_fault.cpu; v[4] = fm1_core1_fault.dbg; v[5] = fm1_core1_fault.pc;
+        v[6] = fm1_core1_fault.rets; v[7] = audio_worker.timeouts; v[8] = melodee_dbg.halves; v[9] = waited;
+        v[10] = fm1_core1_fault.emu;
+        ed_b(mode); ed_b(rc);
+        for (i = 0; i < 11u; i++)
+            for (uint32_t k = 0; k < 5u; k++)
+                ed_b(v[i] >> (7u * k));
         break;
     }
 #endif

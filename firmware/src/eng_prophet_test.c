@@ -365,9 +365,9 @@ static void p5_worker_kernel(void *unused)
 static void p5_join(void)
 {
     if(!p5_pending)return;
-    audio_worker_join();
-    for(uint32_t i=0;i<p5_job.n;i++)p5_pending_out[i]+=p5_job.pcm[i];
     p5_pending=0;
+    if(!audio_worker_join())return;   /* CPU1 lost: this voice's block is dropped */
+    for(uint32_t i=0;i<p5_job.n;i++)p5_pending_out[i]+=p5_job.pcm[i];
 }
 static void p5_post(track_t *t,int32_t *out,uint32_t n,uint32_t nr)
 {

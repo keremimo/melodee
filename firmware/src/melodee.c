@@ -11,8 +11,11 @@
 #ifndef MELODEE_CACHE_RAM
 #define MELODEE_CACHE_RAM 1     /* seven data-cache ways as RAM after a boot self-test (MELODEE_CACHE_RAM=0: off) */
 #endif
+#ifndef MELODEE_CORE1_TEST
+#define MELODEE_CORE1_TEST 0    /* editor command 79 injects CPU1 failures (tools/core1_fault_test.py); never release */
+#endif
 #ifndef MELODEE_FLASH
-#define MELODEE_FLASH 1          /* flash driver + storage.c: settings, projects, user presets */
+#define MELODEE_FLASH 1         /* flash driver + storage.c: settings, projects, user presets */
 #endif
 #ifndef MELODEE_OTA
 #define MELODEE_OTA 1            /* M-UPGRADE update entry and the editor SysEx; needs MELODEE_FLASH */
@@ -44,6 +47,7 @@
 #include <stdint.h>
 #include "fm1_time.h"
 #include "fm1_sys.h"
+#include "fm1_power.h"
 #include "fm1_irq.h"
 #include "fm1_guard.h"
 #include "fm1_cache.h"

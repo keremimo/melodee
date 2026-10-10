@@ -120,6 +120,9 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
             shed_req = 0;
             shed_voice();
         }
+#if MELODEE_DUAL_CORE
+        audio_worker_check();                   /* a CPU1 that misread or faulted: render alone from here */
+#endif
         for (b = 0; b < HALF_FRAMES; b += CTL) {
             /* A fixed one-half lookback makes input available before its
              * block renders; four CTL blocks follow audio time, not CPU time.

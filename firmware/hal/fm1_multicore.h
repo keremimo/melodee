@@ -24,11 +24,18 @@ static inline __attribute__((always_inline)) void fm1_aw_store(volatile uint32_t
 static inline __attribute__((always_inline)) uint32_t fm1_aw_ticks(void) { return FM1_T4_CNT; }
 #define AW_TICKS() fm1_aw_ticks()
 #define AW_TIMEOUT_TICKS (10000u * FM1_TICKS_PER_US)
-#define AW_FAULT() fm1_reboot()
+#define AW_HOLD() fm1_core1_stop()
+#define AW_FAULTS() fm1_core1_fault.count
+#if MELODEE_CORE1_TEST
+static int core1_test_count_only;            /* editor command 79 mode 7: count misreads, keep CPU1 */
+#define AW_MISREAD(n) ((void)(n), core1_test_count_only)
+#endif
 #define AW_RAM_LOOP __attribute__((section(".dsp_text"), noinline, noreturn, used))
 #include "audio_worker.h"
 #undef AW_RAM_LOOP
-#undef AW_FAULT
+#undef AW_MISREAD
+#undef AW_FAULTS
+#undef AW_HOLD
 #undef AW_TIMEOUT_TICKS
 #undef AW_TICKS
 #undef AW_STORE
@@ -61,6 +68,7 @@ static int fm1_multicore_start(void)
     fm1_aw_store(&audio_worker.ready, 0);
     fm1_aw_store(&audio_worker.request, 0);
     fm1_aw_store(&audio_worker.complete, 0);
+    fm1_aw_store(&audio_worker.rejected, 0);
     /* CPU1's IRQ bank (CPU0 is at 0x1EEF100); worker stays IRQ-disabled. */
     for (uint32_t i = 0; i < 32u; i++)
         *(volatile uint32_t *)(0x1EEF300u + 4u * i) = 0;
@@ -77,4 +85,34 @@ static int fm1_multicore_start(void)
     if (!audio_worker_online) fm1_core1_stop();
     *(volatile uint32_t *)0x10008u = div;
     return audio_worker_online;
+}
+
+/* Carried across soft resets (a crash, the watchdog, an update), lost at
+ * power-off; nothing goes to flash on a unit that may be unstable. Once CPU1
+ * was retired, or CPU0 crashed with CPU1 working (its data can go bad too,
+ * where no check reaches), every boot until power-off renders on one core. */
+#define FM1_CORE1_BAR_MAGIC 0x52414231u      /* "1BAR" */
+typedef struct { uint32_t magic, barred; } fm1_core1_bar_t;
+/* Not static, as fm1_crash: the compiler must not assume a zero start. */
+fm1_core1_bar_t fm1_core1_bar __attribute__((section(".noinit")));
+static inline int fm1_core1_barred(void)
+{
+    return fm1_core1_bar.magic == FM1_CORE1_BAR_MAGIC && fm1_core1_bar.barred == 1u;
+}
+static inline void fm1_core1_bar_set(void)
+{
+    fm1_core1_bar.magic = FM1_CORE1_BAR_MAGIC;
+    fm1_core1_bar.barred = 1;
+}
+
+/* main loop: a worker retired this session keeps CPU1 out until power-off */
+static void fm1_core1_poll(void)
+{
+    static int8_t was_online = -1;
+    if (was_online < 0)
+        was_online = (int8_t)audio_worker_online;
+    if (was_online && !audio_worker_online) {
+        was_online = 0;
+        fm1_core1_bar_set();
+    }
 }
