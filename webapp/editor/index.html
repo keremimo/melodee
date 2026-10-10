@@ -597,8 +597,8 @@ const parse = {
     if (trailer.length >= 4 && [0, 16].includes(trailer[0]) && trailer[1] === 0x55 && trailer[2] === 1)
       o.uiCaps = trailer[3] & 63;                 /* tagged preferences; never interpret old PR bytes as SONG */
     o.motionMax = 0; o.chance = false; o.backupCaps = 0;
-    if (o.uiCaps && trailer[4] === 0x4d && trailer[5] === 1 && trailer[6] === 64) {
-      o.motionMax = 64; o.chance = trailer[7] === 1;
+    if (o.uiCaps && trailer[4] === 0x4d && [1,2].includes(trailer[5]) && trailer[6] === 64) {
+      o.motionMax = 64; o.motionVersion = trailer[5]; o.chance = trailer[7] === 1;
       if (trailer[8] === 0x42 && trailer[9] === 1) o.backupCaps = trailer[10] & 3;
     }
     o.fm6 = null;                                 /* FM6 patches (cmds 68..71): the factory and bank slot counts */
@@ -676,7 +676,10 @@ const parse = {
   [CMD.MOTION](a) {
     const r = new Reader(a), o = { track: r.b(), rc: r.b(), on: !!r.b(), count: r.b(), max: r.b(), events: [] };
     if (o.count > o.max || o.max !== 64 || a.length !== 5 + o.count * 4) throw new Error("Invalid motion reply");
-    for (let i = 0; i < o.count; i++) o.events.push({ step: r.b(), param: r.b(), value: r.v() });
+    for (let i = 0; i < o.count; i++) {
+      const step = r.b(), param = r.b();
+      o.events.push({step:step & 63, param:param | ((step & 64) << 1), value:r.v()});
+    }
     return o;
   },
   [CMD.NAMES](a) {
@@ -812,7 +815,7 @@ const req = {
   motion: (track, op = 0, arg = {}) => {
     if (!Number.isInteger(track) || track < 0 || track > 3 || ![0, 1, 2, 3, 4].includes(op)) throw new Error("Invalid motion request");
     return [CMD.MOTION, [track, ...(op === 0 ? [] : op === 1 ? [op, arg.on ? 1 : 0] : op === 2 ? [op] :
-      [op, arg.step & 63, arg.param & 127, ...(op === 3 ? v14enc(arg.value) : [])])]];
+      [op, (arg.step & 63) | ((arg.param & 128) >> 1), arg.param & 127, ...(op === 3 ? v14enc(arg.value) : [])])]];
   },
   names: (e, first = 0) => [CMD.NAMES, first ? [e & 0x7F, first & 0x7F, (first >> 7) & 0x7F] : [e & 0x7F]],
   smpBegin: (s) => [CMD.SMP_BEGIN, [s & 0x7F]],
@@ -2019,7 +2022,8 @@ function makeMockDevice(opt = {}) {
         P("FLUTE", [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 127, 0], 1),
         P("STEEL DRUM", [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 127, 0], 0),
         P("SAW BASS", [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 127, 0], 1),
-        P("TUBULAR", [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 127, 0], 0)] },
+        P("TUBULAR", [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 127, 0], 0),
+        P("INIT VOICE", [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 127, 0], 0)] },   // the DX7 init voice, after F24
     {name:"-",titles:["-","-"],edit:Array(8).fill(NONE),presets:[]},
     {name:"-",titles:["-","-"],edit:Array(8).fill(NONE),presets:[]},
     {name:"CZ-1",titles:["CZ-1","TONE"],edit:[D("-",F.INT,0,7,0),D("-",F.INT,0,16,0),...Array(5).fill(NONE),D("TONE",F.INT,2,2,2)],
@@ -2283,13 +2287,14 @@ function makeMockDevice(opt = {}) {
         else if (a[1] === 1) m.on = !!a[2];
         else if (a[1] === 2) m.events = [];
         else if (a[1] === 3 || a[1] === 4) {
-          const at = m.events.findIndex(e => e.step === a[2] && e.param === a[3]);
+          const step = a[2] & 63, param = a[3] | ((a[2] & 64) << 1);
+          const at = m.events.findIndex(e => e.step === step && e.param === param);
           if (a[1] === 4) { if (at >= 0) m.events.splice(at, 1); }
           else if (at < 0 && st.tracks.reduce((n,t) => n + t.motion.events.length, 0) >= 64) rc = 2;
-          else { const e = {step:a[2],param:a[3],value:v14dec(a[4],a[5])}; if (at >= 0) m.events[at] = e; else m.events.push(e); }
+          else { const e = {step,param,value:v14dec(a[4],a[5])}; if (at >= 0) m.events[at] = e; else m.events.push(e); }
         }
         [a[0],rc,+m.on,m.events.length,64].forEach(b);
-        m.events.forEach(e => {b(e.step);b(e.param);v(e.value);});
+        m.events.forEach(e => {b(e.step | ((e.param & 128) >> 1));b(e.param);v(e.value);});
         break;
       }
       case CMD.PROPHET: {
@@ -2340,12 +2345,12 @@ function makeMockDevice(opt = {}) {
         b(target);b(index);b(rc);if(!rc && cmd===CMD.CZ_GET)CZ.nibbles(raw).forEach(b);break;
       }
       case CMD.INFO:
-        s(opt.legacy ? "MELODEE 0.4 BETA (MOCK)" : "MELODEE v1.0.1 (MOCK)"); b(ENG.length); b(P_COUNT); b(G_COUNT); b(NSTEP); b(P_E0);
+        s(opt.legacy ? "MELODEE 0.4 BETA (MOCK)" : "MELODEE v1.0.2 (MOCK)"); b(ENG.length); b(P_COUNT); b(G_COUNT); b(NSTEP); b(P_E0);
         ENG.forEach((e) => s(e.name));
         if (!opt.legacy) b(NTRK);
         if (!opt.legacy && !opt.v3 && !opt.v5) {
           b(0);
-          if (st.uiCaps) { [0x55,1,st.uiCaps,0x4d,1,64,1,0x42,1,3,0x50,1,8,16].forEach(b); if (!opt.noFm6) [0x46,1,FM6.FACTORY_PK.length,FM6_BANK,0x43,1,16,1,0,0,0x35,1,19,16,17,18,20,0,1,0x4e,1,64,0,0,1].forEach(b); }
+          if (st.uiCaps) { [0x55,1,st.uiCaps,0x4d,2,64,1,0x42,1,3,0x50,1,8,16].forEach(b); if (!opt.noFm6) [0x46,1,FM6.FACTORY_PK.length,FM6_BANK,0x43,1,16,1,0,0,0x35,1,19,16,17,18,20,0,1,0x4e,1,64,0,0,1].forEach(b); }
         }
         break;
       case CMD.GET: case CMD.SET: {
@@ -3782,11 +3787,14 @@ function renderMotion() {
   if (rows.contains(document.activeElement)) return;
   rows.replaceChildren(el("tr", {}, ...["motionStep", "motionParam", "motionValue"].map(k => el("th", {text:t(k)})), el("th")),
     ...m.events.map(e => {
-      const desc = d.pdesc[e.param], label = desc?.label || `P${e.param}`;
-      const value = el("input", {type:"number",min:desc?.min ?? -8192,max:desc?.max ?? 8191,value:e.value,"aria-label":`${e.step + 1} ${label}`});
+      const native = e.param >= 112, tag = native ? e.value >> 8 : 0, i = e.param - 112;
+      const desc = tag === 1 ? P5.FIELDS.find(f => f.id === i) : native ? null : d.pdesc[e.param];
+      const fm = tag === 3 ? (i < 126 ? FM6.OP[i % 21] : FM6.VOICE[i - 126]) : null;
+      const label = desc?.label || (fm ? `${i < 126 ? `OP${6 - Math.floor(i / 21)} ` : ""}${fm[0]}` : tag === 2 ? `CZ tone ${i}` : `P${e.param}`);
+      const value = el("input", {type:"number",min:desc?.min ?? (native ? 0 : -64),max:desc?.max ?? (fm ? fm[1] : native ? 255 : 127),value:native ? e.value & 255 : e.value,"aria-label":`${e.step + 1} ${label}`});
       value.addEventListener("change", () => op(async () => {
         assertSession(d);
-        const r = parse[CMD.MOTION](await sessionRequest(d, req.motion(m.track, 3, {...e,value:+value.value})));
+        const r = parse[CMD.MOTION](await sessionRequest(d, req.motion(m.track, 3, {...e,value:native ? (tag << 8) | +value.value : +value.value})));
         if (r.rc) throw new Error("Motion edit refused"); d.motion = r; renderMotion();
       }));
       return el("tr", {}, el("td", {text:e.step + 1}), el("td", {text:label}), el("td", {}, value),
