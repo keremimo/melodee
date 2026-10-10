@@ -842,7 +842,7 @@ const build = () => $("build-single").checked ? "single" : "dual";
 const ready = () => { lastKey = "ready"; $("status").textContent = `Melodee ${meta.version} (${t(build() + "Tag")})`; };
 const log = (t) => { $("log").textContent += t + "\n"; };
 let image = null;
-const meta = {"version": "1.0.2", "product": "FM-1_91002", "pkg": {"dual": "../../firmware/melodee-1.0.2.fwsc", "single": "../../firmware/melodee-1.0.2-1core.fwsc"}};
+const meta = {"version": "1.1.0", "product": "FM-1_91010", "pkg": {"dual": "../../firmware/melodee-1.1.0.fwsc", "single": "../../firmware/melodee-1.1.0-1core.fwsc"}};
 const images = {};                // "dual" / "single" -> the package's image, each fetched once
 
 let writing = false, stock = null, stockFileEpoch = 0, buildEpoch = 0;
