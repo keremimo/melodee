@@ -12,7 +12,7 @@ It saves a complete backup first. If your firmware cannot export one, you can se
 **Skip backup** and confirm that Melodee music, sounds and settings may be lost.
 
 Multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. Current release:
-**Melodee 1.0.2** ([what's new](#whats-new-in-102)).
+**Melodee 1.1.0** ([what's new](#whats-new-in-110)).
 
 Melodee is a modified version of [Felucca](https://github.com/hugelton/Felucca) by Leo Kuroshita
 ([@kurogedelic](https://github.com/kurogedelic)), [Hügelton Instruments](https://hugelton.com), and
@@ -23,6 +23,12 @@ runs Felucca.
 - Install: [web installer](https://keremimo.github.io/melodee/) (Chrome or Edge, USB), or `tools/fm1_install.py` from a terminal
 - Editor: [web editor](https://keremimo.github.io/melodee/webapp/editor/)
 - Build: [BUILDING.md](BUILDING.md)
+
+## What's new in 1.1.0
+
+The minor release carries forward 1.0.2's native synth motion, pattern operations and UI fixes,
+with both Standard (dual-core) and Single core firmware available in the installer and release
+downloads. Both builds have the same features and project format.
 
 ## What's new in 1.0.2
 
