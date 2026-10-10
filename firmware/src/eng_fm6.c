@@ -227,8 +227,9 @@ static void fm6_track_loaded(const track_t *t)
     uint32_t tr = (uint32_t)(t - trk);
     if (tr < NTRK && t->eng_req == ENGI_FM6) {
         uint8_t pk[FM6_PACKED], v[FP_SIZE + 1u];
-        fm6_factory(t->preset % FM6_NFAC, pk);
-        fm6_unpack(pk, v);
+        if (t->preset < FM6_NFAC)
+            fm6_factory(t->preset, pk);
+        fm6_unpack(t->preset < FM6_NFAC ? pk : FM6_INIT, v);   /* (past F24: INIT VOICE) */
         fm6_put_patch(tr, v, 1);
     }
 }
@@ -1033,9 +1034,12 @@ static const preset_t FM6_PRESETS[] = {
     FM6_PR("STEEL DRUM", 0, FX(0, 0, 30, 40)),
     FM6_PR("SAW BASS", 1, FX(20, 0, 10, 10)),
     FM6_PR("TUBULAR", 0, FX(0, 0, 30, 80)),
+    FM6_PR("INIT VOICE", 0, FX(0, 0, 0, 0)),          /* the DX7's init voice, dry (after F24: the stores keep the
+                                                         * factory's numbers) */
 };
 #undef FM6_PR
 _Static_assert(FM6_NROM == 16u, "FM6: the presets name F9..F24");
+_Static_assert(NELEM(FM6_PRESETS) == FM6_NFAC + 1u, "FM6: F1..F24, then INIT VOICE");
 
 static const engine_t ENG_FM6 = {
     .name = "FM6",

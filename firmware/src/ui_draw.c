@@ -156,12 +156,17 @@ static uint32_t sec_of(uint32_t i);
 static void sec_chip(uint32_t i, char *b, uint32_t n);
 static int sec_map_on(void);
 static void sound_name(const track_t *t, char *b);
+static int ptc_on(void);                                /* ui_patterns.c */
 static void head_chip_text(char *b)
 {
     const page_t *pg = cur_page();
     uint32_t e = TSEL->eng_req % NENGINES;
     if (new_on()) {                                     /* NEW SONG */
         str_cpy(b, "NEW SONG", 16);
+    } else if (ptc_on()) {                              /* PATTERNS' Copy to: "copy 3 to 5" */
+        str_cpy(b, "copy 1 to 1", 16);
+        b[5] = (char)('1' + ui.ptc_src % NPAT);
+        b[10] = (char)('1' + ui.ptc_dst % NPAT);
     } else if (ui.home) {                               /* Stage: the engine (a kit: its name, "909 KIT") */
         if (browse_pending()) { uint32_t kk, s = browse_shown(&kk); e = src_engine(s, kk); }
         if (ENGINES[eng_idx(e)] == &ENG_DRUM && !browse_pending()) sound_name(TSEL, b);
@@ -263,8 +268,9 @@ static void draw_head(void)
             cv_icon_mid(232 - cw - 18, H_HEAD / 2, 12, batt_level() ? ICON_X_BAT1 : ICON_X_BAT0, T_REC, T_BG);
         if (page_sheet())                               /* the page has a sheet (OCT+ held) */
             cv_text_r(232 - cw - 6 - (low ? 18 : 0), 2, &AF_S, "\x85", T_MID, T_BG);
-        if (!ui.home && cur_page()->graph == GR_PATGRID) {   /* PATTERNS: its name plain (the grid is in colour) */
-            cv_text_r(232, 4, &AF_X, "patterns", T_MID, T_BG);
+        if (!ui.home && cur_page()->graph == GR_PATGRID) {   /* PATTERNS: its name plain (the grid is in colour);
+                                                              * Copy to: what goes where, in the theme's colour */
+            cv_text_r(232, 4, &AF_X, ptc_on() ? chip : "patterns", ptc_on() ? T_THEME : T_MID, T_BG);
         } else {
             cv_rrect(232 - cw, 2, cw, 14, 4, T_THEME, T_BG);
             cv_text_c(232 - cw / 2, 3, &AF_X, chip, T_INK, T_THEME);
@@ -915,6 +921,19 @@ static void confirm_text(char *a, char *b)
         break;
     case CF_INIT_SOUND:
         str_cpy(a, "INITIALIZE SOUND?", 24);
+        break;
+    case CF_DEL_PAT:                                    /* PATTERNS: the track's pattern, its notes and motion */
+        str_cpy(a, "DELETE PATTERN 1?", 24);
+        a[15] = (char)('1' + trk[k % NTRK].pattern % NPAT);
+        str_cpy(b, "Track 1 \xB7 notes and motion", 32);
+        b[6] = (char)('1' + k % NTRK);
+        break;
+    case CF_PASTE_PAT:                                  /* PATTERNS' Copy to over a pattern in use */
+        str_cpy(a, "REPLACE PATTERN 1?", 24);
+        a[16] = (char)('1' + ui.ptc_dst % NPAT);
+        str_cpy(b, "Track 1 \xB7 with pattern 1", 32);
+        b[6] = (char)('1' + k % NTRK);
+        b[str_len(b) - 1u] = (char)('1' + ui.ptc_src % NPAT);
         break;
     case CF_CLEAR_MOTION:
         str_cpy(a, "CLEAR T1 MOTION?", 24); a[7] = (char)('1' + k % NTRK);

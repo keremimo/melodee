@@ -130,6 +130,8 @@ static const sheet_row_t SHEET_SONG[] = {
 
 /* the pattern's (NOTES, the drum grid, PATTERN: OCT+ held; TOOLS' Clear pattern lives here) */
 static const sheet_row_t SHEET_PATTERN[] = {{"Clear pattern", 0, 0, 0, CF_CLEAR_SEQ}, {"Clear motion", 0, 0, 0, CF_CLEAR_MOTION}};
+/* PATTERNS' (OCT+): the selected track's pattern; Copy to: its place picked on the grid (ui_patterns.c) */
+static const sheet_row_t SHEET_PATTERNS[] = {{"Copy to\x85", 0, 0, ptc_start, 0}, {"Delete pattern", 0, 0, 0, CF_DEL_PAT}};
 
 /* the step's: NOTES' note at the cursor (KNOB 1 its length, velocity, chance), the drum grid's hit of the lane there */
 static void st_cap(uint32_t c, char *b)                 /* NOTES' column c as its chip shows it (draw_columns) */
@@ -235,16 +237,18 @@ static int step_enter(void)
     return 1;
 }
 
-/* the page's sheet: 0 none, 1 the sound's, 2 the song's, 3 the pattern's */
+/* the page's sheet: 0 none, 1 the sound's, 2 the song's, 3 the pattern's, 4 PATTERNS' */
 static uint32_t page_sheet(void)
 {
     uint32_t fam;
-    if (ui.menu || ui.confirm || ui.layer || pop.on || name_on() || new_on() || slot_kind())
+    if (ui.menu || ui.confirm || ui.layer || pop.on || name_on() || new_on() || slot_kind() || ptc_on())
         return 0;
     if (ui.home)
         return 1;
     if (cur_page()->graph == GR_SONG)
         return 2;
+    if (cur_page()->graph == GR_PATGRID)
+        return 4;
     if (cur_page()->graph == GR_ROLL || cur_page()->graph == GR_STEPS)
         return 3;
     fam = cur_page()->fam;
@@ -268,6 +272,14 @@ static void page_sheet_open(void)
         nm[1] = (char)('1' + song.sel % NTRK);
         sheet_open("Pattern", nm, SHEET_PATTERN, NELEM(SHEET_PATTERN));
         break;
+    case 4: {                                           /* "Pattern 3", "T2" */
+        char t[12] = "Pattern 1";
+        t[8] = (char)('1' + TSEL->pattern % NPAT);
+        str_cpy(nm, "T1", sizeof nm);
+        nm[1] = (char)('1' + song.sel % NTRK);
+        sheet_open(t, nm, SHEET_PATTERNS, NELEM(SHEET_PATTERNS));
+        break;
+    }
     default:
         break;
     }
@@ -276,10 +288,11 @@ static void page_sheet_open(void)
 /* a clearing row with nothing there to clear (or a song playing): says so instead of asking; 0 = ask */
 static int cf_refused(uint32_t cf)
 {
-    int edit = cf == CF_DEL_ROW || cf == CF_CLEAR_SONG || cf == CF_CLEAR_SEQ || cf == CF_CLEAR_MOTION;
+    int edit = cf == CF_DEL_ROW || cf == CF_CLEAR_SONG || cf == CF_CLEAR_SEQ || cf == CF_CLEAR_MOTION || cf == CF_DEL_PAT;
     if (edit && chain_busy())
         ui_message("STOP TO EDIT");
-    else if (cf == CF_DEL_ROW && ui.song_row >= chain_config.count)
+    else if ((cf == CF_DEL_ROW && ui.song_row >= chain_config.count) ||
+             (cf == CF_DEL_PAT && pattern_empty(song.sel % NTRK, TSEL->pattern)))
         ui_message("NOTHING TO DELETE");
     else if ((cf == CF_CLEAR_SONG && !chain_config.count) || (cf == CF_CLEAR_SEQ && seq_is_empty(TSEL)) ||
              (cf == CF_CLEAR_MOTION && !motion_count(TSEL)))
@@ -312,14 +325,16 @@ static void sheet_input(int32_t k1, int32_t k2, uint32_t oct)
 }
 
 /* ---------------------------------------------------- the pickers --- */
-/* knob c turned on a page: its picker when its value is a name from a long list; another knob: the picker goes */
+/* knob c turned on a page: its picker when its value is a name from a long list; another knob: the picker goes.
+ * Not on a screen of its own: SCALES is the scales' list itself (Kerem: the picker covered it) */
+static int own_screen(void);                            /* ui_draw.c */
 static void pick_touch(uint32_t c)
 {
     int16_t *vp;
     const param_desc_t *d;
     if (pop.on == POP_PICK && pop.col != c)
         pop_close();
-    if (ui.home || pop.on == POP_SHEET)
+    if (ui.home || pop.on == POP_SHEET || own_screen())
         return;
     d = page_desc(cur_page(), c, &vp);
     if (!d || !vp || d->fmt != F_ENUM || !d->names || d->max - d->min < 4)

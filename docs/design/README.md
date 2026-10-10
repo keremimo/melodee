@@ -78,7 +78,11 @@ One way to move on every screen with something to move through (Kerem, 2026-10-1
 - **SELECT** turns the pages, as before, NOTES too (Kerem, 2026-10-10): there KNOB 1 alone moves, the steps one by
   one (empty ones too) and a step's notes one at a time (a chord's, a take's), back onto the step before's last note.
 - **Direct pages stay direct**: one knob per track where speed matters (Stage, MIXER, PATTERNS, NEW SONG's roles);
-  the sound pages' four knobs edit their four values. PATTERNS: OCT- clears what is queued.
+  the sound pages' four knobs edit their four values. PATTERNS: OCT- clears what is queued; OCT+ the selected
+  track's pattern's sheet (Copy to.., Delete pattern; Kerem 2026-10-11). Copy to: the place it goes framed in the
+  theme's colour on the track's row (the first empty one first, an empty place a "+"), the header "copy 1 to 4"; any
+  knob moves it, OCT+ copies (over a pattern in use: "Replace pattern 2?" first), OCT- leaves. Delete pattern asks,
+  then empties it (its notes and motion; SAVE held undoes it).
 
 | Screen | KNOB 1 | KNOB 2 | KNOB 3 / 4 | OCT+ | OCT- |
 |---|---|---|---|---|---|
@@ -86,6 +90,8 @@ One way to move on every screen with something to move through (Kerem, 2026-10-1
 | Settings | value | row | - | open / step | close |
 | PROJECT, USER, STORE | slot | slot | - | the slot's sheet | Stage |
 | SONG | section | track | pattern / repeats | play / stop | Stage |
+| PATTERNS | track 1's pattern | track 2's | track 3's / 4's | the pattern's sheet | the queue, Stage |
+| PATTERNS: Copy to | the place | the place | the place | copy there | leave |
 | MOD | source (its picker) | route | destination / amount | - | Stage |
 | MOTION | Play on / off | lane | - | the lane's sheet | Stage |
 | NOTES | step | pitch | length / velocity | place a note | Stage |
@@ -145,3 +151,7 @@ TAKE JAM: REC held on SONG (elsewhere REC held captures).
   move, OCT+ opens, OCT- closes.
 - **EDIT held**: the sections on the white keys; Init, Favourite, Undo, Store on the black keys. The engine is chosen
   in the browser only (KNOB 4; Kerem, 2026-10-10).
+- **Init sound** (Kerem 2026-10-11: sound design from scratch): the engine's own INIT, nothing changed and dry:
+  INIT PROPHET, INIT TONE, INIT SID, FM6's INIT VOICE (the DX7 init voice, a preset after F24 so the stores keep the
+  factory's numbers); DRUM its 808 kit. The browser's KNOB 4 (the engine) loads the engine's INIT, and each engine's
+  INIT comes first in its sounds there; Init sound (the sound's sheet, EDIT held's black key) the engine's own.
