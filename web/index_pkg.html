@@ -36,6 +36,9 @@
   <p class="small" data-t="beta"></p>
   <p class="small"><span data-t="brick"></span>
     <a href="https://github.com/kurogedelic/FM-1-transporter" target="_blank" rel="noopener" style="color:inherit">FM-1-transporter</a></p>
+  <p><label><input type="radio" name="build" id="build-dual" checked> <span data-t="dual"></span></label><br>
+    <label><input type="radio" name="build" id="build-single"> <span data-t="single"></span></label></p>
+  <p class="small" data-t="singleWhy"></p>
   <p><button id="go" disabled data-t="install"></button></p>
   <details style="margin-top:24px">
     <summary data-t="stockTitle"></summary>
@@ -66,6 +69,8 @@ const TEXT = {
     intro: "FM-1 を USB で接続してください。（Chrome か Edge で使えます）",
     warn: "書き込み中は USB を抜かないでください。",
     install: "インストール", other: "English",
+    dual: "標準（デュアルコア）", single: "シングルコア", dualTag: "標準", singleTag: "シングルコア",
+    singleWhy: "シングルコア版は、標準版でクラッシュする FM-1 のためのものです（赤い MELODEE CRASH 画面、フリーズ、書き込みモードでの再起動）。FM-1 の 2 つ目のコアを起動しません（公式ファームウェアも使っていません）。PROPHET の最大発音数は 8 から 5 になり、重い FM6・PROPHET の音色は早めに処理の上限に達します。標準版に戻すには、標準を選んでインストールしてください。",
     editor: "エディタ（インストール後、パソコンから音色やシーケンスを編集）",
     direct: "USB ケーブルはパソコンに直接つないでください。Probe や Transporter などの機材は不要です。",
     brick: "万一インストールに失敗して起動しなくなった場合は、復旧に Transporter が必要です:",
@@ -100,6 +105,8 @@ const TEXT = {
     intro: "Connect the FM-1 by USB. (Works in Chrome or Edge.)",
     warn: "Do not unplug the USB cable while writing.",
     install: "Install", other: "日本語",
+    dual: "Standard (dual core)", single: "Single core", dualTag: "standard", singleTag: "single core",
+    singleWhy: "The single-core build is for FM-1s that crash with the standard build (a red MELODEE CRASH screen, freezes, or restarts into update mode). It never starts the FM-1's second core, which the official firmware does not use either. PROPHET then plays up to five voices instead of eight, and heavy FM6 and PROPHET sounds reach the CPU limit sooner. To go back, choose Standard and install again.",
     editor: "Editor (after installing: edit sounds and sequences from the computer)",
     direct: "Connect the USB cable directly to the computer. No probe or Transporter is needed.",
     brick: "If an install fails and the FM-1 no longer starts, recovering it needs a Transporter:",
@@ -139,36 +146,49 @@ function applyLang() {
   document.querySelectorAll("[data-t]").forEach((e) => { e.textContent = t(e.dataset.t); });
   $("lang").textContent = t("other");
   $("stock-go").textContent = t($("stock-skip-backup").checked ? "stockGoNoBackup" : "stockGo");
-  if (lastKey) $("status").textContent = t(lastKey) + lastArg;
+  if (lastKey === "ready") ready();
+  else if (lastKey) $("status").textContent = t(lastKey) + lastArg;
 }
 $("lang").addEventListener("click", () => { lang = lang === "ja" ? "en" : "ja"; applyLang(); });
 applyLang();
 $("stock-skip-backup").addEventListener("change", applyLang);
 const sayK = (k, arg = "") => { lastKey = k; lastArg = arg; $("status").textContent = t(k) + arg; };
 const say = (txt) => { lastKey = null; $("status").textContent = txt; };
+const build = () => $("build-single").checked ? "single" : "dual";
+const ready = () => { lastKey = "ready"; $("status").textContent = `Melodee ${meta.version} (${t(build() + "Tag")})`; };
 const log = (t) => { $("log").textContent += t + "\n"; };
 let image = null;
 const meta = /*META*/;
+const images = {};                // "dual" / "single" -> the package's image, each fetched once
 
-let writing = false, stock = null, stockFileEpoch = 0;
-const lockInstaller = (on) => { writing = on; $("go").disabled = on || !image; $("stock-go").disabled = on || !stock; $("stock-file").disabled = on; $("stock-recovery").disabled = on; $("stock-skip-backup").disabled = on; };
+let writing = false, stock = null, stockFileEpoch = 0, buildEpoch = 0;
+const lockInstaller = (on) => { writing = on; $("go").disabled = on || !image; $("build-dual").disabled = on; $("build-single").disabled = on; $("stock-go").disabled = on || !stock; $("stock-file").disabled = on; $("stock-recovery").disabled = on; $("stock-skip-backup").disabled = on; };
 window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault(); e.returnValue = t("leave"); } });
 
-(async () => {
+// the chosen build's package: Install stays off until it is loaded and checked
+async function choose() {
+  if (writing) return;
   if (!navigator.requestMIDIAccess) { sayK("nomidi"); return; }
+  const kind = build(), epoch = ++buildEpoch;
+  image = null; $("go").disabled = true;
   try {
-    const r = await fetch(meta.pkg);
-    if (!r.ok) throw new Error(`${meta.pkg}: HTTP ${r.status}`);
-    const pkg = new Uint8Array(await r.arrayBuffer());
-    if (productOf(pkg) !== meta.product) { sayK("badpkg"); return; }
-    image = logicalImage(pkg);
-    say(`Melodee ${meta.version}`);
-    $("go").disabled = false;
-  } catch (e) { sayK("loadfail", e.message); }
-})();
+    if (!images[kind]) {
+      const url = meta.pkg[kind], r = await fetch(url);
+      if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+      const pkg = new Uint8Array(await r.arrayBuffer());
+      if (productOf(pkg) !== meta.product) { if (epoch === buildEpoch) sayK("badpkg"); return; }
+      images[kind] = logicalImage(pkg);
+    }
+    if (epoch !== buildEpoch) return;
+    image = images[kind]; if (!writing) ready(); lockInstaller(writing);
+  } catch (e) { if (epoch === buildEpoch) sayK("loadfail", e.message); }
+}
+$("build-dual").addEventListener("change", choose);
+$("build-single").addEventListener("change", choose);
+choose();
 
 $("go").addEventListener("click", async () => {
-  if (writing) return;
+  if (writing || !image) return;
   lockInstaller(true);
   let midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }

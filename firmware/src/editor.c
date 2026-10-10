@@ -291,7 +291,7 @@ static void ed_motion_reply(uint32_t k, uint32_t rc)
     for (uint32_t i = 0; i < motion.count; i++) {
         const motion_event_t *e = &motion.event[i];
         if ((e->place >> 6) != k || motion_pattern[i] != t->pattern) continue;
-        ed_b(e->place & 63u); ed_b(e->param); ed_v(e->value);
+        ed_b((e->place & 63u) | ((e->param & 128u) >> 1)); ed_b(e->param); ed_v(e->value);
     }
 }
 static int ed_args_ok(uint32_t cmd, const uint8_t *a, uint32_t n)
@@ -518,8 +518,13 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         else if (na > 1u) {
             if (a[1] == 1u) motion_set_enabled(t, a[2]);
             else if (a[1] == 2u) { load_begin(t, UNDO_PAT); motion_clear(t); load_end(t); }
-            else if (a[1] == 3u) rc = motion_set_event(t, a[2], a[3], (int16_t)ed_rv(a + 4));
-            else if (a[1] == 4u && a[2] < NSTEP && motion_param(a[3])) motion_delete_event(t, a[2], a[3]);
+            else if (a[1] == 3u) rc = motion_set_event(t, a[2] & 63u, a[3] | ((a[2] & 64u) << 1), (int16_t)ed_rv(a + 4));
+            else if (a[1] == 4u) {
+                uint32_t id = a[3] | ((a[2] & 64u) << 1);
+                if (motion_param(id) || (id >= MO_NATIVE && id < MO_NATIVE + MO_NATIVE_N))
+                    motion_delete_event(t, a[2] & 63u, id);
+                else rc = 1;
+            }
             else rc = 1;
             ui.force = 1;
         }

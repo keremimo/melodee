@@ -46,6 +46,17 @@ const E = vm.runInNewContext(proto + `
   ok(old[0].title === "Major" && old[1].title === "UNKNOWN" && old[1].id === 1 && old[1].family === "Other", "scale picker: old firmware and unknown scale fallback");
 }
 
+{
+  const id = 112 + 134, value = (3 << 8) | 23;
+  const [cmd, a] = E.req.motion(0, 3, {step:63,param:id,value});
+  const reply = E.parse[E.CMD.MOTION]([0,0,1,1,64,a[2],a[3],a[4],a[5]]);
+  ok(cmd === E.CMD.MOTION && a.every(x => x < 128) && reply.events[0].step === 63 &&
+    reply.events[0].param === id && reply.events[0].value === value, "native motion: 8-bit parameter and tagged value survive MIDI framing");
+  const legacy = E.parse[E.CMD.MOTION]([0,0,1,1,64,12,36,...E.req.motion(0,3,{step:12,param:36,value:80})[1].slice(4)]);
+  ok(legacy.events[0].step === 12 && legacy.events[0].param === 36 && legacy.events[0].value === 80,
+    "native motion: existing motion replies remain compatible");
+}
+
 async function prophetTests(){
   {   /* bulk .syx import into a native collection: empty slots first, else overwrite from the selected slot */
     const slots=(used)=>Array.from({length:128},(_,slot)=>({slot,used:used(slot)}));
@@ -1401,7 +1412,7 @@ async function patternProtocol() {
 async function stockRestore() {
   const installer = readFileSync(join(HERE, "index_pkg.html"), "utf8");
   const script = installer.match(/<script type="module">([\s\S]*?)<\/script>/)[1]
-    .replace("/*META*/", JSON.stringify({version:"0.10",product:"FM-1_9010",pkg:"test.fwsc"}));
+    .replace("/*META*/", JSON.stringify({version:"0.10",product:"FM-1_9010",pkg:{dual:"test.fwsc",single:"test-1core.fwsc"}}));
   async function run({skip = false, loader = false, recovery = false, supported = false, confirm = true, backupError = false} = {}) {
     const calls = [], elements = new Map();
     const element = (id) => {
@@ -1472,7 +1483,73 @@ async function stockRestore() {
   ok(r.calls.includes("resume") && r.calls.some(c => c.includes("Has the complete backup")),
     "stock: saved-backup recovery retains its existing confirmation");
 }
+async function installerBuilds() {
+  const installer = readFileSync(join(HERE, "index_pkg.html"), "utf8");
+  const script = installer.match(/<script type="module">([\s\S]*?)<\/script>/)[1]
+    .replace("/*META*/", JSON.stringify({version:"1.0.2",product:"FM-1_91002",
+      pkg:{dual:"melodee-1.0.2.fwsc",single:"melodee-1.0.2-1core.fwsc"}}));
+  const fetched = [], installed = [], elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) elements.set(id, {checked:id === "build-dual", disabled:false, textContent:"", value:0, listeners:{},
+      addEventListener(k, fn) { this.listeners[k] = fn; }});
+    return elements.get(id);
+  };
+  const context = vm.createContext({
+    navigator:{language:"en", requestMIDIAccess:async () => ({})},
+    document:{documentElement:{}, querySelectorAll:() => [], getElementById:element},
+    window:{addEventListener() {}},
+    fetch:async (url) => { fetched.push(url); return {ok:true, arrayBuffer:async () => new Uint8Array(Buffer.from(url)).buffer}; },
+    productOf:() => "FM-1_91002", logicalImage:(pkg) => String.fromCharCode(...pkg),
+    Updater:class { async find() { return null; } async install(image, product) { installed.push([image, product]); } },
+  });
+  vm.runInContext(script, context);
+  await new Promise(resolve => setImmediate(resolve));
+  ok(fetched.join() === "melodee-1.0.2.fwsc" && element("status").textContent === "Melodee 1.0.2 (standard)"
+    && !element("go").disabled, "installer: the standard (dual-core) build is the default");
+  element("build-dual").checked = false; element("build-single").checked = true;
+  await element("build-single").listeners.change();
+  const status = element("status").textContent;
+  await element("go").listeners.click();
+  ok(status === "Melodee 1.0.2 (single core)" && installed.length === 1 && installed[0][0] === "melodee-1.0.2-1core.fwsc"
+    && installed[0][1] === "FM-1_91002" && !element("build-dual").disabled, "installer: Single core installs the single-core package");
+  element("build-single").checked = false; element("build-dual").checked = true;
+  await element("build-dual").listeners.change();
+  await element("go").listeners.click();
+  ok(fetched.length === 2 && installed[1][0] === "melodee-1.0.2.fwsc", "installer: back to standard, each package fetched once");
+}
+async function installerBuildRaces() {
+  const script = readFileSync(join(HERE, "index_pkg.html"), "utf8").match(/<script type="module">([\s\S]*?)<\/script>/)[1]
+    .replace("/*META*/", JSON.stringify({version:"1.0.2",product:"FM-1_91002",pkg:{dual:"dual",single:"single"}}));
+  const elements = new Map(), pending = new Map(); let installDone, installed;
+  const element = id => {
+    if (!elements.has(id)) elements.set(id, {checked:id === "build-dual",disabled:false,textContent:"",listeners:{},
+      addEventListener(k,fn) { this.listeners[k] = fn; }});
+    return elements.get(id);
+  };
+  const context = vm.createContext({navigator:{language:"en",requestMIDIAccess:async()=>({})},
+    document:{documentElement:{},querySelectorAll:()=>[],getElementById:element},window:{addEventListener(){}},
+    fetch:url=>new Promise(resolve=>pending.set(url,resolve)),productOf:()=>"FM-1_91002",
+    logicalImage:pkg=>String.fromCharCode(...pkg),
+    Updater:class { async find(){ return null; } async install(img){installed=img;await new Promise(resolve=>installDone=resolve);} }
+  });
+  const finish = url => pending.get(url)({ok:true,arrayBuffer:async()=>Uint8Array.from(Buffer.from(url)).buffer});
+  const tick = () => new Promise(resolve=>setImmediate(resolve));
+  vm.runInContext(script, context);
+  element("build-dual").checked=false;element("build-single").checked=true;
+  const single = element("build-single").listeners.change();
+  ok(element("go").disabled,"installer: Install is disabled while the selected package loads");
+  finish("single");await single;finish("dual");await tick();
+  ok(element("status").textContent === "Melodee 1.0.2 (single core)","installer: a late standard download cannot replace the selected single-core build");
+  const flash = element("go").listeners.click();await tick();
+  ok(installed === "single" && element("build-dual").disabled && element("build-single").disabled,
+    "installer: the selected package is fixed and build selection locked throughout writing");
+  await element("build-dual").listeners.change();
+  installDone();await flash;
+  ok(!element("build-dual").disabled && !element("build-single").disabled,"installer: build selection unlocks after writing");
+}
 await stockRestore();
+await installerBuilds();
+await installerBuildRaces();
 await patternProtocol();
 await editorMock();
 await editorSamplePresets();

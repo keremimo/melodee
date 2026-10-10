@@ -135,7 +135,11 @@ Or, to install your own build from the web installer, make a local copy of the s
 (Web MIDI needs a secure context):
 
 ```
-python3 web/make_site.py build/melodee.fwsc dev /tmp/melodee-site
+# Build both variants from the same source; release outputs are kept separately.
+./build.sh --release 1.0.2
+MELODEE_DUAL_CORE=0 ./build.sh --release 1.0.2
+python3 web/make_site.py build/release-1.0.2/melodee-1.0.2.fwsc \
+  build/release-1.0.2-1core/melodee-1.0.2-1core.fwsc 1.0.2 /tmp/melodee-site
 cd /tmp/melodee-site && python3 -m http.server 8000
 # open http://localhost:8000/webapp/installer/
 ```

@@ -889,6 +889,7 @@ static int proj_write_slot(uint32_t slot, const uint8_t *raw, uint32_t len)
 static void project_capture(project_t *p)
 {
     uint32_t i;
+    uint8_t native[FP_SIZE + 1u];
     uint32_t f = motion_guard();
     memset(p, 0, sizeof *p);
     p->magic = PROJ_MAGIC;
@@ -909,7 +910,11 @@ static void project_capture(project_t *p)
         memcpy(p->t[i].step, trk[i].step, sizeof trk[i].step);
         p->cz[i] = cz_patch[i];
         p->p5[i] = *p5_patch_of(&trk[i]);
-        fm6_pack(fm6_patch[i], p->fm6[i]);
+        motion_native_snapshot(&trk[i], p->cz[i].raw, MO_TAG_CZ, CZ_BYTES);
+        motion_native_snapshot(&trk[i], p->p5[i].raw, MO_TAG_P5, sizeof p->p5[i].raw);
+        memcpy(native, fm6_patch[i], sizeof native);
+        motion_native_snapshot(&trk[i], native, MO_TAG_FM6, sizeof native);
+        fm6_pack(native, p->fm6[i]);
         memcpy(p->fm6_fn[i], fm6_fn[i], FM6_NFN);
     }
     memcpy(p->drum,drum_patch,sizeof drum_patch);
@@ -1073,6 +1078,7 @@ static int project_restore_runtime(const project_t *input)
     chain_defaults(&chain_config);
     motion = p->motion;
     memset(motion_active, 0, sizeof motion_active);
+    memset(motion_nactive, 0, sizeof motion_nactive);   /* (the patches come with the project) */
     motion_base_valid = 0;
     ui.song_row = 0;
     for (i = 0; i < G_COUNT; i++)

@@ -972,3 +972,17 @@ at offset 8. TPLD magic `0x444C5054` adds 64 bytes of track parameters to TPLC.
 FUN14/FBKH/TPLC and earlier data remain readable, with missing lane levels
 initialized to 127. Settings retain PER5 and its template boundary; a
 `0x5250` high-word tag in the unused zoom word identifies recording preferences.
+
+### Native synth motion (1.0.2)
+
+Native events use parameter `112 + patch_byte` (up to 255) and value
+`engine_tag << 8 | byte_value`, with tags 1 = Prophet, 2 = CZ-1, 3 = FM6. Voice assignment,
+CZ line selection, FM6 transpose and names are excluded. Fields and values are validated.
+The stored four-byte event and project extents are unchanged; older firmware rejects native events.
+The project snapshot saves the original patch bytes, independently of sounding motion.
+
+In command 64 queries, writes and deletes, the high bit of the parameter is carried in bit 6
+of the step byte: `wire_step = step | ((param & 128) >> 1)`, `wire_param = param & 127`.
+Decode `step = wire_step & 63`, `param = wire_param | ((wire_step & 64) << 1)`.
+Existing events keep their original wire representation. Values retain the signed 14-bit encoding.
+The web editor displays and edits the raw native byte while preserving its engine tag.

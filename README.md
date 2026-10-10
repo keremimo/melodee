@@ -12,7 +12,7 @@ It saves a complete backup first. If your firmware cannot export one, you can se
 **Skip backup** and confirm that Melodee music, sounds and settings may be lost.
 
 Multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. Current release:
-**Melodee 1.0.1** ([what's new](#whats-new-in-101)).
+**Melodee 1.0.2** ([what's new](#whats-new-in-102)).
 
 Melodee is a modified version of [Felucca](https://github.com/hugelton/Felucca) by Leo Kuroshita
 ([@kurogedelic](https://github.com/kurogedelic)), [Hügelton Instruments](https://hugelton.com), and
@@ -23,6 +23,29 @@ runs Felucca.
 - Install: [web installer](https://keremimo.github.io/melodee/) (Chrome or Edge, USB), or `tools/fm1_install.py` from a terminal
 - Editor: [web editor](https://keremimo.github.io/melodee/webapp/editor/)
 - Build: [BUILDING.md](BUILDING.md)
+
+## What's new in 1.0.2
+
+- **Two installer builds:** Standard uses both cores. Choose **Single core** if your FM-1 crashes,
+  freezes or restarts into update mode with Standard. Single core never starts the second core;
+  PROPHET plays up to five voices instead of eight, and heavy FM6 and PROPHET sounds reach the CPU
+  limit sooner. Both builds have the same features and project format. Choose Standard and install
+  again to return to dual core.
+- **Motion records the native synth settings:** Prophet and CZ-1 Stage knobs, their sound pages,
+  and FM6 operator and voice pages now record and replay their changes. Arm REC, start playback,
+  then turn a sound knob. Turning one while armed but stopped shows **PLAY TO RECORD MOTION**.
+  Stopping or bypassing motion restores the original patch; project snapshots keep that original.
+  MOTION is hidden until the selected pattern has recorded motion.
+- **Init sound starts from scratch:** Prophet, CZ-1, SID and FM6 use their own init patches,
+  with effects off. Switching engines in the sound browser starts on that engine's init sound.
+- **SCALES stays unobscured:** changing a scale no longer opens a second picker over its list.
+- **Copy and delete patterns:** OCT+ on PATTERNS opens the current pattern's menu. Copy notes
+  and motion within the track, confirm before replacing a used slot, or delete with confirmation.
+  Holding SAVE undoes the action.
+
+Projects with native synth motion require 1.0.2 or later; older firmware cannot load those events.
+Existing projects remain readable by 1.0.2. The motion pool still holds 64 events shared across tracks
+and patterns; settings represented by multiple patch bytes can use multiple events.
 
 ## What's new in 1.0.1
 
