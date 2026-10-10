@@ -2345,7 +2345,7 @@ function makeMockDevice(opt = {}) {
         b(target);b(index);b(rc);if(!rc && cmd===CMD.CZ_GET)CZ.nibbles(raw).forEach(b);break;
       }
       case CMD.INFO:
-        s(opt.legacy ? "MELODEE 0.4 BETA (MOCK)" : "MELODEE v1.0.2 (MOCK)"); b(ENG.length); b(P_COUNT); b(G_COUNT); b(NSTEP); b(P_E0);
+        s(opt.legacy ? "MELODEE 0.4 BETA (MOCK)" : "MELODEE v1.1.0 (MOCK)"); b(ENG.length); b(P_COUNT); b(G_COUNT); b(NSTEP); b(P_E0);
         ENG.forEach((e) => s(e.name));
         if (!opt.legacy) b(NTRK);
         if (!opt.legacy && !opt.v3 && !opt.v5) {
