@@ -30,7 +30,7 @@ static const char *const PRESET_CAT[NENGINES] = {
 #endif
     [3] = "OLBBBBBBLLLLLLLLPSPPGGKKUUERFFFF",          /* SID */
     [10] = "DD",                                        /* DRUM: the kits */
-    [12] = "KEBRPEGUKRBEEKGSPLUEWEBE",                  /* FM6 */
+    [12] = "KEBRPEGUKRBEEKGSPLUEWEBEO",                 /* FM6, INIT VOICE */
     [ENGI_CZ] = "ORRRSSSSSUUUBBBBURWSWWWWUKKKKKKKKGGGGGPPPEEEEEDEESSULLLLFDDDEFFFF",   /* INIT TONE, Casio's 64 */
     [ENGI_PROPHET] =                                    /* INIT, Sequential's 200 */
         "OOOKBPROOOGKLPWPOLOUUBEOEGFPOOBOEOOODDDEOOGKSGBPEPPLBROOOOPOKPKOFOSOOEPRODFLFOOEOULWOPBOLOPKFORGLPOBULROOSKOO"
@@ -284,9 +284,11 @@ static uint32_t list_scan(uint32_t m, uint32_t ws, uint32_t wk, uint32_t n, uint
         }
     } else {
         for (seg = 0; seg <= LSEG_USER; seg++) {
-            uint32_t len = lseg_len(seg), slot = seg >= LSEG_USER || (seg & 1u);
+            uint32_t len = lseg_len(seg), slot = seg >= LSEG_USER || (seg & 1u), init;
             src = lseg_src(seg);
-            for (k = 0; k < len; k++) {
+            init = slot || !len ? 0u : preset_init(src);   /* (an engine's INIT first: FM6's comes after F24) */
+            for (i = 0; i < len; i++) {
+                k = (i + init) % len;
                 if (slot && !(src == USER_GENERAL ? up_used(k) : native_used(src_engine(src, k), k)))
                     continue;
                 if (!list_keep(m, src, k))

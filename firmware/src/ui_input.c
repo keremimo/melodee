@@ -50,7 +50,7 @@ static int oct_nav(void)
 }
 static int oct_enter_ok(void)                           /* OCT+ would do something here */
 {
-    return list_on() || slot_kind() || motion_page() || (!ui.home && cur_page()->graph == GR_SCALE_PICKER) || page_sheet() || pop.on || smap.on || (!ui.home && cur_page()->graph == GR_BROWSE);
+    return list_on() || slot_kind() || motion_page() || (!ui.home && cur_page()->graph == GR_SCALE_PICKER) || page_sheet() || pop.on || smap.on || (!ui.home && cur_page()->graph == GR_BROWSE) || ptc_on();
 }
 
 /* the OCT LEDs, bit 0 OCT-, bit 1 OCT+. In the dialogs, the menu and on action pages OCT- (back) is
@@ -984,7 +984,7 @@ static void act_do(void)
         confirm_open(CF_CLEAR_SEQ, song.sel);
         break;
     default:                                              /* G_INITSND */
-        set_engine(TSEL->eng_req);                        /* engine defaults + its first preset (the steps stay) */
+        sound_init_of(TSEL, TSEL->eng_req);               /* the engine's INIT (the steps stay) */
         ui_message("SOUND INIT");
         ui.force = 1;
         break;
@@ -1645,8 +1645,11 @@ static void ui_input(void)
                 new_open();
             } else if (kind == CF_CLEAR_SONG) {
                 if (!chain_busy()) { chain_defaults(&chain_config); memset(chain_patterns, 0, sizeof chain_patterns); ui.song_row = 0; ui_message("SONG CLEARED"); }
+            } else if (kind == CF_PASTE_PAT) {          /* PATTERNS' Copy to over a pattern in use */
+                if (ui.ptc_on && ui.ptc_trk == ui.confirm_trk)
+                    ptc_paste(1);
             } else if (kind == CF_INIT_SOUND) {
-                if (!chain_busy()) { set_engine(TSEL->eng_req); ui_message("SOUND INIT"); }
+                if (!chain_busy()) { sound_init_of(TSEL, TSEL->eng_req); ui_message("SOUND INIT"); }
             } else {
                 track_t *t = &trk[ui.confirm_trk % NTRK];
                 load_begin(t, UNDO_PAT);
@@ -1659,7 +1662,7 @@ static void ui_input(void)
                     b[0] = (char)('1' + ui.confirm_trk);
                     ui_say("TRACK ", b);
                 } else {
-                    ui_message("PATTERN CLEARED");
+                    ui_message(kind == CF_DEL_PAT ? "PATTERN DELETED" : "PATTERN CLEARED");
                 }
             }
         } else if (oct & 1u) {
@@ -1820,7 +1823,9 @@ static void ui_input(void)
         else
             go_home();
     } else if (oct_nav() && !ui.layer && (oct & 2u)) {  /* any other page: OCT+ Enter (a slot's sheet, the page's), */
-        if (slot_kind())
+        if (ptc_on())                                   /* PATTERNS' Copy to: there */
+            ptc_paste(0);
+        else if (slot_kind())
             slot_enter();
         else if (motion_page())
             motion_enter();
@@ -1835,6 +1840,9 @@ static void ui_input(void)
         if (str_eq(cur_page()->title, "SCALES") && p < NPAGES) {
             ui.page = (uint8_t)p;
             page_entered();
+        } else if (ptc_on()) {                          /* PATTERNS' Copy to: left, the page stays */
+            ui.ptc_on = 0;
+            ui.force = 1;
         } else if (str_eq(cur_page()->title, "PATTERNS") && patterns_queued()) {   /* PATTERNS: the queue first */
             uint32_t k, f = motion_guard();
             for (k = 0; k < NTRK; k++)

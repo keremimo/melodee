@@ -88,6 +88,8 @@ static struct {
     uint8_t fam_last[FAM_COUNT]; /* last page used per family */
     uint8_t bank;                /* SEQ: 16-step bank (follows the cursor) */
     uint8_t pat_key, pat_copy, pat_track;          /* SEQ + white-key bank gesture */
+    uint8_t ptc_on, ptc_trk, ptc_src, ptc_dst;     /* PATTERNS' Copy to: track ptc_trk's pattern src to dst
+                                                    * (ui_patterns.c) */
     uint8_t cursor;              /* SEQ: step being edited (STEP page KNOB 1 moves it) */
     uint16_t note_pick;          /* NOTES: event index + 1; zero chooses the first hit */
     uint8_t erase_gesture, erase_owner; /* an EDIT press captures one track/bank until released */
@@ -149,9 +151,10 @@ static struct {
 #include "screen.c"
 
 enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER,
-       CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_TAKE_JAM, CF_NEW_SONG, CF_ERASE_PROJ };   /* ui.confirm: REC held on
-                                   * SEQ / ARP, on TRACKS; SAVE over a used slot; a pattern over the user's steps;
-                                   * USER ERASE */
+       CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_TAKE_JAM, CF_NEW_SONG, CF_ERASE_PROJ,
+       CF_DEL_PAT, CF_PASTE_PAT };   /* ui.confirm: REC held on SEQ / ARP, on TRACKS; SAVE over a used slot; a pattern
+                                      * over the user's steps; USER ERASE; PATTERNS: Delete pattern, Copy to over a
+                                      * pattern in use */
 
 static const page_t *page_over;   /* a quick layer's own four knobs (ui_layer.c), while it edits or draws them */
 static uint32_t drum_hit_selected(void);
@@ -300,6 +303,7 @@ static void page_entered(void)
     ui.hot_t = 0;                                /* clear the previous page's emphasis */
     ui.act = 0;
     ui.proj_new = 0;
+    ui.ptc_on = 0;
     if (pg->graph == GR_BROWSE) {                /* (OCT- goes back to the sound from before: its loads, a level */
         browse_mark = browse_loads;              /* of their own) */
         undo_seal();
@@ -931,9 +935,9 @@ static void apply_preset_to(track_t *t, uint32_t pi)
     load_end(t);
 }
 
-/* the engine's defaults and its first preset. With the audio IRQ off: the ISR sees the old engine with
+/* the engine's defaults and its preset pi. With the audio IRQ off: the ISR sees the old engine with
  * its values or the new one with its own (voice.c engine_block), never one with the other's */
-static void set_engine_of(track_t *t, uint32_t ei)
+static void engine_load_of(track_t *t, uint32_t ei, uint32_t pi)
 {
     const engine_t *e = ENGINES[ei % NENGINES];
     uint32_t i;
@@ -943,16 +947,34 @@ static void set_engine_of(track_t *t, uint32_t ei)
         return;
     }
 #endif
-    /* PROPHET starts on Sequential's first factory program, not INIT. */
     load_begin(t, UNDO_SOUND);
     fm1_irq_off();
     t->eng_req = (uint8_t)(ei % NENGINES);
     for (i = 0; i < 8u; i++)
         t->p[P_E0 + i] = e->edit[i].def;
-    apply_preset_to(t, t->eng_req == ENGI_PROPHET ? 1u : 0u);
+    apply_preset_to(t, pi);
     fm1_irq_on();
     load_end(t);
 }
+/* the engine's defaults and its first preset (PROPHET: Sequential's first factory program, not INIT) */
+static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET ? 1u : 0u); }
+
+/* the engine's own starting point, nothing changed: its INIT preset (Prophet, CZ-1, SID, FM6: "INIT .."), else
+ * its first (DRUM: the 808 kit) */
+static uint32_t preset_init(uint32_t e)
+{
+    const engine_t *en = ENGINES[e % NENGINES];
+    uint32_t k;
+    for (k = 0; k < en->npresets; k++) {
+        const char *n = en->presets[k].name;
+        if (n[0] == 'I' && n[1] == 'N' && n[2] == 'I' && n[3] == 'T' && (n[4] == ' ' || !n[4]))
+            return k;
+    }
+    return 0;
+}
+/* Init sound (the sound's sheet, EDIT held's black key, the browser's ENGINE knob): the engine's INIT, the steps
+ * stay */
+static void sound_init_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, preset_init(ei)); }
 
 static void apply_preset(uint32_t pi) { apply_preset_to(TSEL, pi); }
 static void set_engine(uint32_t ei) { set_engine_of(TSEL, ei); }
@@ -965,10 +987,10 @@ static void track_defaults(track_t *t)
     track_defaults_steps(t);
 }
 
-/* switch engine (its defaults + first preset) and say so */
+/* switch engine (its INIT sound: one starts a sound from there, the browser's next turn its presets) and say so */
 static void select_engine(uint32_t e)
 {
-    set_engine(e);
+    sound_init_of(TSEL, e);
     ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
     ui.force = 1;
 }
@@ -1000,8 +1022,10 @@ static void preset_go(uint32_t n)                    /* load list index n into t
     else if (e == USER_GENERAL) {
         up_load(k);
     } else {
-        if (e != TSEL->eng_req)
-            select_engine(e);
+        if (e != TSEL->eng_req) {
+            set_engine(e);
+            ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
+        }
         apply_preset(k);
     }
     recent_loaded();

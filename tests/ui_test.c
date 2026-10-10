@@ -1766,6 +1766,111 @@ static int test_patterns_queue(void)
     return bad;
 }
 
+/* Init sound: the engine's INIT (FM6: INIT VOICE after F24, dry); the browser's ENGINE knob loads it, its INIT first
+ * in the list. SCALES: no picker over its own list. PATTERNS: OCT+ the pattern's sheet; Copy to (the first empty
+ * place, any knob moves it, OCT+ copies, over a pattern in use the question first, OCT- leaves); Delete pattern */
+static int test_init_scales_patterns(void)
+{
+    int bad = 0, ok;
+    uint32_t i, b, first;
+    char nm[16];
+    track_t *t;
+    ui_power_on();
+    set_engine_of(TSEL, ENGI_FM6);
+    ok = TSEL->preset == 0u;
+    TSEL->p[P_E0] = 5;
+    sound_init_of(TSEL, ENGI_FM6);
+    fm6_name(nm, fm6_patch[song.sel]);
+    for (i = 0; i < 4u; i++)
+        ok &= !TSEL->p[P_DIST + i];
+    bad += check("INIT: FM6's: INIT VOICE (after F24), the DX7 init voice, dry", ok && TSEL->preset == FM6_NFAC &&
+                 str_eq(nm, "INIT VOICE") && !TSEL->p[P_E0]);
+    sound_init_of(TSEL, ENGI_PROPHET);
+    sound_name(TSEL, nm);
+    bad += check("INIT: the Prophet's: INIT PROPHET (not program 1)", TSEL->eng_req == ENGI_PROPHET && !TSEL->preset &&
+                 str_eq(nm, "INIT PROPHET"));
+    sound_init_of(TSEL, ENGI_CZ);
+    sound_name(TSEL, nm);
+    bad += check("INIT: the CZ-1's: INIT TONE", TSEL->eng_req == ENGI_CZ && !TSEL->preset && str_eq(nm, "INIT TONE"));
+    set_engine_of(TSEL, ENGI_FM6);
+    hold(B_OCTUP);
+    sheet_do("Init sound");
+    press(B_OCTUP);
+    bad += check("INIT: the sound's sheet: Init sound, asked, FM6's INIT VOICE", TSEL->preset == FM6_NFAC &&
+                 msg_is("SOUND INIT"));
+    go_page(GR_BROWSE); frame();
+    list_set(LM_ALL);
+    turn(EN_K4, -1);
+    bad += check("INIT: the browser's ENGINE knob: the Prophet, its INIT", TSEL->eng_req == ENGI_PROPHET && !TSEL->preset);
+    turn(EN_K4, 1);
+    bad += check("..again: FM6, its INIT VOICE", TSEL->eng_req == ENGI_FM6 && TSEL->preset == FM6_NFAC);
+    turn(EN_K2, 1);
+    ok = TSEL->eng_req == ENGI_FM6 && !TSEL->preset;
+    turn(EN_K2, -1);
+    bad += check("..INIT VOICE first in FM6's sounds: KNOB 2 on, F1; back: INIT VOICE", ok && TSEL->eng_req == ENGI_FM6 &&
+                 TSEL->preset == FM6_NFAC);
+    turn(EN_K2, -1);
+    bad += check("..back again: the Prophet's last program", TSEL->eng_req == ENGI_PROPHET &&
+                 TSEL->preset == ENGINES[ENGI_PROPHET]->npresets - 1u);
+
+    ui_power_on();
+    go_title("SCALES"); frame();
+    turn(EN_K2, 1);
+    ok = pop.on != POP_PICK;
+    turn(EN_K3, 1);
+    bad += check("SCALES: KNOB 2 (the scale) and KNOB 3 turning: no picker over the list", ok && pop.on != POP_PICK);
+
+    ui_power_on();
+    stop_transport();
+    go_title("PATTERNS"); frame();
+    t = TSEL;
+    my_steps(t);
+    press(B_OCTUP);
+    bad += check("PATTERNS: OCT+ the pattern's sheet (Copy to, Delete pattern)", pop.on == POP_SHEET &&
+                 pop.rows == SHEET_PATTERNS);
+    for (first = 1; first < NPAT && !pattern_empty(song.sel, first); first++)
+        ;
+    sheet_do("Copy to\x85");
+    bad += check("..Copy to: the pattern, the first empty place", ptc_on() && ui.ptc_src == t->pattern &&
+                 ui.ptc_dst == first && first < NPAT);
+    turn(EN_K3, 1);
+    ok = ui.ptc_dst == first + 1u && t->pattern == 0u;
+    turn(EN_K1, -1);
+    bad += check("..any knob moves the place (no pattern switched)", ok && ui.ptc_dst == first && t->pattern == 0u);
+    hold(B_OCTUP);
+    bad += check("..OCT+ held: no sheet while copying", pop.on != POP_SHEET);
+    ok = 1;
+    for (i = 0; i < NSTEP; i++)
+        ok &= !memcmp(&pattern_at(song.sel, first)->step[i], &t->step[i], sizeof t->step[i]);
+    bad += check("..OCT+ copies it there, Copy to ends", ok && !ptc_on() && msg_is("PATTERN COPIED") &&
+                 !pattern_empty(song.sel, first));
+    sheet_do("Copy to\x85");
+    b = ui.ptc_dst;
+    turn(EN_K1, -10);
+    ok = b != first && ui.ptc_dst == first;
+    press(B_OCTUP);
+    bad += check("..over a pattern in use: the question first", ok && ui.confirm == CF_PASTE_PAT && ptc_on());
+    press(B_OCTUP);
+    bad += check("..yes: copied", !ui.confirm && !ptc_on() && msg_is("PATTERN COPIED"));
+    sheet_do("Copy to\x85");
+    press(B_OCTDN);
+    bad += check("..OCT- leaves Copy to, PATTERNS stays", !ptc_on() && !ui.home && str_eq(cur_page()->title, "PATTERNS"));
+    sheet_do("Delete pattern");
+    bad += check("..Delete pattern asks", ui.confirm == CF_DEL_PAT && !seq_is_empty(t));
+    press(B_OCTUP);
+    bad += check("..yes: the pattern empty", seq_is_empty(t) && pattern_empty(song.sel, t->pattern) &&
+                 msg_is("PATTERN DELETED"));
+    undo_step(0);
+    ok = !seq_is_empty(t);
+    undo_step(1);
+    bad += check("..SAVE held undoes it, SAVE + OCT+ redoes it", ok && seq_is_empty(t));
+    sheet_do("Delete pattern");
+    ok = !ui.confirm && msg_is("NOTHING TO DELETE");
+    sheet_do("Copy to\x85");
+    bad += check("..an empty pattern: nothing to delete, nothing to copy", ok && !ptc_on() && msg_is("NOTHING TO COPY"));
+    return bad;
+}
+
 /* MOD as rows: KNOB 2 the route, KNOB 1 its source (its picker), KNOB 3 its destination, KNOB 4 its amount */
 static int test_mod_rows(void)
 {
@@ -4716,6 +4821,7 @@ int main(void)
     bad += test_step_sheets();
     bad += test_mod_rows();
     bad += test_patterns_queue();
+    bad += test_init_scales_patterns();
     bad += test_bughunt_ui();
     bad += test_bughunt_ui2();
     bad += test_piano_roll();

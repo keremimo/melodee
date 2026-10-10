@@ -439,7 +439,7 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_NOTE, S_HOME_CHORD, S_HOME_INVERSION, S_HOME_
        S_ROLL_EMPTY, S_ROLL_ACID, S_ROLL_CHORDS, S_ROLL_TIES, S_ROLL_LEN32, S_ROLL_HIGH, S_ROLL_LOW, S_ROLL_WIDE, S_ROLL_PLAYING,
        S_MOCK_HOME, S_MOCK_PRESETS, S_MOCK_SEQ, S_MOCK_DRUM, S_MOCK_MIXER, S_MOCK_DIALOG, S_MOCK_MENU, S_NATIVE_FM_USER, S_NATIVE_CZ_USER,
        S_NOTES_SLIDE, S_NOTES_MIXED, S_NOTES_CHORD, S_NOTES_EMPTY, S_NOTES_RAW, S_NOTES_ZOOM, S_NOTES_LOOP, S_NOTES_DRUM, S_NOTES_DENSE, S_NOTES_REC, S_NOTES_ERASE, S_NOTES_DRUM_REC, S_NOTES_DRUM_ERASE, S_SCL_MICRO, S_SCL_MICRO_LAYER, S_SCL_MICRO_CHORD, S_SCALE_PICKER_EDO, S_SCALE_PICKER_HIST, S_SCALE_PICKER_FAV, S_SCALE_PICKER_EMPTY, S_SCALE_SETTINGS_FAV, S_MENU_CLICK, S_MENU_CLICK_LEVEL, S_MENU_COUNTIN, S_MENU_PREVIEW, S_MENU_ADD, S_DRUM_SOUND_808, S_DRUM_SOUND_909, S_DRUM_MIX_909, S_DRUM_HIT_909, S_DRUM_HIT_FREE, S_DRUM_HIT_LONG,
-       S_STAGE_DRUM, S_STAGE_CZ, S_STAGE_P5, S_STAGE_QUEUED, S_STAGE_BROWSE, S_STAGE_STOPPED, S_STAGE_FILTER, S_STAGE_ENV, S_PATGRID, S_PATGRID_STOPPED, S_PROJECT_NEW, S_NEW_KEY, S_NEW_ROLES,
+       S_STAGE_DRUM, S_STAGE_CZ, S_STAGE_P5, S_STAGE_QUEUED, S_STAGE_BROWSE, S_STAGE_STOPPED, S_STAGE_FILTER, S_STAGE_ENV, S_PATGRID, S_PATGRID_STOPPED, S_PATGRID_SHEET, S_PATGRID_COPY, S_PATGRID_REPLACE, S_PATGRID_DELETE, S_PROJECT_NEW, S_NEW_KEY, S_NEW_ROLES,
        S_REF_STAGE_HELD, S_REF_STAGE_RELEASED, S_REF_STAGE_CUTOFF, S_REF_STAGE_DRUM, S_REF_BROWSER, S_REF_PATTERNS, S_REF_SONG,
        S_REF_ENV, S_REF_LFO, S_REF_EDIT_OSC, S_REF_FX, S_REF_DLY, S_REF_MIXER, S_REF_NOTES, S_REF_SETTINGS, S_REF_DIALOG,
        S_REF_SHEET_SOUND, S_REF_SHEET_SONG, S_REF_PICKER_WAVE, S_REF_SECTIONS_P5, S_REF_MAP_P5, S_REF_MAP_FM6,
@@ -464,7 +464,7 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_note", "h
     "roll_empty", "roll_acid", "roll_chords", "roll_ties", "roll_len32_p2", "roll_high", "roll_low", "roll_wide", "roll_playing",
     "mock_home", "mock_presets", "mock_seq", "mock_drum", "mock_mixer", "mock_dialog", "mock_menu", "native_fm_user", "native_cz_user",
     "notes_slide", "notes_mixed", "notes_chord", "notes_empty", "notes_raw", "notes_zoom", "notes_loop", "notes_drum", "notes_dense", "notes_rec", "notes_erase", "notes_drum_rec", "notes_drum_erase", "scl_micro", "scl_micro_layer", "scl_micro_chord", "scale_picker_edo", "scale_picker_historical", "scale_picker_favorites", "scale_picker_empty", "scale_settings_favorite", "menu_click", "menu_click_level", "menu_countin", "menu_preview", "menu_add", "drum_sound_808", "drum_sound_909", "drum_mix_909", "drum_hit_909", "drum_hit_free", "drum_hit_long",
-    "stage_drum", "stage_cz", "stage_p5", "stage_queued", "stage_browse", "stage_stopped", "stage_filter", "stage_env", "patterns", "patterns_stopped", "project_new", "new_key", "new_roles",
+    "stage_drum", "stage_cz", "stage_p5", "stage_queued", "stage_browse", "stage_stopped", "stage_filter", "stage_env", "patterns", "patterns_stopped", "patterns_sheet", "patterns_copy", "patterns_replace", "patterns_delete", "project_new", "new_key", "new_roles",
     "ref_stage_held", "ref_stage_released", "ref_stage_cutoff", "ref_stage_drum", "ref_browser", "ref_patterns", "ref_song", "ref_env", "ref_lfo", "ref_edit_osc", "ref_fx", "ref_dly", "ref_mixer", "ref_notes", "ref_settings", "ref_dialog", "ref_sheet_sound", "ref_sheet_song", "ref_picker_wave", "ref_sections_p5", "ref_map_p5", "ref_map_fm6", "ref_scl_list", "ref_sheet_project", "ref_sheet_note", "ref_sheet_hit", "ref_motion", "ref_sheet_motion", "ref_mod", "ref_picker_mod", "ref_arp", "ref_pattern", "ref_slicer", "ref_fmeg", "ref_grid", "ref_scales"};
 
 /* the scenes of the UI design screens: the state the UI-redesign
@@ -1015,7 +1015,11 @@ static void setup(int s)
     /* SEQ > PATTERNS: patterns on every track (track 1: 1..3, track 2: 1 and 5, track 4: 1), track 2 waiting for 5,
      * track 3 muted; stopped: KNOB 2 just turned */
     case S_PATGRID:
-    case S_PATGRID_STOPPED: {
+    case S_PATGRID_STOPPED:
+    case S_PATGRID_SHEET:                                /* stopped, track 1's pattern: its sheet; Copy to (to 4, */
+    case S_PATGRID_COPY:                                 /* empty); over 2 (in use): the question; Delete pattern */
+    case S_PATGRID_REPLACE:
+    case S_PATGRID_DELETE: {
         uint32_t b;
         song.playing = 0;
         for (b = 1; b < 3u; b++) { pattern_switch(&trk[0], b); my_steps(&trk[0]); }
@@ -1035,6 +1039,16 @@ static void setup(int s)
             jam.n = 2; jam.pat[0][0] = 0; jam.rep[0] = 4; jam.pat[1][0] = 1; jam.pat[1][1] = 4; jam.rep[1] = 2;
         }
         go_page(GR_PATGRID);
+        if (s >= S_PATGRID_SHEET)                        /* (track 1's pattern 1: something to copy, to delete) */
+            my_steps(&trk[0]);
+        if (s == S_PATGRID_SHEET) {
+            ui.hot_t = 0; page_sheet_open();
+        } else if (s == S_PATGRID_COPY || s == S_PATGRID_REPLACE) {
+            ui.hot_t = 0; ptc_start();
+            if (s == S_PATGRID_REPLACE) { ui.ptc_dst = 1; confirm_open(CF_PASTE_PAT, song.sel); }
+        } else if (s == S_PATGRID_DELETE) {
+            ui.hot_t = 0; confirm_open(CF_DEL_PAT, song.sel);
+        }
         break;
     }
     case S_PATTERN: go_title("PATTERN"); ui.cursor = 3; break;

@@ -6,6 +6,9 @@
  * waiting for the bar dashed, the others with something in them as three bars (their thirds' notes), empty ones an
  * outline. At the foot the song as its sections' letters (the rows with the same four patterns share one), the row
  * playing (else the one SONG picked) lit; no song yet: the rows the jam logged. KNOB k queues track k's pattern.
+ * OCT+ the selected track's pattern's sheet (Copy to.., Delete pattern). Copy to: the place it goes framed in the
+ * theme's colour on the track's row (the first empty one first), any knob moves it, OCT+ copies (over a pattern in
+ * use: the question first), OCT- leaves.
  * SONG: its title, its length, the jam at the right (logging while patterns play without a song; REC held: TAKE);
  * the sections as columns (their letters; four at a time around the row picked, one more to add a row), a track's
  * patterns as blocks in its colour, one pattern over sections in a row as one block; the row picked marked, the
@@ -13,6 +16,9 @@
  * letter and repeats, how far the song has played. KNOB 1 the row, 2 the track, 3 its pattern in the row, 4 the
  * row's repeats; OCT+ plays, REC held takes the jam (ui_input.c).
  * Each part remembers what it drew. Included by ui_draw.c */
+
+static int ptc_on(void);                                /* PATTERNS' Copy to (below) */
+static uint32_t ptc_next(uint32_t from, int32_t dir);
 
 /* ------------------------------------------------------------ shared --- */
 /* pattern b of track k holds something: a note, a hit, a recorded note's step */
@@ -24,6 +30,17 @@ static int pattern_used(uint32_t k, uint32_t b)
         if (step_on(&s[i]) || (s[i].flags & SF_RECORDED))
             return 1;
     return 0;
+}
+/* pattern b of track k holds nothing at all: no note, no hit, no motion (Copy to there asks nothing) */
+static int pattern_empty(uint32_t k, uint32_t b)
+{
+    uint32_t i;
+    if (pattern_used(k, b))
+        return 0;
+    for (i = 0; i < motion.count; i++)
+        if ((motion.event[i].place >> 6) == k && motion_pattern[i] == b)
+            return 0;
+    return 1;
 }
 /* track k's pattern b: its steps, length and division (the one playing: the track's own; its bank lags behind) */
 static const step_t *pat_steps(uint32_t k, uint32_t b, uint32_t *len, uint32_t *div)
@@ -130,6 +147,8 @@ static void pt_row(uint32_t k)
     h = fnv1(fnv1(fnv1(2166136261u, steps_hash(t)), t->pattern_gen), t->pattern + 16u * t->pattern_next + 8192u * sel +
             16384u * (uint32_t)(t->p[P_MUTE] != 0) + 65536u * (uint32_t)t->p[P_SLEN]);
     h = fnv1(h, ux.gen * 977u + ux.pal * 31u + (uint32_t)song.playing);
+    if (ptc_on() && k == ui.ptc_trk)                    /* Copy to: where it goes */
+        h = fnv1(h, 1u + ui.ptc_src + 16u * ui.ptc_dst);
     if (!ui.force && h == ptv.row[k]) {
         if (prog != ptv.prog[k]) {                      /* playing: the bar at the cell's foot only */
             ptv.prog[k] = prog;
@@ -151,19 +170,24 @@ static void pt_row(uint32_t k)
     }
     for (b = 0; b < NPAT; b++) {
         int32_t x = PT_CELL_X(b), y = 2;
+        int dst = ptc_on() && k == ui.ptc_trk && b == ui.ptc_dst;
+        if (dst)                                        /* Copy to: the place, framed in the theme's colour */
+            cv_rrect(x - 2, y - 2, 27, 36, 6, T_THEME, T_BG);
         if (b == t->pattern) {                          /* playing: filled, how far through it */
-            cv_rrect(x, y, 23, 32, 4, tc, T_BG);
+            cv_rrect(x, y, 23, 32, 4, tc, dst ? T_THEME : T_BG);
             if (prog)
                 pt_prog_bar(x + 3, y + 25, prog, tc);
             continue;
         }
         if (pattern_used(k, b) || b == t->pattern_next) {
-            cv_rrect(x, y, 23, 32, 4, T_SURF, T_BG);
+            cv_rrect(x, y, 23, 32, 4, T_SURF, dst ? T_THEME : T_BG);
             if (pattern_used(k, b))
                 pt_bars(k, b, x, y, ux_mix(T_SURF, tc, 60));
         } else {                                        /* empty: an outline */
-            cv_rrect(x, y, 23, 32, 4, T_LINE, T_BG);
-            cv_rrect(x + 1, y + 1, 21, 30, 3, T_BG, T_LINE);
+            cv_rrect(x, y, 23, 32, 4, dst ? T_BG : T_LINE, dst ? T_THEME : T_BG);
+            cv_rrect(x + 1, y + 1, 21, 30, 3, T_BG, dst ? T_BG : T_LINE);
+            if (dst)                                    /* (Copy to: an empty place) */
+                cv_text_c(x + 11, y + 10, &AF_S, "+", T_THEME, T_BG);
         }
         if (b == t->pattern_next)                       /* waiting for the bar: dashed */
             cv_dashed(x, y, 23, 32, 4, tc);
@@ -224,13 +248,66 @@ static int patterns_queued(void)
             return 1;
     return 0;
 }
-/* KNOB k: track k's next pattern (stopped: at once; playing: at the end of its bar; a song plays: refused) */
+/* KNOB k: track k's next pattern (stopped: at once; playing: at the end of its bar; a song plays: refused); Copy to:
+ * any knob the place */
 static void patgrid_edit(uint32_t k, int32_t steps)
 {
     track_t *t = &trk[k % NTRK];
+    if (ptc_on()) {
+        ui.ptc_dst = (uint8_t)ptc_next(ui.ptc_dst, steps > 0 ? 1 : -1);
+        ui.force = 1;
+        return;
+    }
     uint32_t from = t->pattern_next < NPAT ? t->pattern_next : t->pattern;
     if (pattern_request(t, (uint32_t)clamp((int32_t)from + (steps > 0 ? 1 : -1), 0, NPAT - 1u)))
         ui_message("STOP SONG TO SWITCH");
+    ui.force = 1;
+}
+
+/* ----------------------------------------------- PATTERNS: Copy to --- */
+static void confirm_open(uint32_t kind, uint32_t trk);  /* ui_input.c */
+static int ptc_on(void) { return ui.ptc_on && !ui.home && cur_page()->graph == GR_PATGRID && ui.ptc_trk == song.sel; }
+static uint32_t ptc_next(uint32_t from, int32_t dir)    /* the next place that is not the pattern copied (ends kept) */
+{
+    int32_t b = (int32_t)from + dir;
+    if (b == (int32_t)ui.ptc_src)
+        b += dir;
+    return b < 0 || b >= (int32_t)NPAT ? from : (uint32_t)b;
+}
+static void ptc_start(void)                             /* the pattern sheet's Copy to: the selected track's pattern */
+{
+    uint32_t k = song.sel % NTRK, src = trk[k].pattern, i, b = (src + 1u) % NPAT;
+    if (chain_busy()) {
+        ui_message("STOP SONG TO COPY");
+        return;
+    }
+    if (pattern_empty(k, src)) {
+        ui_message("NOTHING TO COPY");
+        return;
+    }
+    for (i = 1; i < NPAT && !pattern_empty(k, (src + i) % NPAT); i++)   /* the first empty place after it */
+        ;
+    if (i < NPAT)
+        b = (src + i) % NPAT;
+    ui.ptc_on = 1;
+    ui.ptc_trk = (uint8_t)k;
+    ui.ptc_src = (uint8_t)src;
+    ui.ptc_dst = (uint8_t)b;
+    ui.force = 1;
+}
+static void ptc_paste(int asked)                        /* OCT+: copy it there (over one in use: asked first) */
+{
+    uint32_t k = ui.ptc_trk % NTRK;
+    int rc;
+    if (!asked && !pattern_empty(k, ui.ptc_dst)) {
+        confirm_open(CF_PASTE_PAT, k);
+        return;
+    }
+    rc = pattern_copy(&trk[k], ui.ptc_src, ui.ptc_dst);
+    if (!rc)
+        ui.ptc_on = 0;
+    ui_message(!rc ? "PATTERN COPIED" : rc == 2 ? "PATTERN DATA FULL" : chain_busy() ? "STOP SONG TO COPY" :
+               "PATTERN IS PLAYING");
     ui.force = 1;
 }
 

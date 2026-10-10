@@ -285,6 +285,11 @@ BRASS WIND PLUCK BELL DRUM FX OTHER**. Every factory sound, the Prophet, CZ-1 an
 category; native and user slots take the category of a factory sound with the same name, otherwise the words in
 their name (BASS, PIANO, STRINGS, ...). The chosen category is kept with the device settings.
 
+**KNOB 4** chooses the engine and starts it from its init sound, nothing changed and dry (INIT PROPHET, INIT TONE,
+INIT SID, FM6's INIT VOICE; DRUM its 808 kit), for designing a sound from scratch; each engine's init sound comes
+first in its list. **Init sound** in the sound's sheet (OCT+ held) and on EDIT held's black key does the same for the
+track's engine.
+
 Knobs accelerate: a slow turn moves one step a detent, and a few clicks are one step each however quick. Only a spin
 (four detents or more in a row) speeds up, to 3, 5 and then 8 steps a detent on wide values, so a quick half turn
 sweeps 0–127; the tempo and lists of more than 256 entries go twice as far, so the end of a 400-sound list is a flick
@@ -303,6 +308,9 @@ track changes at its own loop end. Selecting the active pattern cancels a queued
 **SEQ > PATTERNS** (or hold SEQ) shows the four tracks' eight patterns at once: the one playing in the track's colour
 (with how far it has played), the one waiting outlined, the others holding notes raised; under it, the song's rows
 around the one playing (no song yet: the jam's). **KNOB 1–4** pick tracks 1–4's patterns; SELECT goes on to SONG.
+**OCT+** opens the selected track's pattern's sheet: **Copy to…** frames the place it goes on the track's row (the
+first empty one), any knob moves the frame, OCT+ copies there (over a pattern in use it asks first) and OCT- cancels;
+**Delete pattern** asks, then empties the pattern, its notes and automation (hold SAVE to undo).
 
 On **SEQ > SONG**, KNOB 1 chooses the section, KNOB 2 the track, KNOB 3 that track's pattern and
 KNOB 4 the section's repeats. **Jam to song:** from PLAY on, every loop of track 1 logs the four tracks'
