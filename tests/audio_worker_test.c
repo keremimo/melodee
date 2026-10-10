@@ -12,7 +12,7 @@ static uint32_t clock_value, callback_calls, holds, faults, forgiven;
 #define AW_TIMEOUT_TICKS 10u
 #define AW_HOLD() (holds++)
 #define AW_FAULTS() faults
-#define AW_MISREAD(n) ((n) <= forgiven)      /* as the FM-1 after raising its core supply */
+#define AW_MISREAD(n) ((n) <= forgiven)      /* a platform that answers the first ones */
 #define AW_RAM_LOOP static
 #include "../firmware/src/audio_worker.h"
 static void callback(void *context) { (void)context; callback_calls++; }

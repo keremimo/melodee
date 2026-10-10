@@ -4,14 +4,13 @@
 
 Some FM-1 units' CPU1 misreads shared SRAM (keremimo/melodee#17); an idle unit then crashed.
 Editor command 79 recreates each failure on a healthy unit:
-  misread  CPU1 sees a request that is not there (0x00200000, as measured): counted, never run;
-           the first raise the core supply (SYSVDD 15) and keep CPU1, later ones retire it
+  misread  CPU1 sees a request that is not there (0x00200000, as measured): counted, never run
   null     CPU1 runs a job at address 0 (the idle crash: pc 00000002): its fault is caught
   stall    CPU1 never finishes a job: the 10 ms join timeout
-  crash    CPU0 crashes (as the master_out report), twice: the supply ladder carried across soft
-           resets (1.35 V, then 1.38 V, then one core until power-off; one core after an early crash)
-Each must end with the worker retired (CPU1 held, serial rendering) and the audio still running.
-Test builds also report and set the supply rails (power, sysvdd=N, vdc14=N, count-only).
+  crash    CPU0 crashes beside a working CPU1 (as the master_out report), late and early
+Each must end with the worker retired (CPU1 held, serial rendering), the audio still running and
+CPU1 barred until power-off (soft resets keep it out). Test builds also report the supply rails and
+the clock, read only (power), and can count misreads without retiring (count-only).
 A retired worker stays retired until reset, so every mode reboots first and waits out the
 30 s boot guard (two crashes within 30 s of boot enter UBOOT).
 """
@@ -23,9 +22,8 @@ HEADER = [0x7D, 0x46, 0x4C, 79]
 MODES = {'report': 0, 'misread': 1, 'null': 2, 'stall': 3}
 FIELDS = ('online', 'rejected', 'faults', 'fault_cpu', 'fault_dbg', 'fault_pc', 'fault_rets',
           'timeouts', 'audio_halves', 'waited_us', 'fault_emu')
-POWER_FIELDS = ('boot_sysvdd', 'boot_vdc14', 'boot_vddio', 'sysvdd', 'vdc14', 'vddio', 'sys_div', 'clk_con0',
+POWER_FIELDS = ('sysvdd', 'vdc14', 'vddio', 'barred', 'boot_failed', 'reserved', 'sys_div', 'clk_con0',
                 'clk_con1', 'clk_con2', 'clk_con3', 'misread', 'faults', 'cpu_ticks', 'rejected', 'online')
-RAILS = {'sysvdd': 0, 'vdc14': 1, 'vddio': 2}
 RC = {0: 'ok', 1: 'no worker (dual core off or already retired)', 2: 'job completed (it should not)'}
 
 
@@ -68,14 +66,12 @@ def show(label, r):
 
 
 def show_power(r):
-    volts = lambda rail, l: {0: 0.93 + 0.03 * l, 1: 1.25 + 0.05 * l, 2: 2.8 + 0.1 * l}[rail]
-    print(f"rails: SYSVDD {r['sysvdd']} ({volts(0, r['sysvdd']):.2f} V, boot {r['boot_sysvdd']}) "
-          f"VDC14 {r['vdc14']} ({volts(1, r['vdc14']):.2f} V, boot {r['boot_vdc14']}) "
-          f"VDDIO {r['vddio']} ({volts(2, r['vddio']):.1f} V, boot {r['boot_vddio']})")
+    print(f"rails (read only): SYSVDD {r['sysvdd']} ({0.93 + 0.03 * r['sysvdd']:.2f} V) "
+          f"VDC14 {r['vdc14']} ({1.25 + 0.05 * r['vdc14']:.2f} V) VDDIO {r['vddio']} ({2.8 + 0.1 * r['vddio']:.1f} V)")
     print(f"clock: SYS_DIV {r['sys_div']:08X} CLK_CON0..3 {r['clk_con0']:08X} {r['clk_con1']:08X} {r['clk_con2']:08X} "
-          f"{r['clk_con3']:08X}")
-    print(f"cpu: {4000 * 64 * 24 / max(r['cpu_ticks'], 1):.1f} dependent adds/us; "
-          f"worker online {r['online']} rejected {r['rejected']} (last {r['misread']:08X}) faults {r['faults']}")
+          f"{r['clk_con3']:08X}; cpu {4000 * 64 * 24 / max(r['cpu_ticks'], 1):.1f} dependent adds/us")
+    print(f"worker online {r['online']} rejected {r['rejected']} (last {r['misread']:08X}) faults {r['faults']}; "
+          f"CPU1 barred until power-off {r['barred']}, boot after an early crash {r['boot_failed']}")
 
 
 def back(name, wait=2):
@@ -101,34 +97,34 @@ def reboot(name, settle, keep=False):
 
 
 def ladder(name, settle):
-    """CPU0 crashes (the master_out report) walk the supply ladder across soft resets"""
+    """CPU0 crashes (the master_out report) with CPU1 working: one core until power-off"""
     def crash():
         i, o = find_port(name)
         with mido.open_output(o) as outgoing:
             outgoing.send(mido.Message('sysex', data=HEADER + [10]))
         return back(name, 8)                # the crash screen shows for 4 s
 
-    def state(label, online, sysvdd):
+    def state(label, online, barred, failed=None):
         p = command(name, 5)
-        good = p['online'] == online and p['sysvdd'] == sysvdd
-        print(f"  {label}: online {p['online']} SYSVDD {p['sysvdd']} ({'ok' if good else f'want online {online} SYSVDD {sysvdd}'})")
+        good = p['online'] == online and p['barred'] == barred and (failed is None or p['boot_failed'] == failed)
+        print(f"  {label}: online {p['online']} barred {p['barred']} early-crash boot {p['boot_failed']} "
+              f"({'ok' if good else 'UNEXPECTED'})")
         return good
 
     print('== crash')
-    reboot(name, 0)
-    ok = state('fresh boot', 1, 14)
-    crash()                                 # within 30 s of boot, on 1.35 V
-    ok &= state('after an early crash: one core this boot, the supply up', 0, 15)
-    time.sleep(settle)
-    reboot(name, settle, keep=True)
-    ok &= state('next soft reset: both cores on the boost', 1, 15)
-    crash()                                 # on the highest level, CPU1 working
-    ok &= state('after a crash on the boost: one core', 0, 15)
-    time.sleep(settle)
+    reboot(name, settle)
+    ok = state('fresh boot', 1, 0)
+    crash()                                 # after the boot guard's 30 s
+    ok &= state('after a crash beside CPU1: one core', 0, 1, 0)
     reboot(name, 0, keep=True)
-    ok &= state('until power-off', 0, 15)
+    ok &= state('next soft reset: still one core', 0, 1)
     reboot(name, 0)
-    ok &= state('power-on ladder again', 1, 14)
+    ok &= state('power-on again: both cores', 1, 0)
+    crash()                                 # within the first 30 s
+    ok &= state('after an early crash: one core', 0, 1, 1)
+    time.sleep(settle)
+    reboot(name, 0)
+    ok &= state('power-on again: both cores', 1, 0)
     print(f"crash: {'PASS' if ok else 'FAIL'}")
     return ok
 
@@ -139,15 +135,6 @@ def run(name, mode, settle, do_reboot):
     show('before', before)
     if not before['online']:
         raise SystemExit('CPU1 is not online before the injection: reboot it, or build with MELODEE_DUAL_CORE=1')
-    boosted = True
-    if mode == 'misread':                   # the first misreads raise the core supply and keep CPU1
-        first = command(name, MODES[mode])
-        show('inject', first)
-        time.sleep(0.5)
-        power = command(name, 5)
-        show_power(power)
-        boosted = first['rc'] == 0 and power['online'] == 1 and power['sysvdd'] == 15
-        print(f"  first misreads: {'kept CPU1, SYSVDD 15' if boosted else 'NOT ANSWERED'}")
     hit = command(name, MODES[mode])
     show('inject', hit)
     time.sleep(1.0)
@@ -155,7 +142,7 @@ def run(name, mode, settle, do_reboot):
     show('after ', after)
     ok = after['audio_halves'] > hit['audio_halves'] and not after['online'] and hit['rc'] == 0
     if mode == 'misread':
-        ok = ok and boosted and after['rejected'] > 0 and not after['faults'] and not after['timeouts']
+        ok = ok and after['rejected'] > 0 and not after['faults'] and not after['timeouts']
     elif mode == 'null':
         ok = ok and (after['faults'] > 0 or after['timeouts'] > 0)
         print('  fault caught by ' + ('CPU1 itself' if after['faults'] and after['fault_cpu'] else
@@ -163,17 +150,13 @@ def run(name, mode, settle, do_reboot):
                                       'nobody: the join timeout'))
     elif mode == 'stall':
         ok = ok and after['timeouts'] == 1
-    if mode == 'misread':                   # retired on the highest level: one core until power-off
-        reboot(name, 0, keep=True)
-        power = command(name, 5)
-        carried = power['online'] == 0 and power['sysvdd'] == 15
-        print(f"  next soft reset: {'one core, SYSVDD 15' if carried else 'NOT CARRIED'}")
-        ok = ok and carried
-    if mode in ('null', 'stall'):           # a retired worker leaves CPU0 on the raised supply
-        time.sleep(0.2)
-        power = command(name, 5)
-        show_power(power)
-        ok = ok and power['sysvdd'] == 15
+    time.sleep(0.2)                         # a retired worker bars CPU1 until power-off
+    power = command(name, 5)
+    reboot(name, 0, keep=True)
+    again = command(name, 5)
+    carried = power['barred'] == 1 and again['online'] == 0 and again['barred'] == 1
+    print(f"  barred, and after a soft reset: {'one core' if carried else 'NOT CARRIED'}")
+    ok = ok and carried
     print(f"{mode}: {'PASS' if ok else 'FAIL'}: audio {'running' if after['audio_halves'] > hit['audio_halves'] else 'STOPPED'}, "
           f"worker {'retired' if not after['online'] else 'STILL ONLINE'}")
     return ok
@@ -182,7 +165,7 @@ def run(name, mode, settle, do_reboot):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('modes', nargs='*', default=['misread', 'null', 'stall'],
-                        choices=[*MODES, 'crash', 'reboot', 'power', 'count-only', 'retire-on-misread', *(f'{r}={l}' for r in RAILS for l in range(16))])
+                        choices=[*MODES, 'crash', 'reboot', 'power', 'count-only', 'retire-on-misread'])
     parser.add_argument('--port', help='MIDI port name (default: Melodee or Felucca)')
     parser.add_argument('--settle', type=float, default=31, help='seconds after a reboot before injecting')
     parser.add_argument('--no-reboot', action='store_true', help='inject into the running session')
@@ -199,12 +182,6 @@ def main():
             show_power(command(args.port, 5))
         elif mode in ('count-only', 'retire-on-misread'):
             show_power(command(args.port, 7, args=(int(mode == 'count-only'),)))
-        elif '=' in mode:
-            rail, level = mode.split('=')
-            r = command(args.port, 6, args=(RAILS[rail], int(level)))
-            if r['rc']:
-                raise SystemExit(f'{mode}: refused')
-            show_power(r)
         else:
             results.append(run(args.port, mode, args.settle, not args.no_reboot))
     if results and not all(results):

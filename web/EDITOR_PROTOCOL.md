@@ -950,16 +950,14 @@ The worker is idle whenever the main-loop handler takes this snapshot.
 With flag 4, schema-3 fields 22 and 23 (formerly OBXF's voices, always 0) carry
 `core1_rejected` (requests CPU1 misread and refused) and `core1_faults` (CPU1
 exceptions caught); either retires the worker (`core1_online` 0). Both stay 0 on
-a healthy unit. Misreads first raise the core supply a step and keep the worker; only later
-ones retire it (BUILDING.md). Test builds (`MELODEE_CORE1_TEST=1`) add command
-79: argument 0 report, 1 inject a misread request, 2 a job at address 0, 3 a job
-that never returns, 4 reboot (a second argument 1 keeps the supply ladder,
-otherwise it starts over as at power-off), 10 crash CPU0 (no reply); the reply
-is mode, rc, then eleven 32-bit values as five 7-bit bytes each. Arguments 5 (rails and clock), 6 rail level (rail
-0 SYSVDD, 1 VDC14, 2 VDDIO; SYSVDD never below 6), 7 count misreads only (0/1)
-and 8 hold/release eight notes on track 0 reply mode, rc and sixteen such values;
-9 replies mode, rc and P33 0x00..0x3F, 0x72, 0x74, 0x90, 0x92, 0x9B as 7-bit
-pairs (see `tools/core1_fault_test.py`).
+a healthy unit. Test builds (`MELODEE_CORE1_TEST=1`) add command 79: argument 0 report, 1 inject
+a misread request, 2 a job at address 0, 3 a job that never returns, 4 reboot (a
+second argument 1 keeps CPU1 barred, otherwise the bar clears as at power-off),
+10 crash CPU0 (no reply); the reply is mode, rc, then eleven 32-bit values as
+five 7-bit bytes each. Arguments 5 (rails, read only, and clock), 7 count
+misreads only (0/1) and 8 hold/release eight notes on track 0 reply mode, rc and
+sixteen such values; 9 replies mode, rc and P33 0x00..0x3F, 0x72, 0x74, 0x90,
+0x92, 0x9B as 7-bit pairs (see `tools/core1_fault_test.py`).
 `core1_jobs` includes both FM6 and Prophet sample jobs; `fm6_pairs` continues to
 count only FM6 pairs. For Prophet measurements, combine worker jobs with the
 schema-3 voice counts and audio timing counters.

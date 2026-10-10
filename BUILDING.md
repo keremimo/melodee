@@ -270,48 +270,41 @@ single-core: its system library says `modified #define CPU_CORE_NUM 1` (the SDK
 default is 2), so no FM-1 was validated with both cores. JieLi's own profile
 above 320 MHz (`isd_config_rule.c`, `CONFIG_OVERCLOCKING_ENABLE`, 396 MHz) sets
 DVDD 14 (1.35 V) and DCDC14 4 (1.45 V), and its notes say to raise them on chips
-that run low; its exception auto-fix (`debug.c`) raises the supplies after a
-crash. One healthy unit ran both cores under an eight-voice Prophet chord
+that run low. One healthy unit ran both cores under an eight-voice Prophet chord
 without a misread down to SYSVDD 6 (1.11 V): the margin varies from chip to chip.
+Melodee does not change a supply rail: what an FM-1 board and its regulators take
+at other levels is unknown, so the rails stay where the boot loader sets them.
 
-So, with both cores kept for everyone:
+So the second core stays on, and a unit that shows the fault falls back to one:
 
-- `fm1_power_init` (hal/fm1_power.h) raises SYSVDD to 14 (1.35 V) and VDC14 to
-  4 (1.45 V) at boot, before CPU1 starts, a step at a time; it never lowers a
-  rail. `MELODEE_DUAL_CORE=0` builds leave the rails as the boot loader set them.
 - The worker runs a request only when it is exactly the next one and its check
   word (`fn`, `context` and the request number, written by CPU0 before the
   request) matches; the count of finished requests stays in a CPU1 register.
   Anything else is counted in `rejected` and never run.
-- The first misreads raise SYSVDD to 15 (1.38 V, the highest) and VDC14 to 5
-  (1.50 V): the audio ISR asks, the main loop (`fm1_core1_supply_poll`, the P33
-  owner) applies it, and CPU1 keeps working. A misread after that retires the
+- A misread, a CPU1 fault or a job that does not finish in 10 ms retires the
   worker for the session: CPU1 is held, the Prophet cap returns to five voices
-  and every voice renders on CPU0.
-- A CPU1 fault: `fm1_core1_fault_c` records it (`fm1_core1_fault`). If CPU1
-  took the exception, it holds itself; if the debug unit raised it on CPU0
+  and every voice renders on CPU0. A misread retires it at the next half-buffer
+  render. A CPU1 fault: `fm1_core1_fault_c` records it (`fm1_core1_fault`). If
+  CPU1 took the exception, it holds itself; if the debug unit raised it on CPU0
   (`DBG_MSG` CPU1 bits only), CPU1 is held and CPU0 resumes through
   `fm1_fatal_common`'s ISR-style return. A waiting join drops that voice's
-  block, otherwise the next render retires the worker; the supply goes up too.
-- A job that does not finish in 10 ms: held, the job dropped (a partly advanced
-  voice is never rerun), retired, supply up. Before, this reset the device.
-- The ladder carries across soft resets (a crash, the watchdog, an update) in
-  `.noinit` (`fm1_carry`), never in flash, and starts over at power-off. Any
-  crash, boost or retirement starts the next boot on 1.38 V; a crash or a
-  retirement already on 1.38 V with CPU1 working keeps CPU1 out of every boot
-  until power-off. A boot after a crash in the first 30 s runs on one core, so
-  a unit whose CPU0 data goes bad (the `master_out` report, which no check can
-  catch) does not crash twice into UBOOT.
+  block (a partly advanced voice is never rerun). Before, a stall reset the
+  device.
+- A retirement, or a CPU0 crash with CPU1 working (its data can go bad too: the
+  `master_out` report, which no check can catch), keeps CPU1 out of every boot
+  until power-off. The record (`fm1_core1_bar`) is in `.noinit`, never in flash:
+  it survives soft resets (a crash, the watchdog, an update) and is gone at
+  power-off. A boot after a crash in the first 30 s runs on one core too, so
+  such a unit does not crash twice into UBOOT.
 
 `core1_rejected` and `core1_faults` (AUDIO_STATS fields 22 and 23) stay 0 on a
 healthy unit. `MELODEE_CORE1_TEST=1 ./build.sh` adds editor command 79
 (`tools/core1_fault_test.py`): it injects each failure (misread, null job,
-stall; each must end with audio running, the misread first with CPU1 kept at
-SYSVDD 15, then one core after a soft reset), crashes CPU0 twice to walk the
-ladder (`crash`), reports the rails, the clock registers and a measured CPU rate
-(`power`), sets a rail (`sysvdd=N`, never below 6), counts misreads without
-answering them (`count-only`), holds an eight-note chord on track 0 (mode 8) and
-dumps P33 (mode 9). Never release a `MELODEE_CORE1_TEST` build.
+stall; each must end with audio running and CPU1 barred across a soft reset),
+crashes CPU0 beside a working CPU1 (`crash`), reports the rails (read only), the
+clock registers and a measured CPU rate (`power`), counts misreads without
+retiring (`count-only`), holds an eight-note chord on track 0 (mode 8) and dumps
+P33 (mode 9). Never release a `MELODEE_CORE1_TEST` build.
 
 `tests/dual_core_test.c` exercises the actual paired renderer with a host thread,
 comparing samples across all 32 algorithms, three FM6 models, voice counts,

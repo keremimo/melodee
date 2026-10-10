@@ -431,10 +431,10 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
 #if MELODEE_CORE1_TEST && MELODEE_DUAL_CORE
     case ED_CORE1_TEST: {        /* mode: 0 report, 1 misread request, 2 null job, 3 stalled job, 4 reboot */
         uint32_t mode = na ? a[0] : 0u, rc = 0, waited = 0, v[16];
-        if (mode == 4u) {                           /* (a[1] 1: keep the supply ladder, else as at power-on) */
+        if (mode == 4u) {                           /* (a[1] 1: keep fm1_core1_bar, else clear it as power-off does) */
             bootguard.pending = 0;                  /* (intentional: not a failed boot) */
             if (!(na > 1u && a[1]))
-                fm1_carry.magic = 0;
+                fm1_core1_bar.magic = 0;
             fm1_reboot();
         }
         if (mode == 10u) {                          /* a CPU0 crash (the master_out report): fetch from 0 */
@@ -457,8 +457,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             }
             break;
         }
-        if (mode >= 5u && mode <= 8u) {             /* 5 rails + clock, 6 rail a[1] to a[2], 7 count misreads only (a[1]), */
-            fm1_irq_off();                          /* 8 hold (a[1]) / release eight notes on track 0: CPU1 load */
+        if (mode == 5u || mode == 7u || mode == 8u) {   /* 5 rails + clock (read only), 7 count misreads only */
+            fm1_irq_off();                          /* (a[1]), 8 hold (a[1]) / release eight notes on track 0 */
             if (mode == 8u)
                 for (i = 0; i < 8u; i++) {
                     if (na > 1u && a[1])
@@ -466,16 +466,11 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
                     else
                         trk_note_off(&trk[0], 41u + 3u * i);
                 }
-            if (mode == 6u && na == 3u && a[1] < FM1_RAILS && (a[1] != FM1_RAIL_SYSVDD || a[2] >= 6u))
-                fm1_power_set(a[1], a[2]);          /* (SYSVDD: never below 1.11 V) */
-            else if (mode == 6u)
-                rc = 1;
             if (mode == 7u)
                 core1_test_count_only = na > 1u && a[1];
-            for (i = 0; i < FM1_RAILS; i++) {
-                v[i] = fm1_power.boot[i];
-                v[3 + i] = fm1_power_get(i);
-            }
+            for (i = 0; i < FM1_RAILS; i++)
+                v[i] = fm1_power_get(i);
+            v[3] = (uint32_t)fm1_core1_barred(); v[4] = bootguard.failed; v[5] = 0;
             fm1_clock_regs(v + 6);
             v[11] = audio_worker.misread; v[12] = fm1_core1_fault.count;
             v[13] = fm1_cpu_ticks();

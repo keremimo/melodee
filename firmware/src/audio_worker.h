@@ -9,9 +9,9 @@
  * 0x00200000 where RAM holds 0). Before, one such read of the mailbox at rest
  * called a null fn: the MELODEE CRASH of an idle unit. The worker now runs only
  * the next request, and only when its check word matches: a misread is counted,
- * never run. The platform may answer misreads (AW_MISREAD: the FM-1 raises the
- * core supply a step); any it does not, a CPU1 fault or a stall retires the
- * worker for the session: CPU1 is held and CPU0 renders every voice again. */
+ * never run. A misread (unless the platform answers it: AW_MISREAD, test
+ * builds only), a CPU1 fault or a stall retires the worker for the session:
+ * CPU1 is held and CPU0 renders every voice again. */
 #pragma once
 #include <stdint.h>
 #ifndef AW_IDLE

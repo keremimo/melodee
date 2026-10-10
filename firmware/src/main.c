@@ -95,7 +95,8 @@ static void fm1_fault(const fm1_crash_t *c)
     char b[12];
     uint32_t t0;
 #if MELODEE_DUAL_CORE
-    fm1_carry_failed(audio_worker_online);            /* the next boot: the supply up, or one core */
+    if (audio_worker_online)
+        fm1_core1_bar_set();                          /* one core on every boot until power-off */
 #endif
     fm1_audio_stop();
     scr_wake_now();
@@ -177,8 +178,8 @@ static void fm1_main(void)
     melodee_init();
 #if MELODEE_DUAL_CORE
     /* One core after a crash in the first 30 s (a second would enter UBOOT),
-     * or until power-off once CPU1 failed on the highest supply (fm1_carry). */
-    if (!bootguard.failed && !fm1_carry.single)
+     * and until power-off once CPU1 was retired or CPU0 crashed beside it. */
+    if (!bootguard.failed && !fm1_core1_barred())
         fm1_multicore_start();              /* bounded handshake; failure keeps serial rendering */
     /* CPU1 starts through mask-ROM before it reaches our RAM worker. Restrict
      * instruction fetch only after that bootstrap has returned, or stopped
@@ -296,7 +297,7 @@ static void fm1_main(void)
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
         settings_poll();                              /* queued settings save: only while stopped */
 #if MELODEE_DUAL_CORE
-        fm1_core1_supply_poll();                      /* CPU1 misread: core supply up a step (fm1_multicore.h) */
+        fm1_core1_poll();                             /* a retired CPU1 sits out until power-off */
 #endif
         melodee_dbg.stage = 2;
         ui_leds();
@@ -348,9 +349,6 @@ void fm1_cstart(void)
     for (s = _dt_load, d = _dt_start; d < _dt_end; s++, d++)
         *d = *s;                                /* the oscillator correction tables */
     fm1_mailbox_clear();
-#if MELODEE_DUAL_CORE
-    fm1_power_init();                       /* core rails up before CPU1 or the audio load (fm1_power.h) */
-#endif
 #if MELODEE_CACHE_RAM
     {   /* XIP-to-SRAM exceeds the direct-call range on pi32v2. */
         void (*volatile init)(uint32_t) = fm1_cache_init;
