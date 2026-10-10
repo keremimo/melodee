@@ -12,7 +12,7 @@ It saves a complete backup first. If your firmware cannot export one, you can se
 **Skip backup** and confirm that Melodee music, sounds and settings may be lost.
 
 Multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. Current release:
-**Melodee 1.0.0** ([what's new](#whats-new-in-100)).
+**Melodee 1.0.1** ([what's new](#whats-new-in-101)).
 
 Melodee is a modified version of [Felucca](https://github.com/hugelton/Felucca) by Leo Kuroshita
 ([@kurogedelic](https://github.com/kurogedelic)), [Hügelton Instruments](https://hugelton.com), and
@@ -23,6 +23,18 @@ runs Felucca.
 - Install: [web installer](https://keremimo.github.io/melodee/) (Chrome or Edge, USB), or `tools/fm1_install.py` from a terminal
 - Editor: [web editor](https://keremimo.github.io/melodee/webapp/editor/)
 - Build: [BUILDING.md](BUILDING.md)
+
+## What's new in 1.0.1
+
+- **Fixes the crashes some FM-1s had with 1.0.0:** a red MELODEE CRASH screen, on some units every
+  minute or so, sometimes ending in update mode. On those units the FM-1's second core now and then
+  reads memory wrong. Melodee now checks every job it hands to the second core and never runs one it
+  read wrong. If the second core misreads, faults or stops answering, it is switched off and the
+  first core plays every voice, with no crash or freeze; PROPHET then plays up to five voices
+  instead of eight. Such a unit stays on one core until it is switched off and on again. Units
+  without the fault keep both cores.
+- **No crash loop into update mode:** after a crash in the first 30 seconds, the next start runs
+  on one core.
 
 ## What's new in 1.0.0
 
