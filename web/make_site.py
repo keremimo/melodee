@@ -14,7 +14,7 @@
   webapp/synth-editor/              the synth-only branch's editor (publish_synth.py), kept as published
   webapp/installer/index.html       index_pkg.html, self-contained (fm1pkg.js, fm1ota.js, metadata inlined)
   webapp/editor/index.html          editor.html (+ fukiai.ttf, FUKIAI-LICENSE.txt)
-  webapp/manual/index.html          manual.html
+  webapp/manual/index.html          manual.html (+ web/manual-shots/*.png, NIGHT UI screenshots)
   src/                              not touched
 
   web/make_site.py build/melodee-X.Y.fwsc build/melodee-X.Y-1core.fwsc X.Y OUT_DIR
@@ -22,6 +22,9 @@
 The packages must be ones made by tools/fm1pkg_make.py (Melodee's own loader, no vendor files), from one
 release: their identity (FM-1_9xx, FM-1_9xxx from 0.10, FM-1_9xxxx for X.Y.Z) is read from them and must be
 the same; the device must report it after the install.
+
+For a complete local site (installer + editor + manual with screenshots), refresh the committed
+screenshots when the UI changes, then assemble the site — see BUILDING.md "Local site".
 """
 import json
 import re
@@ -169,6 +172,12 @@ def main(pkg, single, version, out, nightly=None, installer_only=False, synth=No
         shutil.copy(HERE.parent / doc, fw / doc)
     shutil.copy(HERE / "editor.html", ed / "index.html")
     shutil.copy(HERE / "manual.html", man / "index.html")
+    figs = HERE / "manual-shots"                 # NIGHT UI screenshots (tools/manual_shots.py)
+    pngs = sorted(figs.glob("*.png"))
+    if not pngs:
+        raise SystemExit(f"no screenshots in {figs}: run tools/manual_shots.py")
+    for p in pngs:
+        shutil.copy(p, man / p.name)
     for f in ("fukiai.ttf", "FUKIAI-LICENSE.txt", "fm1backup.js"):
         if not installer_only and (HERE / f).exists():
             shutil.copy(HERE / f, ed / f)

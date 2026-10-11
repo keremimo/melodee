@@ -163,17 +163,44 @@ python3 tools/fm1_install.py --info          # identity of the connected FM-1
 ```
 
 Or, to install your own build from the web installer, make a local copy of the site and open it from `localhost`
-(Web MIDI needs a secure context):
+(Web MIDI needs a secure context). See [Local site](#local-site) below.
+
+## Local site
+
+`web/make_site.py` assembles GitHub Pages layout under an output directory:
+
+- `webapp/installer/` — self-contained installer
+- `webapp/editor/` — patch editor
+- `webapp/manual/` — `manual.html` as `index.html`, plus screenshots from `web/manual-shots/`
+- `firmware/` — both `.fwsc` packages, LICENSE texts
+
+The manual’s screenshots are committed under `web/manual-shots/` (NIGHT palette only).
+`build/` is gitignored, so regenerating them is a separate step when the UI changes.
 
 ```
-# Build both variants from the same source; release outputs are kept separately.
+# 0) Firmware (and host-test assets under build/gen). Needed before UI renders or release packages.
 MELODEE_RAM_AUDIO=1 ./build.sh --release 1.3.0
 MELODEE_RAM_AUDIO=1 MELODEE_DUAL_CORE=0 ./build.sh --release 1.3.0
+
+# 1) Host UI renders → build/ui_new/<PALETTE>/*.png (and side folders). Needs Pillow.
+#    Supported path: the host test suite (ui_renders is one of its jobs).
+tests/run_tests.sh
+#    SOUND=0 tests/run_tests.sh   # skip the long sound tests if you only need UI/screenshots
+
+# 2) Copy the allowlisted NIGHT frames into the committed screenshot folder for the manual.
+python3 tools/manual_shots.py            # build/ui_new/NIGHT → web/manual-shots/
+# python3 tools/manual_shots.py --check  # report missing/stale without writing
+
+# 3) Assemble Pages layout and serve it (Web MIDI needs localhost / HTTPS).
 python3 web/make_site.py build/release-1.3.0/melodee-1.3.0.fwsc \
   build/release-1.3.0-1core/melodee-1.3.0-1core.fwsc 1.3.0 /tmp/melodee-site
 cd /tmp/melodee-site && python3 -m http.server 8000
 # open http://localhost:8000/webapp/installer/
+#      http://localhost:8000/webapp/manual/
+#      http://localhost:8000/webapp/editor/
 ```
+
+Steps 1–2 are only required when the UI (or the allowlist in `tools/manual_shots.py`) changed and you need to refresh `web/manual-shots/`. For a routine site assemble from already-committed screenshots, start at step 3. `make_site.py` still requires `web/manual-shots/*.png` to exist — it copies them into `webapp/manual/` beside `index.html`.
 
 Installing firmware is at your own risk. If an install fails and the FM-1 no longer
 starts, identify its recovery mode using the steps below.
