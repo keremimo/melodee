@@ -4,7 +4,7 @@
 <!-- Sample input recording and waveform trimming adapted from Andrea (@andreahaku), PR #29.
      Melodee web editor. One file, no libraries. Protocol: EDITOR_PROTOCOL.md.
      Add ?mock=1 to the URL to use a built-in simulated device. -->
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -27,10 +27,14 @@
   h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; padding-bottom: 2px; border-bottom: 1px solid var(--fg); }
   h3 { font-size: 11px; font-weight: 400; color: var(--dim); margin: 4px 0 0; }
   a { color: inherit; }
-  .lang { float: right; font-size: 12px; color: var(--dim); text-decoration: underline; background: none; padding: 0; }
   button { font: inherit; background: var(--fg); color: var(--bg); border: 0; padding: 2px 10px; cursor: pointer; }
   button:disabled { opacity: .3; cursor: default; }
-  button.lang { color: var(--dim); background: none; }
+  .site { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .site .brand { font-size: 18px; font-weight: 600; }
+  .site .links { display: flex; gap: 16px; }
+  .site .links a { color: var(--dim); text-decoration: none; }
+  .site .links a:hover { color: var(--fg); }
+  .site .links a[aria-current="page"] { color: var(--fg); }
   select, input[type=text], input[type=number], input[type=search] {
     font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); padding: 1px 3px; border-radius: 0; }
   input[type=range] { width: 100%; margin: 0; accent-color: var(--fg); }
@@ -164,9 +168,14 @@
 </head>
 <body>
 <main>
-  <button class="lang" id="lang"></button>
-  <h1>Melodee Editor</h1>
-  <p class="dim"><a href="../installer/" style="color:inherit" data-t="installer"></a></p>
+  <nav class="site">
+    <span class="brand">Melodee</span>
+    <div class="links">
+      <a href="../editor/" aria-current="page">Patch Editor</a>
+      <a href="../installer/">Installer</a>
+    </div>
+  </nav>
+  <h1>Editor</h1>
   <!-- always visible: connection, version, sync mode, the tabs and (Sound / Sequencer / Tracks) the track selector -->
   <header class="top">
     <div class="bar">
@@ -2772,101 +2781,6 @@ function setLabel(e, txt) { e.replaceChildren(...(e.dataset.ic ? [icon(e.dataset
 })();
 
 const TEXT = {
-  ja: {
-    tabFm6: "6-OP FM", fm6Help: "FM6 の音色を編集・SysEx から読み込み、トラックへ送ります。ユーザープリセットまたはプロジェクトへ保存すると、音色全体が保存されます。",
-    fm6Source: "音色の出し入れ", fm6ReadBtn: "トラックから読む", fm6SendBtn: "トラックへ送る", fm6Live: "編集しながら送る",
-    fm6StoreBtn: "バンクに保存", fm6Import: "SysEx を読み込む", fm6Export: "SysEx に書き出し", fm6BankExport: "バンクを SysEx に書き出し",
-    fm6Init: "初期音色", fm6Voice: "ボイス", fm6Ops: "オペレーター", fm6Carriers: "キャリア", fm6Feedback: "フィードバック",
-    fm6PitchEg: "ピッチ EG", fm6Freq: "周波数",
-    fm6Legend: "R1〜R4 / L1〜L4: EG のレートとレベル、BP LD RD LC RC: キーボードレベルスケーリング、RS: レートスケーリング、AMS: LFO 音量変調、KVS: ベロシティ、OL: 出力レベル、MODE: 比率 / 固定、FC FF: 周波数（粗・細）、DET: デチューン（7 が中央）。● はキャリア。",
-    fm6Pick: "読み込んだファイルの音色（押すと編集へ）:", fm6Picked: "編集中:", fm6Sent: "トラックへ送りました:", fm6Read: "トラックから読みました",
-    fm6Loaded: "読み込みました", fm6Factory: "F1〜F24 はファクトリー音色です。B1〜B32 を選んでください。", fm6BadSum: "チェックサム不一致あり",
-    fm6Exported: "バンクを書き出しました",
-    motion: "モーション", motionOn: "再生", motionClear: "モーションを消去", motionConfirm: "選択トラックのモーションを消しますか？", chance: "確率 %", motionStep: "ステップ", motionParam: "パラメーター", motionValue: "値",
-    backupTitle: "全体バックアップ", backupExport: "バックアップ保存", backupImport: "バックアップ復元", backupHelp: "現在の曲・A〜D・音色バンク・ユーザーサンプル・設定を、このパソコンへ保存。", backupOld: "全体バックアップには対応版への更新が必要です。", backupConfirm: "全体バックアップを復元しますか？ 現在の曲、保存データとサンプルを置き換えます。USBを抜かないでください。", backupWorking: "バックアップ処理中 ", backupDone: "バックアップを保存しました", backupRestored: "全体バックアップを復元しました",
-    deviceDisplay: "本体の画面",
-    deviceDisplayHelp: "FM-1 の画面に反映し、保存します。再生中の変更は停止後に保存されます。",
-    devicePresets: "本体のプリセット",
-    deviceFavHelp: "お気に入りと表示フィルターは FM-1 と同期します。パソコンのライブラリの音色は、本体のユーザースロットに保存してから登録してください。",
-    deviceList: "表示",
-    deviceAll: "すべてのプリセット",
-    deviceFavorites: "お気に入りのみ",
-    deviceEmpty: "お気に入りはまだありません。「すべてのプリセット」から追加してください。",
-    deviceTheme: "テーマ",
-    deviceFont: "フォント",
-    deviceMonitor: "MIDI モニター",
-    deviceRegular: "標準",
-    deviceBold: "太字",
-    deviceOff: "オフ",
-    deviceEvents: "イベント",
-    deviceNotes: "保持中の音・和音",
-    deviceStar: "お気に入りに追加",
-    deviceUnstar: "お気に入りから削除",
-    deviceUnsaved: "反映されましたが、本体に保存できませんでした。もう一度お試しください。",
-    deviceRejected: "本体がこの設定を受け付けませんでした。",
-    devicePending: "反映しました。再生を停止すると保存されます。",
-
-    other: "English", connect: "接続", disconnect: "切断", mock: "モック（実機なし）",
-    sound: "音色", engine: "エンジン", presets: "プリセット", initSound: "音色を初期化",
-    track: "トラック",
-    saveFile: "ファイルに保存", loadFile: "ファイルを読み込む", projects: "プロジェクト",
-    load: "読込", save: "保存", used: "使用中", empty: "空", unknown: "—",
-    steps: "ステップ", reload: "再読み込み", clearSeq: "シーケンスを消去",
-    notesHelp: "ノートは C4 E4 G4 のように入力（最大 4 音、C4 = 60）。ヒットは DRUM のレーン名（KICK >SNARE HATCL、> はアクセント）。",
-    notes: "ノート", hits: "ヒット", time: "タイム", acc: "アクセント", slide: "スライド", vel: "ベロシティ",
-    foot: "Chrome か Edge で使えます。", iconsCredit: "アイコン: Fukiai（MIT）Hügelton Instruments",
-    nomidi: "このブラウザでは使えません。Chrome か Edge で開いてください。",
-    denied: "MIDI（SysEx）の使用が許可されませんでした。",
-    nodevice: "Melodee が見つかりません。USB で接続して、もう一度押してください。",
-    connecting: "接続中", reading: "読み込み中 ", steploading: "ステップを読み込み中 ",
-    ready: "接続しました", disconnected: "切断されました", lost: "Melodee が外されました",
-    noreply: "応答がありません", error: "エラー: ", busy: "処理中",
-    applying: "書き込み中 ", applied: "読み込みました", badfile: "ファイルを読み込めません: ",
-    savedSlot: "保存しました: スロット ", loadedSlot: "読み込みました: スロット ", emptySlot: "空のスロットです: ",
-    confirmSave: "スロット {n} に上書き保存しますか？", confirmLoad: "スロット {n} を読み込みますか？ 4 トラックすべての音色とシーケンスが置き換わります（元に戻せません）。",
-    confirmClear: "シーケンスを全部消しますか？", confirmInit: "音色を初期化しますか？ シーケンスはそのままです（本体の SAVE 長押しで元に戻せます）。",
-    samples: "サンプル", smpHelp: "ファイルを選択、または入力から録音。波形の両端でトリム、ホイールで拡大。1枠に16音、合計約7秒。",
-    zones: "ゾーン", smpName: "名前", chooseFiles: "ファイルを選ぶ", upload: "書き込む", erase: "消去", clearList: "リストを消す",
-    file: "ファイル", root: "ルート", keys: "鍵盤", length: "長さ", remove: "外す",
-    record: "録音", stopRec: "停止", recInput: "入力", recDenied: "録音できません", recFull: "スロットがいっぱいです", recSilent: "無音でした。入力を確かめてください",
-    preview: "試聴", autoTrim: "自動トリム", trim: "切り取り",
-    smpTooBig: "大きすぎます", smpDecodeFail: "読み込めません: ", smpUploading: "書き込み中 USR", smpDone: "書き込みました USR",
-    smpFail: "サンプルの書き込みに失敗しました: ", smpErased: "消去しました USR",
-    confirmErase: "USR{n} を消去しますか？", confirmUpload: "USR{n} に書き込みますか？ 今の内容は消えます。",
-    layout: "（ファームウェアのパラメーター数が想定と違うため、簡易表示にしています）",
-    ctlHelp: "スライダーはクリックしてからホイールか矢印キーで微調整（Shift で 10 ずつ）、ダブルクリックで初期値。",
-    live: "● リアルタイム", polling: "○ ポーリング（古いファームウェア）",
-    library: "ライブラリ", libSearch: "名前・タグで検索", allEngines: "全エンジン", allTags: "全タグ",
-    sortModified: "更新順", sortCreated: "作成順", sortName: "名前順", sortEngine: "エンジン順",
-    name: "名前", tagsCol: "タグ", date: "更新",
-    audition: "試聴", toSlot: "本体スロットへ", rename: "名前変更", tags: "タグ", duplicate: "複製", delete: "削除",
-    exportPatch: "書き出し", saveToLib: "今の音色をライブラリへ", import: "読み込み", exportLib: "ライブラリを書き出し",
-    factoryToLib: "ライブラリへコピー", libEmpty: "ライブラリは空です。「今の音色をライブラリへ」やファクトリープリセットのコピー、本体スロットからの取り込み、ファイルの読み込みで追加できます。",
-    noMatch: "該当なし", noLibDB: "（ブラウザに保存できません。再読み込みで消えます）",
-    bank: "本体のユーザープリセット", bankLoad: "読込", bankStore: "今の音色を保存", bankGet: "ライブラリへ",
-    exportBank: "バンクを書き出し", dndHelp: "ライブラリとスロットの間はドラッグでもコピーできます。",
-    confirmOverwriteRange: "空きスロットが足りません。{from}–{to} の {n} スロット（使用中 {used}）に上書きしますか？", confirmOverwrite: "スロット {n}（{name}）を上書きしますか？", confirmEraseSlot: "スロット {n}（{name}）を消去しますか？",
-    confirmDelete: "「{name}」をライブラリから削除しますか？",
-    promptName: "名前（本体では英数字 12 文字まで）", promptTags: "タグ（カンマ区切り）",
-    promptNameAuto: "名前（英数字 12 文字まで。空なら本体が自動で付けます）",
-    auditioning: "試聴の準備中 ", auditioned: "試聴中（音色だけ。シーケンスはそのまま。本体の SAVE 長押しで元の音色に戻せます）: ",
-    savedLib: "ライブラリに保存しました: ", copiedLib: "ライブラリにコピーしました: ", imported: "読み込みました: ",
-    skippedN: " 件（読めないもの {n} 件）", patchesN: " 件",
-    putDone: "本体に書き込みました: スロット ", storedSlot: "本体に保存しました: スロット ", erasedSlot: "消去しました: スロット ",
-    loadedUser: "音色を読み込みました（シーケンスはそのまま。パターンは本体の SEQ > PHRASES から。SAVE 長押しで元に戻せます）: ", reloaded: "本体で音色が変わったので読み直しました", readingBank: "スロットを読み込み中",
-    badEngine: "このファームウェアにないエンジンです: ", flashFail: "書き込みに失敗しました（rc {rc}）",
-    installer: "Melodee インストーラー",
-    tabSeq: "シーケンサー", tabTracks: "トラック", tabSettings: "設定",
-    needDevice: "FM-1 を接続すると編集できます。", smpNone: "このファームウェアにはユーザーサンプルのスロットがありません。",
-    bankConnect: "FM-1 を接続すると本体のユーザープリセットも扱えます。", bankNone: "このファームウェアにはユーザープリセットがありません。",
-    mixer: "ミキサー", mixHelp: "本体の MIXER ページと同じ 4 トラック。フェーダーはレベル。パンはどのトラックも選択を変えずに書き込みます（0.8 のファームウェアでは一瞬そのトラックを選びます）。REC は本体での録音待機の表示です。",
-    level: "レベル", pan: "パン", mute: "ミュート", rec: "REC", selectTrack: "選択", selectedTrack: "選択中",
-    projHelp: "プロジェクトは本体の状態をまとめて保存します: 4 トラックの音色とパターン、曲の並び順、選択中のトラック、グローバル設定。",
-    slot: "スロット", songTitle: "ソング", songHelp: "保存スロットのパターンと繰り返す回数を順に並べます。音色は現在のまま。並び順を残すには、上のプロジェクトを保存してください。切替はトラック1のパターン終端、曲末で停止します。", songAdd: "行を追加", songRemove: "最後の行を削除", songPlay: "先頭から再生", songStop: "停止", songReps: "回", songEmpty: "行を追加してください", songBusy: "停止してから編集してください", songInvalid: "スロットと回数を確認してください", songPlaying: "再生中の行", songSaved: "並び順を変更しました。プロジェクトを保存すると残せます。",
-    system: "システム", firmware: "ファームウェア", sync: "同期", tracksN: "トラック", stepsN: "ステップ数", enginesL: "エンジン",
-    smpSlots: "サンプルスロット", userBank: "ユーザープリセット", none: "なし",
-  },
-  en: {
     tabFm6: "6-OP FM", fm6Help: "Edit an FM6 voice, or import a SysEx file and pick a voice. Send it to a track, then save it in User presets or save the project. Each preset keeps its whole voice.",
     fm6Source: "Patches in and out", fm6ReadBtn: "Read from track", fm6SendBtn: "Send to track", fm6Live: "Send while editing",
     fm6StoreBtn: "Store in bank", fm6Import: "Import SysEx", fm6Export: "Export SysEx", fm6BankExport: "Export bank as SysEx",
@@ -2900,7 +2814,7 @@ const TEXT = {
     deviceRejected: "The device rejected that setting.",
     devicePending: "Applied. Settings will save when playback stops.",
 
-    other: "日本語", connect: "Connect", disconnect: "Disconnect", mock: "Mock device (no hardware)",
+    connect: "Connect", disconnect: "Disconnect", mock: "Mock device (no hardware)",
     sound: "Sound", engine: "Engine", presets: "Presets", initSound: "Init sound",
     track: "Track",
     saveFile: "Save to file", loadFile: "Load file", projects: "Projects",
@@ -2949,7 +2863,6 @@ const TEXT = {
     putDone: "Written to the device: slot ", storedSlot: "Stored on the device: slot ", erasedSlot: "Erased slot ",
     loadedUser: "Sound loaded (the sequence stays; its pattern is on the device under SEQ > PHRASES; hold SAVE to undo): ", reloaded: "The sound changed on the device: read again", readingBank: "Reading the slots",
     badEngine: "This firmware has no such engine: ", flashFail: "Write failed (rc {rc})",
-    installer: "Melodee installer",
     tabSeq: "Sequencer", tabTracks: "Tracks", tabSettings: "Settings",
     needDevice: "Connect the FM-1 to edit.", smpNone: "This firmware has no user sample slots.",
     bankConnect: "Connect the FM-1 to see its user presets too.", bankNone: "This firmware has no user presets.",
@@ -2959,17 +2872,14 @@ const TEXT = {
     slot: "Slot", songTitle: "Song", songHelp: "Arrange patterns from saved slots and choose their repeats. The current sounds stay. Save a project above to keep the chain. Rows change at the end of track 1; the song stops at the end.", songAdd: "Add row", songRemove: "Remove last row", songPlay: "Play from start", songStop: "Stop", songReps: "repeats", songEmpty: "Add a row first", songBusy: "Stop before editing", songInvalid: "Check slots and repeats", songPlaying: "Playing row", songSaved: "Chain changed. Save a project to keep it.",
     system: "System", firmware: "Firmware", sync: "Sync", tracksN: "Tracks", stepsN: "Steps", enginesL: "Engines",
     smpSlots: "Sample slots", userBank: "User presets", none: "none",
-  },
+  
 };
-let lang = (navigator.language || "en").toLowerCase().startsWith("ja") ? "ja" : "en";
-const t = (k) => TEXT[lang][k] ?? k;
+const t = (k) => TEXT[k] ?? k;
 let lastKey = null, lastArg = "";
 function sayK(k, arg = "") { lastKey = k; lastArg = arg; $("status").textContent = t(k) + arg; }
 function say(message) { lastKey = null; lastArg = ""; $("status").textContent = String(message); }
 function applyLang() {
-  document.documentElement.lang = lang;
   document.querySelectorAll("[data-t]").forEach((e) => setLabel(e, t(e.dataset.t)));
-  $("lang").textContent = t("other");
   setLabel($("connect"), t(dev ? "disconnect" : "connect"));
   if (lastKey) $("status").textContent = t(lastKey) + lastArg;
   $("libq").placeholder = t("libSearch");
@@ -2979,7 +2889,6 @@ function applyLang() {
   renderPreferences(true);
   renderPanels();
 }
-$("lang").addEventListener("click", () => { lang = lang === "ja" ? "en" : "ja"; applyLang(); });
 
 /* ---------------------------------------------------------------- tabs --- */
 /* one panel at a time; the last one is remembered (localStorage) and in the URL hash (#sound ...) */
