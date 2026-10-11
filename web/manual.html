@@ -24,6 +24,12 @@
   p { margin: 0 0 16px; }
   a { color: inherit; }
   a:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+  .site { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 24px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .site .brand { font-size: 24px; font-weight: 600; }
+  .site .links { display: flex; gap: 16px; font-size: 13px; }
+  .site .links a { color: var(--dim); text-decoration: none; }
+  .site .links a:hover { color: var(--fg); }
+  .site .links a[aria-current="page"] { color: var(--fg); }
   .small { color: var(--dim); font-size: 13px; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 32px; align-items: start; }
   .toc { margin: 0 0 8px; }
@@ -58,10 +64,17 @@
 </head>
 <body>
 <main>
-  <h1>Melodee</h1>
+  <nav class="site">
+    <span class="brand">Melodee</span>
+    <div class="links">
+      <a href="../editor/">Patch Editor</a>
+      <a href="../installer/">Installer</a>
+      <a href="../manual/" aria-current="page">Manual</a>
+    </div>
+  </nav>
+  <h1>Manual</h1>
   <p>User manual for Melodee on the M-VAVE FM-1.</p>
   <p class="small">Outline. The prose for each section is not written yet.</p>
-  <p class="small"><a href="../installer/">Installer</a> · <a href="../editor/">Editor</a></p>
 
   <div class="layout">
     <nav class="toc" id="toc" aria-label="Contents">
