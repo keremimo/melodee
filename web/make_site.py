@@ -14,6 +14,7 @@
   webapp/synth-editor/              the synth-only branch's editor (publish_synth.py), kept as published
   webapp/installer/index.html       index_pkg.html, self-contained (fm1pkg.js, fm1ota.js, metadata inlined)
   webapp/editor/index.html          editor.html (+ fukiai.ttf, FUKIAI-LICENSE.txt)
+  webapp/manual/index.html          manual.html
   src/                              not touched
 
   web/make_site.py build/melodee-X.Y.fwsc build/melodee-X.Y-1core.fwsc X.Y OUT_DIR
@@ -130,8 +131,8 @@ def main(pkg, single, version, out, nightly=None, installer_only=False, synth=No
         if html.count(mark) != 1:
             raise SystemExit(f"index_pkg.html must contain {mark} once; update make_site.py")
     html = html.replace("/*LIB*/", lib).replace("/*META*/", meta)
-    inst, ed, fw = out / "webapp" / "installer", out / "webapp" / "editor", out / "firmware"
-    for d in (inst, ed, fw):
+    inst, ed, man, fw = out / "webapp" / "installer", out / "webapp" / "editor", out / "webapp" / "manual", out / "firmware"
+    for d in (inst, ed, man, fw):
         d.mkdir(parents=True, exist_ok=True)
     keep = {name, name1, "melodee-nightly.fwsc", "melodee-nightly-1core.fwsc", "melodee-synth.fwsc",
             "melodee-synth-1core.fwsc"}
@@ -166,18 +167,17 @@ def main(pkg, single, version, out, nightly=None, installer_only=False, synth=No
         encoding="utf-8")
     for doc in ("LICENSE", "LICENSING.md"):
         shutil.copy(HERE.parent / doc, fw / doc)
-    if not installer_only:
-        shutil.copy(HERE / "editor.html", ed / "index.html")
+    shutil.copy(HERE / "editor.html", ed / "index.html")
+    shutil.copy(HERE / "manual.html", man / "index.html")
     for f in ("fukiai.ttf", "FUKIAI-LICENSE.txt", "fm1backup.js"):
         if not installer_only and (HERE / f).exists():
             shutil.copy(HERE / f, ed / f)
-    if not installer_only:
-        (out / "index.html").write_text(
-            '<!doctype html><meta charset="utf-8"><title>Melodee</title>'
-            '<meta http-equiv="refresh" content="0; url=webapp/installer/">'
-            '<a href="webapp/installer/">Melodee installer</a>\n', encoding="utf-8")
-    print(f"site: {out}: webapp/installer ({len(html)} B), webapp/editor, firmware/{name} ({len(raw)} B) and "
-          f"{name1} ({len(raw1)} B), {product}" + (f"; synth {synth_meta['version']}" if synth_meta else ""))
+    (out / "index.html").write_text(
+        '<!doctype html><meta charset="utf-8"><title>Melodee</title>'
+        '<meta http-equiv="refresh" content="0; url=webapp/installer/">'
+        '<a href="webapp/installer/">Melodee installer</a>\n', encoding="utf-8")
+    print(f"site: {out}: webapp/installer ({len(html)} B), webapp/editor, webapp/manual, firmware/{name} ({len(raw)} B) and "
+          f"{name1} ({len(raw1)} B), {product}")
 
 
 if __name__ == "__main__":

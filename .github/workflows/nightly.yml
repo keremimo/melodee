@@ -82,17 +82,19 @@ jobs:
           ref: gh-pages
           path: .nightly-pages
           fetch-depth: 0
-      - name: Publish installer and nightly packages
+      - name: Publish installer, manual and nightly packages
         run: |
           commit=$(cat build/nightly-commit.txt)
           python web/publish_nightly.py .nightly-pages \
             --dual build/melodee-nightly.fwsc --single build/melodee-nightly-1core.fwsc \
             --version "next-${commit:0:7}" --commit "$commit" --built-at "$(cat build/nightly-built-at.txt)"
           cp build/SHA256SUMS-nightly .nightly-pages/firmware/SHA256SUMS-nightly
+          mkdir -p .nightly-pages/webapp/manual
+          cp web/manual.html .nightly-pages/webapp/manual/index.html
           cd .nightly-pages
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add webapp/installer/index.html firmware
+          git add webapp/installer/index.html webapp/manual/index.html firmware
           if ! git diff --cached --quiet; then
             git commit -m 'build: publish next nightly variants'
             git push origin HEAD:gh-pages

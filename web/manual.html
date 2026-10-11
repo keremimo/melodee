@@ -1,0 +1,530 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments -->
+<!-- Melodee user manual. One file, English only. Each section is an outline:
+     replace the paragraph and list with the finished text. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melodee manual</title>
+<style>
+  :root { --bg: #fff; --fg: #000; --dim: #777; --line: #ccc; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #000; --fg: #fff; --dim: #888; --line: #444; }
+  }
+  :root[data-theme="dark"] { --bg: #000; --fg: #fff; --dim: #888; --line: #444; }
+  html { color-scheme: light dark; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 16px; }
+  h1 { font-size: 24px; font-weight: 600; margin: 0 0 24px; }
+  h2 { font-size: 18px; font-weight: 600; margin: 0 0 8px; padding-bottom: 2px; border-bottom: 1px solid var(--fg); }
+  h3 { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+  p { margin: 0 0 16px; }
+  a { color: inherit; }
+  a:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+  .small { color: var(--dim); font-size: 13px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 32px; align-items: start; }
+  .toc { margin: 0 0 8px; }
+  .toc-label { margin: 0 0 8px; color: var(--dim); font-size: 13px; }
+  .toc a { color: var(--dim); text-decoration: none; font-size: 13px; line-height: 1.45; }
+  .toc a.here { color: var(--fg); font-weight: 600; }
+  .toc a.sub { padding-left: 12px; }
+  section { margin: 0 0 36px; scroll-margin-top: 24px; }
+  section section { margin: 28px 0 0; }
+  ul, ol { margin: 0 0 16px; padding-left: 1.2em; }
+  li { margin: 0 0 2px; }
+  li::marker { color: var(--dim); }
+  table { border-collapse: collapse; width: 100%; margin: 0 0 16px; font-size: 14px; }
+  th { font-weight: 400; color: var(--dim); text-align: left; }
+  td, th { border-bottom: 1px solid var(--line); padding: 4px 12px 4px 0; vertical-align: top; }
+  kbd, code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  kbd { border: 1px solid var(--line); padding: 0 4px; }
+  figure { margin: 0 0 16px; }
+  .figure-slot { border: 1px solid var(--line); min-height: 140px; }
+  figcaption { color: var(--dim); font-size: 13px; margin-top: 4px; }
+  footer { margin-top: 24px; }
+  @media (max-width: 799px) {
+    .toc { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+    .toc-label { width: 100%; }
+    .toc a.sub { padding-left: 0; }
+  }
+  @media (min-width: 800px) {
+    .layout { grid-template-columns: 210px minmax(0, 1fr); }
+    .toc { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow: auto; display: flex; flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Melodee</h1>
+  <p>User manual for Melodee on the M-VAVE FM-1.</p>
+  <p class="small">Outline. The prose for each section is not written yet.</p>
+  <p class="small"><a href="../installer/">Installer</a> · <a href="../editor/">Editor</a></p>
+
+  <div class="layout">
+    <nav class="toc" id="toc" aria-label="Contents">
+      <p class="toc-label">Contents</p>
+      <a href="#about">About</a>
+      <a href="#before">Before you install</a>
+      <a href="#install">Installing</a>
+      <a href="#panel">The panel</a>
+      <a href="#navigate">Getting around</a>
+      <a href="#stage">Stage</a>
+      <a href="#tracks">Tracks</a>
+      <a href="#sounds">Sounds</a>
+      <a href="#engines">Engines</a>
+      <a class="sub" href="#prophet">Prophet</a>
+      <a class="sub" href="#fm6">FM6</a>
+      <a class="sub" href="#cz1">CZ-1</a>
+      <a class="sub" href="#sid">SID</a>
+      <a class="sub" href="#drum">Drum</a>
+      <a href="#designer">Sound designer</a>
+      <a href="#presets">Saving sounds</a>
+      <a href="#projects">Projects</a>
+      <a href="#sequencer">Sequencer</a>
+      <a href="#patterns">Patterns</a>
+      <a href="#notes">Notes</a>
+      <a href="#recording">Recording</a>
+      <a href="#motion">Motion</a>
+      <a href="#songs">Songs</a>
+      <a href="#scales">Scales and chords</a>
+      <a href="#arp">Arpeggiator</a>
+      <a href="#modulation">Envelopes and modulation</a>
+      <a href="#effects">Effects</a>
+      <a href="#performance">Performance effects</a>
+      <a href="#global">Global</a>
+      <a href="#menu">Menu</a>
+      <a href="#midi">MIDI</a>
+      <a href="#usb-audio">USB audio</a>
+      <a href="#editor">Web editor</a>
+      <a href="#backup">Backup and official firmware</a>
+      <a href="#trouble">If something goes wrong</a>
+    </nav>
+
+    <article id="doc">
+      <section id="about">
+        <h2>About</h2>
+        <p>What Melodee is, and what runs on the FM-1 after you install it.</p>
+        <ul>
+          <li>Multi-engine synthesizer and sequencer firmware</li>
+          <li>Five instruments, four tracks</li>
+          <li>Based on Felucca; not official M-VAVE firmware</li>
+          <li>Where to report a problem</li>
+        </ul>
+      </section>
+
+      <section id="before">
+        <h2>Before you install</h2>
+        <p>What you need, and what to save before replacing the firmware.</p>
+        <ul>
+          <li>Chrome or Edge, and a data USB cable plugged in directly</li>
+          <li>Official V15 can be restored from the installer</li>
+          <li>Projects, Prophet programs, and anything a downgrade would lose</li>
+          <li>Field-testing release; no warranty</li>
+        </ul>
+      </section>
+
+      <section id="install">
+        <h2>Installing</h2>
+        <p>The web installer, the two builds, and a terminal install.</p>
+        <ul>
+          <li>Standard (dual core) and Single core</li>
+          <li>When to choose Single core, and what it changes</li>
+          <li>Leave the cable connected while writing</li>
+          <li>Installing from a terminal</li>
+          <li>What the FM-1 reports when the install finishes</li>
+        </ul>
+      </section>
+
+      <section id="panel">
+        <h2>The panel</h2>
+        <p>The keys, knobs and buttons, and the lights.</p>
+        <figure>
+          <div class="figure-slot"></div>
+          <figcaption>Panel diagram</figcaption>
+        </figure>
+        <ul>
+          <li>Keys, KNOB 1–4, MASTER, ALGORITHM, PRESETS</li>
+          <li>FX, SCL, ENV, LFO, EDIT, GLO, HOME, SAVE, ARP, SEQ, PLAY, REC</li>
+          <li>OCT− and OCT+</li>
+          <li>Key and button lights: dark, dim, bright, breathing</li>
+        </ul>
+      </section>
+
+      <section id="navigate">
+        <h2>Getting around</h2>
+        <p>How pages, lists, sheets and holds work.</p>
+        <ul>
+          <li>SELECT turns the pages of the open section</li>
+          <li>KNOB 1 moves across, KNOB 2 moves down</li>
+          <li>OCT+ enters or confirms, OCT− goes back</li>
+          <li>On Stage the octave buttons shift the octave</li>
+          <li>Holds: FX, GLO, SCL, EDIT, SAVE, HOME, SEQ, REC</li>
+          <li>Sheets, pickers and undo</li>
+        </ul>
+      </section>
+
+      <section id="stage">
+        <h2>Stage</h2>
+        <p>The HOME screen.</p>
+        <ul>
+          <li>The selected track's four knobs</li>
+          <li>Notes, chords and the live waveform</li>
+          <li>A lane per track: sound, pattern, bar, level</li>
+          <li>Header: tempo, REC, octave shift</li>
+        </ul>
+      </section>
+
+      <section id="tracks">
+        <h2>Tracks</h2>
+        <p>Four tracks, one instrument each, and the mixer.</p>
+        <ul>
+          <li>ALGORITHM selects the track</li>
+          <li>Track colour on the screen</li>
+          <li>Mixer: level, pan, reverb send, mute</li>
+          <li>GLO opens the mixer, then the global pages</li>
+        </ul>
+      </section>
+
+      <section id="sounds">
+        <h2>Sounds</h2>
+        <p>Browsing and starting a sound.</p>
+        <ul>
+          <li>PRESETS opens the browser</li>
+          <li>Factory presets, native slots, general user slots</li>
+          <li>Categories, favourites, recent</li>
+          <li>Changing the engine starts from its init sound</li>
+          <li>Knob acceleration, and holding SAVE to go back</li>
+        </ul>
+      </section>
+
+      <section id="engines">
+        <h2>Engines</h2>
+        <p>The instruments a track can play.</p>
+        <ul>
+          <li>Selectable: PROPHET, FM6, CZ-1, SID, DRUM</li>
+          <li>Retired engines stay silent; their saved values remain</li>
+          <li>How many notes a track can play</li>
+        </ul>
+
+        <section id="prophet">
+          <h3>Prophet</h3>
+          <p>Sequential Prophet-5 programs.</p>
+          <ul>
+            <li>Init and the factory bank</li>
+            <li>Oscillators, sync, mixer, filter, envelopes</li>
+            <li>Poly-Mod, LFO, wheel, unison, glide</li>
+            <li>User slots P001–P128, and SysEx</li>
+          </ul>
+        </section>
+
+        <section id="fm6">
+          <h3>FM6</h3>
+          <p>Six-operator FM, DX7-compatible.</p>
+          <ul>
+            <li>Algorithms and the on-screen chart</li>
+            <li>Operators, pitch envelope, LFO, controllers</li>
+            <li>MODERN, MARK I and OPL</li>
+            <li>Slots F001–F064, and DX7 SysEx</li>
+          </ul>
+        </section>
+
+        <section id="cz1">
+          <h3>CZ-1</h3>
+          <p>Native Casio CZ-1 tones.</p>
+          <ul>
+            <li>Two lines, windows and the six envelopes</li>
+            <li>Factory tones and slots Z001–Z128</li>
+            <li>Name, copy a line, compare</li>
+            <li>Casio SysEx</li>
+          </ul>
+        </section>
+
+        <section id="sid">
+          <h3>SID</h3>
+          <p>A Commodore SID chip for every note.</p>
+          <ul>
+            <li>6581 and 8580</li>
+            <li>Waveforms, ring, sync, envelope, filter</li>
+            <li>Factory presets</li>
+          </ul>
+        </section>
+
+        <section id="drum">
+          <h3>Drum</h3>
+          <p>Synthesized 808 and 909 kits.</p>
+          <ul>
+            <li>Lanes and the General MIDI key map</li>
+            <li>Tuning, decay, tone, attack or snappy, level</li>
+            <li>A recorded hit can keep its own pitch and length</li>
+            <li>The drum grid</li>
+          </ul>
+        </section>
+      </section>
+
+      <section id="designer">
+        <h2>Sound designer</h2>
+        <p>Build a sound on the device, from a goal or from the engine's own pages.</p>
+        <ul>
+          <li>Open it from the HOME menu, or from a sound page</li>
+          <li>Engine, start (current, init, or a recipe), and which pages</li>
+          <li>Stages: Features, Source, Tone, Env, Motion, Play, FX</li>
+          <li>Audition on the keys, compare with the original, finish and name it</li>
+        </ul>
+      </section>
+
+      <section id="presets">
+        <h2>Saving sounds</h2>
+        <p>Store a sound in a user slot and name it.</p>
+        <ul>
+          <li>SAVE, then USER, a slot, and the keys to spell the name</li>
+          <li>What a native Prophet, FM6 or CZ-1 slot keeps</li>
+          <li>General slots U01–U64</li>
+          <li>Loading a sound leaves the patterns alone</li>
+        </ul>
+      </section>
+
+      <section id="projects">
+        <h2>Projects</h2>
+        <p>Songs saved on the device, the startup project, and the template.</p>
+        <ul>
+          <li>Slots, BOOT, and the template for a new project</li>
+          <li>New song: key, tempo, and a role for each track</li>
+          <li>SAVE + REC writes the project back to its slot</li>
+          <li>Autosave after five idle seconds</li>
+          <li>What a project file contains</li>
+        </ul>
+      </section>
+
+      <section id="sequencer">
+        <h2>Sequencer</h2>
+        <p>How sequencing is organised, and the pages under SEQ.</p>
+        <ul>
+          <li>NOTES, PATTERN, TEMPO, PATTERNS, SONG, MOTION</li>
+          <li>64 steps, division, swing and gate</li>
+          <li>PLAY starts and stops; REC arms the selected track</li>
+        </ul>
+      </section>
+
+      <section id="patterns">
+        <h2>Patterns</h2>
+        <p>Eight patterns on each track.</p>
+        <ul>
+          <li>Hold SEQ and press a white key, or use the grid</li>
+          <li>Copy notes and motion; delete with confirmation</li>
+          <li>A change waits until that track's loop ends</li>
+          <li>Hold SAVE to undo</li>
+        </ul>
+      </section>
+
+      <section id="notes">
+        <h2>Notes</h2>
+        <p>The editor for entered steps and recorded takes.</p>
+        <ul>
+          <li>Step, pitch, length and velocity</li>
+          <li>Move, zoom, slide, chance and delete</li>
+          <li>Erase with EDIT held while recording</li>
+          <li>Undo and redo</li>
+          <li>Drum hits on the same page</li>
+        </ul>
+      </section>
+
+      <section id="recording">
+        <h2>Recording</h2>
+        <p>Live loops, capture, and playback quantize.</p>
+        <ul>
+          <li>Arm a track; REC + PLAY records at once</li>
+          <li>Timing, velocity and held length are kept</li>
+          <li>Hold REC to capture the last bars</li>
+          <li>TEMPO QNT snaps playback; OFF restores the take</li>
+          <li>The shared pool of timed notes</li>
+        </ul>
+      </section>
+
+      <section id="motion">
+        <h2>Motion</h2>
+        <p>Knob moves recorded into the pattern.</p>
+        <ul>
+          <li>Arm REC, start playback, then turn a sound knob</li>
+          <li>Armed and stopped: play first</li>
+          <li>Stopping or bypassing motion restores the patch</li>
+          <li>Events shared across the project</li>
+        </ul>
+      </section>
+
+      <section id="songs">
+        <h2>Songs</h2>
+        <p>An arrangement of patterns, or a jam turned into one.</p>
+        <ul>
+          <li>Section, track, pattern and repeats</li>
+          <li>Pattern changes while playing are logged</li>
+          <li>Hold REC on SONG to keep that jam</li>
+          <li>Playback, the last section, and stop</li>
+        </ul>
+      </section>
+
+      <section id="scales">
+        <h2>Scales and chords</h2>
+        <p>Tuning, quantize, transpose and chord keys.</p>
+        <ul>
+          <li>Families, favourites and root</li>
+          <li>QNT: OFF, WHITE, SNAP, ALL, MPC</li>
+          <li>Microtonal scales</li>
+          <li>Transpose, and the octave buttons</li>
+          <li>Chord types and voicings</li>
+        </ul>
+      </section>
+
+      <section id="arp">
+        <h2>Arpeggiator</h2>
+        <p>The arpeggiator on ARP and ARP 2.</p>
+        <ul>
+          <li>Mode, rate, octaves and gate</li>
+          <li>Swing, probability, hold and order</li>
+          <li>The beat light</li>
+        </ul>
+      </section>
+
+      <section id="modulation">
+        <h2>Envelopes and modulation</h2>
+        <p>The shared envelope, LFOs and modulation slots.</p>
+        <ul>
+          <li>ENV and ENV DEST</li>
+          <li>LFO, LFO 2 and LFO DEST</li>
+          <li>Four modulation slots; MIDI controllers as sources</li>
+          <li>Engines that use their own envelopes instead</li>
+        </ul>
+      </section>
+
+      <section id="effects">
+        <h2>Effects</h2>
+        <p>Per-track sends, the shared effects, and the slicer.</p>
+        <ul>
+          <li>Distortion, chorus, delay and reverb sends</li>
+          <li>Slicer patterns</li>
+          <li>Delay: DIGI, TAPE, and ping-pong</li>
+          <li>Reverb: ROOM, SPRING, HALL; chorus; the master limiter</li>
+        </ul>
+      </section>
+
+      <section id="performance">
+        <h2>Performance effects</h2>
+        <p>The FX hold layer: effects on the keys, macros on the knobs.</p>
+        <ul>
+          <li>Repeat, reverse, filter, tape stop, freeze, harmonizer, flanger, phaser</li>
+          <li>Mutes on the black keys</li>
+          <li>The knobs do not change the saved preset</li>
+          <li>Latch, and a double-press to keep it open</li>
+        </ul>
+      </section>
+
+      <section id="global">
+        <h2>Global</h2>
+        <p>Device settings on GLOBAL and SYSTEM.</p>
+        <ul>
+          <li>Concert pitch (A4) and fine tune</li>
+          <li>Clock: internal, USB or TRS</li>
+          <li>MIDI input status, the drum channel, and routing</li>
+          <li>What is kept when the power goes off</li>
+        </ul>
+      </section>
+
+      <section id="menu">
+        <h2>Menu</h2>
+        <p>Hold HOME.</p>
+        <ul>
+          <li>COLOR, SPEAKER, HOLD, LIGHTS</li>
+          <li>USB AUDIO</li>
+          <li>Click, count-in, note preview, chord entry, FX latch</li>
+          <li>Knob acceleration, screen off, calibration</li>
+          <li>About and Sound designer</li>
+        </ul>
+      </section>
+
+      <section id="midi">
+        <h2>MIDI</h2>
+        <p>USB and TRS MIDI in and out.</p>
+        <ul>
+          <li>Channels 1–4 play tracks 1–4</li>
+          <li>The drum channel, and every other channel</li>
+          <li>The keys send on the track's channel</li>
+          <li>Pitch bend, sustain, panic and clock</li>
+          <li>Microtonal notes on MIDI out</li>
+        </ul>
+      </section>
+
+      <section id="usb-audio">
+        <h2>USB audio</h2>
+        <p>Play the computer through the FM-1, or record the four tracks.</p>
+        <ul>
+          <li>Melodee Out and Melodee In</li>
+          <li>One mono channel per track, after level and before pan</li>
+          <li>16- or 24-bit, 44.1 kHz; no driver</li>
+          <li>Switch either device off from the menu</li>
+        </ul>
+      </section>
+
+      <section id="editor">
+        <h2>Web editor</h2>
+        <p>Edit the FM-1 from the computer. <a href="../editor/">Open the editor</a>.</p>
+        <ul>
+          <li>Connect over USB in Chrome or Edge</li>
+          <li>Sound, FM6, sequencer, mixer, library, projects, settings</li>
+          <li>Prophet, CZ-1 and FM6 SysEx</li>
+          <li>Complete backup and restore</li>
+        </ul>
+      </section>
+
+      <section id="backup">
+        <h2>Backup and official firmware</h2>
+        <p>Save everything, restore it, or go back to official V15.</p>
+        <ul>
+          <li>The installer saves a complete backup before returning</li>
+          <li>Skipping the backup, and what that loses</li>
+          <li>Restore from the editor after reinstalling Melodee</li>
+          <li>What older firmware cannot read</li>
+        </ul>
+      </section>
+
+      <section id="trouble">
+        <h2>If something goes wrong</h2>
+        <p>An install that stops, a crash, or a unit that no longer starts.</p>
+        <ul>
+          <li>Replug the cable and press Install again</li>
+          <li>Single core when Standard crashes or restarts into update mode</li>
+          <li>A unit that no longer starts needs a Transporter</li>
+          <li>Where to report a problem</li>
+        </ul>
+      </section>
+    </article>
+  </div>
+
+  <footer class="small">
+    <p>Melodee by Ellic Studio, based on <a href="https://github.com/hugelton/Felucca" target="_blank" rel="noopener">Felucca</a>
+      by Leo Kuroshita (@kurogedelic), <a href="https://hugelton.com" target="_blank" rel="noopener">Hügelton Instruments</a>.<br>
+      GPL-3.0, no warranty. Source:
+      <a href="https://github.com/keremimo/melodee" target="_blank" rel="noopener">github.com/keremimo/melodee</a><br>
+      M-VAVE and FM-1 are trademarks of their respective owners.</p>
+  </footer>
+</main>
+<script>
+  const tocLinks = [...document.querySelectorAll("#toc a")];
+  const seen = new Set();
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach((en) => { if (en.isIntersecting) seen.add(en.target.id); else seen.delete(en.target.id); });
+    let current = null;
+    for (const a of tocLinks) {
+      const id = a.getAttribute("href").slice(1);
+      if (seen.has(id)) { current = id; break; }
+    }
+    tocLinks.forEach((a) => a.classList.toggle("here", a.getAttribute("href") === "#" + current));
+  }, { rootMargin: "0px 0px -70% 0px", threshold: 0 });
+  for (const a of tocLinks) {
+    const el = document.getElementById(a.getAttribute("href").slice(1));
+    if (el) obs.observe(el);
+  }
+</script>
+</body>
+</html>
