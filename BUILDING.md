@@ -201,7 +201,7 @@ cd /tmp/melodee-site && python3 -m http.server 8000
 #      http://localhost:8000/webapp/editor/
 ```
 
-Steps 1–2 are only required when the UI (or the allowlist in `tools/manual_shots.py`) changed and you need to refresh a version’s screenshots. For a routine site assemble from already-committed screenshots, start at step 3. `make_site.py` still requires at least one `web/manual/vX.Y.Z/` with `index.html` and `*.png` — it copies each version folder into `webapp/manual/`.
+Steps 1–2 are required when the UI (or the allowlist in `tools/manual_shots.py`) changed and you need to refresh a version’s screenshots. `make_site.py` still requires at least one `web/manual/vX.Y.Z/` with `index.html` and `*.png` — it copies each version folder into `webapp/manual/`.
 
 Installing firmware is at your own risk. If an install fails and the FM-1 no longer
 starts, identify its recovery mode using the steps below.
