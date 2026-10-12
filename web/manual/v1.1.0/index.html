@@ -762,11 +762,11 @@
         <ul>
           <li>Tap <kbd>REC</kbd> to arm or disarm the selected track. Transport stays put.</li>
           <li><kbd>REC</kbd>+<kbd>PLAY</kbd> arms and starts in one gesture. An armed track records while playback runs: timing, velocity and held length are kept (including repeats and overlapping chord releases).</li>
-          <li><strong>Capture:</strong> while the transport runs, Melodee keeps what you play on tracks that are not recording. Hold <kbd>REC</kbd> to write the selected track’s last bars into its pattern. An empty pattern takes 1, 2 or 4 bars and sets LEN; a pattern with notes takes its last LEN steps. Hold <kbd>SAVE</kbd> to undo. You cannot capture while that track is armed for recording.</li>
+          <li><strong>Capture:</strong> sometimes referred to as "restrospective recording" - while the transport runs, Melodee keeps what you play on tracks that are not recording. Hold <kbd>REC</kbd> to write the selected track’s last bars into its pattern. An empty pattern takes 1, 2 or 4 bars and sets LEN (the pattern length on SEQ -> Pattern); a pattern with notes takes its last LEN steps. Hold <kbd>SAVE</kbd> to undo. You cannot use the capture feature while a track is actively armed to be directly recorded.</li>
           <li><strong>SEQ → TEMPO → QNT</strong> snaps recorded playback to a swung grid; <strong>OFF</strong> (default) restores the original take. The piano roll always shows the original. This is separate from scale QNT on SEL. Track GATE affects manually entered steps.</li>
           <li>A project shares <strong>1,024 timed notes</strong> across all 32 banks. <strong>RECORDING FULL</strong> leaves existing takes intact; clear or replace recorded steps to free space.</li>
         </ul>
-        <p>Menu preferences: AUDIO CLICK, CLICK LEVEL, COUNT-IN, NOTE PREVIEW and CHORD ENTRY (HOLD vs ADD). Count-in runs with internal clock when starting an armed track; external clock skips it.</p>
+        <p>There are some Menu (long hold <kbd>HOME</kbd>) preferences related to recording: AUDIO CLICK, CLICK LEVEL, COUNT-IN. Count-in runs with internal clock when starting an armed track; external clock skips it.</p>
       </section>
 
       <section id="global">
@@ -790,7 +790,7 @@
 
       <section id="menu">
         <h2>Menu</h2>
-        <p>Hold <kbd>HOME</kbd> for the menu (a list; <kbd>KNOB 2</kbd> moves the row, <kbd>KNOB 1</kbd> or <kbd>OCT+</kbd> changes the value).</p>
+        <p>Hold <kbd>HOME</kbd> for the settings menu (a list; <kbd>KNOB 2</kbd> moves the row, <kbd>KNOB 1</kbd> or <kbd>OCT+</kbd> changes the value).</p>
         <div class="shots">
           <figure class="shot"><img src="menu.png" alt="Menu list" width="240" height="240"><figcaption>MENU.</figcaption></figure>
           <figure class="shot"><img src="menu_hold.png" alt="Menu hold time item" width="240" height="240"><figcaption>HOLD time.</figcaption></figure>
@@ -798,21 +798,21 @@
         <table>
           <thead><tr><th>Item</th><th>What it does</th></tr></thead>
           <tbody>
-            <tr><td>COLOR</td><td>NIGHT / DAY / CONTRAST palettes.</td></tr>
+            <tr><td>COLOR</td><td>NIGHT / DAY / CONTRAST palettes/themes.</td></tr>
             <tr><td>SPEAKER</td><td>EQ settings to apply to the internal speaker: OFF / LOWCUT / BASS+ . Note that OFF does not mute the speaker; it only applies turns off the speaker EQ.</td></tr>
-            <tr><td>HOLD</td><td>Layer hold time (0.3–0.6&nbsp;s).</td></tr>
+            <tr><td>HOLD</td><td>The duration of a long hold of a button or knob (0.3–0.6&nbsp;s) to pull up an additional menu or action.</td></tr>
             <tr><td>LIGHTS</td><td>Idle indicator brightness, OFF (only pressed / engaged / selectable) through FULL.</td></tr>
             <tr><td>USB AUDIO</td><td>In+Out / In / Out / Off.</td></tr>
             <tr><td>AUDIO CLICK</td><td>Metronome on / off.</td></tr>
             <tr><td>CLICK LEVEL</td><td>Metronome volume.</td></tr>
             <tr><td>COUNT-IN</td><td>Bars of count-in before an armed track records (internal clock only).</td></tr>
             <tr><td>NOTE PREVIEW</td><td>Hear notes as you edit steps.</td></tr>
-            <tr><td>CHORD ENTRY</td><td>HOLD vs ADD when entering chords.</td></tr>
+            <tr><td>CHORD ENTRY</td><td>How keys and MIDI build a chord on a stopped step: HOLD = press pitches together, then release to advance; ADD = tap pitches one by one to add or remove them at the same cursor (up to four; a full step shows CHORD FULL).</td></tr>
             <tr><td>FX LATCH</td><td>Performance effects toggle on tap instead of hold.</td></tr>
             <tr><td>KNOB ACCEL</td><td>Knob acceleration on a spin; OFF keeps every detent one step.</td></tr>
             <tr><td>SCREEN OFF</td><td>Blank the screen after a time.</td></tr>
             <tr><td>CALIBRATION</td><td>Hardware calibration (also: hold <kbd>OCT−</kbd>+<kbd>OCT+</kbd> at power-on).</td></tr>
-            <tr><td>ABOUT, SOUND DESIGNER</td><td>Version / credits, and the <a href="#designer">sound designer</a>.</td></tr>
+            <tr><td>ABOUT</td><td>Version / credits.</td></tr>
           </tbody>
         </table>
       </section>
@@ -841,8 +841,8 @@
 
       <section id="editor">
         <h2>Web editor</h2>
-        <p>Edit the FM-1 from the computer in Chrome or Edge: <a href="../editor/">Open the patch editor</a>.</p>
-        <p>Connect over USB for sound and mixer controls, a 6-operator FM editor, Prophet and CZ-1 panels, sequencer and motion, library and SysEx import/export, projects, settings, and complete backup / restore. Prefer the editor page for those workflows rather than this manual.</p>
+        <p>Edit the FM-1 from the computer in Chrome or Edge: <a href="../../editor/">Open the patch editor</a>.</p>
+        <p>Connect over USB for sound and mixer controls, a 6-operator FM editor, Prophet and CZ-1 panels, sequencer and motion, library and SysEx import/export, projects, settings, and complete backup / restore.</p>
       </section>
 
       <section id="backup">
@@ -850,7 +850,7 @@
         <ul>
           <li>The installer’s <strong>Return to official V15</strong> saves a complete Melodee backup first when the firmware can export one.</li>
           <li><strong>Skip backup</strong> is available when export is impossible; confirm that Melodee music, sounds and settings may be lost.</li>
-          <li>After reinstalling Melodee, restore from the <a href="../editor/">web editor</a>’s backup tools.</li>
+          <li>After reinstalling Melodee, restore from the <a href="../../editor/">web editor</a>’s backup tools.</li>
           <li>Older Melodee builds cannot read newer data (for example native motion events need 1.0.2 or later; expanded recordings and some scale IDs need 0.12+). Export Prophet programs and keep the installer’s backup before downgrading.</li>
         </ul>
       </section>
