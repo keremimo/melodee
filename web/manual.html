@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-only
-     Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments -->
+     Copyright (C) 2026 Relyt29 (@relyt29), Signals Intelligence Sound (https://sigintsound.com/) -->
 <!-- Melodee user manual. One file, English only. Screenshots: web/manual-shots/*.png (NIGHT UI renders, tools/manual_shots.py). -->
 <html lang="en">
 <head>
@@ -79,7 +79,7 @@
     </div>
   </nav>
   <h1>Manual</h1>
-  <p>How to use Melodee on the M-VAVE FM-1 after installing the custom firmware. This guide walks every screen in the order you reach it, and tables what each knob and control on that page does. Screens shown here use the NIGHT palette; your colours depend on MENU → COLOR.</p>
+  <p>How to use Melodee on the M-VAVE FM-1 after installing the custom firmware. This guide shows screenshots of each page and tables what each knob and control on that page does. Screens shown here use the NIGHT theme; your colors depend on the MENU Settings page (long hold HOME button) → COLOR.</p>
 
   <div class="layout">
     <nav class="toc" id="toc" aria-label="Contents">
@@ -132,7 +132,7 @@
         <h2>Before you install</h2>
         <p>You need <strong>Chrome or Edge</strong>, a <strong>data USB cable</strong> plugged straight into the computer (not a charge-only cable or hub if you can avoid it), and the FM-1 powered and connected.</p>
         <ul>
-          <li>The installer can restore official <strong>V15</strong> later. It saves a complete Melodee backup first when it can.</li>
+          <li>The installer can also install/restore the official stock M-Vave firmware <strong>V15</strong>. It saves a complete Melodee backup first when it can.</li>
           <li>Before installing or downgrading, export anything you care about: projects, Prophet programs, FM6 and CZ-1 native slots. A downgrade or skipped backup can lose Melodee music, sounds and settings.</li>
           <li>Melodee is a field-testing release with <strong>no warranty</strong>. Use at your own risk.</li>
         </ul>
@@ -149,29 +149,6 @@
         <p>From a terminal you can also run <code>tools/fm1_install.py</code> (see the project README).</p>
       </section>
 
-      <section id="panel">
-        <h2>The panel</h2>
-        <p>Melodee reuses the FM-1’s hardware. Every control below keeps one job across the firmware; the pages change what the four knobs edit, but the buttons stay put.</p>
-        <table>
-          <thead><tr><th>Control</th><th>Job</th></tr></thead>
-          <tbody>
-            <tr><td>Keys</td><td>Play notes on the selected track. In layers and grids they also select patterns, effects, roots and drum lanes.</td></tr>
-            <tr><td><kbd>KNOB 1</kbd>–<kbd>4</kbd></td><td>Edit the four controls on the open page, or Stage’s four sound knobs.</td></tr>
-            <tr><td><kbd>MASTER</kbd></td><td>Overall output volume.</td></tr>
-            <tr><td><kbd>ALGORITHM</kbd></td><td>Select track 1–4 on every page; the screen takes that track’s colour.</td></tr>
-            <tr><td><kbd>PRESETS</kbd></td><td>Browse sounds; on engine EDIT pages, jump between sections (or pick the operator / line); on NOTES, zoom.</td></tr>
-            <tr><td><kbd>SELECT</kbd></td><td>Turn the pages within the open section, both ways.</td></tr>
-            <tr><td><kbd>FX</kbd> <kbd>SCL</kbd> <kbd>ENV</kbd> <kbd>LFO</kbd> <kbd>EDIT</kbd> <kbd>GLO</kbd> <kbd>ARP</kbd> <kbd>SEQ</kbd></td><td>Open that family’s pages; press again for the next page.</td></tr>
-            <tr><td><kbd>HOME</kbd></td><td>Return to Stage. Hold for the menu.</td></tr>
-            <tr><td><kbd>SAVE</kbd></td><td>Tap for PRESETS / USER / PROJECT. Hold for undo.</td></tr>
-            <tr><td><kbd>PLAY</kbd></td><td>Start and stop all four tracks.</td></tr>
-            <tr><td><kbd>REC</kbd></td><td>Arm or disarm the selected track. Hold to capture (or take a jam on SONG).</td></tr>
-            <tr><td><kbd>OCT−</kbd> <kbd>OCT+</kbd></td><td>On Stage: shift octave (both together reset). Everywhere else: go back / enter or confirm.</td></tr>
-          </tbody>
-        </table>
-        <p>Key and button lights share one grammar: <strong>dark</strong> nothing there, <strong>dim</strong> something there, <strong>bright</strong> happening now, <strong>breathing</strong> waiting (for example REC armed but stopped, or a pattern queued for the loop end). The menu’s <strong>LIGHTS</strong> sets how bright idle indicators are.</p>
-      </section>
-
       <section id="navigate">
         <h2>Getting around</h2>
         <p>One navigation language everywhere:</p>
@@ -183,17 +160,40 @@
           <li>Named values often open a picker. Short pages (CHORD, ENV DEST, LFO DEST, LFO 2, ARP 2, DLY 2) put their settings straight on the four knobs.</li>
         </ul>
         <h3>Holds and locks</h3>
-        <p>Hold <kbd>FX</kbd>, <kbd>GLO</kbd>, <kbd>SCL</kbd> or <kbd>EDIT</kbd> for a quick layer on the keys and knobs (hold time is set in the menu as <strong>HOLD</strong>). Double-press the same button within about 300&nbsp;ms to lock the layer open with both hands free; press it again to close. Hold <kbd>SAVE</kbd> for undo, <kbd>HOME</kbd> for the menu, <kbd>SEQ</kbd> for the PATTERNS grid, <kbd>REC</kbd> to capture.</p>
+        <p>Hold <kbd>FX</kbd>, <kbd>GLO</kbd>, <kbd>SEL</kbd> or <kbd>EDIT</kbd> for a quick layer on the keys and knobs (hold time is set in the global settings menu as <strong>HOLD</strong>). Double-press the same button within about 300&nbsp;ms to lock the layer open with both hands free; press it again to close. Hold <kbd>SAVE</kbd> for undo, <kbd>HOME</kbd> for the menu, <kbd>SEQ</kbd> for the PATTERNS grid, <kbd>REC</kbd> to capture.</p>
         <h3>Sheets and undo</h3>
         <p>Hold <kbd>OCT+</kbd> on pages that have a sheet (Stage, sound pages, NOTES, PATTERNS, SONG, and others) to open actions such as Init sound, Copy to…, or Sound designer.</p>
         <p><strong>Undo / redo:</strong></p>
         <ul>
           <li>Hold <kbd>SAVE</kbd> to undo. On NOTES, that undoes the last step edit first; otherwise it undoes the last sound or pattern load (or Capture).</li>
           <li>While <kbd>SAVE</kbd> is held, <kbd>OCT−</kbd> undoes further and <kbd>OCT+</kbd> redoes.</li>
-          <li>Up to eight levels when the UI cache is available; otherwise one. A new edit clears redo. Recording, changing track or bank, or changing loop length starts a fresh step-edit history.</li>
+          <li>Melodee supports up to eight levels of undo when the UI cache is available; otherwise one. A new edit clears redo. Recording, changing track or bank, or changing loop length starts a fresh step-edit history.</li>
           <li>If a song or chain is busy, the device may ask you to stop first (<strong>STOP TO UNDO</strong>).</li>
         </ul>
       </section>
+
+      <section id="panel">
+        <h2>The panel</h2>
+        <table>
+          <thead><tr><th>Control</th><th>Job</th></tr></thead>
+          <tbody>
+            <tr><td>Piano Keys</td><td>Play notes on the selected track. In layers and grids they also select patterns, effects, roots and drum lanes.</td></tr>
+            <tr><td><kbd>KNOB 1</kbd>–<kbd>4</kbd></td><td>Edit the four controls on the open page, or Stage’s four sound knobs.</td></tr>
+            <tr><td><kbd>MASTER KNOB</kbd></td><td>Overall output volume.</td></tr>
+            <tr><td><kbd>ALGORITHM KNOB</kbd></td><td>Change the selected track 1–4 on every page; the screen takes that track’s color.</td></tr>
+            <tr><td><kbd>PRESETS KNOB</kbd></td><td>Browse sounds; on engine EDIT pages, jump between sections (or pick the operator / line); on NOTES, zoom.</td></tr>
+            <tr><td><kbd>SELECT KNOB</kbd></td><td>Turn the pages within the open section, both ways.</td></tr>
+            <tr><td><kbd>FX</kbd> <kbd>SEL</kbd> <kbd>ENV</kbd> <kbd>LFO</kbd> <kbd>EDIT</kbd> <kbd>GLO</kbd> <kbd>ARP</kbd> <kbd>SEQ</kbd></td><td>Open that family’s pages; press again for the next page.</td></tr>
+            <tr><td><kbd>HOME</kbd></td><td>Return to Stage. Hold for the global settings menu.</td></tr>
+            <tr><td><kbd>SAVE</kbd></td><td>Tap for PRESETS / USER / PROJECT. Hold for undo.</td></tr>
+            <tr><td><kbd>PLAY/STOP</kbd></td><td>Start and stop all four tracks.</td></tr>
+            <tr><td><kbd>REC</kbd></td><td>Arm or disarm the selected track. Hold to capture (or take a jam on SONG).</td></tr>
+            <tr><td><kbd>OCT−</kbd> <kbd>OCT+</kbd></td><td>On Stage: shift octave (both together reset). In menus and everywhere else: go back / enter or confirm.</td></tr>
+          </tbody>
+        </table>
+        <p>Key and button lights share one grammar: <strong>dark</strong> nothing there, <strong>dim</strong> something there, <strong>bright</strong> happening now, <strong>slow pulse</strong> waiting (for example REC armed but stopped, or a pattern queued for the loop end). The menu’s <strong>LIGHTS</strong> sets how bright idle indicators are.</p>
+      </section>
+
 
       <section id="stage">
         <h2>Stage</h2>
@@ -219,11 +219,11 @@
 
       <section id="tracks">
         <h2>Tracks</h2>
-        <p>Four tracks, one instrument and sound each. <kbd>ALGORITHM</kbd> selects the track on every page; the screen takes that track’s colour (coral, amber, mint, lilac).</p>
+        <p>Four tracks, one instrument and sound each. <kbd>ALGORITHM</kbd> selects the track on every page; the screen takes that track’s color (coral orange, amber yellow, mint green, lilac purple).</p>
         <ul>
           <li>Each track carries its own engine, sound, patterns, scale ROOT and transpose, effect sends, modulation and voice settings.</li>
           <li>Mixing and solo live under <kbd>GLO</kbd> — see <a href="#global">Global</a> for MIXER, GLOBAL and SYSTEM.</li>
-          <li>Voice counts: FM6 up to 16 voices; Prophet up to eight per track on Standard (five on Single core or if the second core is unavailable). Running several full Prophet tracks together has not been stress-tested on every unit.</li>
+          <li>Voice counts: FM6 up to 16 voices; Prophet up to eight per track on Standard (five on Single core or if the second core is unavailable). Running several full Prophet tracks together has not been stress-tested on every unit, and is not recommended.</li>
         </ul>
       </section>
 
@@ -314,7 +314,7 @@
         <section id="prophet">
           <h3>Prophet</h3>
           <p class="small">Melodee’s own Prophet-5–style engine. Factory programs from Sequential’s Prophet-5/10 SysEx.</p>
-          <p>Sequential Prophet-5 Rev 4–style programs: two oscillators (saw, pulse; B also triangle), hard sync, mixer, SSI or Curtis four-pole filter, separate filter and amp envelopes, Poly-Mod, LFO, wheel, unison, glide and Vintage. PRESETS browses INIT, Sequential’s 200 factory programs, then native user slots <strong>P001–P128</strong>.</p>
+          <p>Sequential Prophet-5 Rev 4–style programs: two oscillators (saw, pulse; B also triangle), hard sync, mixer, SSI or Curtis four-pole filter, separate filter and amp envelopes, Poly-Mod, LFO, wheel, unison, glide and Vintage. PRESETS browses INIT, Sequential’s 200 factory programs, then native user slots <strong>P001–P128</strong>. Navigate between sections/pages with PRESETS knob, Navigate between individual settings per page (e.g. OSC A vs OSC B), with SELECT knob. In the SECTION map, navigate with Knob 2, and select a section to jump to with OCT+.</p>
           <div class="shots">
             <figure class="shot"><img src="stage_p5.png" alt="Prophet Stage knobs" width="240" height="240"><figcaption>Prophet Stage knobs: cutoff, res, env amount, release.</figcaption></figure>
             <figure class="shot"><img src="ref_map_p5.png" alt="Prophet section map" width="240" height="240"><figcaption>The section map (hold EDIT, or EDIT on an EDIT page).</figcaption></figure>
@@ -326,7 +326,7 @@
             <tbody>
               <tr><td>OSC A</td><td>FREQ A (pitch, semitones), SAW A (on/off), PULSE A (on/off), WIDTH A (pulse width).</td></tr>
               <tr><td>OSC B</td><td>FREQ B (semitones), FINE B (fine detune), WIDTH B, KEY B (B tracks the keyboard on/off).</td></tr>
-              <tr><td>B WAVES</td><td>SAW B, TRI B, PULSE B (on/off), LOW B (B drops to low frequency).</td></tr>
+              <tr><td>B WAVES</td><td>SAW B, TRI B, PULSE B (on/off), LOW B (B becomes an LFO: low frequency oscillator).</td></tr>
             </tbody>
           </table>
           <h4>Mixer and filter</h4>
@@ -341,27 +341,30 @@
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
-              <tr><td>FLT ENV</td><td>ATK, DEC, SUS, REL for the filter envelope.</td></tr>
+              <tr><td>FLT ENV</td><td>ATK (attack), DEC (decay), SUS (sustain), REL (release) for the filter envelope.</td></tr>
               <tr><td>AMP ENV</td><td>ATK, DEC, SUS, REL for the amplifier.</td></tr>
-              <tr><td>ENV MOD</td><td>ENV AMT (filter envelope amount), VEL FLT (velocity → filter), VEL AMP (velocity → level), RELEASE (release stage on/off).</td></tr>
+              <tr><td>ENV MOD</td><td>ENV AMT (the amount to open the filter, following the envelope's shape), VEL FLT (velocity → filter), VEL AMP (velocity → level), RELEASE (release stage of both amplifier and filter envelopes toggle on/off).</td></tr>
             </tbody>
           </table>
           <h4>Poly-Mod, LFO and wheel</h4>
+          <p>Two separate modulation paths. <strong>Poly-Mod</strong> takes the filter envelope and/or Oscillator B as sources and routes them into Osc A’s pitch, pulse width, and the filter. Osc B can do this even when its mixer level is zero, so it works as a pure modulator (audio-rate or low-rate with LOW B). The <strong>LFO / wheel</strong> path is independent: the LFO (and optional noise) is the source; its depth is INITIAL plus the MIDI mod wheel (CC 1), then you choose destinations on the WHEEL pages.</p>
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
-              <tr><td>POLYMOD</td><td>Source amounts: ENV AMT, OSC B; destinations FREQ A, PW A (on/off).</td></tr>
-              <tr><td>MOD FLT</td><td>FILTER (Poly-Mod to filter), VINTAGE (component drift), AT FLT / AT LFO (aftertouch to filter / LFO).</td></tr>
-              <tr><td>LFO</td><td>RATE, and waveform SAW / TRI / SQUARE (on/off).</td></tr>
-              <tr><td>WHEEL</td><td>INITIAL (LFO initial amount), N MIX (noise/LFO mix), FREQ A, FREQ B (wheel → oscillator pitch).</td></tr>
-              <tr><td>WHEEL 2</td><td>PW A, PW B (wheel → width), FILTER (wheel → cutoff), GLIDE (portamento time).</td></tr>
+              <tr><td>POLYMOD</td><td>Sources (amounts): ENV AMT (filter envelope), OSC B. Destinations (on/off): FREQ A (Osc A pitch), PW A (Osc A pulse width).</td></tr>
+              <tr><td>MOD FLT</td><td>FILTER (Poly-Mod destination: filter cutoff, on/off). Also VINTAGE (component drift), AT FLT (aftertouch → filter), AT LFO (aftertouch → LFO depth).</td></tr>
+              <tr><td>LFO</td><td>Shapes the wheel-path source: RATE, and waveform SAW / TRI / SQUARE (on/off).</td></tr>
+              <tr><td>WHEEL</td><td>Depth: INITIAL (always-on amount; mod wheel CC 1 adds on top), N MIX (blend noise into the LFO). Destinations (on/off): FREQ A, FREQ B (→ oscillator pitch).</td></tr>
+              <tr><td>WHEEL 2</td><td>More destinations (on/off): PW A, PW B (→ pulse width), FILTER (→ cutoff). GLIDE is portamento time (not a modulation destination).</td></tr>
             </tbody>
           </table>
           <h4>Voice and store</h4>
+          <p>The Voice section has Prophet’s own <strong>UNISON</strong> and <strong>BEND</strong> pages, plus Melodee’s shared <strong>VOICE</strong> list for the track (poly/mono, glide, priority, pan, mute). UNISON is not the VOICE page — VOICE is the list of global engine voice settings. Loading or editing UNISON copies into Melodee’s VCE / PRIO / DTUNE / ALLOC; you can override those afterwards on VOICE. Program glide stays on WHEEL 2; VOICE’s GLD is Melodee’s track portamento.</p>
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
-              <tr><td>UNISON</td><td>UNISON (on/off), VOICES (1–5), DETUNE (0–7), PRIORITY (LOW / LOW RET / LAST / LAST RET).</td></tr>
+              <tr><td>UNISON</td><td>UNISON (on/off), VOICES (1–5), DETUNE (0–7), note PRIORITY (LOW / LOW RET (retrigger) / LAST / LAST RET).</td></tr>
+              <tr><td>VOICE</td><td>List (<kbd>KNOB 2</kbd> row, <kbd>KNOB 1</kbd> value): VCE (POLY / MONO / LEG / UNI), GLD (glide time), GLMOD (RATE / TIME), PRIO (LAST / LOW / HIGH), ALLOC (ROT / REUSE), DTUNE, PAN (−100…+100%), MUTE, SPRD (stereo spread). Same shared page as other engines — see <a href="#voice">Voice</a>.</td></tr>
               <tr><td>BEND</td><td>BEND (pitch-bend range, 1–12 semitones).</td></tr>
               <tr><td>STORE</td><td>SLOT (P001–P128), STORE, SEND, INIT. Controls whose required waveform or switch is off are drawn dim; they stay editable.</td></tr>
             </tbody>
@@ -370,7 +373,7 @@
 
         <section id="fm6">
           <h3>FM6</h3>
-          <p class="small">Restates msfa from <a href="https://github.com/asb2m10/dexed" target="_blank" rel="noopener">Dexed</a> (Google Inc., Pascal Gauthier).</p>
+          <p class="small">Uses msfa from <a href="https://github.com/asb2m10/dexed" target="_blank" rel="noopener">Dexed</a> (Google Inc., Pascal Gauthier).</p>
           <p>Six-operator FM (Dexed / DX7–compatible): 32 algorithms with an on-screen chart, per-operator frequency, levels, envelopes and scaling, pitch envelope, LFO, and controller / portamento settings. On operator pages, <kbd>PRESETS</kbd> picks the operator; black keys do the same under a held <kbd>EDIT</kbd>. Native slots <strong>F001–F064</strong>; DX7 librarians can send 32-voice banks over USB into F001–F032 or F033–F064.</p>
           <div class="shots">
             <figure class="shot"><img src="ref_map_fm6.png" alt="FM6 section map with operators" width="240" height="240"><figcaption>Section map; black keys pick operators.</figcaption></figure>
@@ -387,7 +390,7 @@
               <tr><td>PITCH EG</td><td>R1–R4: pitch envelope rates.</td></tr>
               <tr><td>PITCH LV</td><td>L1–L4: pitch envelope levels.</td></tr>
               <tr><td>FM LFO</td><td>WAVE (TRI / SAWDN / SAWUP / SQR / SIN / S&amp;H), SPEED, DELAY, KSYNC (key sync).</td></tr>
-              <tr><td>FM LFO 2</td><td>PMD (pitch mod depth), AMD (amp mod depth), PMS (pitch mod sensitivity 0–7).</td></tr>
+              <tr><td>FM LFO 2</td><td>PMD (pitch mod depth), AMD (how much the LFO wobbles amplitude — global amp-mod depth), PMS (pitch mod sensitivity 0–7).</td></tr>
             </tbody>
           </table>
           <h4>Per operator</h4>
@@ -395,13 +398,15 @@
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
               <tr><td>FREQ</td><td>CRS (coarse ratio, or Hz in FIXED), FINE, DTN (detune ±7), MODE (RATIO / FIXED).</td></tr>
-              <tr><td>OUT</td><td>OUT (output level 0–99), VEL (velocity sensitivity 0–7), AMS (amp-mod sensitivity 0–3), ON (operator on/off).</td></tr>
+              <tr><td>OUT</td><td>OUT (output level 0–99), VEL (velocity sensitivity 0–7), AMS (how much this operator follows amp mod, 0–3; see below), ON (operator on/off).</td></tr>
               <tr><td>EG RATE</td><td>R1–R4: envelope rates (0–99).</td></tr>
               <tr><td>EG LVL</td><td>L1–L4: envelope levels (0–99).</td></tr>
-              <tr><td>SCALE</td><td>BRK (break point note), LDEP / RDEP (level scaling depth left / right), RSCL (rate scaling 0–7).</td></tr>
-              <tr><td>CURVE</td><td>LCRV / RCRV: scaling curve (−LIN / −EXP / +EXP / +LIN).</td></tr>
+              <tr><td>SCALE</td><td>Keyboard level and rate scaling. BRK (break point — at this note, level is unchanged), LDEP / RDEP (how strongly level changes left / right of BRK, 0–99; 0 = off), RSCL (rate scaling 0–7: higher keys run the envelope faster).</td></tr>
+              <tr><td>CURVE</td><td>LCRV / RCRV: shape and direction of level scaling on each side of BRK (−LIN / −EXP lower the operator’s level as you move away; +EXP / +LIN raise it). Depth (LDEP / RDEP) sets how much; the curve’s sign sets which way.</td></tr>
             </tbody>
           </table>
+          <p>AMS is not the operator envelope (that’s EG RATE / EG LVL). It’s DX7-style <em>amplitude modulation sensitivity</em>: how strongly this operator’s level follows amp mod from the LFO’s AMD, or from controllers routed to amplitude (wheel / breath / aftertouch with destination A). AMD sets how much amp wobble exists; AMS (0 = ignore, 3 = strongest) sets whether <em>this</em> operator hears it. Use it for tremolo on a carrier, or put AMS on a modulator so the LFO breathes the brightness instead of the overall volume.</p>
+          <p>SCALE and CURVE are DX7-style keyboard level scaling: they raise or lower that operator’s output as you play above or below BRK. Classic use: −LIN or −EXP on the right so high notes get quieter, or so a modulator thins out and the sound gets less bright up the keyboard.</p>
           <h4>Controllers (per track, saved with the project)</h4>
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
@@ -424,31 +429,33 @@
             <figure class="shot"><img src="cz1_env.png" alt="CZ-1 envelope page" width="240" height="240"><figcaption>An eight-step envelope page (rates R1–R8, levels L1–L8).</figcaption></figure>
           </div>
           <h4>Common</h4>
+          <p>Every tone is built from one or two <strong>lines</strong>. A line is a DCO → DCW → DCA chain: pitch, then phase-distortion (timbre), then amplitude — each with its own eight-step envelope. Common pages set how the lines combine, plus shared detune, vibrato and windows. <kbd>PRESETS</kbd> picks which line’s pages you are editing when you are in the per-line section.</p>
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
-              <tr><td>CZ TOOLS</td><td>Actions (OCT+): NAME, 1&nbsp;&gt;&nbsp;2 / 2&nbsp;&gt;&nbsp;1 (copy a line), COMP (compare with the stored tone).</td></tr>
-              <tr><td>CZ LINE</td><td>LINE (LINE1 / LINE2 / 1+2 / 1+1), MOD (OFF / RING / NOISE), OCT (0–2).</td></tr>
-              <tr><td>CZ DETUNE</td><td>SIGN (±), OCT (0–3), NOTE (0–11), FINE (0–60) — line 2 detune.</td></tr>
-              <tr><td>CZ VIBRATO</td><td>WAVE (TRI / SAW UP / SAW DN / SQR), RATE, DEPTH, DELAY.</td></tr>
-              <tr><td>CZ WINDOW</td><td>LINE1 / LINE2 window shape (OFF, SAW DN, TRIANGLE, TRAPEZ, HALF SAW, 2 SAW UP, 2 SAW 6, 2 SAW 7).</td></tr>
+              <tr><td>CZ TOOLS</td><td>NAME (16-character tone name; <kbd>OCT+</kbd> to edit), 1&nbsp;&gt;&nbsp;2 / 2&nbsp;&gt;&nbsp;1 (copy one line’s wave, window, key follow, level, velocity and all three envelopes onto the other — MOD stays with line 1 and is not overwritten), COMP (swap the edited tone with the snapshot taken before your first edit on this track; “NO EDITS” if you have not changed anything yet).</td></tr>
+              <tr><td>CZ LINE</td><td>LINE chooses how many oscillators sound: LINE1 or LINE2 alone (the unused line’s params are drawn dim), 1+2 (both lines with their own settings), or 1+1 (two voices that both use line 1’s params — line 2’s own wave/envelopes are unused, but detune and MOD can still affect the second oscillator). MOD mixes the two lines when more than one is active: OFF (sum), RING (multiply line 1 × line 2), or NOISE (randomly stretch line 2’s phase — a noise-modulated second line). OCT is a global pitch offset (0 = −1 octave, 1 = unison, 2 = +1 octave).</td></tr>
+              <tr><td>CZ DETUNE</td><td>Pitch offset for <em>line 2 only</em>: SIGN (±), OCT (0–3 octaves), NOTE (0–11 semitones), FINE (0–60). Inactive (dim) in LINE1 mode; SIGN only matters when some detune is set. Use with 1+2 or 1+1 for chorusing, intervals, or beating.</td></tr>
+              <tr><td>CZ VIBRATO</td><td>A pitch LFO shared by the tone: WAVE (TRI / SAW UP / SAW DN / SQR), RATE (speed), DEPTH (amount — set this above 0 or the vibrato is silent and WAVE / RATE / DELAY go dim), DELAY (wait after note-on before the vibrato fades in).</td></tr>
+              <tr><td>CZ WINDOW</td><td>A repeating amplitude mask inside <em>every</em> oscillator cycle, for as long as the note plays. WAVE picks the phase-distortion carrier shape; WINDOW then fades that carrier up/down within each period (like a tiny amp envelope that retriggers on every cycle). That changes the waveform’s silhouette and spectrum; OFF leaves the cycle flat (no extra shaping). SAW DN, TRIANGLE, TRAPEZ, HALF SAW, 2 SAW UP, 2 SAW 6 and 2 SAW 7 are different masks. LINE1 and LINE2 each have their own. This is separate from the WAV envelope (which moves DCW / timbre over the note) and the AMP envelope (overall loudness over the note).</td></tr>
             </tbody>
           </table>
           <h4>Per line (LINE 1, LINE 2)</h4>
+          <p>Each line has a waveform page, a touch (level / velocity) page, and three envelopes: <strong>PIT</strong> (pitch / DCO), <strong>WAV</strong> (wave depth / DCW — the phase-distortion amount that brightens or darkens the tone), and <strong>AMP</strong> (loudness / DCA). These are Casio-style rate/level multi-stage envelopes, not ADSR.</p>
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
-              <tr><td>WAVE</td><td>WAVE and WAVE2 (SAW, SQUARE, PULSE, NULL, DBL SINE, SAW-PULS, MULTISIN, PULSE2; WAVE2 adds OFF), W.KEY / A.KEY (wave / amp key follow 0–9).</td></tr>
-              <tr><td>TOUCH</td><td>LEVEL (1–15), V.PIT / V.WAV / V.AMP (velocity to pitch / wave / amp, 0–15).</td></tr>
-              <tr><td>PIT / WAV / AMP envelopes</td><td>Eight rates (R1–R8) and eight levels (L1–L8), 0–99, plus SUS (sustain step) and END (final step). Each line has its own pitch, wave and amp envelope.</td></tr>
+              <tr><td>WAVE</td><td>WAVE is the primary carrier (SAW, SQUARE, PULSE, NULL = silent, DBL SINE, SAW-PULS, MULTISIN for a resonance-like spectrum, PULSE2). WAVE2 is an optional second carrier (same set, plus OFF): when on, the line alternates WAVE ↔ WAVE2 each phase wrap. W.KEY (0–9) is DCW key follow — higher notes get less wave/timbre depth (bright → darker up the keyboard). A.KEY (0–9) is DCA key follow — higher notes run the amp envelope faster (shorter notes up the keyboard).</td></tr>
+              <tr><td>TOUCH</td><td>LEVEL (1–15) is the line’s output level. V.PIT / V.WAV / V.AMP (0–15) set how much MIDI velocity scales pitch, wave depth and amp — soft notes pull those paths down. (The FM-1’s own keys send fixed velocity; velocity matters over MIDI or from the sequencer.)</td></tr>
+              <tr><td>PITCH / WAVE / AMP envelopes</td><td>The envelope shape of the CZ-1 is controlled by eight rates R1–R8 (how fast the envelope moves toward each step’s level — higher = faster) and eight levels L1–L8 (0–99 targets). END (1–8) is the last active step: the envelope only runs through END, and the END step always targets 0 (release to silence; its level value is ignored). SUS selects which level is the sustain step while the key is held; on release the envelope jumps past SUS and finishes through END → 0. SUS must sit before END (otherwise it shows “−” = no sustain). With no SUS, the whole path keeps playing after note-off — useful for long rings. Rates after END and levels at/after END are inactive (dim). Each line has its own Pitch, Wave and Amp envelopes (six envelopes total).</td></tr>
             </tbody>
           </table>
         </section>
 
         <section id="sid">
           <h3>SID</h3>
-          <p class="small">Restates <a href="https://github.com/libsidplayfp/resid" target="_blank" rel="noopener">reSID</a> by Dag Lem, including measured combined-waveform tables from a real 6581 and 8580.</p>
-          <p>A Commodore MOS 6581 / 8580 model per note: waveforms, pulse width, ring, sync, combined waves, the chip’s ADSR, filter and drive. Thirty-two factory presets. The chip uses its own envelope — the shared <a href="#modulation">ENV</a> page does not drive it. Stage knobs: WAVE, PW, CUT, RES.</p>
+          <p class="small">Uses <a href="https://github.com/libsidplayfp/resid" target="_blank" rel="noopener">reSID</a> by Dag Lem, including measured combined-waveform tables from a real 6581 and 8580.</p>
+          <p>Probably the simplest synth engine (in terms of numbers of parameters to program) on the device; use this if you're looking to dial in a quick sound. It models a Commodore MOS 6581 / 8580 chip per note: waveforms, pulse width, ring, sync, combined waves, the chip’s ADSR, filter and drive. Thirty-two factory presets. Stage knobs: WAVE, PW, CUT, RES.</p>
           <table>
             <thead><tr><th>Page</th><th>Control</th><th>What it means</th></tr></thead>
             <tbody>
@@ -467,46 +474,58 @@
         <section id="drum">
           <h3>Drum</h3>
           <p class="small">808 kit: Hügelton’s TR-808 circuit models. 909 kit: the schwung module <a href="https://github.com/athousanddetails/schwung-9W9" target="_blank" rel="noopener">9W9</a> by AThousandDetails (after ER-99), ported via Charles Vestal’s x0x.</p>
-          <p>Synthesized TR-808 and TR-909 kits on the General MIDI key map. The DRUM EDIT pages have <strong>Sound</strong>, <strong>Lanes</strong> and <strong>Voice</strong> tabs. On Sound and Mix, white keys pick which drum you are editing; the knobs then shape that drum.</p>
+          <p>Synthesized TR-808 and TR-909 kits on the General MIDI key map. The DRUM EDIT pages have <strong>Sound</strong> (KIT / HIT macros), <strong>Drum</strong> (per-instrument Sound and Mix), <strong>Lanes</strong> and <strong>Voice</strong> tabs. On Sound and Mix, white keys pick which drum you are editing; the knobs then shape that drum.</p>
           <div class="shots">
             <figure class="shot"><img src="stage_drum.png" alt="Drum Stage" width="240" height="240"><figcaption>Drum Stage: lanes light as they hit.</figcaption></figure>
             <figure class="shot"><img src="drum_sound_808.png" alt="Drum sound page" width="240" height="240"><figcaption>DRUM SOUND: TUNE, DECAY, TONE for the picked drum.</figcaption></figure>
             <figure class="shot"><img src="drum_mix_909.png" alt="Drum mix page" width="240" height="240"><figcaption>DRUM MIX: LEVEL per drum.</figcaption></figure>
             <figure class="shot"><img src="drum.png" alt="Drum step grid" width="240" height="240"><figcaption>The drum grid: white keys step, black keys pick lanes.</figcaption></figure>
           </div>
+          <h4>Kit macros (Sound section)</h4>
+          <p>These four-knob pages shape the whole kit at once (also the Stage knobs for TUNE, TONE, DECY and SNAP).</p>
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
-              <tr><td>DRUM SOUND</td><td>KIT (808 or 909), and TUNE, TONE, DECY (decay) for the drum picked on the keys.</td></tr>
-              <tr><td>DRUM MIX</td><td>LEVEL (and SNAP / snappy) for the picked drum.</td></tr>
+              <tr><td>KIT</td><td>KIT (808 or 909), TUNE (overall pitch), TONE (overall character / brightness), DECY (overall decay).</td></tr>
+              <tr><td>HIT</td><td>SNAP (snare snappy / noise amount), ACC (how strongly velocity changes level — the circuits alone only move about 2&nbsp;dB from soft to hard), KICK (PUNCH keeps the bass-drum attack click; ROUND softens it), DRV (drive into a soft clip, level kept).</td></tr>
+            </tbody>
+          </table>
+          <h4>Per drum (Drum section)</h4>
+          <p>Pick a drum on the white keys, then offset that instrument from the kit macros.</p>
+          <table>
+            <thead><tr><th>Page</th><th>Controls</th></tr></thead>
+            <tbody>
+              <tr><td>DRUM SOUND</td><td>DRUM (which instrument), TUNE, DECAY, and TONE (or SNAPPY on the snare; ATTACK on 909 kick / toms).</td></tr>
+              <tr><td>DRUM MIX</td><td>LEVEL for the picked drum.</td></tr>
               <tr><td>LANES</td><td>Levels for KICK, SNARE, CLAP, HATCL (closed hat).</td></tr>
               <tr><td>LANES 2</td><td>Levels for HATOP (open hat), TOM, RIM, BELL.</td></tr>
             </tbody>
           </table>
-          <p>Stage knobs: TUNE, TONE, DECY, SNAP. The drum grid uses white keys for steps and black keys for lanes; recorded takes use the same NOTES piano roll as other engines after recording stops. A recorded hit can keep its own pitch and length (see <a href="#notes">Notes</a> and DRUM HIT).</p>
+          <p>Stage knobs: TUNE, TONE, DECY, SNAP. The SEQ sequencer drum grid uses white keys for steps and black keys to select which lane; recorded takes use the same NOTES piano roll as other engines after recording stops. A recorded hit can keep its own pitch and length (see <a href="#notes">Notes</a> and DRUM HIT).</p>
         </section>
 
         <section id="voice">
           <h3>Voice</h3>
-          <p>Shared voice allocation and tuning for the track, under <kbd>EDIT</kbd> → VOICE (a list; <kbd>KNOB 2</kbd> moves the row, <kbd>KNOB 1</kbd> sets its value). Prophet and FM6 manage their own voicing; VOICE still sets glide and spread for them.</p>
+          <p>All synthesis engines have a VOICE settings page, with the same options regardless of engine. This includes shared voice allocation and tuning for the track, under <kbd>EDIT</kbd> → VOICE (a list; <kbd>KNOB 2</kbd> moves the row, <kbd>KNOB 1</kbd> sets its value). Prophet and FM6 also have their own voicing pages; VOICE still sets poly/mono mode, glide, priority, pan, mute and spread for them.</p>
           <figure class="shot"><img src="voice.png" alt="Voice list page" width="240" height="240"><figcaption>VOICE list.</figcaption></figure>
           <table>
             <thead><tr><th>Row</th><th>Values</th><th>What it means</th></tr></thead>
             <tbody>
-              <tr><td>VCE</td><td>POLY / MONO / LEG / UNI</td><td>Polyphonic, monophonic, legato, or unison.</td></tr>
-              <tr><td>GLD</td><td>time</td><td>Glide (portamento) time.</td></tr>
-              <tr><td>GLMOD</td><td>RATE / TIME</td><td>Glide follows a fixed rate or a fixed time.</td></tr>
-              <tr><td>PRIO</td><td>LAST / LOW / HIGH</td><td>Note priority when voices run out.</td></tr>
-              <tr><td>ALLOC</td><td>ROT / REUSE</td><td>Rotate through voices, or reuse the same one.</td></tr>
-              <tr><td>DTUNE</td><td>0–127</td><td>Detune between stacked / unison voices.</td></tr>
-              <tr><td>PAN</td><td>−100…+100%</td><td>Track pan.</td></tr>
-              <tr><td>MUTE</td><td>OFF / ON</td><td>Mute the track.</td></tr>
-              <tr><td>SPRD</td><td>0–100%</td><td>Stereo spread of stacked / unison voices.</td></tr>
+              <tr><td>Voice</td><td>POLY / MONO / LEG / UNI</td><td>Play the instrument polyphonically (multiple tones at the same time), monophonic (only one tone at a time), legato (single voice but don't retrigger envelopes when you change note), or unison (monophonic playback using multiple voices thickened together).</td></tr>
+              <tr><td>Glide</td><td>time</td><td>Glide (portamento) time.</td></tr>
+              <tr><td>Glide Mode</td><td>RATE / TIME</td><td>Glide follows a fixed rate or a fixed time.</td></tr>
+              <tr><td>Priority</td><td>LAST / LOW / HIGH</td><td>Note priority when voices run out.</td></tr>
+              <tr><td>Allocation</td><td>ROT / REUSE</td><td>Rotate through voices, or reuse the same one.</td></tr>
+              <tr><td>Detune</td><td>0–127</td><td>Detune between stacked / unison voices.</td></tr>
+              <tr><td>Pan</td><td>−100…+100%</td><td>Track pan.</td></tr>
+              <tr><td>Mute</td><td>OFF / ON</td><td>Mute the track.</td></tr>
+              <tr><td>Spread</td><td>0–100%</td><td>Stereo spread of stacked / unison voices.</td></tr>
             </tbody>
           </table>
         </section>
       </section>
 
+      <!-- Sound designer is not enabled on v1.1.0 but is on later versions, saving this text for future manual versions
       <section id="designer">
         <h2>Sound designer</h2>
         <p>Build a sound on the device from a goal or from the engine’s own pages. Open it from the HOME hold menu (<strong>SOUND DESIGNER</strong>), or from a sound page’s sheet (<kbd>OCT+</kbd> held → Sound designer).</p>
@@ -518,6 +537,7 @@
         </ol>
         <p>Motion on the designed track is paused while you design so it cannot overwrite edits. Knob turns in the designer do not record motion.</p>
       </section>
+      -->
 
       <section id="modulation">
         <h2>Envelopes and modulation</h2>
@@ -531,11 +551,11 @@
         <table>
           <thead><tr><th>Page</th><th>Controls</th></tr></thead>
           <tbody>
-            <tr><td>ENV</td><td>ATK, DEC, SUS, REL — shared amp envelope. Unused when the engine has its own (Prophet, FM6, CZ-1, SID).</td></tr>
-            <tr><td>ENV DEST</td><td>FLT, PIT, SHP — envelope amount to filter, pitch and shape (±).</td></tr>
-            <tr><td>LFO</td><td>RATE, WAVE (SIN / TRI / SAW / SQR / S&amp;H), PHS (phase), FADE (fade-in).</td></tr>
-            <tr><td>LFO 2</td><td>SYNC (OFF, 4BAR…1/32 tempo divisions), TRIG (NOTE / FREE), POL (BI / UNI).</td></tr>
-            <tr><td>LFO DEST</td><td>PIT, FLT, SHP (±), AMP — LFO amount to pitch, filter, shape and level.</td></tr>
+            <tr><td>ENV</td><td>ATK (Attack - how loud to make the start of a sound), DEC (Decay - how loud the sound goed down after its initial peak), SUS (Sustain - how loud to play the note while the key is pressed down), REL (Release - how long to fade the sound out after a note is released) — shared amp envelope.</td></tr>
+            <tr><td>ENV DEST</td><td>FLT, PIT, SHP — envelope amount to filter, pitch and wave shape (±).</td></tr>
+            <tr><td>LFO</td><td>RATE (speed), WAVE (SIN / TRI / SAW / SQR / S&amp;H) (type of wave), PHS (phase), FADE (fade-in).</td></tr>
+            <tr><td>LFO 2</td><td>SYNC (OFF, 4BAR…1/32 tempo divisions), TRIG (NOTE / FREE), Polarity (Bidirectional up and down in amount, or Unidirectional only).</td></tr>
+            <tr><td>LFO DEST</td><td>pitch, filter, wave shape (±), amp amount .</td></tr>
           </tbody>
         </table>
         <h3>MOD matrix</h3>
@@ -565,7 +585,7 @@
           <tbody>
             <tr><td>FX</td><td>DST (distortion), CHO (chorus send), DLY (delay send), REV (reverb send) — for the selected track.</td></tr>
             <tr><td>SLICER</td><td>SLCR (OFF / GATE / STUT), PAT (pattern 1–16), RATE (1/8…32T), DEPTH — a tempo-synced 16-step gate or stutter.</td></tr>
-            <tr><td>DLY</td><td>TIME (division, incl. dotted and triplet), FDBK (feedback), TONE (colour), MIX.</td></tr>
+            <tr><td>DLY</td><td>TIME (division, incl. dotted and triplet), FDBK (feedback), TONE (color), MIX.</td></tr>
             <tr><td>DLY 2</td><td>TYPE (DIGI / TAPE / DG-PP / TP-PP ping-pong), WEAR (tape wear).</td></tr>
             <tr><td>REVERB</td><td>TYPE (ROOM / SPRING / HALL), SIZE, DAMP.</td></tr>
             <tr><td>CHORUS</td><td>CRT (rate), CDP (depth).</td></tr>
@@ -578,7 +598,7 @@
         <h2>Performance effects</h2>
         <p>Hold <kbd>FX</kbd> (or lock it with a double-press) for punch-in effects on the keys.</p>
         <figure class="shot"><img src="perform_held.png" alt="Performance effects layer" width="240" height="240"><figcaption>FX hold layer: effects on the white keys.</figcaption></figure>
-        <p>White keys default to repeat (1/8 · 1/16 · 1/32), reverse, LPF, HPF, tape stop, freeze, OCT UP / OCT DN (harmonizer with shimmer), flanger and phaser. Hold a white key and turn <kbd>PRESETS</kbd> to remap it; <kbd>EDIT</kbd> restores the default. Black keys mute tracks while held (not saved with the preset).</p>
+        <p>White keys default to repeat (1/8 · 1/16 · 1/32), reverse, Low Pass Filter (LPF), High Pass Filter (HPF), tape stop, freeze, OCT UP / OCT DN (harmonizer with shimmer), flanger and phaser. Hold a white key and turn <kbd>PRESETS</kbd> to remap it; <kbd>EDIT</kbd> restores the default. Black keys mute tracks while held (not saved with the preset).</p>
         <ul>
           <li>The knobs are performance macros only (FILTER, CRUSH, THROW, DEPTH / shimmer) — they do not rewrite the saved sound.</li>
           <li>MENU → <strong>FX LATCH</strong>: tap to toggle instead of hold. <kbd>FX</kbd>+<kbd>OCT−</kbd> clears latched effects.</li>
@@ -588,33 +608,33 @@
 
       <section id="scales">
         <h2>Scales and chords</h2>
-        <p>Press <kbd>SCL</kbd> for SCALES, again for the SCL settings list, again for CHORD. Hold <kbd>SCL</kbd> for a quick layer: keys set ROOT; knobs set ROOT / scale / chord / voicing.</p>
+        <p>Press <kbd>SEL</kbd> for SCALES, again for the SEL settings list, again for CHORD. Hold <kbd>SEL</kbd> for a quick layer: keys set ROOT; knobs set ROOT / scale / chord / voicing.</p>
         <div class="shots">
-          <figure class="shot"><img src="scl.png" alt="Scale settings list" width="240" height="240"><figcaption>SCL settings.</figcaption></figure>
+          <figure class="shot"><img src="scl.png" alt="Scale settings list" width="240" height="240"><figcaption>SEL settings.</figcaption></figure>
           <figure class="shot"><img src="scale_picker_favorites.png" alt="Scale picker" width="240" height="240"><figcaption>SCALES picker.</figcaption></figure>
           <figure class="shot"><img src="chord.png" alt="Chord page" width="240" height="240"><figcaption>CHORD.</figcaption></figure>
-          <figure class="shot"><img src="layer_scl_active.png" alt="SCL hold layer" width="240" height="240"><figcaption>Hold SCL: ROOT on the keys, scale and chord on the knobs.</figcaption></figure>
+          <figure class="shot"><img src="layer_scl_active.png" alt="SEL hold layer" width="240" height="240"><figcaption>Hold SEL: ROOT on the keys, scale and chord on the knobs.</figcaption></figure>
         </div>
         <table>
           <thead><tr><th>Page / control</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td>SCALES</td><td><kbd>KNOB 1</kbd> family (or ALL / FAV), <kbd>KNOB 2</kbd> scale, ROOT, QNT. PRESETS also browses scales. Seventy scales including microtonal equal divisions, just intonation, temperaments, maqam models and Bohlen–Pierce.</td></tr>
-            <tr><td>SCL</td><td>ROOT (per track), scale favourite, QNT, TRN (transpose ±24 semitones).</td></tr>
+            <tr><td>SEL</td><td>ROOT (per track), scale favourite, QNT, TRN (transpose ±24 semitones).</td></tr>
             <tr><td>CHORD</td><td>CHRD (OFF, DIA3, DIA7, MAJ, MIN, DOM7, MAJ7, MIN7, SUS4, POW) and VOIC (CLOSE, OPEN, INV1, INV2, +OCT).</td></tr>
           </tbody>
         </table>
-        <p><strong>QNT:</strong> OFF (chromatic), SNAP (every key, rounded down to the scale), WHITE (white keys only; black silent), ALL (every key is the next scale degree), MPC (MPC Bank H pads → successive degrees; DEG sets what pad H02 plays). SCL, QNT and DEG are shared by all tracks; ROOT and TRN are per track. Chord keys work on the keys, MIDI in, recording and the arpeggiator. Drum kits keep their own key map.</p>
+        <p><strong>QNT:</strong> OFF (chromatic), SNAP (every key, rounded down to the scale), WHITE (white keys only; black silent), ALL (every key is the next scale degree), MPC (for an Akai MPC pad controller). With QNT MPC, Bank&nbsp;H pads H01–H16 (MIDI notes 20–35, MPC Sample’s default map) play successive scale degrees instead of fixed pitches — so you can play the scale in order across the pad grid. When QNT is MPC, a <strong>DEG</strong> control appears: it sets which scale degree pad&nbsp;H02 plays; H01 is one degree below that, H03 one above, and so on through H16. Incoming MIDI follows WHITE, ALL and MPC the same way the keys do. SEL, QNT and DEG are shared by all tracks; ROOT and TRN (transpose) are per track. Chord keys work on the keys, MIDI in, recording and the arpeggiator. Drum kits keep their own key map.</p>
       </section>
 
       <section id="arp">
         <h2>Arpeggiator</h2>
-        <p><kbd>ARP</kbd> opens ARP and ARP 2 for the selected track. The beat light follows the arp when it runs.</p>
+        <p>The beat light follows the arp when it runs.</p>
         <figure class="shot"><img src="arp.png" alt="Arpeggiator page" width="240" height="240"><figcaption>ARP.</figcaption></figure>
         <table>
           <thead><tr><th>Page</th><th>Controls</th></tr></thead>
           <tbody>
-            <tr><td>ARP</td><td>MODE (OFF, UP, DN, UPDN, RND, ORD, REPEAT), RATE (division), OCT (1–4), GATE (note length %).</td></tr>
-            <tr><td>ARP 2</td><td>SWG (swing), PROB (probability each step plays), HOLD (keep arpeggiating after release), ORD (NOTE or PLAY order).</td></tr>
+            <tr><td>ARP</td><td>MODE (Off, Up, Down, Up then Down, Random, Order as played, Repeat), Rate (note division), Octave (1–4), Gate (note length %).</td></tr>
+            <tr><td>ARP 2</td><td>SWG (swing), PROB (probability each step plays), HOLD (keep arpeggiating after release), ORD (ordered by NOTE pitch or PLAY order).</td></tr>
           </tbody>
         </table>
       </section>
@@ -626,26 +646,39 @@
           <thead><tr><th>Page</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td>NOTES</td><td>Edit entered steps and recorded takes (piano roll; drum grid on Drum).</td></tr>
-            <tr><td>PATTERN</td><td>LEN, DIV, SWING, GATE for the selected track’s pattern.</td></tr>
-            <tr><td>TEMPO</td><td>BPM and song swing (saved with the project); track playback QNT for recorded takes.</td></tr>
+            <tr><td>PATTERN</td><td>How long the selected track’s loop is, how fast its steps run, and its own swing and note length.</td></tr>
+            <tr><td>TEMPO</td><td>Project speed (BPM) and song swing; optional playback snap for recorded takes on the selected track.</td></tr>
             <tr><td>PATTERNS</td><td>Four tracks × eight patterns at once.</td></tr>
             <tr><td>SONG</td><td>Arrangement of sections.</td></tr>
-            <tr><td>MOTION</td><td>Knob automation for the selected pattern (shown once that pattern has motion).</td></tr>
+            <tr><td>MOTION</td><td>Knob automation for the selected pattern (shown once that pattern has some automation saved).</td></tr>
             <tr><td>DRUM HIT</td><td>On a Drum track: the macros of a selected recorded hit.</td></tr>
           </tbody>
         </table>
         <h4>PATTERN and TEMPO</h4>
+        <p>Think of a <strong>pattern</strong> as one looping phrase on one track — a drum groove, a bass line, a chord stab. <strong>PATTERN</strong> sets how that loop is built for the selected track. <strong>TEMPO</strong> sets how fast the whole song runs, plus a song-wide groove feel. Each track can still have its own pattern length, step size, swing and note length, so the four parts need not line up the same way.</p>
         <div class="shots">
-          <figure class="shot"><img src="pattern.png" alt="Pattern page" width="240" height="240"><figcaption>PATTERN.</figcaption></figure>
-          <figure class="shot"><img src="tempo.png" alt="Tempo page" width="240" height="240"><figcaption>TEMPO.</figcaption></figure>
+          <figure class="shot"><img src="pattern.png" alt="Pattern page" width="240" height="240"><figcaption>PATTERN: this track’s loop shape.</figcaption></figure>
+          <figure class="shot"><img src="tempo.png" alt="Tempo page" width="240" height="240"><figcaption>TEMPO: song speed and feel.</figcaption></figure>
         </div>
+        <h5>Pattern</h5>
         <table>
-          <thead><tr><th>Page</th><th>Controls</th></tr></thead>
+          <thead><tr><th>Control</th><th>What it does</th></tr></thead>
           <tbody>
-            <tr><td>PATTERN</td><td>LEN (1–64 steps), DIV (step division), SWG (swing %), GATE (step length %).</td></tr>
-            <tr><td>TEMPO</td><td>BPM (40–240), SWG (song swing %), QNT (playback quantize for recorded takes: OFF, 1/4…4BAR).</td></tr>
+            <tr><td>LEN</td><td>How many steps before the pattern repeats (1–64). Sixteen steps at 1/16 is one bar of common 4/4; eight steps is a half-bar loop; longer lengths stretch a phrase across more bars.</td></tr>
+            <tr><td>DIV</td><td>How long each step lasts relative to the beat: 1/4, 1/8, 1/16, 1/32, triplets (8T, 16T), or slower spans (1/2, 1/1, 2BAR, 4BAR). Finer divisions pack more events into the same time; coarser ones make each step last longer.</td></tr>
+            <tr><td>SWG</td><td>Swing for this track’s pattern: delays the even-numbered steps so the rhythm leans instead of sitting dead straight. 0% is even; raise it for a shuffled or “swung” feel. Independent of song swing on TEMPO.</td></tr>
+            <tr><td>GATE</td><td>How long manually entered steps stay on, as a percentage of the step. Low values are short and clipped; high values are sustained (ties and recorded note lengths still follow what you played or edited).</td></tr>
+          </tbody>
+          </table>
+        <h5>Tempo</h5>
+        <table>
+          <thead><tr><th>Control</th><th>What it does</th></tr></thead>
+            <tr><td>BPM</td><td>Song speed in beats per minute (40–240). Saved with the project. With the internal clock you can also tap tempo from the GLO hold layer.</td></tr>
+            <tr><td>SWG</td><td>Song swing: a project-wide lean applied on top of timing. Use this when every track should share the same groove; use PATTERN SWG when only one part should shuffle.</td></tr>
+            <tr><td>QNT</td><td>Playback quantize for <em>recorded</em> takes on the selected track: OFF keeps your original timing; choose a grid (1/4 … 4BAR) to snap playback to that swung grid. The piano roll still shows the original take — turn QNT off anytime to hear it again. This is separate from scale QNT on SEL.</td></tr>
           </tbody>
         </table>
+        <p>Capture into an empty pattern can set LEN for you (1, 2 or 4 bars) — see <a href="#recording">Recording</a>.</p>
 
         <section id="notes">
           <h3>Notes</h3>
@@ -662,7 +695,7 @@
               <tr><td><kbd>KNOB 2</kbd> PITCH</td><td>Change pitch; on an empty manual step, insert a note. Keys and MIDI enter notes or chords when stopped (then advance when released).</td></tr>
               <tr><td><kbd>KNOB 3</kbd> LENGTH</td><td>Resize. Hold <kbd>ENV</kbd> for fine 1/16-step adjustments on recorded notes.</td></tr>
               <tr><td><kbd>KNOB 4</kbd> VEL</td><td>Velocity 1–127. Hold <kbd>ENV</kbd> and turn KNOB 4 for SLIDE on a manual note.</td></tr>
-              <tr><td><kbd>PRESETS</kbd></td><td>Zoom (16 steps down to one). Hold <kbd>SCL</kbd> and turn SELECT or KNOB 1 to move; hold <kbd>ENV</kbd> and turn them to resize.</td></tr>
+              <tr><td><kbd>PRESETS</kbd></td><td>Zoom (16 steps down to one). Hold <kbd>SEL</kbd> and turn SELECT or KNOB 1 to move; hold <kbd>ENV</kbd> and turn them to resize.</td></tr>
               <tr><td><kbd>EDIT</kbd></td><td>Tap to delete the highlighted pitch. Hold <kbd>EDIT</kbd> while recording to erase under the playhead (header: ERASING).</td></tr>
               <tr><td><kbd>OCT+</kbd></td><td>On empty space places a note; on a note opens its sheet: Length, Velocity, Chance, Slide, Delete note.</td></tr>
             </tbody>
@@ -719,7 +752,7 @@
           <li>Tap <kbd>REC</kbd> to arm or disarm the selected track. Transport stays put.</li>
           <li><kbd>REC</kbd>+<kbd>PLAY</kbd> arms and starts in one gesture. An armed track records while playback runs: timing, velocity and held length are kept (including repeats and overlapping chord releases).</li>
           <li><strong>Capture:</strong> while the transport runs, Melodee keeps what you play on tracks that are not recording. Hold <kbd>REC</kbd> to write the selected track’s last bars into its pattern. An empty pattern takes 1, 2 or 4 bars and sets LEN; a pattern with notes takes its last LEN steps. Hold <kbd>SAVE</kbd> to undo. You cannot capture while that track is armed for recording.</li>
-          <li><strong>SEQ → TEMPO → QNT</strong> snaps recorded playback to a swung grid; <strong>OFF</strong> (default) restores the original take. The piano roll always shows the original. This is separate from scale QNT on SCL. Track GATE affects manually entered steps.</li>
+          <li><strong>SEQ → TEMPO → QNT</strong> snaps recorded playback to a swung grid; <strong>OFF</strong> (default) restores the original take. The piano roll always shows the original. This is separate from scale QNT on SEL. Track GATE affects manually entered steps.</li>
           <li>A project shares <strong>1,024 timed notes</strong> across all 32 banks. <strong>RECORDING FULL</strong> leaves existing takes intact; clear or replace recorded steps to free space.</li>
         </ul>
         <p>Menu preferences: AUDIO CLICK, CLICK LEVEL, COUNT-IN, NOTE PREVIEW and CHORD ENTRY (HOLD vs ADD). Count-in runs with internal clock when starting an armed track; external clock skips it.</p>
@@ -755,7 +788,7 @@
           <thead><tr><th>Item</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td>COLOR</td><td>NIGHT / DAY / CONTRAST palettes.</td></tr>
-            <tr><td>SPEAKER</td><td>OFF / LOWCUT / BASS+ for the internal speaker.</td></tr>
+            <tr><td>SPEAKER</td><td>EQ settings to apply to the internal speaker: OFF / LOWCUT / BASS+ . Note that OFF does not mute the speaker; it only applies turns off the speaker EQ.</td></tr>
             <tr><td>HOLD</td><td>Layer hold time (0.3–0.6&nbsp;s).</td></tr>
             <tr><td>LIGHTS</td><td>Idle indicator brightness, OFF (only pressed / engaged / selectable) through FULL.</td></tr>
             <tr><td>USB AUDIO</td><td>In+Out / In / Out / Off.</td></tr>
