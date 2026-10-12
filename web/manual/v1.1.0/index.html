@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-only
      Copyright (C) 2026 Relyt29 (@relyt29), Signals Intelligence Sound (https://sigintsound.com/) -->
-<!-- Melodee user manual. One file, English only. Screenshots: web/manual-shots/*.png (NIGHT UI renders, tools/manual_shots.py). -->
+<!-- Melodee user manual v1.1.0. English only. Screenshots live beside this file (NIGHT UI renders, tools/manual_shots.py). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -30,6 +30,12 @@
   .site .links a { color: var(--dim); text-decoration: none; }
   .site .links a:hover { color: var(--fg); }
   .site .links a[aria-current="page"] { color: var(--fg); }
+  .site .ver { display: flex; align-items: baseline; gap: 6px; color: var(--dim); font-size: 13px; }
+  .site .ver select {
+    font: inherit; font-size: 13px; color: var(--fg);
+    background: var(--bg); border: 1px solid var(--line); padding: 0 4px;
+  }
+  .site .ver select:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
   .small { color: var(--dim); font-size: 13px; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 32px; align-items: start; }
   .toc { margin: 0 0 8px; }
@@ -73,9 +79,14 @@
   <nav class="site">
     <span class="brand">Melodee</span>
     <div class="links">
-      <a href="../editor/">Patch Editor</a>
-      <a href="../installer/">Installer</a>
-      <a href="../manual/" aria-current="page">Manual</a>
+      <a href="../../editor/">Patch Editor</a>
+      <a href="../../installer/">Installer</a>
+      <a href="../" aria-current="page">Manual</a>
+      <label class="ver">Version
+        <select id="manual-ver" aria-label="Manual version">
+          <option value="../v1.1.0/" selected>v1.1.0 (latest)</option>
+        </select>
+      </label>
     </div>
   </nav>
   <h1>Manual</h1>
@@ -880,6 +891,37 @@
     const el = document.getElementById(a.getAttribute("href").slice(1));
     if (el) obs.observe(el);
   }
+
+  (async () => {
+    const sel = document.getElementById("manual-ver");
+    if (!sel) return;
+    const match = location.pathname.match(/\/(v\d+(?:\.\d+)*)(?:\/|$)/);
+    const current = match ? match[1] : "v1.1.0";
+    const verKey = (v) => v.replace(/^v/, "").split(".").map((n) => +n || 0);
+    try {
+      const vs = await (await fetch("../versions.json")).json();
+      const sorted = [...vs].sort((a, b) => {
+        const A = verKey(a), B = verKey(b);
+        for (let i = 0; i < Math.max(A.length, B.length); i++) {
+          const d = (A[i] || 0) - (B[i] || 0);
+          if (d) return d;
+        }
+        return 0;
+      });
+      const latest = sorted[sorted.length - 1]?.replace(/\/$/, "");
+      sel.replaceChildren(...sorted.map((v) => {
+        const name = v.replace(/\/$/, "");
+        const opt = document.createElement("option");
+        opt.value = "../" + name + "/";
+        opt.textContent = name === latest ? name + " (latest)" : name;
+        return opt;
+      }));
+    } catch (_) { /* keep the markup fallback */ }
+    sel.value = "../" + current + "/";
+    sel.addEventListener("change", () => {
+      location.href = sel.value + location.hash;
+    });
+  })();
 </script>
 </body>
 </html>

@@ -90,12 +90,19 @@ jobs:
             --version "next-${commit:0:7}" --commit "$commit" --built-at "$(cat build/nightly-built-at.txt)"
           cp build/SHA256SUMS-nightly .nightly-pages/firmware/SHA256SUMS-nightly
           mkdir -p .nightly-pages/webapp/manual
-          cp web/manual.html .nightly-pages/webapp/manual/index.html
-          cp web/manual-shots/*.png .nightly-pages/webapp/manual/
+          cp -R web/manual/. .nightly-pages/webapp/manual/
+          python3 -c "
+import json, pathlib, re
+man = pathlib.Path('.nightly-pages/webapp/manual')
+ver_re = re.compile(r'^v\d+(?:\.\d+)*$')
+vers = sorted((p.name for p in man.iterdir() if p.is_dir() and ver_re.match(p.name)),
+              key=lambda s: tuple(int(x) for x in s[1:].split('.')))
+(man / 'versions.json').write_text(json.dumps(vers, indent=2) + '\n')
+"
           cd .nightly-pages
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add webapp/installer/index.html webapp/manual/index.html webapp/manual firmware
+          git add webapp/installer/index.html webapp/manual firmware
           if ! git diff --cached --quiet; then
             git commit -m 'build: publish next nightly variants'
             git push origin HEAD:gh-pages

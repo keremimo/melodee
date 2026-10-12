@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Copyright (C) 2026 Relyt29 (@relyt29), Signals Intelligence Sound (https://sigintsound.com/) -->
+<!-- Loads the latest Melodee manual from versions.json (web/manual/v*/). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melodee manual</title>
+<script>
+(async () => {
+  const hash = location.hash || "";
+  const fallback = "v1.1.0/";
+  const verKey = (v) => v.replace(/^v/, "").replace(/\/$/, "").split(".").map((n) => +n || 0);
+  try {
+    const vs = await (await fetch("versions.json")).json();
+    const latest = [...vs].sort((a, b) => {
+      const A = verKey(a), B = verKey(b);
+      for (let i = 0; i < Math.max(A.length, B.length); i++) {
+        const d = (A[i] || 0) - (B[i] || 0);
+        if (d) return d;
+      }
+      return 0;
+    }).pop();
+    const dir = latest.replace(/\/$/, "") + "/";
+    location.replace(dir + hash);
+  } catch (_) {
+    location.replace(fallback + hash);
+  }
+})();
+</script>
+</head>
+<body>
+<p><a href="v1.1.0/">Melodee manual</a></p>
+</body>
+</html>

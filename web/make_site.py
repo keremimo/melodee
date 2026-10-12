@@ -14,7 +14,7 @@
   webapp/synth-editor/              the synth-only branch's editor (publish_synth.py), kept as published
   webapp/installer/index.html       index_pkg.html, self-contained (fm1pkg.js, fm1ota.js, metadata inlined)
   webapp/editor/index.html          editor.html (+ fukiai.ttf, FUKIAI-LICENSE.txt)
-  webapp/manual/index.html          manual.html (+ web/manual-shots/*.png, NIGHT UI screenshots)
+  webapp/manual/                    web/manual/ (index → latest v*/, each version dir has HTML + screenshots)
   src/                              not touched
 
   web/make_site.py build/melodee-X.Y.fwsc build/melodee-X.Y-1core.fwsc X.Y OUT_DIR
@@ -171,13 +171,30 @@ def main(pkg, single, version, out, nightly=None, installer_only=False, synth=No
     for doc in ("LICENSE", "LICENSING.md"):
         shutil.copy(HERE.parent / doc, fw / doc)
     shutil.copy(HERE / "editor.html", ed / "index.html")
-    shutil.copy(HERE / "manual.html", man / "index.html")
-    figs = HERE / "manual-shots"                 # NIGHT UI screenshots (tools/manual_shots.py)
-    pngs = sorted(figs.glob("*.png"))
-    if not pngs:
-        raise SystemExit(f"no screenshots in {figs}: run tools/manual_shots.py")
-    for p in pngs:
-        shutil.copy(p, man / p.name)
+    man_src = HERE / "manual"                    # versioned manuals: vX.Y.Z/ (index.html + screenshots)
+    ver_re = re.compile(r"^v\d+(?:\.\d+)*$")
+    vers = sorted(
+        (p for p in man_src.iterdir() if p.is_dir() and ver_re.match(p.name)),
+        key=lambda p: tuple(int(x) for x in p.name[1:].split(".")),
+    )
+    if not vers:
+        raise SystemExit(f"no versioned manuals in {man_src}: add web/manual/vX.Y.Z/")
+    for p in man_src.iterdir():                  # index.html, versions.json, …
+        if p.is_file():
+            shutil.copy(p, man / p.name)
+    for vdir in vers:
+        dest = man / vdir.name
+        dest.mkdir(parents=True, exist_ok=True)
+        pngs = sorted(vdir.glob("*.png"))
+        if not pngs:
+            raise SystemExit(f"no screenshots in {vdir}: run tools/manual_shots.py --version {vdir.name}")
+        if not (vdir / "index.html").is_file():
+            raise SystemExit(f"{vdir}/index.html is missing")
+        for p in vdir.iterdir():
+            if p.is_file():
+                shutil.copy(p, dest / p.name)
+    (man / "versions.json").write_text(          # always derive from the dirs on disk
+        json.dumps([p.name for p in vers], indent=2) + "\n", encoding="utf-8")
     for f in ("fukiai.ttf", "FUKIAI-LICENSE.txt", "fm1backup.js"):
         if not installer_only and (HERE / f).exists():
             shutil.copy(HERE / f, ed / f)

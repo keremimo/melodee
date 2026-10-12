@@ -171,10 +171,10 @@ Or, to install your own build from the web installer, make a local copy of the s
 
 - `webapp/installer/` — self-contained installer
 - `webapp/editor/` — patch editor
-- `webapp/manual/` — `manual.html` as `index.html`, plus screenshots from `web/manual-shots/`
+- `webapp/manual/` — versioned manuals from `web/manual/` (`index.html` loads the latest `v*/`; each version folder holds its HTML and screenshots)
 - `firmware/` — both `.fwsc` packages, LICENSE texts
 
-The manual’s screenshots are committed under `web/manual-shots/` (NIGHT palette only).
+The manual’s screenshots are committed under each `web/manual/vX.Y.Z/` (NIGHT palette only).
 `build/` is gitignored, so regenerating them is a separate step when the UI changes.
 
 ```
@@ -187,8 +187,9 @@ MELODEE_RAM_AUDIO=1 MELODEE_DUAL_CORE=0 ./build.sh --release 1.3.0
 tests/run_tests.sh
 #    SOUND=0 tests/run_tests.sh   # skip the long sound tests if you only need UI/screenshots
 
-# 2) Copy the allowlisted NIGHT frames into the committed screenshot folder for the manual.
-python3 tools/manual_shots.py            # build/ui_new/NIGHT → web/manual-shots/
+# 2) Copy the allowlisted NIGHT frames into the latest versioned manual folder.
+python3 tools/manual_shots.py            # build/ui_new/NIGHT → web/manual/v*/ (latest)
+# python3 tools/manual_shots.py --version v1.1.0
 # python3 tools/manual_shots.py --check  # report missing/stale without writing
 
 # 3) Assemble Pages layout and serve it (Web MIDI needs localhost / HTTPS).
@@ -200,7 +201,7 @@ cd /tmp/melodee-site && python3 -m http.server 8000
 #      http://localhost:8000/webapp/editor/
 ```
 
-Steps 1–2 are only required when the UI (or the allowlist in `tools/manual_shots.py`) changed and you need to refresh `web/manual-shots/`. For a routine site assemble from already-committed screenshots, start at step 3. `make_site.py` still requires `web/manual-shots/*.png` to exist — it copies them into `webapp/manual/` beside `index.html`.
+Steps 1–2 are only required when the UI (or the allowlist in `tools/manual_shots.py`) changed and you need to refresh a version’s screenshots. For a routine site assemble from already-committed screenshots, start at step 3. `make_site.py` still requires at least one `web/manual/vX.Y.Z/` with `index.html` and `*.png` — it copies each version folder into `webapp/manual/`.
 
 Installing firmware is at your own risk. If an install fails and the FM-1 no longer
 starts, identify its recovery mode using the steps below.
