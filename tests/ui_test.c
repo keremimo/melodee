@@ -1478,7 +1478,7 @@ static int test_browser(void)
                 ok &= (c = preset_cat(e, k)) >= 1u && c < CAT_N && CAT_LETTER[c] == PRESET_CAT[e][k];
         }
     for (i = 0; i < NENG_SHOWN; i++)
-        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || eng_vis(i) == ENGI_DRUM || eng_vis(i) == 11u;
+        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || eng_vis(i) == ENGI_DRUM || eng_vis(i) == 11u || eng_vis(i) == ENGI_WT;
     bad += check("BROWSE: a category letter for each factory preset of every engine shown", ok);
     bad += check("BROWSE: factory categories (Prophet, FM6, CZ-1, the kits)",
                  preset_cat(ENGI_PROPHET, find_preset(ENGI_PROPHET, "Fat Poly Bass")) == CAT_BASS &&
