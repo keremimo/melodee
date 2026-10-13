@@ -2552,7 +2552,9 @@ static void ui_input(void)
             if (pattern_request(TSEL, (uint32_t)clamp((int32_t)from + s, 0, (int32_t)trk_npat(song.sel) - 1))) ui_message("STOP SONG TO SWITCH");
             ui.force = 1;
         } else if (step_gesture(s)) {                   /* ENV / SCL / a key held: the note's length, its place */
-        } else if (!ui.home) {                          /* the section's pages (BPM: SEQ > TEMPO; the notes, the hits:
+        } else if (ui.home) {                           /* Stage: the next / previous engine (as PRESETS' KNOB 4) */
+            select_engine(eng_step(TSEL->eng_req, s));
+        } else {                                        /* the section's pages (BPM: SEQ > TEMPO; the notes, the hits:
                                                          * KNOB 1) */
             page_scroll(s);
         } else {                                        /* HOME: what the menu's HOME SELECT says */

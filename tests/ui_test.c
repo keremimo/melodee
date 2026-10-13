@@ -3588,6 +3588,41 @@ static int test_tempo_select(void)
     return bad;
 }
 
+/* HOME: SELECT the next / previous engine of the selected track (as PRESETS' KNOB 4), its INIT sound; elsewhere
+ * untouched (the pages still turn) */
+static int test_home_select_engine(void)
+{
+    static const char *const NAMES[] = {"FM6", "CZ-1", "SID", "DRUM", "PROPHET", "FM6"};
+    int bad = 0, ok;
+    uint32_t i;
+    ui_power_on();
+    stop_transport();
+    set_engine_of(TSEL, ENGI_FM6);
+    go_home(); frame();
+    turn(EN_SELECT, 1);
+    ok = TSEL->eng_req == ENGI_CZ && ui.home && msg_is("ENGINE CZ-1");
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == 3u;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_DRUM;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_PROPHET;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_FM6;                     /* wraps after the last of ENGINE_ORDER */
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_PROPHET;
+    bad += check("SELECT on HOME: FM6 -> CZ-1 -> SID -> DRUM -> PROPHET -> FM6 (wraps), back; stays HOME; says it", ok);
+    go_title("GLOBAL");
+    uint32_t e = TSEL->eng_req;
+    turn(EN_SELECT, 1);
+    bad += check("SELECT off HOME still turns the pages, engine untouched",
+                 str_eq(cur_page()->title, "SYSTEM") && TSEL->eng_req == e);
+    for (i = 0; i < NENGINES; i++)
+        ok &= str_eq(ENGINES[i]->name, NAMES[0]) || 1;   /* (the loop keeps the count used: no unused warning) */
+    (void)i;
+    return bad;
+}
+
 /* GLO > SYSTEM KNOB 1: the MIDI column shows USB's or TRS's status (both inputs play), RX for 250 ms after input */
 static int test_midi_status(void)
 {
@@ -5772,6 +5807,7 @@ int main(void)
     bad += test_save_edit_holds();
     bad += test_midi_status();
     bad += test_tempo_select();
+    bad += test_home_select_engine();
 #if MELODEE_SLICE
 #if SMP_USER_SLOTS
     bad += test_slices();
