@@ -1,0 +1,2 @@
+# Keep recovery source provenance identical across native build runners.
+tools/*.py text eol=lf

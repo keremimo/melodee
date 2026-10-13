@@ -39,6 +39,9 @@ runs Felucca.
   Apple Silicon), and Linux are included in the release downloads. They back up the
   device first and require `--write` to restore firmware. See
   [recovery instructions](BUILDING.md#recover-a-black-screen-fm-1).
+- **Official V15 recovery:** recovery downloads were corrected on 2026-10-13 to
+  accept the unmodified M-VAVE `FM-1.fwsc`, verified by its complete SHA-256.
+  Download the recovery archive again if an older copy rejects official firmware.
 
 This removes the relocation step; it does not establish the cause of the reported
 1.3.0 startup failures.

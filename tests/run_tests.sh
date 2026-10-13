@@ -242,6 +242,7 @@ if core; then
     run "installer CLI (fm1_install.py) against a simulated FM-1" python3 tests/install_test.py
     run "ROM USB recovery: backup, protected regions, interrupted writes and transport failures" python3 tests/recovery_test.py
     run "release assets: firmware identity, application bytes, native provenance and ZIP integrity" python3 tests/release_assets_test.py
+    run "recovery correction: preserve signed firmware and verify public replacement assets" python3 tests/recovery_correction_test.py
 fi
 
 if core && [ $TABLES = 1 ]; then

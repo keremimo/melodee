@@ -243,6 +243,14 @@ Choose a firmware package whose boot has been verified. For investigating 1.3 st
 failures, use a previously working release rather than reinstalling the suspected build.
 Download the `.fwsc` and its `SHA256SUMS` from the corresponding release.
 
+The corrected recovery tool also accepts the unmodified official M-VAVE V15
+`FM-1.fwsc` (`FM-1_015`), with whole-file SHA-256
+`db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a`.
+The recovery archives on the 1.3.1 release were corrected on 2026-10-13 to accept
+V15's metadata; download again if an older executable rejects it. Keep the backup:
+stock firmware may overwrite Melodee
+data after boot even though the recovery operation preserves it.
+
 ```sh
 # Identify ROM UBOOT; no loader or package needed.
 python3 tools/fm1_recover.py --info

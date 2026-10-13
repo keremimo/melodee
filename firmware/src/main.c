@@ -358,9 +358,6 @@ static void fm1_main(void)
         ui_input();
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
         settings_poll();                              /* queued settings save: only while stopped */
-#if MELODEE_DUAL_CORE
-        fm1_core1_poll();                             /* a retired CPU1 sits out until power-off */
-#endif
         oc_poll();                                    /* OVERCLOCK: back to 320 MHz after a fault, the restart */
         melodee_dbg.stage = 2;
         ui_leds();

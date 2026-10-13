@@ -14,7 +14,7 @@ import tarfile
 import urllib.request
 import zipfile
 
-from fm1_recover import VERSION, read_loader, sha256
+from fm1_recover import Package, VERSION, read_loader, sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 LIBUSB_VERSION = "1.0.30"
@@ -37,7 +37,12 @@ def fetch(url, path, digest=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True, choices=["windows-x64", "macos-arm64", "macos-x64", "linux-x64"])
+    parser.add_argument("--stock-package", type=Path,
+                        help="smoke-test genuine official V15 offline; the firmware is never included in the archive")
     args = parser.parse_args()
+    if args.stock_package:
+        if not Package(args.stock_package).stock_v15:
+            raise RuntimeError("--stock-package requires the verified official M-VAVE V15 package")
     actual = (sys.platform, platform.machine().lower())
     expected = {"windows-x64": ("win32", "amd64"), "macos-arm64": ("darwin", "arm64"),
                 "macos-x64": ("darwin", "x86_64"), "linux-x64": ("linux", "x86_64")}[args.target]
@@ -91,6 +96,8 @@ def main():
     fixture = out / "smoke.fwsc"
     fixture.write_bytes(make_package())
     run(exe, fixture, "--check")
+    if args.stock_package:
+        run(exe, args.stock_package.resolve(), "--check")
     # Enumerating an empty CI runner exercises the bundled PyUSB/libusb backend.
     probe = subprocess.run([str(exe), "--info", "--wait", "0"], capture_output=True, text=True)
     if probe.returncode != 1 or "ROM UBOOT device not found" not in probe.stderr:
@@ -123,6 +130,10 @@ def main():
                 "pyinstaller": importlib.metadata.version("pyinstaller"), "libusb": LIBUSB_VERSION,
                 "libusb_sha256": sha256((stage / library_name).read_bytes()),
                 "executable_sha256": sha256(exe.read_bytes()), "smoke_tests_passed": True,
+                "stock_v15_smoke_tested": bool(args.stock_package),
+                "source_sha256": {name: sha256((ROOT / "tools" / name).read_bytes())
+                                  for name in ("fm1_recover.py", "fm1_install.py", "fm1pkg_make.py", "build_recovery.py")},
+                "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
                 "hardware_tested": False}
     (bundle / "BUILD_INFO.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (bundle / "SHA256SUMS").write_text("".join(f"{sha256(p.read_bytes())}  {p.relative_to(bundle).as_posix()}\n"

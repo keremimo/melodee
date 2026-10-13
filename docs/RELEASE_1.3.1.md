@@ -1,3 +1,15 @@
+**Recovery tool correction — 2026-10-13:** all four recovery archives now accept
+the unmodified official M-VAVE V15 `FM-1.fwsc` (`FM-1_015`), verified by whole-file
+SHA-256. Older recovery downloads rejected its empty metadata entry and vendor
+checksum conventions; download the archive again. Modified V15 files are refused
+before USB access. Stock firmware is not included; obtain it from M-VAVE. Keep the
+full backup, because stock firmware may overwrite Melodee data after boot.
+
+Only the recovery tools, instructions, checksums and recovery provenance were
+updated. The signed v1.3.1 tag and firmware downloads are unchanged.
+`BUILD_INFO.json` records the correction source separately under
+`recovery_correction` and `recovery_builds`.
+
 The updater no longer scans or relocates legacy Prophet banks at `0x89000`.
 That abandoned region is treated as application flash. Current Prophet banks at
 `0x93000` remain supported; older banks are no longer recovered automatically on upgrade.

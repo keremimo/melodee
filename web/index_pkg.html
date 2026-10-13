@@ -46,7 +46,7 @@
   <p class="small" data-t="direct"></p>
   <p class="small" data-t="beta"></p>
   <p class="small"><span data-t="brick"></span>
-    <a href="https://github.com/kurogedelic/FM-1-transporter" target="_blank" rel="noopener" style="color:inherit">FM-1-transporter</a></p>
+    <a href="https://github.com/keremimo/melodee/blob/next/docs/RECOVERY.md" target="_blank" rel="noopener" style="color:inherit" data-t="recoveryLink"></a></p>
   <p><label><input type="radio" name="build" id="build-dual" checked> <span data-t="dual"></span></label><br>
     <label><input type="radio" name="build" id="build-single"> <span data-t="single"></span></label></p>
   <p class="small" data-t="singleWhy"></p>
@@ -92,11 +92,20 @@ const $ = (id) => document.getElementById(id);
 const TEXT = {
   intro: "Connect the FM-1 by USB. (Works in Chrome or Edge.)",
   warn: "Do not unplug the USB cable while writing.",
-  install: "Install",
+  install: "Install", other: "日本語",
+  nightlyTitle: "Nightly (next)", "nightly-dual": "Nightly — dual core",
+  "nightly-single": "Nightly — single core", "nightly-dualTag": "nightly, dual core", "nightly-singleTag": "nightly, single core",
+  nightlyWhy: "Development builds from next. Pick the clock on the FM-1 in the HOME-held menu's OVERCLOCK (320 MHz by default). Save a complete backup in the editor before installing. Choose Standard to return to the release.",
+  synthTitle: "Synth only (optional)", "synth-dual": "Synth only — dual core", "synth-single": "Synth only — single core",
+  "synth-dualTag": "synth only, dual core", "synth-singleTag": "synth only, single core",
+  synthWhy: "A one-track sound module for playing and recording into a computer: every synth and its sound editing, ARP, CHORD and SCALES, the effects (drive, chorus, delay, reverb) and stereo recording over USB audio. There is no sequencer, song or project saving; PLAY holds the ARP. Projects and presets saved on the FM-1 stay where they are and come back when you choose Standard and install again. Save a complete backup in the editor before installing.",
+  synthEditor: "Synth-only editor (sounds, effects and settings from the computer)",
   dual: "Standard (dual core)", single: "Single core", dualTag: "standard", singleTag: "single core",
   singleWhy: "The single-core build is for FM-1s that crash with the standard build (a red MELODEE CRASH screen, freezes, or restarts into update mode). It never starts the FM-1's second core, which the official firmware does not use either. PROPHET then plays up to five voices instead of eight, and heavy FM6 and PROPHET sounds reach the CPU limit sooner. To go back, choose Standard and install again.",
+  editor: "Editor (after installing: edit sounds and sequences from the computer)",
   direct: "Connect the USB cable directly to the computer. No probe or Transporter is needed.",
-  brick: "If an install fails and the FM-1 no longer starts, recovering it needs a Transporter:",
+  brick: "If the FM-1 does not start after installation, follow the recovery steps for its USB mode (including official V15 recovery):",
+  recoveryLink: "USB recovery instructions and downloads",
   beta: "Melodee 1.0 is a field-testing release; please report problems on GitHub. The author accepts no responsibility if your FM-1 is damaged or misbehaves because of this custom firmware. Use it at your own risk.",
   back: "Get official FM-1 V15 from M-VAVE and select the unmodified FM-1.fwsc. The browser validates it locally; it is not sent to a server.",
   stockTitle: "Return to official V15", stockFile: "Official FM-1.fwsc", stockGo: "Back up and return to official V15",

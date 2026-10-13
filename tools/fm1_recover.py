@@ -28,7 +28,7 @@ import sys
 import tempfile
 import time
 
-from fm1_install import logical_image, product_of
+from fm1_install import STOCK_V15_SHA256, logical_image, product_of
 from fm1pkg_make import chipkey_decode, crc16, enc, sfc
 
 APP_LO, APP_HI, FLASH_SIZE, SECTOR = 0x4000, 0x93000, 0x100000, 4096
@@ -66,6 +66,11 @@ class Package:
         raw = self.path.read_bytes()
         self.product = product_of(raw)
         require(re.fullmatch(r"FM-1_\d+", self.product), "Package is not for an FM-1")
+        self.digest = sha256(raw)
+        self.stock_v15 = self.product == "FM-1_015"
+        if self.stock_v15:
+            require(self.digest == STOCK_V15_SHA256,
+                    "Official V15 package differs from the verified M-VAVE FM-1.fwsc; download the unmodified original")
         image = logical_image(raw)
         header = bytearray(image[:64])
         enc(header, 0, 64)
@@ -82,13 +87,18 @@ class Package:
             entry = bytearray(entries[i * 80:(i + 1) * 80])
             enc(entry, 0, 80)
             kind, _, check, _, off, size, padded = struct.unpack_from("<HHHHIII", entry)
-            require(off >= 0x400 and size > 0 and size <= padded and off + padded <= ((total + 31) & ~31),
+            # Genuine V15 includes an empty info.log and auxiliary vendor entries
+            # whose checksum fields are not plain-data CRCs. Its pinned whole-file
+            # SHA-256 authenticates those bytes; Melodee keeps the strict CRC path.
+            require(off >= 0x400 and (size > 0 or self.stock_v15) and size <= padded and
+                    off + padded <= ((total + 31) & ~31),
                     "Invalid package entry extent")
             require(off + size <= total and all(off + padded <= lo or off >= hi for lo, hi in ranges),
                     "Overlapping or truncated package entries")
             ranges.append((off, off + padded))
             data = image[off:off + size]
-            require(crc16(data) == check, "Bad package data checksum")
+            if not self.stock_v15 or kind in (0, 100):
+                require(crc16(data) == check, "Bad package data checksum")
             if kind == 0:
                 require(self.flash is None and size == APP_HI and entry[64:].split(b"\0", 1)[0] == b"flash.bin",
                         "Expected one flash.bin with application boundary 0x93000")
@@ -114,7 +124,6 @@ class Package:
         app = bytearray(self.flash[APP_LO:APP_LO + 32])
         sfc(app, 0, 32, 0, self.key)
         require(crc16(app[2:]) == struct.unpack_from("<H", app)[0], "Application header does not match package chip key")
-        self.digest = sha256(raw)
 
 
 def cipher(data):
@@ -320,6 +329,8 @@ def main(argv=None):
         package = Package(args.package) if args.package else None
         if package:
             print(f"Package: {package.product}; SHA-256 {package.digest}")
+            if package.stock_v15:
+                print("Verified official M-VAVE V15. Recovery preserves saved-data bytes; stock firmware may change them after boot.")
         loader_path = args.loader
         if not args.info and not loader_path and os.environ.get("AC79_SDK"):
             loader_path = Path(os.environ["AC79_SDK"]) / "cpu/wl82/tools/wl82loader.bin"

@@ -5,6 +5,7 @@ import binascii
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -35,6 +36,40 @@ def make_package(key=0x980F):
     P.sfc(app, 0, 32, 0, key)
     flash[R.APP_LO:R.APP_LO + 32] = app
     return P.ufw(bytes(flash), b"FELUCCA-LOADER-1", "FM-1_91030")
+
+
+def make_stock_fixture():
+    """Synthetic V15 entry conventions, with no vendor firmware redistributed."""
+    image = R.logical_image(make_package())
+    header = bytearray(image[:64])
+    P.enc(header, 0, 64)
+    entries = bytearray(image[64:224])
+    off = (len(image) + 31) & ~31
+    empty = bytearray(80)
+    struct.pack_into("<HHHHIII", empty, 0, 2, 2, 0, 0, off, 0, 0)
+    empty[64:72] = b"info.log"
+    P.enc(empty, 0, 80)
+    entries += empty
+    auxiliary = bytearray(80)
+    # The vendor metadata has a checksum convention unlike a plain-data CRC.
+    data = b"vendor metadata!"
+    struct.pack_into("<HHHHIII", auxiliary, 0, 50, 3, P.crc16(data) ^ 1, 0, off, len(data), 32)
+    auxiliary[64:67] = b"USR"
+    P.enc(auxiliary, 0, 80)
+    entries += auxiliary
+    image = bytearray(image + bytes(off - len(image)) + data)
+    struct.pack_into("<IH", header, 4, len(image), 4)
+    struct.pack_into("<H", header, 2, P.crc16(entries))
+    struct.pack_into("<H", header, 0, P.crc16(header[2:]))
+    P.enc(header, 0, 64)
+    image[:64] = header
+    image[64:64 + len(entries)] = entries
+    raw = bytearray()
+    product = "FM-1_015"
+    for i in range(20):
+        raw += image[i * 47:(i + 1) * 47]
+        raw.append(ord(product[i]) + i + 1 if i < len(product) else 0x7D)
+    return bytes(raw + image[940:])
 
 
 class FakeROM(R.Link):
@@ -244,6 +279,69 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(R.RecoveryError, "outside"):
                 self.link.write_sector(address, bytes(R.SECTOR))
         self.assertEqual(self.link.erases, [])
+
+
+class OfficialRecoveryTests(RecoveryTests):
+    def setUp(self):
+        super().setUp()
+        raw = make_stock_fixture()
+        self.stock_hash = patch.object(R, "STOCK_V15_SHA256", R.sha256(raw))
+        self.stock_hash.start()
+        self.addCleanup(self.stock_hash.stop)
+        self.path.write_bytes(raw)
+        self.package = R.Package(self.path)
+
+    # The inherited recovery tests also exercise stock writes, failures and bounds.
+    # Package-specific Melodee fixtures still use the strict non-stock branch.
+    def test_stock_metadata_accepted_only_with_exact_whole_file_hash(self):
+        self.assertTrue(self.package.stock_v15)
+        self.assertEqual(self.package.product, "FM-1_015")
+        with patch.object(R, "STOCK_V15_SHA256", "0" * 64):
+            with self.assertRaisesRegex(R.RecoveryError, "unmodified original"):
+                R.Package(self.path)
+
+    def test_modified_stock_rejected_before_usb_access(self):
+        original = self.path.read_bytes()
+        for address in (10, 1200, R.APP_LO + 0x400 + 20, len(original) - 1):
+            raw = bytearray(original)
+            raw[address] ^= 1
+            self.path.write_bytes(raw)
+            with patch.object(R, "Link", side_effect=AssertionError("USB opened")), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(R.main([str(self.path), "--write"]), 1)
+        self.assertEqual(self.link.erases, [])
+
+    def test_metadata_exceptions_do_not_apply_to_melodee(self):
+        image = R.logical_image(self.path.read_bytes())
+        raw = bytearray()
+        product = "FM-1_91031"
+        for i in range(20):
+            raw += image[i * 47:(i + 1) * 47]
+            raw.append(ord(product[i]) + i + 1 if i < len(product) else 0x7D)
+        self.path.write_bytes(raw + image[940:])
+        with self.assertRaisesRegex(R.RecoveryError, "entry extent"):
+            R.Package(self.path)
+
+
+@unittest.skipUnless(os.environ.get("FM1_STOCK_V15"), "set FM1_STOCK_V15 to test genuine official V15")
+class GenuineV15Tests(unittest.TestCase):
+    def test_genuine_package_check_and_restore_preserve_protected_flash(self):
+        path = Path(os.environ["FM1_STOCK_V15"])
+        package = R.Package(path)
+        self.assertEqual(package.digest, R.STOCK_V15_SHA256)
+        self.assertTrue(package.stock_v15)
+        with patch.object(R, "Link", side_effect=AssertionError("USB opened")):
+            self.assertEqual(R.main([str(path), "--check"]), 0)
+        before = bytearray(b"\x5a" * R.FLASH_SIZE)
+        link = FakeROM(before)
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+            link.output = Path(folder)
+            report = R.recover(link, package, R.read_loader(R.default_loader()), link.output, True)
+            self.assertEqual((link.output / "full-flash-before.bin").read_bytes(), before)
+        self.assertEqual(link.erases, list(range(R.APP_LO, R.APP_HI, R.SECTOR)))
+        self.assertTrue(report["full_flash_verified"])
+        self.assertEqual(link.nor[:R.APP_LO], before[:R.APP_LO])
+        self.assertEqual(link.nor[R.APP_HI:], before[R.APP_HI:])
+        self.assertEqual(link.nor[R.APP_LO:R.APP_HI], package.flash[R.APP_LO:])
 
 
 class TransportTests(unittest.TestCase):

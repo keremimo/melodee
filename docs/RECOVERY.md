@@ -19,6 +19,18 @@ Choose a `.fwsc` firmware package from the release downloads. The recovery tool
 does not select or download firmware for you. To investigate a startup regression,
 use a previously working version. Compare the file with the release's `SHA256SUMS`.
 
+The corrected tool also supports the unmodified **official M-VAVE V15 `FM-1.fwsc`**
+(identity `FM-1_015`). Download it from M-VAVE; it is not included in the recovery
+archive. The complete file must have SHA-256
+`db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a`.
+Modified V15 packages are refused before USB access. The recovery archives on the
+1.3.1 release were corrected on 2026-10-13 to accept V15's metadata layout. If an
+older download rejects V15, download the archive again.
+
+For official recovery, substitute `FM-1.fwsc` in the commands below. Keep the full
+backup: recovery retains the bootloader and saved-data bytes, but official firmware
+may overwrite Melodee's songs, sounds or settings after it boots.
+
 On macOS/Linux:
 
 ```sh
