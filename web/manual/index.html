@@ -10,7 +10,7 @@
 <script>
 (async () => {
   const hash = location.hash || "";
-  const fallback = "v1.1.0/";
+  const fallback = "v1.3.1/";
   const verKey = (v) => v.replace(/^v/, "").replace(/\/$/, "").split(".").map((n) => +n || 0);
   try {
     const vs = await (await fetch("versions.json")).json();
@@ -31,6 +31,6 @@
 </script>
 </head>
 <body>
-<p><a href="v1.1.0/">Melodee manual</a></p>
+<p><a href="v1.3.1/">Melodee manual</a></p>
 </body>
 </html>

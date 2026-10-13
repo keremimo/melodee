@@ -38,10 +38,10 @@ SHOTS = [
     "project.png", "project_new.png", "new_key.png", "new_roles.png",
     # Envelopes and modulation
     "env.png", "env_dest.png", "lfo.png", "mod.png",
-    # Effects
-    "fx.png", "slicer.png", "dly.png", "reverb_spring.png",
-    # Performance effects / hold layers
-    "perform_held.png", "layer_glo_active.png", "layer_scl_active.png", "layer_edit_active.png",
+    # Effects: track inserts and the shared return
+    "fx_phaser.png", "fx_echo.png", "fx_reverb.png", "fx_send.png", "fx_bus1.png",
+    # Hold layers
+    "layer_glo_active.png", "layer_scl_active.png", "layer_edit_active.png",
     # Scales and chords
     "scl.png", "scale_picker_favorites.png", "chord.png",
     # Arpeggiator
@@ -52,7 +52,7 @@ SHOTS = [
     # Mixer / global
     "mixer.png", "global.png", "system.png",
     # Menu
-    "menu.png", "menu_hold.png",
+    "menu.png", "menu_hold.png", "menu_autosave_on.png", "menu_usb_stereo.png", "menu_clock.png",
     # Engines
     "ref_map_p5.png", "ref_edit_osc.png", "fm6_alg_01.png", "fm6_eg.png", "fm6_freq.png",
     "fm6_store.png", "ref_map_fm6.png", "cz1_env.png", "voice.png", "drum_sound_808.png", "drum_mix_909.png",
