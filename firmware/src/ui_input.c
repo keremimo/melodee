@@ -1958,6 +1958,9 @@ static void select_turn(uint32_t hs, int32_t s)
         ui_say(b, v);
         return;
     }
+    case HS_ENGINE:                                     /* (this branch: the WT branch adds the engine choice) */
+        select_engine(eng_step(TSEL->eng_req, s));
+        return;
     case HS_SWING:
         song.g[G_SWING] = (int16_t)clamp(song.g[G_SWING] + accel(EN_SELECT, s, GP[G_SWING].max - GP[G_SWING].min),
                                          GP[G_SWING].min, GP[G_SWING].max);
@@ -2552,9 +2555,7 @@ static void ui_input(void)
             if (pattern_request(TSEL, (uint32_t)clamp((int32_t)from + s, 0, (int32_t)trk_npat(song.sel) - 1))) ui_message("STOP SONG TO SWITCH");
             ui.force = 1;
         } else if (step_gesture(s)) {                   /* ENV / SCL / a key held: the note's length, its place */
-        } else if (ui.home) {                           /* Stage: the next / previous engine (as PRESETS' KNOB 4) */
-            select_engine(eng_step(TSEL->eng_req, s));
-        } else {                                        /* the section's pages (BPM: SEQ > TEMPO; the notes, the hits:
+        } else if (!ui.home) {                          /* the section's pages (BPM: SEQ > TEMPO; the notes, the hits:
                                                          * KNOB 1) */
             page_scroll(s);
         } else {                                        /* HOME: what the menu's HOME SELECT says */

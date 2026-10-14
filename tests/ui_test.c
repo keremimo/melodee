@@ -3596,24 +3596,19 @@ static int test_home_select_engine(void)
     ui_power_on();
     stop_transport();
     set_engine_of(TSEL, ENGI_FM6);
+    HOME_SELECT = HS_ENGINE;                             /* (this branch's addition: the ENGINE choice) */
     go_home(); frame();
     turn(EN_SELECT, 1);
-    printf("D1: %u %d [%s]\n", TSEL->eng_req, ui.home, ui.msg);
     ok = TSEL->eng_req == ENGI_CZ && ui.home && msg_is("ENGINE CZ-1");
     turn(EN_SELECT, 1);
-    printf("D2: %u\n", TSEL->eng_req);
     ok &= TSEL->eng_req == 3u;
     turn(EN_SELECT, 1);
-    printf("D3: %u\n", TSEL->eng_req);
     ok &= TSEL->eng_req == ENGI_DRUM;
     turn(EN_SELECT, 1);
-    printf("D4: %u\n", TSEL->eng_req);
     ok &= TSEL->eng_req == ENGI_WT;
     turn(EN_SELECT, 1);
-    printf("D5: %u\n", TSEL->eng_req);
     ok &= TSEL->eng_req == ENGI_PROPHET;
     turn(EN_SELECT, 1);
-    printf("D6: %u\n", TSEL->eng_req);
     ok &= TSEL->eng_req == ENGI_FM6;
     turn(EN_SELECT, -1);
     ok &= TSEL->eng_req == ENGI_PROPHET;
@@ -3633,6 +3628,7 @@ static int test_home_select_engine(void)
     turn(EN_SELECT, 1);
     bad += check("SELECT off HOME still turns the pages, engine untouched",
                  str_eq(cur_page()->title, "SYSTEM") && TSEL->eng_req == e);
+    HOME_SELECT = HS_BPM;                                /* (the default again) */
     return bad;
 }
 
