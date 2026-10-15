@@ -1056,6 +1056,12 @@ int main(int argc, char **argv)
         cpu_parts[ncpu][3][0] = 4, cpu_parts[ncpu][3][1] = 4, cpu_parts[ncpu][3][2] = DRUM_HITS;
         j->parts = (const uint8_t (*)[3])cpu_parts[ncpu++];
         j->e = 0xFF;
+        j = add(J_CPU, "cpu/mix/wt_drums");     /* the WT engine inside a mix: WT + the 808 kit */
+        memset(cpu_parts[ncpu], 0, sizeof cpu_parts[ncpu]);
+        cpu_parts[ncpu][0][0] = ENGI_WT, cpu_parts[ncpu][0][1] = 1, cpu_parts[ncpu][0][2] = 8;
+        cpu_parts[ncpu][3][0] = 4, cpu_parts[ncpu][3][1] = 4, cpu_parts[ncpu][3][2] = DRUM_HITS;
+        j->parts = (const uint8_t (*)[3])cpu_parts[ncpu++];
+        j->e = 0xFF;
         j = add(J_CPU, "cpu/mix/3parts_full_drums");
         memset(cpu_parts[ncpu], 0, sizeof cpu_parts[ncpu]);
         cpu_parts[ncpu][0][0] = ENGI_FM6, cpu_parts[ncpu][0][1] = 0, cpu_parts[ncpu][0][2] = 8;
@@ -1160,7 +1166,7 @@ int main(int argc, char **argv)
      * increase. The recorded overhead keeps each existing absolute limit
      * unchanged and still credits improvements in the active mix. */
     nc = load_kv(cpath, cpu, MAXJ);
-    idle_base = kv_get(cpu, nc, J[c1 - 3u].name) ? atof(kv_get(cpu, nc, J[c1 - 3u].name)) : 0;
+    idle_base = kv_get(cpu, nc, J[c1 - 4u].name) ? atof(kv_get(cpu, nc, J[c1 - 4u].name)) : 0;
     for (i = c0; i < c1; i++) {
         const job_t *j = &J[i];
         const char *want = kv_get(cpu, nc, j->name);
@@ -1215,7 +1221,7 @@ int main(int argc, char **argv)
         if (eng_ok(e))
             printf("regress:   %-8s %-14s %6.0f instr  %6.1f ns\n", ENGINES[e]->name, eng_preset(ENGINES[e], heavy_p[e])->name,
                    heavy[e], heavy_ns[e]);
-    for (i = c1 - 3u; i < c1; i++)
+    for (i = c1 - 4u; i < c1; i++)
         printf("regress:   %-23s %6.0f instr  %6.1f ns\n", J[i].name + 8, J[i].r.ipc, J[i].r.ns);
 
     printf("regress: %u golden renders (%u changed, %u gone), %u health failures, %u voice / routing checks failed, "

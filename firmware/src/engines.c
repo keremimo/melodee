@@ -18,6 +18,7 @@
 #include "eng_drum.c"           /* DRUM: synthesized 808 circuits (drum_808.c) */
 #include "eng_noise.c"
 #include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c) */
+#include "eng_wt.c"             /* WT: the wavetable bank sweeps (melodee_wt.h, tools/gen_wt_tables.py) */
 #if MELODEE_SLICE
 #include "eng_slice.c"
 #else
@@ -143,6 +144,8 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_CZ,                     /* 15: native Casio CZ-1 */
     &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, /* 16..18 reserved */
     &ENG_P5_TEST,                /* 19: Prophet (ANALOG's ID 0 stays reserved) */
+    &ENG_RETIRED,                /* 20: held by the USER_NATIVE_P5 source id, not an engine */
+    &ENG_WT,                     /* 21: wavetable (ENGI_WT) */
 };
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
@@ -182,6 +185,7 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     13,                          /* SLICE */
 #endif
     10,                          /* DRUM */
+    ENGI_WT,                     /* WT */
 };
 
 /* Retired synth records (ANALOG and DIGITAL since 2.0 too) retain their stored identity and render silence.
@@ -197,7 +201,7 @@ static int eng_extra_retired(uint32_t e)
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 static int eng_ok(uint32_t e)
 {
-    return e < NENGINES && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != 14u && (MELODEE_SLICE || e != ENGI_SLICE);
+    return e < NENGINES && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != 14u && e != 20u && (MELODEE_SLICE || e != ENGI_SLICE);   /* 20: the USER_NATIVE_P5 source id, not an engine */
 }
 static uint32_t eng_sound_idx(uint32_t e)
 {

@@ -400,6 +400,24 @@ static int test_sound_loads(void)
     up_load(3);
     project_load(1);
     bad += check("a project load drops the copy and takes none", undo.trk == 0 && undo_depth == 0);
+    /* the same flow against the unified library with the WT engine (a generic engine past the
+     * natives: the record must stay valid and reload identical) */
+    ui_power_on();
+    track_select(0);
+    set_engine_of(&trk[0], ENGI_WT);
+    trk[0].p[P_E0] = 3;                           /* BANK: VOX */
+    trk[0].p[P_E1] = 77;                          /* MORPH */
+    my_steps(&trk[0]);
+    up_store(4, "WT MINE");
+    bad += check("a WT user preset stores into the shared library", up_used(4) && up_rec(4)->engine == ENGI_WT &&
+                 up_rec(4)->np == P_COUNT);
+    set_engine_of(&trk[0], 3);                    /* leave: a general sound */
+    track_defaults_steps(&trk[0]);
+    before = trk[0];
+    up_load(4);
+    bad += check("a WT user preset loads: engine, bank and morph back, steps kept", trk[0].eng_req == ENGI_WT &&
+                 trk[0].p[P_E0] == 3 && trk[0].p[P_E1] == 77 &&
+                 !memcmp(trk[0].step, before.step, sizeof before.step));
     ui_power_on();
     bad += check("sample engines retired with reserved IDs",!eng_ok(4) && !eng_ok(8) && !eng_ok(13) && !eng_ok(14));
     host_808_kit(t);
@@ -1423,7 +1441,7 @@ static int test_browser(void)
                 ok &= (c = preset_cat(e, k)) >= 1u && c < CAT_N && CAT_LETTER[c] == PRESET_CAT[e][k];
         }
     for (i = 0; i < NENG_SHOWN; i++)
-        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || eng_vis(i) == ENGI_DRUM || eng_vis(i) == 11u;
+        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || eng_vis(i) == ENGI_DRUM || eng_vis(i) == 11u || eng_vis(i) == ENGI_WT;
     bad += check("BROWSE: a category letter for each factory preset of every engine shown", ok);
     bad += check("BROWSE: factory categories (Prophet, FM6, CZ-1, the kits)",
                  preset_cat(ENGI_PROPHET, find_preset(ENGI_PROPHET, "Fat Poly Bass")) == CAT_BASS &&
@@ -3358,6 +3376,50 @@ static int test_tempo_select(void)
     return bad;
 }
 
+/* HOME: SELECT the next / previous engine of the selected track (as PRESETS' KNOB 4), its INIT sound; elsewhere
+ * untouched (the pages still turn) */
+static int test_home_select_engine(void)
+{
+    int bad = 0, ok;
+    ui_power_on();
+    stop_transport();
+    set_engine_of(TSEL, ENGI_FM6);
+    HOME_SELECT = HS_ENGINE;                             /* (this branch's addition: the ENGINE choice) */
+    go_home(); frame();
+    turn(EN_SELECT, 1);
+    ok = TSEL->eng_req == ENGI_CZ && ui.home && msg_is("ENGINE CZ-1");
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == 3u;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_DRUM;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_WT;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_PROPHET;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_FM6;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_PROPHET;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_WT;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_DRUM;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == 3u;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_CZ;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_FM6;
+    bad += check("SELECT on HOME: FM6 -> CZ-1 -> SID -> DRUM -> WT -> PROPHET -> FM6 (wraps), back; stays HOME; says it", ok);
+    go_title("GLOBAL");
+    uint32_t e = TSEL->eng_req;
+    turn(EN_SELECT, 1);
+    bad += check("SELECT off HOME still turns the pages, engine untouched",
+                 str_eq(cur_page()->title, "SYSTEM") && TSEL->eng_req == e);
+    HOME_SELECT = HS_BPM;                                /* (the default again) */
+    return bad;
+}
+
 /* GLO > SYSTEM KNOB 1: the MIDI column shows USB's or TRS's status (both inputs play), RX for 250 ms after input */
 static int test_midi_status(void)
 {
@@ -5042,6 +5104,7 @@ int main(void)
     bad += test_save_edit_holds();
     bad += test_midi_status();
     bad += test_tempo_select();
+    bad += test_home_select_engine();
 #if MELODEE_SLICE
 #if SMP_USER_SLOTS
     bad += test_slices();

@@ -1601,6 +1601,9 @@ static void home_select_turn(int32_t s)
         ui_say(b, v);
         return;
     }
+    case HS_ENGINE:                                     /* (this branch: the WT branch adds the engine choice) */
+        select_engine(eng_step(TSEL->eng_req, s));
+        return;
     case HS_SWING:
         song.g[G_SWING] = (int16_t)clamp(song.g[G_SWING] + accel(EN_SELECT, s, GP[G_SWING].max - GP[G_SWING].min),
                                          GP[G_SWING].min, GP[G_SWING].max);
