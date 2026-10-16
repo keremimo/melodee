@@ -110,6 +110,11 @@ static uint8_t sync_reload;                  /* engine / preset / project / user
 #define BOX_X 2                       /* panels and rows: x 2 .. 237 */
 #define BOX_W 236
 
+#if BOARD_SMK37
+typedef uint32_t ui_btnmask_t;   /* bits of panel button ids (SMK-37: 18 buttons) */
+#else
+typedef uint16_t ui_btnmask_t;   /* bits of panel button ids (FM-1: 14 buttons) */
+#endif
 static struct {
     uint8_t designer_mode;       /* the sound designer: START, the stages (ui_designer.c) */
     uint8_t home;
@@ -137,7 +142,7 @@ static struct {
     uint8_t entry_open;          /* SEQ: keys held since the first press of this entry */
     uint8_t step_move;           /* a held SELECT modifier gesture: one edit until the modifier is released */
     uint8_t step_oct_used;       /* OCT buttons consumed by EDIT undo or redo */
-    uint16_t step_mods, step_used; /* STEP's ENV/SCL buttons awaiting release, and the gestures consumed */
+    ui_btnmask_t step_mods, step_used; /* STEP's ENV/SCL buttons awaiting release, and the gestures consumed */
     uint8_t lane;                /* SEQ > STEP on a DRUM track (the grid): the lane the keys and KNOB 3 / 4 edit */
     uint8_t hot_col, hot_t;      /* column whose knob was just turned (drawn white) */
     uint8_t import_refresh, new_active;
@@ -169,7 +174,7 @@ static struct {
     uint8_t ly;                  /* the layer whose button is down (LAYER_*), 0 = none */
     uint8_t lock; /* double-tapped quick layer */
     uint8_t layer;               /* the layer whose map is shown (LAYER_*), 0 = none */
-    uint16_t pg_down;            /* page buttons down (panel ids) that act when let go */
+    ui_btnmask_t pg_down;        /* page buttons down (panel ids) that act when let go */
     uint32_t layer_sig;          /* drawn-state cache of the map */
     char msg[32];                /* (a sound's name fits: the toast wraps it, ui_draw.c draw_toast) */
     char msg2[32];               /* a second message, shown when the first is over */
@@ -707,7 +712,7 @@ static void momentary_take(uint32_t slot)
     }
     if(!native){uint32_t i;for(i=0;i<momentary.count && momentary.ptr[i]!=vp;i++);
         if(i==momentary.count && i<P_COUNT+G_COUNT){momentary.ptr[i]=vp;momentary.value[i]=*vp;momentary.count++;}}
-    ui.pg_down&=(uint16_t)~(1u<<panel.btn[B_LFO]);
+    ui.pg_down&=(ui_btnmask_t)~(1u<<panel.btn[B_LFO]);
 }
 static void load_begin(track_t *t, uint32_t what)
 {

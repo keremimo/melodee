@@ -141,8 +141,13 @@ static void con_flr(const char *p)                  /* flash read over SPI (no X
     static uint8_t b[256];
     int ok, ok2;
     uint32_t a = con_num(&p, &ok), n = con_num(&p, &ok2), i;
+#if BOARD_SMK37
+    if (!ok || a < 0x9D000u || a >= 0x100000u) {
+        con_puts("usage: flr OFFSET [LEN<=256]   (0x9D000..0xFFFFF)\r\n");
+#else
     if (!ok || a < 0x93000u || a >= 0x100000u) {
         con_puts("usage: flr OFFSET [LEN<=256]   (0x93000..0xFFFFF)\r\n");
+#endif
         return;
     }
     if (!ok2 || !n)
@@ -223,6 +228,7 @@ static void con_dbg(void)
         con_kx(NAMES[i], w[i]);
 }
 
+#if !BOARD_SMK37
 /* input scan (hal/fm1_input.h fm1_in_stat) since the last `inp`, then cleared: tick gaps (= LED
  * on-time of a column), per-column LED share in 1/1000, the tick cost, encoder transitions */
 static void con_inp(void)
@@ -282,6 +288,69 @@ static void con_inp(void)
         fm1__unlock(k2);
     }
 }
+#else
+static void con_smk(void)                               /* the SMK-37 inputs (smk_input.h) */
+{
+    uint32_t i;
+    con_kv("adc_ok", (int32_t)fm1_in.adc_ok);
+    con_kv("adc_miss", (int32_t)fm1_in.adc_miss);
+    con_kv("frames", (int32_t)fm1_in.frames);
+    con_puts("pad raw ");
+    for (i = 0; i < SMK_NPAD; i++) { con_dec(fm1_in.pad_raw[i]); con_putc(' '); }
+    con_puts("\r\npad base ");
+    for (i = 0; i < SMK_NPAD; i++) { con_dec(fm1_in.pad_base[i]); con_putc(' '); }
+    con_puts("\r\npad st ");
+    for (i = 0; i < SMK_NPAD; i++) { con_dec(fm1_in.pad_st[i]); con_putc(' '); }
+    con_puts("\r\nfader raw ");
+    for (i = 0; i < 4u; i++) { con_dec(fm1_in.fad_raw[i]); con_putc(' '); }
+    con_puts("\r\nfader ");
+    for (i = 0; i < 4u; i++) { con_dec(fm1_in.fader[i]); con_putc(' '); }
+    con_puts("\r\n");
+    con_kv("wheel0", fm1_in.wheel[0]);
+    con_kv("wheel1", fm1_in.wheel[1]);
+    con_kv("bend", smk_bend);
+    con_kv("modw", smk_modw);
+    con_kv("pedal", fm1_in.pedal);
+    con_kv("batt", fm1_in.batt);
+    con_kx("buttons", fm1_in.buttons);
+    con_kx("notes", fm1_in.notes);
+    for (i = 0; i < FM1_NENC; i++) {
+        con_puts("enc");
+        con_dec((int32_t)i);
+        con_putc('=');
+        con_dec(fm1_in.enc_steps[i]);
+        con_putc(i + 1u == FM1_NENC ? '\r' : ' ');
+    }
+    con_puts("\r\n");
+}
+
+/* what the firmware sends the pads: GRB words by hardware pad (0..7 top row, 8..15 bottom row) */
+static void con_leds(void)
+{
+    uint32_t i;
+    for (i = 0; i < SMK_NPAD; i++) {
+        con_puts("pad");
+        con_dec((int32_t)i);
+        con_puts(" grb ");
+        con_hex(padled_rgb[i], 6);
+        con_puts(i % 4u == 3u ? "\r\n" : "  ");
+    }
+}
+
+/* the pad LEDs' colour order: hardware pad 8 (bottom left) red, 9 green, 10 blue, 11 white, for 20 s */
+static void con_padtest(void)
+{
+    uint32_t i;
+    for (i = 0; i < SMK_NPAD; i++)
+        padled_set(i, 0, 0, 0);
+    padled_set(8, 40, 0, 0);
+    padled_set(9, 0, 40, 0);
+    padled_set(10, 0, 0, 40);
+    padled_set(11, 40, 40, 40);
+    padled_hold_until = fm1_ms + 20000u;
+    con_puts("top row from the left: red green blue white\r\n");
+}
+#endif
 
 static void con_crash(void)
 {
@@ -314,15 +383,28 @@ static void con_params(void)
 static void con_exec(const char *p)
 {
     if (con_word(&p, "help") || con_word(&p, "?"))
+#if BOARD_SMK37
+        con_puts("status  dbg  smk  padtest  leds  crash  params  memr ADDR [LEN]  flr OFF [LEN]  uboot yes\r\n");
+#else
         con_puts("status  dbg  inp  crash  params  memr ADDR [LEN]  flr OFF [LEN]  uboot yes\r\n");
+#endif
     else if (con_word(&p, "status"))
         con_status();
     else if (con_word(&p, "dbg"))
         con_dbg();
     else if (con_word(&p, "crash"))
         con_crash();
+#if BOARD_SMK37
+    else if (con_word(&p, "smk"))
+        con_smk();
+    else if (con_word(&p, "padtest"))
+        con_padtest();
+    else if (con_word(&p, "leds"))
+        con_leds();
+#else
     else if (con_word(&p, "inp"))
         con_inp();
+#endif
     else if (con_word(&p, "params"))
         con_params();
     else if (con_word(&p, "memr"))

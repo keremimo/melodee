@@ -267,11 +267,11 @@ choose();
 
 // an update loader that is not the package's own gets nothing: the official one would write a Melodee
 // package's head over the boot data, Melodee's would write only V15's application (docs/RECOVERY.md)
-const refuseLoader = (id) => id === STOCK_LOADER ? sayK("loaderStock") : id === MELODEE_LOADER ? sayK("loaderMelodee") : sayK("loaderUnknown", id);
+const refuseLoader = (id) => id === STOCK_LOADER ? sayK("loaderStock") : id === melodeeLoader(id.slice(4)) ? sayK("loaderMelodee") : sayK("loaderUnknown", id);
 
 $("go").addEventListener("click", async () => {
   if (writing || !image) return;
-  const product = selection().channel.product;
+  const product = selection().channel.product, own = melodeeLoader(product);   // (the SMK-37 builds: their model's)
   lockInstaller(true);
   let midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
@@ -291,10 +291,10 @@ $("go").addEventListener("click", async () => {
     const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
       ota.link.close();
-      if (ota.id.text !== MELODEE_LOADER) refuseLoader(ota.id.text);
-      else sayK((await up.resume(image, step, product, MELODEE_LOADER)) ? "done" : "stopped");
+      if (ota.id.text !== own) refuseLoader(ota.id.text);
+      else sayK((await up.resume(image, step, product, own)) ? "done" : "stopped");
     } else {
-      await up.install(image, product, step, MELODEE_LOADER);
+      await up.install(image, product, step, own);
     }
   } catch (e) {
     if (e && e.code === "wrongloader") refuseLoader(e.detail);

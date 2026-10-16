@@ -18,6 +18,9 @@ const IS_OTA = (id) => /^ota-/i.test(id.model);
 // reports the name in its update record (firmware/src/ota.c). Each package goes only to its own.
 export const MELODEE_LOADER = "ota-FM-1_900";
 export const STOCK_LOADER = "ota-FM-1_015";
+// a Melodee package's own loader: MELODEE_LOADER under the package's model (FM-1_9.. -> MELODEE_LOADER; the SMK-37
+// builds: "ota-SMK-37 Pro_900", "ota-SMK-37 Elite_900", "ota-MKE-P37_900")
+export const melodeeLoader = (product) => MELODEE_LOADER.replace("FM-1", product.split("_")[0]);
 
 // errors carry a code the pages translate: notfound, model, stopped, noloader, lost, noreturn,
 // mismatch (detail: the identity the device reports), badreq, wrongloader (detail: the loader's
@@ -126,7 +129,7 @@ export class Updater {
     const outs = [...this.access.outputs.values()];
     for (const input of this.access.inputs.values()) {
       if (input.state === "disconnected") continue;
-      if (!/fm-1|melodee|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
+      if (!/fm-1|smk|elite|mke-p37|starry|melodee|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
       const output = outs.find((o) => o.name === input.name && o.state !== "disconnected");
       if (!output) continue;
       try { await input.open(); await output.open(); } catch (_) { continue; }

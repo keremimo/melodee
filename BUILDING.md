@@ -92,6 +92,16 @@ Build options (environment; most use `0` or `1`; defaults in `firmware/src/build
 | `MELODEE_SLICE` | 1 | the SLICE engine |
 | `MELODEE_ICONS` | 1 | parameter icons on the knob cards |
 
+Target board: `BOARD=smk37 ./build.sh` (or `./build.sh --board smk37`) builds Melodee for the SMK-37 (beta):
+`-DBOARD_SMK37=1` for the app, the update loader and the boot stub, identity `SMK-37 Pro_900` (release
+`SMK-37 Pro_9XY[Z]`), the SMK flash layout (PRCT 0x9D000, the stock region table with USRTRIM / USRFLASH), the SMK
+stub's lock (`firmware/stub/stub_smk37.lock`) and the package `build/melodee-smk37.fwsc`. `MODEL=elite` or `MODEL=mke`
+builds the same firmware under the SMK-37 Elite's or the MKE-P37's model name (`build/melodee-smk37-elite.fwsc`,
+`build/melodee-smk37-mke.fwsc`), so the stock updater still takes that unit's own package. TRS MIDI IN is off there
+(`MELODEE_UART=0`: PH8 is a key-matrix row). Controls: [SMK37.md](SMK37.md). The intermediate files
+(`build/melodee.bin`, `build/loader/ota.bin`, `build/gen/`) are shared: build the FM-1 again before
+`tests/run_tests.sh`. The default stays the FM-1, byte for byte.
+
 ## Samples
 
 The CC0 instrument samples that the SAMPLE engine uses are in `assets/samples-cc0/`

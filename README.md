@@ -45,6 +45,7 @@ runs Felucca.
 - Install: [web installer](https://keremimo.github.io/melodee/) (Chrome or Edge, USB), or `tools/fm1_install.py` from a terminal
 - Editor: [web editor](https://keremimo.github.io/melodee/webapp/editor/)
 - Build: [BUILDING.md](BUILDING.md)
+- SMK-37 (beta): [SMK37.md](SMK37.md)
 
 ## What's new in 1.4.0
 
