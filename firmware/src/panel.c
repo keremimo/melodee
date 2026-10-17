@@ -7,39 +7,81 @@
  * (hold OCT- and OCT+ while powering on): MELODEE asks for each label in turn.
  * The learned table lives in .noinit and, with MELODEE_FLASH, in flash with
  * the settings (project.c); read it back with `fm1t memr` to bake it in. */
+#ifndef FM1_NBTN                  /* (host tests without the input HAL: the FM-1's counts) */
+#define FM1_NBTN 14u
+#endif
+#ifndef FM1_NENC
+#define FM1_NENC 7u
+#endif
+#ifndef FM1_OCT_BOTH
+#define FM1_OCT_BOTH 3u
+#endif
 enum { B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
        B_OCTDN, B_OCTUP, NB };
 enum { EN_SELECT, EN_ALGO, EN_PRESET, EN_K1, EN_K2, EN_K3, EN_K4, NE };
+#if BOARD_SMK37
+/* SMK-37: HARDWARE CALIBRATION asks for each FM-1 function by the control that has it by default (PANEL_DEFAULT):
+ * the printed button names, and K6..K8 for SELECT, ALGORITHM, PRESETS, K1..K4 for KNOB 1..4 (K5 is MASTER) */
+static const char *const B_NAME[NB] = {"FX", "SCALE", "CHORD", "NOTE REPEAT", "PARA", "GLOBE", "PATCH", "BT",
+                                        "ARP", "SEQ", "SEQ PLAY", "SEQ REC", "OCTAVE-", "OCTAVE+"};
+static const char *const E_NAME[NE] = {"K6", "K7", "K8", "K1", "K2", "K3", "K4"};
+/* the FM-1's KNOB 1..4 as the screen names them: K1..K4 on the SMK-37 too (its K5..K8: MASTER, SELECT, ALGORITHM,
+ * PRESETS); the knob keycaps read K1..K4 as on the FM-1 */
+#define UI_K1 "K1"
+#define UI_KNOB1 "K1"
+#else
+#define UI_K1 "K1"
+#define UI_KNOB1 "KNOB 1"
 static const char *const B_NAME[NB] = {"FX", "SCL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE",
                                         "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"};
 static const char *const E_NAME[NE] = {"SELECT", "ALGORITHM", "PRESETS", "KNOB 1", "KNOB 2",
                                         "KNOB 3", "KNOB 4"};
+#endif
+#if BOARD_SMK37
+#define PANEL_MAGIC 0x504E5335u          /* "PNS5" (SMK-37): bump when PANEL_DEFAULT changes */
+#else
 #define PANEL_MAGIC 0x50414E35u          /* "PAN5": bump when PANEL_DEFAULT changes */
+#endif
 
 typedef struct {
     uint32_t magic;
-    uint8_t btn[NB];             /* matrix button id (0..13) per label */
-    uint8_t enc[NE];             /* matrix encoder (0..6) per role */
+    uint8_t btn[NB];             /* matrix button id (0..13; SMK-37 0..17) per label */
+    uint8_t enc[NE];             /* matrix encoder (0..6; SMK-37 0..7) per role */
     int8_t dir[NE];              /* +1 / -1 so that clockwise is + */
 } panel_t;
 panel_t panel __attribute__((section(".noinit")));
 
+#if BOARD_SMK37
+/* SMK-37 (smk_input.h button ids, confirmed on a unit; the printed SMK label -> the FM-1 function):
+ * FX = FX, SCALE = SCL, CHORD = ENV, NOTE REPEAT = LFO, PARA = EDIT, GLOBE = GLO, PATCH = HOME, BT = SAVE,
+ * ARP, SEQ as printed, SEQ PLAY = PLAY, SEQ REC = REC, OCTAVE- / + as printed. KNOB BANK, FADER BANK, < and >
+ * are the SMK's own (ui_input.c). Knobs: K1..K4 = KNOB 1..4 (the page's knobs), K5 = MASTER (smk_input.h: the
+ * FM-1's MASTER pot, as a virtual one), K6 = SELECT, K7 = ALGORITHM (track), K8 = PRESETS (the screen's four
+ * dials). HARDWARE CALIBRATION (OCTAVE- + OCTAVE+ at power-on) re-teaches all of it. */
+static const panel_t PANEL_DEFAULT = {
+    PANEL_MAGIC,
+    {14, 8, 9, 7, 13, 10, 12, 11, 6, 15, 16, 17, 4, 5},
+    {5, 6, 7, 0, 1, 2, 3},
+    {1, 1, 1, 1, 1, 1, 1},
+};
+#else
 static const panel_t PANEL_DEFAULT = {
     PANEL_MAGIC,
     {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 0, 1},   /* PLAY = 12, REC = 13 (measured on hardware) */
     {0, 1, 6, 2, 3, 4, 5},                           /* SELECT = enc 0, ALGORITHM = enc 1, PRESETS = enc 6 (printed labels) */
     {1, 1, 1, 1, 1, 1, 1},
 };
+#endif
 
 static void panel_init(void)                     /* also after a flash load: ids are used as array indexes and shifts */
 {
     uint32_t i, buttons = 0, encoders = 0, ok = panel.magic == PANEL_MAGIC;
     for (i = 0; ok && i < NB; i++) {
-        ok = panel.btn[i] < NB && !(buttons & (1u << panel.btn[i]));
+        ok = panel.btn[i] < FM1_NBTN && !(buttons & (1u << panel.btn[i]));   /* (FM-1: 14 = NB) */
         if (ok) buttons |= 1u << panel.btn[i];
     }
     for (i = 0; ok && i < NE; i++) {
-        ok = panel.enc[i] < NE && !(encoders & (1u << panel.enc[i])) &&
+        ok = panel.enc[i] < FM1_NENC && !(encoders & (1u << panel.enc[i])) &&   /* (FM-1: 7 = NE) */
              (panel.dir[i] == 1 || panel.dir[i] == -1);
         if (ok) encoders |= 1u << panel.enc[i];
     }

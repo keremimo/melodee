@@ -111,6 +111,157 @@ static void hexs(char *b, uint32_t v)
     b[8] = 0;
 }
 
+#if BOARD_SMK37
+/* pads as a step grid (1-8 top row): SEQ held (patterns), the DRUM grid, NAME, the layers' tiles (not SCL: notes) */
+static void smk_grid(void)
+{
+    uint32_t l = ui.layer ? ui.layer : ui.ly;
+    smk_pad_grid = (uint8_t)(pattern_keys_on() || grid_on() || (name_on() && !ui.menu) || (l && l != LAYER_SCL));
+}
+
+/* the SMK-37's 4 faders, by FADER BANK (ui_input.c smk_fbank):
+ *   A LEVEL     the levels of tracks 1..4
+ *   B FILTER    the selected track: PROPHET its CUTOFF, RESONANCE, filter ENV AMOUNT, filter DECAY (the panel's
+ *               own values); any other engine its four HOME knobs (the engine's own choice of live controls)
+ *   C ENVELOPE  the selected track's amp ATTACK, DECAY, SUSTAIN, RELEASE (PROPHET: its amp envelope; CZ, FM6 and
+ *               PHASE have envelopes of their own: no effect there)
+ *   D FX        the selected track's FX rack: the MIX of slots 1, 2, 3 and its SEND to the shared FX
+ * A fader takes over only once it moves (also after a bank or track change), so nothing jumps. Track parameters
+ * go through motion_capture as a knob's do. */
+static void smk_fader_param(track_t *t, uint32_t id, uint32_t v)
+{
+    const param_desc_t *d = track_desc(t, id);
+    t->p[id] = (int16_t)(d->min + ((int32_t)d->max - d->min) * (int32_t)v / 127);
+    (void)motion_capture(t, id, t->p[id]);
+}
+static void smk_faders(void)
+{
+    static const uint8_t P5_FLT[4] = {P5_CUTOFF, P5_RESONANCE, P5_ENV_FILTER, P5_DECAY_FILTER};
+    static const uint8_t P5_AMP[4] = {P5_ATTACK_AMP, P5_DECAY_AMP, P5_SUSTAIN_AMP, P5_RELEASE_AMP};
+    static const uint8_t ENV[4] = {P_ATK, P_DEC, P_SUS, P_REL}, SENDS[4] = {P_FXMIX, P_FX2MIX, P_FX3MIX, P_FXSEND};
+    static uint8_t last[4] = {0xFF, 0xFF, 0xFF, 0xFF}, sel = 0xFF;
+    uint32_t i;
+    if (smk_fbank_new || sel != song.sel) {               /* a new bank or track: wait for each fader to move */
+        smk_fbank_new = 0;
+        sel = (uint8_t)song.sel;
+        for (i = 0; i < 4u; i++)
+            last[i] = 0xFF;
+    }
+    for (i = 0; i < 4u; i++) {
+        uint32_t v = fm1_in.fader[i];
+        track_t *t = TSEL;
+        const engine_t *e = ENGINES[eng_idx(t->eng_req)];
+        int p5 = t->eng_req == ENGI_PROPHET;
+        if (last[i] == 0xFF || fm1_in.frames < 200u) {   /* (the first readings settle) */
+            last[i] = (uint8_t)v;
+            continue;
+        }
+        if (v == last[i])
+            continue;
+        last[i] = (uint8_t)v;
+        switch (smk_fbank) {
+        case 1:
+            if (p5)
+                p5_edit_value(t, P5_FLT[i], (int32_t)v);
+            else
+                smk_fader_param(t, e->knob[i], v);
+            break;
+        case 2:
+            if (p5)
+                p5_edit_value(t, P5_AMP[i], (int32_t)v);
+            else if (!e->ownenv)
+                smk_fader_param(t, ENV[i], v);
+            break;
+        case 3:
+            smk_fader_param(t, SENDS[i], v);
+            break;
+        default:
+            if (i < NTRK)
+                smk_fader_param(&trk[i], P_LEVEL, v);
+            break;
+        }
+        ui.force = 1;
+    }
+}
+#endif
+
+#if BOARD_SMK37
+/* the wheels (stock: mux C address 4 = pitch, 5 = mod), self-calibrating: the pitch wheel's rest is its centre
+ * (taken at power-on, followed slowly while it rests), each wheel's range grows to what it has reached (the
+ * travel is short: raw ~445..640 pitch, ~474..629 mod on a unit). Pitch: a 14-bit bend with a dead band around
+ * the centre; mod: 0..127, up (lower raw) = more. Both go to the selected synth track (voice.c), as a MIDI
+ * controller's would, and only when they change, so MIDI IN's bend and CC1 keep working; selecting another
+ * track takes them off the old one */
+
+static void smk_wheels(void)
+{
+    enum { DEAD = 12, SPAN0 = 80, MOD_LO = 485, MOD_HI = 615 };
+    static int32_t pc, plo, phi, mlo, mhi, rest, sent_b, sent_m = -1;
+    static uint8_t tsel = 0xFF;
+    int32_t p = fm1_in.wheel[0], m = fm1_in.wheel[1], d, b, mw;
+    track_t *t;
+    if (fm1_in.frames < 300u)                     /* (the readings settle) */
+        return;
+    if (!pc) {
+        pc = p;
+        plo = p - SPAN0;
+        phi = p + SPAN0;
+        mlo = m < MOD_LO ? m : MOD_LO;
+        mhi = m > MOD_HI ? m : MOD_HI;
+    }
+    if (p < plo)
+        plo = p;
+    if (p > phi)
+        phi = p;
+    if (m < mlo)
+        mlo = m;
+    if (m > mhi)
+        mhi = m;
+    d = p - pc;
+    if (d > -DEAD && d < DEAD) {
+        b = 0;
+        if (++rest > 200) {                        /* resting: the centre follows a slow drift */
+            pc += d > 0 ? 1 : d < 0 ? -1 : 0;
+            rest = 0;
+        }
+    } else {
+        rest = 0;
+        b = d > 0 ? (d - DEAD) * 8191 / (phi - pc - DEAD > 1 ? phi - pc - DEAD : 1)
+                  : (d + DEAD) * 8192 / (pc - plo - DEAD > 1 ? pc - plo - DEAD : 1);
+        b = clamp(b, -8192, 8191);
+    }
+    mw = mhi - m <= DEAD ? 0 : (mhi - m - DEAD) * 127 / (mhi - mlo - DEAD > 1 ? mhi - mlo - DEAD : 1);
+    mw = clamp(mw, 0, 127);
+    smk_bend = b;
+    if (tsel != song.sel) {                        /* another track: the old one back at rest */
+        if (tsel < NTRK && (sent_b || sent_m > 0)) {
+            t = &trk[tsel];
+            t->bend_raw = 0;
+            midi_bend_target[tsel] = 0;
+            t->mw = 0;
+        }
+        tsel = (uint8_t)song.sel;
+        sent_b = 0;
+        sent_m = -1;
+    }
+    t = TSEL;
+    smk_wheel_trk = (uint8_t)song.sel;
+    smk_modw = drum_track(t) ? 0u : (uint8_t)mw;
+    if (drum_track(t))                             /* drums ignore bend and the wheel (as MIDI's) */
+        return;
+    if (b != sent_b) {
+        sent_b = b;
+        t->bend_raw = (int16_t)b;                  /* PROPHET (its BEND) and FM6 (its DX7 range) read this */
+        if (t->eng_req != ENGI_PROPHET)
+            midi_bend_target[song.sel % NTRK] = b * (SMK_BEND_ST * 256) / (b < 0 ? 8192 : 8191);
+    }
+    if (mw != sent_m) {
+        sent_m = mw;
+        t->mw = (uint8_t)mw;
+    }
+}
+#endif
+
 static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
@@ -205,6 +356,10 @@ static void fm1_main(void)
     melodee_dbg.prev_rst = fm1_boot.p3_rst;
     fm1_input_init();
     fm1_adc_init();
+#if BOARD_SMK37 && MELODEE_FLASH
+    if (flash_ok)                                   /* the factory key / pad velocity curves (USRTRIM, read only) */
+        smk_trim_load(fm1_xip_ptr(SMK_TRIM_FLASH));
+#endif
     panel_init();
     melodee_init();
 #if MELODEE_DUAL_CORE
@@ -227,7 +382,7 @@ static void fm1_main(void)
     fm1_guard_lock_top();
     fm1_irq_enable_all();
     fm1_delay_ms(30);
-    if ((fm1_in.buttons & 3u) == 3u) {
+    if ((fm1_in.buttons & FM1_OCT_BOTH) == FM1_OCT_BOTH) {
         panel_setup();                        /* OCT- + OCT+ held at power-on */
         settings_save();
     }
@@ -329,11 +484,23 @@ static void fm1_main(void)
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
         settings_poll();                              /* queued settings save: only while stopped */
         melodee_dbg.stage = 2;
+#if BOARD_SMK37
+        smk_grid();
+#endif
         ui_leds();
+#if BOARD_SMK37
+        smk_faders();
+        smk_wheels();
+        padled_flush();                                 /* the pads' colours, between LCD transfers */
+#endif
         ui_draw();
         melodee_dbg.stage = 9;
         while (fm1_ms - m < 15u) {                               /* ~60 UI frames/s at most */
             ui_input();
+#if BOARD_SMK37
+            smk_wheels();                       /* (bends follow the wheel, not the screen) */
+            smk_grid();
+#endif
 #if MELODEE_OTA
             ed_service();                       /* editor replies without waiting for the next frame */
 #endif

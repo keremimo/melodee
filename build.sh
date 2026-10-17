@@ -3,7 +3,9 @@
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 # Build Melodee on macOS (see BUILDING.md).
-#   ./build.sh [--release X.Y[.Z]]
+#   ./build.sh [--release X.Y[.Z]] [--board fm1|smk37] [--model pro|elite|mke]
+#   BOARD            target board: fm1 (default) or smk37 (SMK-37 -> build/melodee-smk37.fwsc)
+#   MODEL            smk37: pro (default), elite or mke: the model name the keyboard reports
 #   JIELI_TOOLCHAIN  JieLi Linux toolchain (default: ~/.jieli/toolchain)
 #   AC79_SDK         JieLi AC79 SDK checkout (default: ~/fw-AC79_AIoT_SDK)
 set -e
@@ -22,4 +24,5 @@ PY="${PYTHON:-python3}"
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
     docker info >/dev/null 2>&1 || { echo "build.sh: Docker is not running"; exit 1; }
 fi
+export BOARD="${BOARD:-fm1}"     # read by tools/build.py (--board overrides it)
 exec "$PY" tools/build.py "$@"

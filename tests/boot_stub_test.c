@@ -396,7 +396,7 @@ int main(void)
         ota_wr16(mine + 2, 0x5A0Du);
         ota_wr16(mine + 4, 0x5A01u);
         ota_wr16(mine + 6, 0x5441u);
-        memcpy(mine + 8, "ota-FM-1_015", 12);
+        memcpy(mine + 8, OTA_PARM_ID, sizeof OTA_PARM_ID - 1u);   /* (FM-1 ota-FM-1_015; SMK-37 its model's) */
         ota_wr32(mine + 72, OTA_AREA);
         ota_wr16(mine, ota_crc16(mine + 2, 78, 0));
         CHECK(!memcmp(parm, mine, 112), "the record == ota.c's fields");

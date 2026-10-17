@@ -5,12 +5,20 @@
 # Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Build Melodee: the app, the update loader and an installable .fwsc package.
 
-  tools/build.py [--release X.Y[.Z][-suffix]]
+  tools/build.py [--release X.Y[.Z][-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
 
 Outputs in build/: melodee.bin (app), loader/ota.bin (update loader),
 melodee.fwsc (package). A release build (--release X.Y) writes melodee-X.Y.fwsc and a folder
 release-X.Y/ with the package, the app, SHA256SUMS, the licence files.
 See BUILDING.md for the toolchain and the SDK.
+
+BOARD=smk37 (or --board smk37) builds for the SMK-37: -DBOARD_SMK37=1 for the app, the loader and the boot
+stub, identity SMK-37 Pro_900 (release SMK-37 Pro_9XY[Z]), the SMK flash layout (fm1pkg_make.py), the SMK stub's
+own lock (firmware/stub/stub_smk37.lock) and the package build/melodee-smk37.fwsc (melodee-smk37-X.Y.fwsc for a
+release). MODEL=elite / mke (or --model) builds the same firmware under the SMK-37 Elite's or the MKE-P37's model
+name (identity, loader, update record, the stub's record: -DSMK_MODEL; stub_smk37-elite.lock, stub_smk37-mke.lock),
+so the stock updater still takes that unit's own package: build/melodee-smk37-elite.fwsc, -mke.fwsc.
+The default stays the FM-1.
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
 macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
@@ -56,6 +64,11 @@ SDK_SHA256 = {
 }
 
 PRODUCT = "FM-1_900"                # package identity; release builds are FM-1_9XY[Z] (0.10: FM-1_9010, 0.11.1: FM-1_90111)
+BOARD = "fm1"                       # fm1 (default) or smk37: BOARD env or --board
+BOARD_DEFS = {"fm1": [], "smk37": ["-DBOARD_SMK37=1"]}       # the FM-1 build gets no new flag (byte-identical)
+BOARD_STEM = {"fm1": "melodee", "smk37": "melodee-smk37"}   # package name: STEM.fwsc, STEM-X.Y.fwsc
+BOARD_LOCK = {"fm1": "stub.lock", "smk37": "stub_smk37.lock"}   # the boot stub that ships, per board (and model)
+MODEL = "pro"                       # smk37: the model name (MODEL env or --model; fm1pkg_make.MODELS)
 VERSION = None                      # MELODEE_VERSION for release builds (default: firmware/src/melodee.c)
 
 
@@ -147,7 +160,7 @@ def ldr_wrap(image):
 def build_loader():
     LDR.mkdir(parents=True, exist_ok=True)
     src = FW / "loader"
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src"]
+    flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src"]
     tc_all(("cc", "-c", src / "crt0_ldr.S", "-o", LDR / "crt0_ldr.o"),
            ("cc", *flags, "-c", src / "loader.c", "-o", LDR / "loader.o"))
     elf = LDR / "loader.elf"
@@ -184,7 +197,7 @@ def build_stub():
     STB.mkdir(parents=True, exist_ok=True)
     src = FW / "stub"
     tc_all(("cc", "-Ifirmware/stub", "-c", src / "crt0_stub.S", "-o", STB / "crt0_stub.o"),
-           ("cc", *CFLAGS, "-Ifirmware/stub", "-c", src / "stub.c", "-o", STB / "stub.o"))
+           ("cc", *CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/stub", "-c", src / "stub.c", "-o", STB / "stub.o"))
     elf = STB / "stub.elf"
     tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", src / "stub.ld",
        STB / "crt0_stub.o", STB / "stub.o", "-o", elf)
@@ -219,7 +232,7 @@ def build_stub():
     img += b"\xff" * (STUB_LEN - len(img))
     ver, sha = fm1pkg_make.stub_version(img), hashlib.sha256(img).hexdigest()
     print(f"stub: {used} B of {STUB_LEN} ({100 * used / STUB_LEN:.1f}%), version {ver}, sha256 {sha[:16]}")
-    lock = src / "stub.lock"
+    lock = src / BOARD_LOCK[BOARD]
     want = lock.read_text().split() if lock.exists() else []
     if want != [str(ver), sha]:
         if os.environ.get("FM1_STUB_LOCK") == "update":
@@ -240,13 +253,19 @@ def build_stub():
 
 def build_app(stub):
     subprocess.run([sys.executable, SRC / "tools/gen_909_tables.py", GEN / "x0x_drum_tables.h"], check=True)
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
+    flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("MELODEE_FLASH", "MELODEE_OTA", "MELODEE_OTA_DRYRUN", "MELODEE_OTA_RAMONLY", "MELODEE_CDC",
                  "MELODEE_UART", "MELODEE_USB_AUDIO", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE",
-                 "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ"):
+                 "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ",
+                 *(("FELUCCA_DATA_UNTAGGED_OK",) if BOARD == "smk37" else ())):
         v = os.environ.get(flag)    # unset: the default in firmware/src/melodee.c
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
+    fam = os.environ.get("FELUCCA_DATA_FAMILY")   # SMK store owner (storage.c; default MELODEE)
+    if fam and BOARD == "smk37":
+        if not re.fullmatch(r"[A-Z0-9]{1,7}", fam):
+            raise SystemExit("FELUCCA_DATA_FAMILY: 1..7 of A-Z 0-9")
+        flags.append(f'-DFELUCCA_DATA_FAMILY="{fam}"')
     if os.environ.get("P5_OVERSAMPLE") in ("1", "2"):
         flags.append("-DP5_OVERSAMPLE=" + os.environ["P5_OVERSAMPLE"])
     flags.append(f'-DMELODEE_ID="{PRODUCT}"')
@@ -471,28 +490,47 @@ def mmio_check():
 
 
 def main():
-    global PRODUCT, VERSION
+    global PRODUCT, VERSION, BOARD, MODEL
     ap = argparse.ArgumentParser()
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--nightly", action="store_true", help="development package from the current Git commit")
     mode.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity FM-1_9XY[Z], version string vX.Y[.Z]")
+    ap.add_argument("--board", choices=sorted(BOARD_DEFS), default=None,
+                    help="target board: fm1 (default) or smk37 (default: $BOARD, else fm1)")
+    ap.add_argument("--model", choices=sorted(fm1pkg_make.MODELS), default=None,
+                    help="smk37: the model name, pro (default), elite or mke (default: $MODEL, else pro)")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     a = ap.parse_args()
-    name = "melodee.fwsc"
+    BOARD = (a.board or os.environ.get("BOARD") or "fm1").lower().replace("-", "")
+    if BOARD not in BOARD_DEFS:
+        raise SystemExit(f"BOARD={BOARD}: use fm1 or smk37")
+    MODEL = (a.model or (os.environ.get("MODEL") if BOARD == "smk37" else None) or "pro").lower()
+    if MODEL not in fm1pkg_make.MODELS or (MODEL != "pro" and BOARD != "smk37"):
+        raise SystemExit(f"MODEL={MODEL}: pro, elite or mke, with BOARD=smk37")
+    fm1pkg_make.set_board(BOARD)
+    stem = BOARD_STEM[BOARD]
+    model = fm1pkg_make.MODELS[MODEL] if BOARD == "smk37" else "FM-1"
+    if BOARD == "smk37":            # the model's name: identity, loader, update record, the stub's record
+        PRODUCT = model + PRODUCT[PRODUCT.index("_"):]
+        if MODEL != "pro":
+            BOARD_DEFS[BOARD] = [*BOARD_DEFS[BOARD], f'-DSMK_MODEL="{model}"']
+            BOARD_LOCK[BOARD] = f"stub_smk37-{MODEL}.lock"
+            stem += "-" + MODEL
+    name = f"{stem}.fwsc"
     if os.environ.get("MELODEE_DUAL_CORE", "1") != "1":
         ap.error("Single-core firmware is retired; MELODEE_DUAL_CORE must be 1")
     os.environ["MELODEE_DUAL_CORE"] = "1"
     if a.release:                   # X one digit, Y one or two (1.0: FM-1_910; 1.0.0: FM-1_91000),
         try:
-            PRODUCT = fm1pkg_make.release_product(a.release)
+            PRODUCT = fm1pkg_make.release_product(a.release, model)
         except ValueError as error:
             raise SystemExit(str(error)) from error
         VERSION = "v" + a.release.lower()      # e.g. v1.0, v1.1-rc1
-        name = f"melodee-{a.release}.fwsc"
+        name = f"{stem}-{a.release}.fwsc"
     if a.nightly:
         revision = subprocess.check_output(["git", "rev-parse", "--short=7", "HEAD"], cwd=SRC, text=True).strip()
         VERSION = "next-" + revision
-        name = f"melodee-nightly.fwsc"
+        name = f"{stem}-nightly.fwsc"
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
@@ -520,12 +558,12 @@ def main():
     (OUT / "ATTRIBUTION.txt").unlink(missing_ok=True)
     print(f"app      {OUT / 'melodee.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
-    print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
+    print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
     if a.release:                   # what a release carries: the package, the app and every licence they need
         rel = OUT / f"release-{a.release}"
         shutil.rmtree(rel, ignore_errors=True)
         (rel / "LICENSES").mkdir(parents=True)
-        app = f"melodee-{a.release}-app.bin"
+        app = f"{stem}-{a.release}-app.bin"
         (rel / name).write_bytes(pkg)
         (rel / app).write_bytes(img)
         (rel / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n"

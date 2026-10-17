@@ -693,6 +693,33 @@ static __attribute__((noinline)) void spread_sum(int32_t *out)
 /* render one block of a part into out (cleared here); returns the voices rendered */
 /* Channel bend is live performance state, outside projects/presets. Q8 semitones. */
 static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK];
+#if BOARD_SMK37
+/* the SMK-37's wheels (main.c smk_wheels) play the selected synth track as a MIDI controller would: the
+ * pitch wheel its bend (bend_raw, +-SMK_BEND_ST semitones; PROPHET by its program's BEND, FM6 by its DX7
+ * setting), the mod wheel its CC1 value t->mw (PROPHET: added to the LFO amount, as its own wheel; FM6: the DX7
+ * mod wheel; any engine: the matrix source MODW). Engines with no wheel of their own get a vibrato from it
+ * here, unless a matrix slot uses MODW: a triangle at SMK_VIB_HZ from the 24 MHz time base (not the preset's
+ * LFO), up to +-1 semitone */
+#define SMK_BEND_ST 2
+#define SMK_VIB_HZ 10u
+#define SMK_VIB_K (SMK_VIB_HZ * 179u)          /* phase per TIMER4 tick: 2^32 / 24e6 = 178.96 */
+static volatile uint8_t smk_wheel_trk, smk_modw;
+static int32_t smk_bend;                        /* (console smk: the last bend, 14 bit) */
+static int32_t smk_vibrato(const track_t *t)   /* Q8 semitones */
+{
+    uint32_t ph, i;
+    int32_t tri;
+    if (!smk_modw || t != &trk[smk_wheel_trk % NTRK] || t->eng_req == ENGI_PROPHET || t->eng_req == ENGI_FM6)
+        return 0;
+    for (i = 0; i < NMSLOT; i++)
+        if (t->p[P_M1SRC + 3u * i] == MS_MODW)
+            return 0;                           /* the wheel is routed in the matrix: that is its job */
+    ph = fm1_ticks() * SMK_VIB_K;
+    tri = (int32_t)((ph >> 15) & 0xFFFFu);
+    tri = (ph & 0x80000000u ? 0xFFFF - tri : tri) - 32768;   /* triangle, +-32767 */
+    return (tri * smk_modw) >> 14;
+}
+#endif
 static __attribute__((noinline)) void p5_update_bend(track_t *t)
 {
     uint32_t ti=(uint32_t)(t-trk);int32_t range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
@@ -778,6 +805,9 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
     if(!tune_cache.valid || tune_cache.cents!=song.g[G_TUNE])tune_cache_update();
     tune=tune_cache.pitch;tune_fine=tune_cache.fine;
     bend = midi_bend_q8[ti];
+#if BOARD_SMK37
+    bend += smk_vibrato(t);
+#endif
     bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
     bend_fine = (bend - bend16 * 16) * 2367 / 2560;
     for (i = 0; i < NVOICE; i++) {
