@@ -79,7 +79,11 @@ static int ldr_erase(uint32_t off)
 static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     uint32_t took;
+#if BOARD_SMK37
+    if (!FL_IN(off, n, 0x4000u, 0x9D000u))        /* the SMK-37's app area (ldr_core.c LDR_APP_HI) */
+#else
     if (!FL_IN(off, n, 0x4000u, 0x93000u))
+#endif
         return -1;
     return fl_prog_ram(off, p, n, &took);
 }
