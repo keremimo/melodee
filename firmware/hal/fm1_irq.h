@@ -12,7 +12,8 @@
  *
  * The application supplies fm1_fault(const fm1_crash_t *) which reports the
  * crash (LCD) and resets; the record survives in .noinit for the next boot.
- * A CPU1 fault is not a crash: CPU1 is held and CPU0 goes on (fm1_core1_fault_c).
+ * Normally a CPU1 fault holds CPU1 and lets CPU0 go on (fm1_core1_fault_c).
+ * No-fallback diagnostics stop the session for the watchdog instead.
  */
 #pragma once
 #include <stdint.h>
@@ -140,6 +141,9 @@ static int fm1_core1_fault_c(const uint32_t *f)   /* 1: handled, CPU0 resumes */
         for (;;)
             ;
     }
+#if !MELODEE_CORE1_FALLBACK
+    fm1_core1_failure();                     /* CPU0 must not resume into serial rendering */
+#endif
     return 1;
 #else
     (void)f;

@@ -285,6 +285,7 @@ static int ed_flash_stop(void)
 #include "editor_native.c"
 #include "editor_library.c"
 #include "editor_prophet.c"
+#include "editor_cpu_lab.h"
 
 static void ed_motion_reply(uint32_t k, uint32_t rc)
 {
@@ -350,6 +351,11 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
     if (ed_library_handle(cmd,a,na)) { ed_send(); return; }
     if (ed_native_handle(cmd, a, na)) { ed_send(); return; }
     switch (cmd) {
+#if MELODEE_AUDIO_PROFILE && MELODEE_AUDIO_BENCH
+    case 101:
+        ed_cpu_reply(a, na);
+        break;
+#endif
     case 100: {
 #ifdef FM1_IRQ_TARGET
         if(na){ed_b(1);break;}
@@ -367,6 +373,61 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
     }
     case 98: {
 #if MELODEE_AUDIO_PROFILE
+#if MELODEE_AUDIO_BENCH
+#if MELODEE_DUAL_CORE && MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+        if(na && a[0]==7u){
+            if(na>2u || (na==2u && a[1]>1u)){ed_b(1);break;}
+            if(na==2u){if(!AUDIO_LAB_GUARDED()){ed_b(3);break;}fx_reverb_parallel_enabled=a[1];}
+            ed_b(0);ed_b(7);ed_b(fx_reverb_parallel_enabled);break;
+        }
+#endif
+        /* Guarded, RAM-only scheduler calibration. One group's split is
+         * fixed at publication; the next group sees a new allowance. */
+        if(na && a[0]==5u){
+            if((na!=1u && na!=6u) || (na==6u && (a[5]>15u || (ed_bk_r32(a+1u)>31000u && ed_bk_r32(a+1u)!=AUDIO_BATCH_SERVICE_AUTO)))){ed_b(1);break;}
+            if(na==6u){
+                if(!AUDIO_LAB_GUARDED()){ed_b(3);break;}
+                audio_batch_service_allowance=ed_bk_r32(a+1u);
+            }
+            ed_b(0);ed_b(5);ed_bk_u32(audio_batch_service_allowance);break;
+        }
+#endif
+        if(na==1u && a[0]==4u){
+            /* Actual committed headers, including settings (backup inventory
+             * exports live preferences). Reads validate object CRCs as usual. */
+            ed_b(0);ed_b(4);ed_b(OBJ_COUNT);
+            for(uint32_t obj=0;obj<OBJ_COUNT;obj++){
+                st_hdr_t h;int cur=st_current(obj,&h);
+                ed_b(cur>=0);
+                ed_bk_u32(cur>=0?h.len:0);ed_bk_u32(cur>=0?h.crc:0);ed_bk_u32(cur>=0?h.seq:0);
+                fm1_wdt_feed();
+            }
+            break;
+        }
+        if(na && a[0]==3u){
+            static uint8_t original_slot;
+            if(na>2u || (na==2u && a[1]>1u)){ed_b(1);break;}
+            if(na==2u){
+                if(a[1] && !audio_lab_guard){
+                    uint32_t busy=transport_busy() || momentary.active || template_old();
+                    for(uint32_t p=0;p<NPART;p++)for(uint32_t v=0;v<NVOICE;v++)busy|=trk[p].v[v].active;
+                    if(busy){ed_b(3);break;}
+                    original_slot=proj_cur;
+                }
+                if(!a[1] && audio_lab_guard)proj_cur=original_slot;
+                audio_lab_guard=a[1];
+            }
+            ed_b(0);ed_b(3);ed_b(audio_lab_guard);break;
+        }
+        if(na==1u && a[0]==2u){
+            uint32_t hist[AP_HIST_BINS],peak;
+            fm1_irq_off();memcpy(hist,audio_profile_hist,sizeof hist);peak=audio_profile_irq_max;fm1_irq_on();
+            ed_b(0);ed_b(2);ed_b(AP_HIST_BINS);
+            for(uint32_t j=0;j<5u;j++)ed_b(AP_HIST_TICKS>>(7u*j));
+            for(uint32_t j=0;j<5u;j++)ed_b(peak>>(7u*j));
+            for(uint32_t k=0;k<AP_HIST_BINS;k++)for(uint32_t j=0;j<5u;j++)ed_b(hist[k]>>(7u*j));
+            break;
+        }
         uint32_t values[AP_COUNT*3u+5u];
         if(na>1u || (na && a[0]>1u)){ed_b(1);break;}
         fm1_irq_off();
@@ -386,6 +447,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
 #endif
         if(na && a[0]){
             memset(audio_profile,0,sizeof audio_profile);
+            memset(audio_profile_hist,0,sizeof audio_profile_hist);
+            audio_profile_irq_pending=audio_profile_irq_max=0;
 #if MELODEE_DUAL_CORE
             audio_worker.job_ticks=audio_worker.wait_ticks=audio_worker.waits=0;
 #endif

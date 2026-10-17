@@ -47,6 +47,20 @@ static void dump_request(uint32_t ch, uint32_t format)
     uint8_t req[] = {0xf0,0x43,(uint8_t)(0x20u | ch),(uint8_t)format,0xf7};
     host_wire_n = 0; usb_dump(req, sizeof req);
 }
+static int dump_backup_lifetime(uint32_t format)
+{
+    uint8_t get[] = {0,0,0,0,0,0,64,0};
+    fresh_sysex();
+    request(ED_BACKUP_LIST,0,0);
+    int ok=host_wire[6]==0;
+    request(ED_BACKUP_GET,get,sizeof get);ok &= host_wire[6]==0;
+    dump_request(0,format);ok &= host_wire_n==(format==9u?FM6_RX:163u);
+    request(ED_BACKUP_GET,get,sizeof get);ok &= host_wire[6]==5u;
+    request(ED_BACKUP_LIST,0,0);ok &= host_wire[6]==0;
+    request(ED_BACKUP_GET,get,sizeof get);ok &= host_wire[6]==0;
+    return check(format==9u?"bank dump invalidates the staged backup until a new LIST":
+                            "voice dump invalidates the staged backup until a new LIST",ok);
+}
 int main(void)
 {
     int bad = 0, ok;
@@ -108,5 +122,6 @@ int main(void)
     bad += check("disconnected send reports an error instead of success", !strcmp(ui.msg,"SYSEX SEND ERROR") && !sx_busy);
     fm6_send();
     bad += check("disconnected single-voice SEND also reports failure", !strcmp(ui.msg,"SYSEX SEND ERROR") && so_w==so_r);
+    bad += dump_backup_lifetime(0)+dump_backup_lifetime(9);
     printf("DX7 SysEx test %s\n",bad?"FAILED":"passed");return !!bad;
 }

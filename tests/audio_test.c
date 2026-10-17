@@ -30,6 +30,7 @@ static void check(const char *what, int ok)
 }
 static void fresh(void)
 {
+    settings_safety = 1;  /* overload tests explicitly enable the optional guard */
     uint32_t p;
     memset(trk, 0, sizeof trk);
     memset(&song, 0, sizeof song);
@@ -163,10 +164,31 @@ static void bench_output(void)
     check("normal build retains audible physical output", nonzero);
 #endif
 }
+/* GLO > WEIGHTS 2 SAFETY OFF: an overload request through the real half path cuts nothing. */
+static void safety(void)
+{
+    for (int on = 0; on < 2; on++) {
+        fresh();
+        settings_safety = (int16_t)on;
+        trk_note_on(&trk[0], 60, 100); trk_note_on(&trk[0], 64, 100);
+        host_us = 5000;
+        fm1_alnk0_irq(); fm1_alnk0_irq();             /* two slow halves request a cut */
+        int requested = shed_req != 0;
+        trk_note_off(&trk[0], 64);                    /* a sounding release for it to take */
+        voice_t *tail = held(&trk[0], 64), *bass = held(&trk[0], 60);
+        host_us = 100;
+        fm1_alnk0_irq();                             /* the next half acts on it */
+        check(on ? "SAFETY ON: an overload request cuts the releasing voice" :
+                   "SAFETY OFF: an overload request leaves the releasing voice sounding",
+              requested && tail && bass && bass->gate && !shed_req &&
+              (on ? shed_count == 1u && (tail->stage == 4u || !tail->active) : !shed_count && tail->active && tail->stage != 4u));
+    }
+    settings_safety = 1;
+}
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
-    overload(); dma(); bench_output();
+    overload(); dma(); safety(); bench_output();
     printf(bad ? "audio: %d FAILED\n" : "audio: all passed\n", bad);
     return bad != 0;
 }

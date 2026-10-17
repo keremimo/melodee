@@ -90,6 +90,8 @@ static uint32_t ed_ui_set(const uint8_t *a, uint32_t n)
 #endif
 #ifdef MELODEE_FAVORITES
     case 3:
+        if (favorites.filter != a[1])
+            list_forget();                      /* (browse.c: every track's LIST this one) */
         favorites.filter = a[1]; break;
 #endif
     }

@@ -31,8 +31,10 @@ static void fm1_wdt_feed(void)
     fm1_ms++;
     if (host_progress && transport_req == 2u) { seq_stop(); transport_req = 0; }
 }
-static void fm1_irq_off(void) {}
-static void fm1_irq_on(void) {}
+/* Target cli/sti do not nest: an inner pair reopens the outer section. */
+static uint32_t host_irq_masked, host_irq_nested;
+static void fm1_irq_off(void) { host_irq_nested += host_irq_masked; host_irq_masked = 1; }
+static void fm1_irq_on(void) { host_irq_masked = 0; }
 static int32_t fm1_enc_take(uint32_t e) { (void)e; return 0; }
 static void lcd_sync(void) {}
 static void lcd_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c) { (void)x; (void)y; (void)w; (void)h; (void)c; }
@@ -426,7 +428,7 @@ static int cz_native_protocol(void)
     memset(cz_patch,0,sizeof cz_patch); memset(&tmpl,0,sizeof tmpl);
     int restored=tmpl_take((const uint8_t *)&saved,sizeof saved);template_load();
     bad+=check("native tone bytes and mode survive a saved template",restored && trk[1].p[P_E7]==CZ_NATIVE && !memcmp(cz_patch[1].raw,raw,CZ_BYTES));
-    const uint32_t sizes[]={sizeof(tmpl_fx_legacy_t),sizeof(tmpl_fx_single_t),sizeof(tmpl_t)-68u,sizeof(tmpl_t)-44u,sizeof(tmpl_t)-28u,sizeof(tmpl_t)+24u,sizeof(tmpl_t)};
+    const uint32_t sizes[]={sizeof(tmpl_fx_legacy_t),sizeof(tmpl_fx_single_t),sizeof(tmpl_t)-NTRK*2u*(P_COUNT-116u)-20u,sizeof(tmpl_t)-NTRK*2u*(P_COUNT-117u)-4u,sizeof(tmpl_t)-NTRK*2u*(P_COUNT-119u)-4u,sizeof(tmpl_t)+NTRK*2u*(125u-P_COUNT),sizeof(tmpl_t)-NTRK*2u*(P_COUNT-122u),sizeof(tmpl_t)};
     for(uint32_t k=0;k<NELEM(sizes);k++){
         uint8_t begin[12]={0,1},abort[2]={3,1};uint32_t len=sizeof(persist_t)+sizes[k];
         for(uint32_t j=0;j<5;j++)begin[2+j]=(uint8_t)((len>>(7*j))&127u);

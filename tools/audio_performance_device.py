@@ -19,6 +19,8 @@ ENGINES=(19,12,15,3,10,10)
 PRESETS=(3,4,0,8,0,1)
 SPANS=('half','timer5','input','midi_rx','usb','events','allocation','attack','envelope','modulation',
        'track_control','prophet','fm6_control','fm6','cz','sid','808','909','mix','fx','output')
+PANEL_SPANS=('input_blank','input_rows','input_shift','input_led','input_keys','input_encoders','input_diagnostics')
+BATCH_SPANS=('batch_prepare','batch_merge','batch_cpu0','batch_cpu1')
 DEADLINE_US=128*544/24
 COUNTERS=('audio_late','audio_deadline_misses','audio_target_exceeded','voices_shed','voices_given_up',
           'capacity_steals','core1_faults','core1_rejected','core1_timeouts','resource_failures','missed_frames',
@@ -32,7 +34,7 @@ class ReliableDevice(Device):
         for attempt in range(3):
             try:return super().request(cmd,args)
             except TimeoutError:
-                safe=cmd in (98,99,100,68,75,27,31,3,8) or (cmd in (69,76) and args and args[0]==0) or (cmd==95 and args and args[0]==2)
+                safe=cmd in (66,98,99,100,68,75,27,31,3,8) or (cmd in (69,76) and args and args[0]==0) or (cmd==95 and args and args[0]==2)
                 if not safe or attempt==2:raise
                 self.diagnostic_retries+=1
                 print(f'Retrying idempotent diagnostic {cmd}',flush=True)
@@ -69,10 +71,11 @@ def restore_runtime(d,directory,fm6_mode=None):
 def profile(d,reset=False):
     if getattr(d,'performance_production',False):return {}
     b=d.request(98,[int(reset)])
-    if len(b)!=3+(len(SPANS)*3+5)*5 or b[:3]!=[0,1,len(SPANS)]:
+    if len(b)<3 or b[:2]!=[0,1] or b[2] not in (len(SPANS),len(SPANS+PANEL_SPANS),len(SPANS+PANEL_SPANS+BATCH_SPANS)) or len(b)!=3+(b[2]*3+5)*5:
         raise RuntimeError('Requires AUDIO_PROFILE schema 1')
-    vals=[sum(b[3+k*5+j]<<(7*j) for j in range(5)) for k in range(len(SPANS)*3+5)]
-    return {name:dict(ticks=vals[i*3],calls=vals[i*3+1],max_ticks=vals[i*3+2]) for i,name in enumerate(SPANS)} | dict(
+    names=(SPANS+PANEL_SPANS+BATCH_SPANS)[:b[2]]
+    vals=[sum(b[3+k*5+j]<<(7*j) for j in range(5)) for k in range(len(names)*3+5)]
+    return {name:dict(ticks=vals[i*3],calls=vals[i*3+1],max_ticks=vals[i*3+2]) for i,name in enumerate(names)} | dict(
         worker_ticks=vals[-5],wait_ticks=vals[-4],worker_jobs=vals[-3],waits=vals[-2],clock_mhz=vals[-1])
 
 def metadata(d):
@@ -107,7 +110,10 @@ def setup(d,categories,voices,variant):
                 if d.request(69,[0,p,*pk])!=[0,p,0]:raise RuntimeError('FM6 algorithm rejected')
             elif c==3:d.params(p,dict(P_E0=variant&1,P_E2=(1,5,6)[variant%3]))
             continue
-        d.request(27,[p]);r=d.request(8,[ENGINES[c],PRESETS[c]])
+        # Track selection ignores tracks not in use; never load into another track.
+        r=d.request(27,[p])
+        if not r or r[0]!=p:raise RuntimeError(f'Track {p+1} is not in use; screening needs all four tracks')
+        r=d.request(8,[ENGINES[c],PRESETS[c]])
         if r[:2]!=[ENGINES[c],PRESETS[c]]:raise RuntimeError(f'Preset rejected: {p}/{c}')
         common=dict(P_VOICE=0,P_LEVEL=getattr(d,'performance_track_level',35),P_ALLOC=0,P_MUTE=0,P_GLIDE=0,P_AMODE=0,P_QUANT=0,P_CHRD=0,P_TRANS=0,P_SPRD=0,
                     P_LD_PIT=0,P_LD_FLT=0,P_LD_SHP=0,P_LD_AMP=0,P_M1AMT=0,P_M2AMT=0,P_M3AMT=0,P_M4AMT=0,

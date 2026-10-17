@@ -6,6 +6,9 @@
  * for line; only the arithmetic substrate changed (see drum909_dsp.h). Comments
  * that explain WHY a constant is what it is live in 9W9 and are not repeated. */
 #include "drum909.h"
+#ifndef MELODEE_DRUM_FAST
+#define MELODEE_DRUM_FAST 1
+#endif
 /* Melodee keeps the circuit voices; metallic voices are synthesized below. */
 
 #define D9_VCA_VT 0.0002f
@@ -718,7 +721,18 @@ static void d9_render_smp(d9_smp_t *s, const d9_bus_t *bus, int n)
     static const float hz[6] = {205.3f, 304.4f, 369.6f, 522.7f, 540.0f, 800.0f};
     int m = n < s->mute ? n : s->mute;
     uint32_t inc[6];
-    for (int k = 0; k < 6; k++) inc[k] = d9_inc(hz[k] * s->pitch * (s->kind == 3 ? 1.48f : 1.0f));
+#if MELODEE_DRUM_FAST
+    /* Exact fp32 products at the default pitch, including the ride's 1.48
+     * factor. Keep the original ordered products for every other pitch. */
+    static const uint32_t base[2][6] = {
+        {(uint32_t)(205.3f * D9_PHASE_PER_HZ), (uint32_t)(304.4f * D9_PHASE_PER_HZ), (uint32_t)(369.6f * D9_PHASE_PER_HZ), (uint32_t)(522.7f * D9_PHASE_PER_HZ), (uint32_t)(540.0f * D9_PHASE_PER_HZ), (uint32_t)(800.0f * D9_PHASE_PER_HZ)},
+        {(uint32_t)(205.3f * 1.48f * D9_PHASE_PER_HZ), (uint32_t)(304.4f * 1.48f * D9_PHASE_PER_HZ), (uint32_t)(369.6f * 1.48f * D9_PHASE_PER_HZ), (uint32_t)(522.7f * 1.48f * D9_PHASE_PER_HZ), (uint32_t)(540.0f * 1.48f * D9_PHASE_PER_HZ), (uint32_t)(800.0f * 1.48f * D9_PHASE_PER_HZ)}
+    };
+    if(s->pitch==1.0f)
+        for(int k=0;k<6;k++)inc[k]=base[s->kind==3][k];
+    else
+#endif
+        for (int k = 0; k < 6; k++) inc[k] = d9_inc(hz[k] * s->pitch * (s->kind == 3 ? 1.48f : 1.0f));
     s->mute -= m;
     d9_env_anchor(&s->out);
     for (int i = 0; i < m; i++) {

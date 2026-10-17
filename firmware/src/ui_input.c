@@ -107,9 +107,11 @@ static uint32_t arp_led(void)
 /* SEQ held: the white keys F3 .. F4 are the selected track's eight patterns, the first four black keys (F# G# A# C#,
  * as GLO's mutes) the tracks. A white key tapped switches to its pattern (playing: at the bar); an empty one arms REC
  * with it, one with notes when hit again at once (PAT_DTAP_MS: REC's tap, on or off); held PAT_HOLD_MS, its
- * dialog (CF_PAT_KEY): the key again deletes it, another white key copies it there, OCT- leaves it as it is */
+ * dialog (CF_PAT_KEY): the key again deletes it, another white key copies it there, the 4th and 5th black keys
+ * (C# D#, blinking) halve and double it (again while SEQ is held; let go: closed), OCT- leaves it */
 static const uint8_t PAT_KEY[NPAT] = {0, 2, 4, 6, 7, 9, 11, 12};
 static const uint8_t TRK_KEY[NTRK] = {1, 3, 5, 8};
+static const uint8_t LEN_KEY[2] = {8, 10};              /* (its dialog: half, double) */
 #define PAT_HOLD_MS 1000u
 #define PAT_DTAP_MS 300u
 static int pattern_keys_on(void)
@@ -119,17 +121,21 @@ static int pattern_keys_on(void)
 }
 /* the pattern keys (SEQ held), as the keys show things everywhere: bright the pattern playing (and the one held to copy),
  * dim the others that hold something, breathing the one waiting for the bar; the empty ones dark. The track keys: the
- * selected one bright, the others in use dim, an armed one breathing */
+ * selected one bright, the others in use dim, an armed one breathing. Its dialog: no track keys, half and double
+ * blinking (as a layer's button) */
 static uint32_t pattern_leds(uint32_t *dim, uint32_t *breath)
 {
-    uint32_t m = 1u << PAT_KEY[TSEL->pattern] | 1u << TRK_KEY[song.sel % NTRK], b;
+    uint32_t m = 1u << PAT_KEY[TSEL->pattern], b, dlg = ui.confirm == CF_PAT_KEY;
     *dim = *breath = 0;
     for (b = 0; b < NPAT; b++)
         if (b != TSEL->pattern && pattern_used(song.sel, b))
             *dim |= 1u << PAT_KEY[b];
-    for (b = 0; b < trk_n(); b++)
+    if (dlg && ((fm1_ms / 250u) & 1u) == 0u)
+        m |= 1u << LEN_KEY[0] | 1u << LEN_KEY[1];
+    for (b = 0; !dlg && b < trk_n(); b++)
         if ((song.rec >> b) & 1u) *breath |= 1u << TRK_KEY[b];
         else *dim |= 1u << TRK_KEY[b];
+    if (!dlg) m |= 1u << TRK_KEY[song.sel % NTRK];
     if (TSEL->pattern_next < NPAT) *breath |= 1u << PAT_KEY[TSEL->pattern_next];
     for (b = 0; b < NPAT; b++)                          /* (an edit waiting for the loop end: waiting too) */
         if ((seq_pend[song.sel % NTRK] >> b) & 1u) *breath |= 1u << PAT_KEY[b];
@@ -308,7 +314,7 @@ static void pattern_keys(uint32_t notes)
         if (ui.pat_key && !ui.pat_copy && (fm1_in.notes & (1u << PAT_KEY[ui.pat_key - 1u])) &&
             fm1_ms - ui.pat_ms >= PAT_HOLD_MS) {        /* held alone: its dialog */
             ui.pat_dlg = (uint8_t)(ui.pat_key - 1u);
-            ui.pat_key = ui.pat_copy = 0;
+            ui.pat_key = ui.pat_copy = ui.pat_did = 0;
             ui.confirm = CF_PAT_KEY;
             ui.confirm_trk = song.sel;
             song.grid = (uint8_t)keys_mode();           /* (the keys silent from now: they choose) */
@@ -330,10 +336,51 @@ static void pattern_key_delete(uint32_t k, uint32_t b)
         dq_do(CF_DEL_PAT, k, b, 0);
     ui.force = 1;
 }
-/* .. a white key pressed: its own again deletes the pattern, another copies it there; 1 = taken */
+/* .. C# halves it, D# doubles it (motion.c pattern_double: its steps copied after themselves); the dialog stays,
+ * saying the length, while SEQ is held (ui_input closes it as SEQ is let go). The pattern playing: undoable (EDIT
+ * held) as a load, with recorded notes as a precise clear */
+static void pattern_key_len(uint32_t k, uint32_t b, int up)
+{
+    track_t *t = &trk[k];
+    uint32_t len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP);
+    int rc = up ? pattern_double(t, b, 0) : pattern_half(t, b, 0);
+    ui.force = 1;
+    if (rc) {
+        ui_message(rc == 2 ? "PATTERN DATA FULL" : rc == 3 ? (up ? "64 STEPS MAX" : "1 STEP MIN") : "STOP TO EDIT");
+        return;
+    }
+    if (b != t->pattern) {                              /* (another bank: as a copy there, not undoable) */
+        if (up) pattern_double(t, b, 1); else pattern_half(t, b, 1);
+    } else if (up && recording_head[recording_owner(t)] < RECORD_MAX) {
+        fm1_irq_off();
+        if (!note_transaction_begin_track(t)) { fm1_irq_on(); return; }
+        motion_snapshot_track(t, &note_transaction.motion);
+        note_transaction.clear = 1;
+        pattern_double(t, b, 1);
+        note_transaction.slen = (uint8_t)len;           /* (undone: LEN back too) */
+        note_transaction.len = (uint8_t)step_pattern_len(t);
+        note_transaction_end();
+        fm1_irq_on();
+        undo_seal();
+    } else {                                            /* (a load clears the motion it keeps a copy of: kept here) */
+        motion_store_t m;
+        motion_snapshot_track(t, &m);
+        load_begin(t, UNDO_PAT);
+        motion_replace_track(t, &m);
+        if (up) pattern_double(t, b, 1); else pattern_half(t, b, 1);
+        load_end(t);
+    }
+    ui.pat_did = 1;
+    ui_message(up ? "PATTERN DOUBLED" : "PATTERN HALVED");
+}
+/* .. a white key pressed: its own again deletes the pattern, another copies it there; C# D#: its length; 1 = taken */
 static int pattern_key_dialog(uint32_t notes)
 {
     uint32_t b, k = ui.confirm_trk % NTRK, src = ui.pat_dlg % NPAT;
+    if (notes & (1u << LEN_KEY[0] | 1u << LEN_KEY[1])) {
+        pattern_key_len(k, src, (notes >> LEN_KEY[1]) & 1u);
+        return 1;
+    }
     for (b = 0; b < NPAT && !(notes & (1u << PAT_KEY[b])); b++)
         ;
     if (b == NPAT)
@@ -650,7 +697,7 @@ static void capture_take(void)
                 (recording[existing].step & 63u) == actual && recording[existing].on == r.on)
                 break;
         if (existing < RECORD_MAX) { fm1_irq_on(); continue; }
-        for (; j < RECORD_MAX && recording[j].vel && (recording_present(&recording[j]) || recording_run[j].left); j++)
+        for (; j < RECORD_MAX && recording[j].vel && (recording_present(&recording[j]) || recording_sounding(j)); j++)
             ;
         if (j == RECORD_MAX) { fm1_irq_on(); full = 1; break; }
         if (recording[j].vel) recording_unlink(j);
@@ -1102,7 +1149,8 @@ static void edit_param(uint32_t slot, int32_t steps)
         settings_save();
         return;
     }
-    if (pg->scope == SC_GLOBAL && (pg->id[slot] == G_A4 || pg->id[slot] == G_BUDGET)) {
+    if (pg->scope == SC_GLOBAL && (pg->id[slot] == G_A4 || pg->id[slot] == G_BUDGET ||
+                                   (pg->id[slot] >= G_WP5 && pg->id[slot] <= G_SAFETY))) {
         settings_save();
         return;
     }
@@ -1962,6 +2010,7 @@ static void ui_confirm_accept(void)
 #include "ui_designer_input.c"
 static void ui_input(void)
 {
+    pattern_poll();
     uint32_t pressed = fm1_input_edges(0), notes = fm1_input_note_edges(), now = fm1_ticks(), id, b, k;
     dq_poll();                                          /* (destructive edits waiting for their loop end) */
     if (boot_work.state) {
@@ -2168,12 +2217,16 @@ static void ui_input(void)
         page_tap(B_EDIT);
     }
     if (ui.confirm) {                                   /* OCT- cancels, OCT+ does it; nothing else reacts (SEQ's
-                                                         * pattern dialog: the white keys too) */
+                                                         * pattern dialog: the white keys, C# D# too) */
         if (ui.confirm == CF_PAT_KEY && pattern_key_dialog(bank_notes)) {
         } else if (oct & 2u) {
             ui_confirm_accept();
         } else if (oct & 1u) {
             ui.confirm = 0;
+            ui.force = 1;
+        }
+        if (ui.confirm == CF_PAT_KEY && ui.pat_did && !(fm1_in.buttons & (1u << panel.btn[B_SEQ]))) {
+            ui.confirm = 0;                             /* (its length changed: closed as SEQ is let go) */
             ui.force = 1;
         }
         song.grid = (uint8_t)keys_mode();               /* (closed: the keys play at once) */

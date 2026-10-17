@@ -129,6 +129,10 @@ static uint32_t voice_p5_parts(void)
 static uint32_t voice_units(const track_t *t)
 {
     const engine_t *e = ENGINES[t->engine];
+    /* GLO > WEIGHTS: the player's points per voice replace the built-in rule; AUTO (0) keeps it. */
+    int k = e == &ENG_P5_TEST ? 0 : e == &ENG_CZ ? 1 : e == &ENG_FM6 ? 2 : e == &ENG_SID ? 3 : e == &ENG_DRUM ? 4 : -1;
+    if (k >= 0 && settings_vpoints[k] > 0)
+        return (uint32_t)settings_vpoints[k];
 #if MELODEE_ADMISSION
     if(e==&ENG_P5_TEST){
         return voice_p5_parts()>1u?4u:3u;
@@ -367,7 +371,10 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
     int32_t s0 = v->s[0], s1 = v->s[1], s4 = v->s[4], s5 = v->s[5], s6 = v->s[6], s7 = v->s[7];
     uint32_t keep = e->keep;
-    capacity_steals+=(uint32_t)(sounding && (v->note!=note || !v->gate));
+    /* MIDI replaces a repeated press by releasing its old owner first. A
+     * same-pitch one-shot then retriggers the same circuit regardless of gate;
+     * it has not displaced another note or consumed another budget slot. */
+    capacity_steals+=(uint32_t)(sounding && (v->note!=note || (!v->gate && !e->oneshot)));
     voice_was = (uint8_t)(!v->active ? 0u : v->gate ? 2u : 1u);
     v->note = (uint8_t)note;
     v->vel = (uint8_t)vel;
@@ -693,8 +700,16 @@ static __attribute__((noinline)) void spread_sum(int32_t *out)
 /* render one block of a part into out (cleared here); returns the voices rendered */
 /* Channel bend is live performance state, outside projects/presets. Q8 semitones. */
 static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK];
+#ifndef MELODEE_CONTROL_FAST
+#define MELODEE_CONTROL_FAST 1
+#endif
 static __attribute__((noinline)) void p5_update_bend(track_t *t)
 {
+#if MELODEE_CONTROL_FAST
+    /* A centered wheel has an exact zero target at every native bend range.
+     * Smoothing still advances above p5_block, including on silent tracks. */
+    if(!t->bend_raw){midi_bend_target[(uint32_t)(t-trk)]=0;return;}
+#endif
     uint32_t ti=(uint32_t)(t-trk);int32_t range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
     midi_bend_target[ti]=t->bend_raw*range/(t->bend_raw<0?8192:8191);
 }

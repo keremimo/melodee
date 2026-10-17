@@ -212,6 +212,9 @@ static int st_exists(uint32_t obj)
 
 static int st_save(uint32_t obj, const void *src, uint32_t len)
 {
+#if defined(MELODEE_AUDIO_PROFILE) && MELODEE_AUDIO_PROFILE
+    if(AUDIO_LAB_GUARDED())return -9;
+#endif
     uint32_t seq, base, off;
     int cur, rc;
     st_hdr_t h;

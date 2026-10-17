@@ -29,6 +29,8 @@ static void settings_save(void) {}
 static uint8_t settings_boot, settings_drumch = 10;  /* (params.c) */
 #define VOICE_BUDGET_DEFAULT 16u
 static int16_t settings_budget=VOICE_BUDGET_DEFAULT;
+#define VOICE_KINDS 5u
+static int16_t settings_vpoints[VOICE_KINDS], settings_safety;  /* (params.c GLO > WEIGHTS) */
 static int native_used(uint32_t e, uint32_t k) { (void)e; (void)k; return 0; }
 #if __has_include("../firmware/src/favorites.c")
 static int up_favorite(uint32_t k);

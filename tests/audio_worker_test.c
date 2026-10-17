@@ -36,6 +36,8 @@ int main(void)
     uint32_t done;
     /* No worker launched (barred boot or handshake failure): no retirement. */
     assert(!fm1_core1_barred());
+    assert(fm1_core1_boot_allowed(1, 0));
+    assert(!fm1_core1_boot_allowed(0, 0) && !fm1_core1_boot_allowed(1, 1));
     audio_worker_check();
     assert(!holds && !fm1_core1_barred());
     assert(!audio_worker_submit(callback, 0));
@@ -53,6 +55,7 @@ int main(void)
     /* No main-loop poll has run: the first audio job's retirement must bar
      * CPU1 immediately, before a watchdog or intended reset can happen. */
     assert(fm1_core1_barred());
+    assert(!fm1_core1_boot_allowed(1, 0));
     assert(callback_calls == 0);
     assert(audio_worker.request == audio_worker.complete);
     assert(!audio_worker_submit(callback, 0));

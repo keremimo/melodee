@@ -352,8 +352,8 @@ static void test_spread(void)
     char msg[200];
 
     check("SPRD: a track parameter 0..127, default 0 (as before), before the engine's (P_E0 96, P_COUNT 104)",
-          TP[P_SPRD].min == 0 && TP[P_SPRD].max == 127 && TP[P_SPRD].def == 0 && P_SPRD + 1 == P_FXTYPE && P_FX3CHAR + 1 == P_FXSEND && P_FXSEND + 1 == P_FXSEND2 && P_FXSEND2 + 1 == P_FXSEND3 && P_FXSEND3 + 1 == P_FXTONE && P_FX3TONE + 1 == P_E0 && P_E0 == 114 &&
-          P_COUNT == 122 && str_eq(TP[P_SPRD].label, "SPRD") && motion_param(P_SPRD));
+          TP[P_SPRD].min == 0 && TP[P_SPRD].max == 127 && TP[P_SPRD].def == 0 && P_SPRD + 1 == P_FXTYPE && P_FX3CHAR + 1 == P_FXSEND && P_FXSEND + 1 == P_FXSEND2 && P_FXSEND2 + 1 == P_FXSEND3 && P_FXSEND3 + 1 == P_FXTONE && P_FX3TONE + 1 == P_STRUM && P_STRUM + 1 == P_STROKE && P_STROKE + 1 == P_E0 && P_E0 == 116 &&
+          P_COUNT == 124 && str_eq(TP[P_SPRD].label, "SPRD") && motion_param(P_SPRD));
     h1 = phrase_child(HOST_SYNTH, 1, sp_mono0);
     h2 = phrase_child(HOST_SYNTH, 1, sp_mono127);
     check("MONO: SPRD 127 plays bit for bit as SPRD 0 (one voice: on PAN)", h1 && h1 == h2);

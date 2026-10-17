@@ -163,6 +163,17 @@ static uint32_t ed_bk_commit_inner(void)
         sync_reload = 1; ui.force = 1;
         return 0;
     } else if (ed_bk_id == 1u) {
+#if MELODEE_AUDIO_PROFILE
+        /* Guarded diagnostics restore preferences in RAM only. No template
+         * replacement, persistence bookkeeping or flash commit is allowed. */
+        if(AUDIO_LAB_GUARDED()){
+            if(ed_bk_len!=sizeof(persist_t) || !settings_legacy_valid((const persist_t *)raw) ||
+               !ed_bk_panel_valid(&((const persist_t *)raw)->panel))return 2;
+            settings_import((persist_t *)raw,sizeof(persist_t));
+            panel_init();settings_init();palette_set(settings.palette);
+            return 0;
+        }
+#endif
         const persist_t *p = (const persist_t *)raw;
         const uint8_t *t = raw + sizeof *p;                  /* a template after the settings */
         uint32_t tl = ed_bk_len - sizeof *p, tm = 0, ts = 0;

@@ -880,8 +880,11 @@ static void pv_draw(void)
         if (ui.force)
             lcd_fill(0, H_HEAD, 240, 240 - H_HEAD, T_BG);
         draw_head();
-        for (k = 0; k < trk_n(); k++)
-            pv_strip(k);
+        for (k = 0; k < stage_rows(); k++)
+            if (k < trk_n())
+                pv_strip(k);
+            else
+                stage_free(k, &pvm.strip[k]);   /* (UNUSED TRACKS SHOW: a greyed row, "Add track") */
         return;
     }
     pv_tab_h = (kind == PV_RINGS || kind == PV_CURVE) && designer_on() && designer_tabs_on() ? SEC_TAB_H : 0;

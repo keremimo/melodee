@@ -29,6 +29,9 @@ static uint32_t injected_faults;
 #define AW_HOLD() hold_worker()
 #define AW_FAULTS() injected_faults
 #include "../firmware/src/audio_worker.h"
+#ifdef AUDIO_JOIN_WRAPPER
+#define audio_worker_join AUDIO_JOIN_WRAPPER
+#endif
 static void hold_worker(void)
 {
     while (AW_LOAD(&audio_worker.complete) != AW_LOAD(&audio_worker.request)) sched_yield();

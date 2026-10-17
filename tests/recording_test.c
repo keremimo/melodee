@@ -291,7 +291,7 @@ static int pattern_passes(void)
             song.playing && !song.rec && !song.rec_wait && !song.rec_pass && !t->seq_idx && !t->seq_pos &&
             !(recording_flags[1] & 1u) && !t->rh_n && gate >= 998u && gate <= 1000u && gate_note(t, 67));
         bad += check("a late note snapped to zero is eligible immediately on the first playback loop",
-            !q || (recording_run[1].left && recording_refs[0][67]));
+            !q || (recording_left(1) && recording_refs[0][67]));
         recorded_note_t saved[2]; memcpy(saved, recording, sizeof saved);
         motion_capture(t, P_LEVEL, 79);
         input_off(t, 67); input_on(t, 72, 100); input_off(t, 72);
@@ -337,10 +337,10 @@ static int pattern_passes(void)
     raw_begin(); t = &trk[0]; period = seq_div_samples(t->p[P_SDIV]);
     input_on(t, 60, 84); seq_advance(period * 3u); input_off(t, 60);
     raw_replay(); seq_advance(100);
-    uint32_t left = recording_run[0].left;
+    uint32_t left = recording_left(0);
     rec_toggle(0); rec_toggle(0);
     bad += check("cancelling a waiting pass preserves sounding backing notes and their remaining gates",
-        left && recording_run[0].left == left && recording_refs[0][60] && gate_note(t, 60));
+        left && recording_left(0) == left && recording_refs[0][60] && gate_note(t, 60));
     seq_stop();
 
     pass_begin(0, 3, 0); t = &trk[0]; rec_toggle(0);

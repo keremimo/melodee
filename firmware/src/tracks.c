@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The tracks in use (song.ntrk, core.h trk_n): one to start with, up to NTRK, always from track 1. Stage's sheet adds
+/* The tracks in use (song.ntrk, core.h trk_n): all NTRK to start with, always from track 1. Stage's sheet adds
  * one (track_add: the next place, its power-on sound, every pattern empty; selected, the browser open on it) or
  * removes the selected one (track_remove: stopped, after its question): the tracks after it move down a place with
  * all that is theirs (the sound and its patches, the eight patterns, their column of the song, motion, takes) and the
@@ -148,13 +148,15 @@ static void track_blank(uint32_t k)
     scale_share(TSEL);
     fm1_irq_off();
     for (b = 0; b < NPAT; b++) {                        /* the other patterns empty too */
-        pattern_t *p = pattern_at(k % NTRK, b);
+        pattern_t p;
+        pattern_read(k % NTRK, b, &p);
         for (i = 0; i < NSTEP; i++)
-            step_clear(&p->step[i]);
+            step_clear(&p.step[i]);
         for (i = 0; i < 4u; i++)
-            p->timing[i] = TP[P_SLEN + i].def;
+            p.timing[i] = TP[P_SLEN + i].def;
+        pattern_write(k % NTRK, b, &p);
     }
-    t->pattern = 0;
+    pattern_switch(t, 0);
     t->pattern_next = 0xff;
     t->pattern_gen++;
     for (r = 0; r < CHAIN_ROWS; r++)
@@ -162,6 +164,7 @@ static void track_blank(uint32_t k)
     fm1_irq_on();
     pat_sig[k % NTRK] = steps_sig(t);                   /* (empty: not the user's) */
     pat_last[k % NTRK] = 0;
+    list_trk[k % NTRK] = 0;                             /* (the browser: the last LIST picked) */
 }
 
 /* the next track in use (Stage's sheet): a new one, selected, the browser open on it (OCT- keeps its power-on sound) */

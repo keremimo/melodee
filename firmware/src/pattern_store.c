@@ -50,15 +50,16 @@ static int bank_pack(uint8_t *raw, const project_t *q, int runtime)
         raw[BANK_ACTIVE_OFF + k] = (uint8_t)active;
         if (runtime) pattern_commit(&trk[k]);
         for (uint32_t b = 0; b < NPAT; b++) {
-            const pattern_t *p = pattern_at(k, b);
+            pattern_t p;
+            if (runtime) pattern_read(k, b, &p);
             for (uint32_t i = 0; i < 4u; i++) {
-                int16_t v = runtime ? p->timing[i] : (b != active ? TP[P_SLEN + i].def : q->t[k].p[P_SLEN + i]);
+                int16_t v = runtime ? p.timing[i] : (b != active ? TP[P_SLEN + i].def : q->t[k].p[P_SLEN + i]);
                 raw[BANK_TIMING_OFF+(k*NPAT+b)*4u+i]=(uint8_t)v;
             }
             if (b == active) continue;
             for (uint32_t i = 0; i < NSTEP; i++, pos += BANK_STEP_SIZE) {
                 step_t empty = {{0},0,ST_REST};
-                if (!bank_step_pack(raw + pos, runtime ? &p->step[i] : &empty)) { motion_unguard(f); return 0; }
+                if (!bank_step_pack(raw + pos, runtime ? &p.step[i] : &empty)) { motion_unguard(f); return 0; }
             }
         }
     }
@@ -134,10 +135,11 @@ static void bank_restore(const uint8_t *raw)
     for (uint32_t k = 0; k < NTRK; k++) {
         trk[k].pattern = raw[BANK_ACTIVE_OFF + k]; trk[k].pattern_next = 0xff; trk[k].pattern_gen++;
         for (uint32_t b = 0; b < NPAT; b++) {
-            pattern_t *p = pattern_at(k, b);
-            for (uint32_t i = 0; i < 4u; i++) p->timing[i] = raw[BANK_TIMING_OFF + (k * NPAT + b) * 4u + i];
-            if (b == trk[k].pattern) memcpy(p->step, trk[k].step, sizeof p->step);
-            else for (uint32_t i = 0; i < NSTEP; i++, pos += BANK_STEP_SIZE) step_wire_unpack(&p->step[i], raw + pos);
+            pattern_t p;
+            for (uint32_t i = 0; i < 4u; i++) p.timing[i] = raw[BANK_TIMING_OFF + (k * NPAT + b) * 4u + i];
+            if (b == trk[k].pattern) memcpy(p.step, trk[k].step, sizeof p.step);
+            else for (uint32_t i = 0; i < NSTEP; i++, pos += BANK_STEP_SIZE) step_wire_unpack(&p.step[i], raw + pos);
+            pattern_write(k, b, &p);
         }
     }
     motion_unguard(f);

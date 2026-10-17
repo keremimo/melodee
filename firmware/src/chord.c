@@ -24,7 +24,13 @@ static const int8_t CHORD_SHAPE[CH_POW - CH_MAJ + 1][CHORD_MAX] = {
 };
 
 static uint8_t kb_chord[27][CHORD_MAX], kb_chn[27];   /* the notes key k started (kb_chn 0: none) */
-typedef struct { uint8_t id, ch, src, n, note[CHORD_MAX]; } mchord_t;   /* id: track + 1, 0 = free */
+/* Pending tones are separate from started ownership: early release never emits
+ * an unmatched note-off or lets an unplayed tone keep another source alive. */
+typedef struct { uint32_t pos, beat; uint8_t total, rate, vel; } chord_strum_t;
+static chord_strum_t kb_strum[27];
+static uint32_t kb_strum_pending, midi_strum_pending;
+static uint8_t chord_alternate[NTRK];
+typedef struct { uint8_t id, ch, src, n, note[CHORD_MAX]; chord_strum_t strum; } mchord_t;   /* id: track + 1, 0 = free */
 static mchord_t mchord[MCHORD_N];
 /* the last chord played per track (the CHORD page shows it): its root, notes, and the shape's tones above the
  * root (bit i = i semitones, 0..11) */
@@ -231,4 +237,36 @@ static void mchord_forget(uint32_t track)               /* panic: the track's MI
     for (i = 0; i < MCHORD_N; i++)
         if (mchord[i].id == track + 1u)
             mchord[i].id = 0;
+}
+
+/* A division describes the complete first-to-last sweep, not each string gap.
+ * Freeze its rate and pitch order at the press; tempo may still change. ARP owns
+ * timing while enabled, so it receives the complete chord immediately. */
+static uint32_t chord_strum_begin(track_t *t, uint8_t *notes, uint32_t n, chord_strum_t *s, uint32_t vel)
+{
+    memset(s, 0, sizeof *s);
+    uint32_t rate = (uint32_t)t->p[P_STRUM];
+    if (!rate || rate >= NELEM(N_STRUM) || n < 2u || t->p[P_AMODE]) return n;
+    uint32_t up = t->p[P_STROKE] == 1;
+    if (t->p[P_STROKE] == 2) up = chord_alternate[trk_index(t)]++ & 1u;
+    if (up) for (uint32_t i = 0; i < n / 2u; i++) {
+        uint8_t x = notes[i]; notes[i] = notes[n - 1u - i]; notes[n - 1u - i] = x;
+    }
+    s->total = (uint8_t)n; s->rate = (uint8_t)rate; s->vel = (uint8_t)vel;
+    s->beat = seq_beat_samples();
+    return 1u;
+}
+
+/* Keep elapsed beat fraction through tempo changes and INT/MIDI clock switches. */
+static uint32_t chord_strum_due(chord_strum_t *s, uint32_t started, uint32_t elapsed)
+{
+    static const uint8_t DEN[] = {1, 2, 4, 8, 16, 32, 6, 12};
+    uint32_t beat = seq_beat_samples();
+    if (s->beat != beat) {
+        s->pos = (uint32_t)(((uint64_t)s->pos * beat + s->beat / 2u) / s->beat);
+        s->beat = beat;
+    }
+    s->pos += elapsed;
+    uint32_t target = (beat / DEN[s->rate]) * started / (s->total - 1u);
+    return s->pos < target ? target - s->pos : 0u;
 }

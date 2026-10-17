@@ -27,6 +27,10 @@
  * toms and congas (at the hit: SD, rim shot, claves), TONE the BD's and SD's tone, DECY the BD's, the open hat's
  * and the cymbal's decay, SNAP the snappy, ACC how far velocity moves the level too (drum_amp; the circuits alone
  * make a hit at 127 only ~2 dB louder than at 64), KICK ROUND the BD without its attack, DRV as on every kit. Ported from Melodee's drum part of before 1.0 (drums.c). */
+#ifndef MELODEE_DRUM_FAST
+#define MELODEE_DRUM_FAST 1
+#endif
+
 enum { DR_BD, DR_SD, DR_LT, DR_MT, DR_HT, DR_LC, DR_MC, DR_HC, DR_RS, DR_CL, DR_CP, DR_MA, DR_CB, DR_CY,
        DR_OH, DR_CH, DR_N };
 #define DR_X 0xFFu
@@ -453,6 +457,15 @@ static const uint32_t DR_OSC[6] = {              /* phase increments: 205.3, 369
 /* Block setup stays outside the six-oscillator sample loop. */
 static __attribute__((noinline)) void dr_metal_tune(const dr8_t *d,dr_scratch_t *scratch)
 {
+#if MELODEE_DRUM_FAST
+    /* Untuned metal uses the literal increments; the ratio had no consumer. */
+    if(!d->pitch){
+        scratch->inc[0]=DR_OSC[0];scratch->inc[1]=DR_OSC[1];
+        scratch->inc[2]=DR_OSC[2];scratch->inc[3]=DR_OSC[3];
+        scratch->inc[4]=DR_OSC[4];scratch->inc[5]=DR_OSC[5];
+        return;
+    }
+#endif
     uint32_t ratio=(uint32_t)pow2_q16(d->pitch);
     for(uint32_t k=0;k<6;k++)scratch->inc[k]=d->pitch?(uint32_t)(((uint64_t)DR_OSC[k]*ratio)>>16):DR_OSC[k];
 }

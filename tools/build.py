@@ -242,8 +242,8 @@ def build_app(stub):
     subprocess.run([sys.executable, SRC / "tools/gen_909_tables.py", GEN / "x0x_drum_tables.h"], check=True)
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("MELODEE_FLASH", "MELODEE_OTA", "MELODEE_OTA_DRYRUN", "MELODEE_OTA_RAMONLY", "MELODEE_CDC",
-                 "MELODEE_UART", "MELODEE_USB_AUDIO", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE",
-                 "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ"):
+                 "MELODEE_UART", "MELODEE_USB_AUDIO", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
+                 "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ", "MELODEE_MOD_CACHE", "MELODEE_CONTROL_FAST", "MELODEE_MIX_FAST", "MELODEE_FX_DORMANT", "MELODEE_RECORD_INDEX", "MELODEE_PROPHET_FAST", "MELODEE_PANEL_FAST", "MELODEE_FM6_FAST", "MELODEE_CZ_FAST", "MELODEE_DRUM_FAST", "MELODEE_SID_FAST", "MELODEE_CAPTURE_FAST"):
         v = os.environ.get(flag)    # unset: the default in firmware/src/melodee.c
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
@@ -420,7 +420,12 @@ def check(img, syms, dis, rt):
             errors.append("cache configuration must execute wholly in SRAM")
         if (sym("_resource_cache_start"), sym("_resource_cache_end")) != (0x01F28000, 0x01F2F000):
             errors.append("cache resource bank must cover exactly the seven freed data-cache ways")
-        notes.append(f"cache RAM: optional 28672 B after boot self-test; maximum resources {arena + tails + 28672} B")
+        # resources.c reserves the UI partition before exposing this bank to
+        # audio. Do not count undo storage as additional engine/FX capacity.
+        ui_reserve = int(re.search(r"^#define UI_CACHE_BYTES (\d+)u$",
+                                  (FW / "src" / "resources.c").read_text(), re.M)[1])
+        cache_audio = 28672 - ui_reserve
+        notes.append(f"cache RAM: optional 28672 B after boot self-test; UI {ui_reserve} B, audio {cache_audio} B; maximum audio resources {arena + tails + cache_audio} B")
     if 0x54000 - pool < 8192:                     # keep >= 8 KiB of the pool spare
         errors.append(f"pool headroom {0x54000 - pool} B < 8192 B")
     return errors, notes
@@ -477,7 +482,23 @@ def main():
     mode.add_argument("--nightly", action="store_true", help="development package from the current Git commit")
     mode.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity FM-1_9XY[Z], version string vX.Y[.Z]")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--cpu-manifest", type=Path, help="Write source/package identity for CPU experiments")
+    ap.add_argument("--no-core1-fallback", action="store_true",
+                    help="Diagnostic: halt for watchdog reset on CPU1 failure instead of rendering on one core")
     a = ap.parse_args()
+    if a.no_core1_fallback:
+        os.environ["MELODEE_CORE1_FALLBACK"] = "0"
+    if os.environ.get("MELODEE_CORE1_FALLBACK", "1") not in ("0", "1"):
+        ap.error("MELODEE_CORE1_FALLBACK must be 0 or 1")
+    cpu_flags = {}
+    cpu_sources = {}
+    if a.cpu_manifest:
+        for flag in ("MELODEE_RAM_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_PROFILE", "MELODEE_AUDIO_BENCH"):
+            if os.environ.get(flag) not in ("0", "1"):
+                ap.error(f"--cpu-manifest requires an explicit {flag}=0/1")
+            cpu_flags[flag] = int(os.environ[flag])
+        cpu_sources = {str(p.relative_to(SRC)): hashlib.sha256(p.read_bytes()).hexdigest()
+                       for p in sorted(FW.rglob('*')) if p.is_file()}
     name = "melodee.fwsc"
     if os.environ.get("MELODEE_DUAL_CORE", "1") != "1":
         ap.error("Single-core firmware is retired; MELODEE_DUAL_CORE must be 1")
@@ -521,6 +542,18 @@ def main():
     print(f"app      {OUT / 'melodee.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
+    if a.cpu_manifest:
+        if any(hashlib.sha256((SRC / p).read_bytes()).hexdigest() != digest for p, digest in cpu_sources.items()):
+            raise SystemExit("Firmware source changed during CPU experiment build; rebuild before measuring")
+        cpu_flags["MELODEE_DUAL_CORE"] = 1
+        cpu_flags["MELODEE_CORE1_FALLBACK"] = int(os.environ.get("MELODEE_CORE1_FALLBACK", "1"))
+        a.cpu_manifest.write_text(json.dumps(dict(package=str((OUT / name).resolve()),
+            package_sha256=hashlib.sha256(pkg).hexdigest(), editor_identity=("MELODEE " + (VERSION or "v1.4.2-rc.1"))[:24],
+            source_revision=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SRC, text=True).strip(),
+            source_status=subprocess.check_output(["git", "status", "--short"], cwd=SRC, text=True).splitlines(),
+            firmware_sha256=cpu_sources, flags=cpu_flags,
+            build_options={k:v for k,v in os.environ.items() if k.startswith(("MELODEE_", "P5_"))},
+            cflags=CFLAGS), indent=2)+'\n')
     if a.release:                   # what a release carries: the package, the app and every licence they need
         rel = OUT / f"release-{a.release}"
         shutil.rmtree(rel, ignore_errors=True)

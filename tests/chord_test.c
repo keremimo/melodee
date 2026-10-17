@@ -316,9 +316,186 @@ static int kits(void)
     return bad;
 }
 
+/* Real input ownership, scheduler and recorder, including batched advances. */
+static int strumming(void)
+{
+    int bad = 0;
+    track_t *t = &trk[0];
+    static const uint8_t den[] = {0, 2, 4, 8, 16, 32, 6, 12};
+    for (uint32_t rate = 1; rate < NELEM(den); rate++) {
+        reset(); t->p[P_CHRD] = CH_MAJ7; t->p[P_STRUM] = (int16_t)rate;
+        uint32_t span = seq_beat_samples() / den[rate];
+        key_down(K_C4);
+        int exact = ngated(t) == 1 && gate_note(t, 60) && mo_w == 1;
+        seq_advance(span / 3 - 1); exact &= ngated(t) == 1;
+        seq_advance(1); exact &= ngated(t) == 2 && gate_note(t, 64);
+        seq_advance(span * 2 / 3 - span / 3); exact &= ngated(t) == 3 && gate_note(t, 67);
+        seq_advance(span - span * 2 / 3); exact &= ngated(t) == 4 && gate_note(t, 71);
+        seq_advance(span * 2); exact &= mo_w == 4 && !kb_strum_pending;
+        key_up(K_C4); exact &= !ngated(t) && mo_w == 8;
+        bad += check("each strum division: exact first-to-last span, four ordered tones, one sweep, balanced MIDI", exact);
+    }
+    reset(); t->p[P_CHRD] = CH_MAJ; t->p[P_STRUM] = 2;
+    key_down(K_C4); key_up(K_C4); seq_advance(seq_beat_samples());
+    bad += check("early release cancels pending tones without unmatched MIDI offs", !ngated(t) && mo_w == 2 && !kb_strum_pending);
+
+    t->p[P_STROKE] = 1;
+    key_down(K_C4);
+    bad += check("UP starts at the highest voiced pitch", gate_note(t, 67) && ngated(t) == 1);
+    t->p[P_STRUM] = 1; t->p[P_STROKE] = 0; t->p[P_CHRD] = CH_MIN7;
+    seq_advance(seq_beat_samples() / 4);
+    bad += check("held sweep keeps its original rate, shape and direction", ngated(t) == 3 && gate_note(t, 64) && gate_note(t, 60) && !gate_note(t, 63));
+    key_up(K_C4);
+    t->p[P_CHRD] = CH_MAJ; t->p[P_STROKE] = 2;
+    key_down(K_C4); int alt = gate_note(t, 60); key_up(K_C4);
+    key_down(K_C4); alt &= gate_note(t, 67); key_up(K_C4);
+    bad += check("ALT alternates direction on successive chord presses", alt && !ngated(t));
+
+    reset(); t->p[P_CHRD] = CH_MAJ; t->p[P_STRUM] = 2;
+    key_down(K_C4); key_down(K_E4); key_up(K_E4);
+    seq_advance(seq_beat_samples() / 4);
+    bad += check("an unplayed shared tone never steals or retains another key's ownership", ngated(t) == 3 && gate_note(t,60) && gate_note(t,64) && gate_note(t,67));
+    key_up(K_C4);
+    key_down(K_C4); seq_stop(); seq_advance(seq_beat_samples());
+    bad += check("STOP cancels pending strings while the physically held first tone can ring", ngated(t) == 1 && !kb_strum_pending);
+    key_up(K_C4);
+    t->p[P_AMODE] = 1; key_down(K_C4);
+    bad += check("ARP receives the complete chord immediately instead of a partial strum", t->nheld == 3 && !kb_strum_pending);
+    key_up(K_C4);
+
+    reset(); t->p[P_CHRD] = CH_MAJ; t->p[P_STRUM] = 2;
+    key_down(K_C4); panic_req = 1; events_block(0); seq_advance(seq_beat_samples());
+    bad += check("preset/engine panic cancels keyboard strings and balances their MIDI output", !ngated(t) && !kb_strum_pending && !kb_chn[K_C4] && mo_w == 2);
+    key_up(K_C4);
+
+    for (uint32_t ext = 0; ext < 2; ext++) {
+        reset(); midi_sync_active = (uint8_t)ext;
+        t->p[P_CHRD] = CH_MAJ; t->p[P_STRUM] = 4;
+        uint32_t span = seq_beat_samples() / 16;
+        midi_note_event(0,60,87);
+        int exact = ngated(t)==1 && gate_note(t,60);
+        seq_advance(span / 2 - 1); exact &= ngated(t)==1;
+        seq_advance(1); exact &= ngated(t)==2 && gate_note(t,64);
+        seq_advance(span - span/2); exact &= ngated(t)==3 && gate_note(t,67);
+        midi_note_event(0,60,0); seq_advance(span);
+        bad += check("MIDI strums use internal/external beat units and release exactly their started tones", exact && !ngated(t) && !midi_strum_pending);
+    }
+    midi_sync_active = 0;
+    reset(); t->p[P_CHRD] = CH_MAJ; t->p[P_STRUM] = 2;
+    midi_note_event(0,60,90); midi_note_event(0,60,0); seq_advance(seq_beat_samples());
+    bad += check("MIDI early note-off cancels the rest of its sweep", !ngated(t) && !midi_strum_pending);
+    midi_channel(0)->pedal = 1;
+    midi_note_event(0,60,90); midi_note_event(0,60,0); seq_advance(seq_beat_samples()/4);
+    bad += check("MIDI sustain lets the held sweep complete", ngated(t)==3 && !midi_strum_pending);
+    midi_pedal_up(0);
+    bad += check("pedal-up releases all strummed tones", !ngated(t));
+    midi_note_event(0,60,90); midi_silence_track(0); seq_advance(seq_beat_samples());
+    bad += check("All Sound Off cancels MIDI strings", !ngated(t) && !midi_strum_pending);
+    midi_note_event(0,60,90); midi_in_overflow = 1; events_block(0); seq_advance(seq_beat_samples());
+    bad += check("MIDI overflow cannot revive a pending string", !ngated(t) && !midi_strum_pending);
+
+    reset(); t->p[P_CHRD] = CH_MAJ; t->p[P_STRUM] = 2;
+    song.g[G_BPM] = 120; key_down(K_C4);
+    seq_advance(seq_beat_samples()/16); /* one quarter of the sweep */
+    song.g[G_BPM] = 60;
+    seq_advance(seq_beat_samples()/16);
+    bad += check("tempo changes retain elapsed beat fraction", ngated(t)==2 && gate_note(t,64));
+    midi_sync_active = 1;
+    seq_advance(MIDI_BEAT_UNITS/8);
+    bad += check("clock-domain changes retain the remaining sweep", ngated(t)==3 && gate_note(t,67));
+    key_up(K_C4); midi_sync_active = 0;
+
+    reset(); t->p[P_CHRD] = CH_MAJ; t->p[P_STRUM] = 2;
+    song.rec = 1; seq_start(); seq_advance(0); song.rec_pass = 0;
+    uint32_t span = seq_beat_samples()/4;
+    key_down(K_C4); seq_advance(span); key_up(K_C4);
+    int recorded = recording[0].vel && recording[1].vel && recording[2].vel &&
+                   recording_on(t,&recording[0],seq_div_samples(t->p[P_SDIV])) < recording_on(t,&recording[1],seq_div_samples(t->p[P_SDIV])) &&
+                   recording_on(t,&recording[1],seq_div_samples(t->p[P_SDIV])) < recording_on(t,&recording[2],seq_div_samples(t->p[P_SDIV]));
+    recorded_note_t saved[3]; memcpy(saved,recording,sizeof saved);
+    seq_stop(); song.rec = 0; seq_start(); seq_advance(0);
+    int replay = ngated(t)==1 && gate_note(t,60);
+    seq_advance(span/2); replay &= gate_note(t,64) && !gate_note(t,67);
+    /* Release was at the final onset, so the final tone has minimum duration. */
+    seq_advance(span-span/2);
+    bad += check("live recording captures separate strum onsets and replays their timing", recorded && replay && !memcmp(saved,recording,sizeof saved));
+    seq_stop();
+    t->p[P_STRUM] = 4; t->p[P_STROKE] = 2;
+    apply_preset_to(t,0);
+    bad += check("strum and stroke survive sound loads", t->p[P_STRUM]==4 && t->p[P_STROKE]==2);
+    project_capture(&proj_scratch); t->p[P_STRUM]=0; t->p[P_STROKE]=0;
+    project_restore_runtime(&proj_scratch);
+    bad += check("project capture/restore retains strum controls", t->p[P_STRUM]==4 && t->p[P_STROKE]==2);
+    return bad;
+}
+
+/* Recreate the previous parameter layout without changing the fixed native
+ * patches or FX tail. Its engine slots must never become strum settings. */
+static int strum_storage(void)
+{
+    reset(); track_t *t = &trk[0];
+    t->p[P_STRUM]=4; t->p[P_STROKE]=2; t->p[P_E3]=23;
+    t->p[P_FXTONE]=-20; song.g[G_MFXTONE]=17;
+    project_capture(&proj_scratch);
+    proj_scratch.motion.count=1; proj_scratch.motion.on=1;
+    proj_scratch.motion.event[0]=(motion_event_t){0,P_E3,23};
+    static project_store_t old;
+    int bad=check("strum project serializes",proj_pack(&old,&proj_scratch));
+    uint32_t src=68, dst=68;
+    for(uint32_t k=0;k<NTRK;k++) {
+        memmove(old.raw+dst,old.raw+src,114);dst+=114;src+=116;
+        uint32_t tail=8+2+NSTEP*8;
+        memmove(old.raw+dst,old.raw+src,tail);dst+=tail;src+=tail;
+    }
+    uint32_t motion_at=dst+sizeof(chain_config_t);
+    memmove(old.raw+dst,old.raw+src,PROJ_TONE_WIRE-src);
+    memset(old.raw+PROJ_TONE_WIRE-(src-dst),0,src-dst);
+    /* Rewrite the source-era engine motion ID and count, then authenticate. */
+    old.raw[motion_at+__builtin_offsetof(motion_store_t,event)+__builtin_offsetof(motion_event_t,param)]=117;
+    old.raw[66]=122;
+    uint32_t hash=proj_hash(old.raw,sizeof old-4);
+    memcpy(old.raw+sizeof old-4,&hash,4);
+    int ok=proj_import(&proj_scratch,&old,sizeof old);
+    bad+=check("pre-strum project imports with OFF, original engine values/motion and FX tones",
+        ok && !proj_scratch.t[0].p[P_STRUM] && !proj_scratch.t[0].p[P_STROKE] &&
+        proj_scratch.t[0].p[P_E3]==23 && proj_scratch.motion.event[0].param==P_E3 &&
+        proj_scratch.t[0].p[P_FXTONE]==-20 && proj_scratch.g[G_MFXTONE]==17);
+    persist_old=tmpl_old=0; template_save();
+    static uint8_t blob[sizeof(tmpl_t)]; memcpy(blob,&tmpl,sizeof tmpl);
+    src=dst=2*PROJ_GLOBALS+2;
+    for(uint32_t k=0;k<NTRK;k++) {
+        uint32_t head=2+114*2;
+        memmove(blob+dst,blob+src,head);dst+=head;src+=head+4;
+        memmove(blob+dst,blob+src,16);dst+=16;src+=16;
+    }
+    memmove(blob+dst,blob+src,sizeof tmpl-src);
+    uint32_t len=sizeof tmpl-(src-dst);
+    memcpy(blob+len-8,&len,4);
+    ok=tmpl_take(blob,len);
+    bad+=check("pre-strum template imports with OFF and original native/engine/FX data",
+        ok && !tmpl.t[0].p[P_STRUM] && !tmpl.t[0].p[P_STROKE] &&
+        tmpl.t[0].p[P_E3]==23 && tmpl.t[0].p[P_FXTONE]==-20 && tmpl.master[14]==81);
+    up_rec_t preset; memset(&preset,0,sizeof preset);
+    preset.used=UP_USED; preset.ver=UP_VER_CZ; preset.engine=ENGI_CZ;
+    preset.np=122; memcpy(preset.name,"OLD CZ",7); cz_patch_init(preset.packed);
+    bad+=check("pre-strum CZ preset remains valid",up_valid(&preset));
+    memset(&preset,0,sizeof preset); preset.np=125;
+    int16_t defaults[P_COUNT],values[P_COUNT];
+    for(uint32_t i=0;i<P_COUNT;i++)defaults[i]=TP[i].def;
+    for(uint32_t i=0;i<125;i++)up_set_value(&preset,i,0);
+    up_set_value(&preset,114,39);up_set_value(&preset,115,27);up_set_value(&preset,120,23);
+    up_params(&preset,values,defaults);
+    bad+=check("retired high-cut preset values cannot enable strum or change its direction",
+        !values[P_STRUM] && !values[P_STROKE] && values[P_E3]==23);
+    t->p[P_STRUM]=t->p[P_STROKE]=0;go_page(GR_CHORD);
+    turn(EN_K3,4);turn(EN_K4,2);
+    bad+=check("CHORD knobs 3 and 4 edit strum duration and stroke direction",t->p[P_STRUM]==4 && t->p[P_STROKE]==2);
+    return bad;
+}
+
 int main(void)
 {
-    int bad = theory() + shapes_voicings() + keys() + arp_rec() + midi_in() + kits();
+    int bad = theory() + shapes_voicings() + keys() + arp_rec() + midi_in() + kits() + strumming() + strum_storage();
     printf("%s\n", bad ? "CHORD TEST FAILED" : "chord keys test passed");
     return bad != 0;
 }

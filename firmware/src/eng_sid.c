@@ -44,6 +44,11 @@
  *
  * Engine ID 3 was LOFI: its projects keep the ID and load as SID. */
 
+/* Experimental exact filter-output specialization; device acceptance pending. */
+#ifndef MELODEE_SID_FAST
+#define MELODEE_SID_FAST 1
+#endif
+
 static const char *const N_SID_MODEL[] = {"6581", "8580", "C64 6581", "C64 8580"};
 static const char *const N_SID_WAVE[] = {"TRI", "SAW", "PULSE", "NOISE", "TRI+SAW", "TRI+PLS", "SAW+PLS", "T+S+P"};
 static const char *const N_SID_STACK[] = {"ONE", "DETUNE", "OCT", "FIFTH", "MAJOR", "SYNC", "RING", "SUB"};
@@ -473,8 +478,20 @@ static void sid_render_into(track_t *t,voice_t *v,int32_t *out,uint32_t n,const 
             lp = soft_knee(ic2 + ((fc.a2 * ic1 + fc.a3 * v3) >> 13), knee);
             ic1 = clamp(2 * bp - ic1, -150000, 150000);
             ic2 = clamp(2 * lp - ic2, -150000, 150000);
+#if MELODEE_SID_FAST
+            /* LP/BP have no high-pass contribution. Its stateless value can
+             * be omitted; both integrators above still advance identically.
+             * Preserve the chip sum's LP + BP + HP order in every mode. */
+            f = lp * sl + bp * sb;
+            if (sh) {
+                hp = in - lp - ((bp * kd) >> 12);
+                f += hp;
+            }
+            f = (f * gout) >> 12;
+#else
             hp = in - lp - ((bp * kd) >> 12);
             f = ((lp * sl + bp * sb + hp * sh) * gout) >> 12;
+#endif
         } else                                         /* OFF: no voice routed to the filter */
             f = (soft_knee((x * gin) >> 12, knee) * gout) >> 12;
         xlp += (int32_t)(((int64_t)(clamp(f, -131071, 131071) - xlp) * SID_XLP_A) >> 15);

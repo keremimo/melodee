@@ -20,6 +20,10 @@
 
 #include "x0x/fastmath.h"
 
+#ifndef MELODEE_FM6_FAST
+#define MELODEE_FM6_FAST 1
+#endif
+
 /* the 155-byte patch: 6 x 21 operator bytes (the sixth operator first), then the voice */
 enum {
     FP_R1 = 0, FP_L1 = 4, FP_BP = 8, FP_LD, FP_RD, FP_LC, FP_RC, FP_RS, FP_AMS, FP_KVS, FP_OL, FP_MODE, FP_FC, FP_FF,
@@ -494,7 +498,13 @@ static inline __attribute__((always_inline)) void fm6_plan(fm6_voice_t *s, const
             f = 0xc4u, out = 0, in = 0, add = 4u;        /* MARK I: the loop runs from OP6 */
         if (eng == FM6_MODERN) {
             g1 = s->gout[k];
+#if MELODEE_FM6_FAST
+            /* exp2(-14) is exactly 2^-14 in the existing polynomial. Keep
+             * the original routing, phase advancement and gain ramp below. */
+            g2 = lv[k] == 0 ? 1.0f / 16384.0f : fm_exp2f((float)lv[k] * (1.0f / 16777216.0f) - 14.0f);
+#else
             g2 = fm_exp2f((float)lv[k] * (1.0f / 16777216.0f) - 14.0f);
+#endif
             run = g1 >= 1120.0f / 16777216.0f || g2 >= 1120.0f / 16777216.0f;
         } else if (eng == FM6_MARK1) {
             g1 = s->gout[k] ? s->gout[k] : 16383;

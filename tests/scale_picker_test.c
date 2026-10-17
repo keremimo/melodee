@@ -4,17 +4,32 @@
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
+static void open_picker(void)
+{
+    assert(scale_settings_page(cur_page()));
+    turn(EN_K2, -100); frame();
+    turn(EN_K2, 1); frame();
+    press(B_OCTUP); assert(cur_page()->graph == GR_SCALE_PICKER);
+}
+
 static void mark(int on)
 {
     press(B_SCL); frames(400); assert(scale_settings_page(cur_page()));
+    turn(EN_K2, -100); frame();
     turn(EN_K2, 4); frame();                       /* (SCL is a list: Favourite its 5th row, KNOB 1 its value) */
     turn(EN_K1, on ? 1 : -1); frame();
-    turn(EN_SELECT, -1); frame(); assert(cur_page()->graph == GR_SCALE_PICKER);
+    open_picker();
 }
 
 int main(void)
 {
     ui_power_on(); go_home(); press(B_SCL); frames(400);
+    assert(scale_settings_page(cur_page()));
+    press(B_SCL); frames(400); assert(cur_page()->graph == GR_CHORD);
+    press(B_SCL); frames(400); assert(scale_settings_page(cur_page()));
+    turn(EN_SELECT, -1); frame(); assert(cur_page()->graph == GR_CHORD);
+    turn(EN_SELECT, 1); frame(); assert(scale_settings_page(cur_page()));
+    open_picker();
     assert(cur_page()->graph == GR_SCALE_PICKER && ui.scale_family == 1);
     assert(cur_page()->id[1] == P_SCALE && cur_page()->id[2] == P_ROOT);
     uint32_t visited = 0;
@@ -70,6 +85,6 @@ int main(void)
         }
     }
     press(B_SCL); frames(400); assert(!strcmp(cur_page()->title, "CHORD"));
-    puts("scale picker: every family, bounds, shared scale/MPC/QNT, track ROOT, favorites on the next page, empty list and navigation passed");
+    puts("scale picker: SCL/SELECT skip picker, OCT+ entry, every family, shared scale/MPC/QNT, track ROOT, favorites and empty list passed");
     return 0;
 }

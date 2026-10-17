@@ -12,9 +12,11 @@
  * the next request, and only when its check word matches: a misread is counted,
  * never run. A misread (unless the platform answers it: AW_MISREAD, test
  * builds only), a CPU1 fault or a stall retires the worker for the session:
- * CPU1 is held and CPU0 renders every voice again. */
+ * CPU1 is held and CPU0 renders every voice again. With
+ * MELODEE_CORE1_FALLBACK=0, AW_FAILURE stops the session instead. */
 #pragma once
 #include <stdint.h>
+#include "build_options.h"
 #ifndef AW_IDLE
 #define AW_IDLE() ((void)0)
 #endif
@@ -29,6 +31,9 @@
 #endif
 #ifndef AW_MISREAD
 #define AW_MISREAD(n) 0              /* n misreads so far: 1 answered (keep the worker), 0 retire it */
+#endif
+#ifndef AW_FAILURE
+#define AW_FAILURE() __builtin_trap() /* no-fallback platforms must stop the session, not reuse partial state */
 #endif
 #define AW_CHECK(fn, context, request) \
     ((uint32_t)(uintptr_t)(fn) ^ (uint32_t)(uintptr_t)(context) ^ (uint32_t)(request) * 0x9E3779B1u)
@@ -68,10 +73,15 @@ static int audio_worker_submit(audio_worker_fn fn, void *context)
  * is abandoned, never rerun (its voice was partly advanced). */
 static void audio_worker_retire(void)
 {
+#if !MELODEE_CORE1_FALLBACK
+    AW_FAILURE();
+    __builtin_unreachable();
+#else
     AW_HOLD();
     AW_RETIRED();
     audio_worker_online = 0;
     AW_STORE(&audio_worker.complete, AW_LOAD(&audio_worker.request));
+#endif
 }
 
 /* CPU0 between blocks (nothing outstanding): retire a worker that faulted or

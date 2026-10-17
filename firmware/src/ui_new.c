@@ -4,8 +4,8 @@
  * the power-on sounds), every pattern empty, in two screens. KEY: KNOB 1 ROOT, 2 SCALE, 3 TEMPO. ROLES: KNOB k track
  * k's role: -- (no track), KEEP (the template's sound) or DRUMS BASS CHORDS LEAD PAD: the first sound of that category,
  * unless the template's sound already is one. The tracks with a role are the song's, in their order (the template's
- * KEEP, the others --: one without a template). OCT+ next / create, OCT- back / cancel. Stopped only: the base loads like
- * a project */
+ * KEEP, the others --; without a template all four KEEP). OCT+ next / create, OCT- back / cancel. Stopped only: the
+ * base loads like a project */
 static void template_key(uint32_t *root, uint32_t *scale, int32_t *bpm);   /* project.c */
 static uint32_t template_tracks(void);
 static int track_remove(uint32_t k);                                       /* tracks.c */

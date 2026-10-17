@@ -243,7 +243,7 @@ async function editorMock() {
   const rq = async (r, o) => link.request(r, o);
   const info = E.parse[E.CMD.INFO](await rq(E.req.info()));
   ok(info.nengines === 20 && info.engines[14] === "-" && info.engines[1] === "-" && info.engines[12] === "FM6" && info.engines[13] === "-"
- && info.engines[2] === "-" && info.engines[5] === "-" && info.engines[6] === "-" && info.engines[7] === "-" && info.engines[8] === "-" && info.engines[9] === "-" && info.engines[10] === "DRUM" && info.engines[11] === "-" && info.pcount === 122 && info.pe0 === 114 && info.engines[4] === "-",
+ && info.engines[2] === "-" && info.engines[5] === "-" && info.engines[6] === "-" && info.engines[7] === "-" && info.engines[8] === "-" && info.engines[9] === "-" && info.engines[10] === "DRUM" && info.engines[11] === "-" && info.pcount === 124 && info.pe0 === 116 && info.engines[4] === "-",
     "editor: INFO");
   let descs = 0;
   for (let i = 0; i < info.pcount; i++) if (E.parse[E.CMD.DESC](await rq(E.req.desc(0, i))).label) descs++;
@@ -280,11 +280,19 @@ async function editorMock() {
     ok(c0.label === "CHRD" && c0.names.join() === "OFF,DIA3,DIA7,MAJ,MIN,DOM7,MAJ7,MIN7,SUS4,POW" && c0.def === 0 &&
        c1.label === "VOIC" && c1.names.join() === "CLOSE,OPEN,INV1,INV2,+OCT" && c1.def === 0,
       "editor: the chord keys 81, 82 over DESC");
+    const strum = E.parse[E.CMD.DESC](await rq(E.req.desc(0, 114)));
+    const stroke = E.parse[E.CMD.DESC](await rq(E.req.desc(0, 115)));
+    ok(strum.label === "STRUM" && strum.names.join() === "OFF,1/8,1/16,1/32,1/64,1/128,16T,32T" &&
+       stroke.label === "STROKE" && stroke.names.join() === "DOWN,UP,ALT" && !strum.def && !stroke.def,
+       "editor: strum divisions and directions over DESC");
+    await rq(E.req.set(0, 114, 4));
+    await rq(E.req.set(0, 115, 2));
     await rq(E.req.set(0, 81, 2));
     await rq(E.req.set(0, 82, 4));
     await rq(E.req.preset(3, 3));
     const kept = E.parse[E.CMD.DUMP](await rq(E.req.dump()), info);
     ok(kept.p[81] === 2 && kept.p[82] === 4 && kept.preset === 3, "editor: a factory preset keeps CHRD and VOIC (the track's)");
+    ok(kept.p[114] === 4 && kept.p[115] === 2, "editor: sound loads preserve strum and stroke");
     await rq(E.req.set(0, 81, 0));
     await rq(E.req.set(0, 82, 0));
   }

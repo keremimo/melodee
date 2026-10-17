@@ -37,6 +37,7 @@ OPTIONAL = {}                   # built only with an option, not in BUDGET: abse
 # The FM6 operator kernel may be extracted from its renderer. Keep the original
 # combined budget, so moving work into a helper cannot weaken the existing guard.
 EXTRACTED = {
+    "cz_native_wave": ("cz_native_wave_window4",),
     "sid_render": ("sid_render_into",),
     "drum_render": ("drum_render_into",),
     "dr8_run": ("dr8_run_into",),

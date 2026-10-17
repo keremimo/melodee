@@ -47,6 +47,10 @@
 #include "fm1_time.h"
 #include "fm1_gpio.h"
 #include "fm1_led_pwm.h"
+#ifndef FM1_INPUT_PROFILE_START
+#define FM1_INPUT_PROFILE_START(name) ((void)0)
+#define FM1_INPUT_PROFILE_END(id,name) ((void)0)
+#endif
 
 #ifndef FM1_INPUT_IDLE
 #define FM1_INPUT_IDLE() ((void)0)
@@ -65,6 +69,10 @@
 #define FM1_NCOL 11u
 #define FM1_NKEY 41u              /* ids: 0..13 buttons, 14..40 note keys */
 #define FM1_NENC 7u
+
+#ifndef MELODEE_PANEL_FAST
+#define MELODEE_PANEL_FAST 1
+#endif
 
 
 /* key id at (physical column, packed row bit), -1 = none */
@@ -149,6 +157,20 @@ static void fm1__led_col(uint32_t p)
                       fm1_led_pwm_level(4u, bright, dim, fm1_led_dim_mask),
                       fm1_led_pwm_level(8u, bright, dim, fm1_led_dim_mask),
                       fm1_led_pwm_level(16u, bright, dim, fm1_led_dim_mask));
+}
+
+static uint32_t fm1__column_word(uint32_t p)
+{
+#if MELODEE_PANEL_FAST
+    /* Active-low columns 0/1 also select the octave-indicator outputs. */
+    static const uint16_t word[FM1_NCOL] = {
+        0xf7feu, 0xeffdu, 0xfffbu, 0xfff7u, 0xffefu, 0xffdfu,
+        0xffbfu, 0xff7fu, 0xfeffu, 0xfdffu, 0xfbffu
+    };
+    return word[p];
+#else
+    return 0xFFFFu ^ (1u << p) ^ (p < 2u ? 1u << (11u + p) : 0u);
+#endif
 }
 
 static void fm1__sr_word(uint32_t w)
@@ -265,7 +287,7 @@ static void fm1_input_scan(void)
     uint32_t p;
     for (p = 0; p < FM1_NCOL; p++) {
         fm1__led_lines(0);
-        fm1__sr_word(0xFFFFu ^ (1u << p) ^ (p < 2u ? 1u << (11u + p) : 0u));
+        fm1__sr_word(fm1__column_word(p));
         fm1__wait(FM1_SETTLE_US);
         fm1_in.raw[p] = (uint8_t)fm1__rows();
         fm1__keys(p);
@@ -339,7 +361,10 @@ static void fm1_input_tick(void)
 {
     uint32_t p = fm1__tick_col, n = p + 1u == FM1_NCOL ? 0u : p + 1u;
     uint32_t t0 = fm1_ticks(), g = t0 - fm1_in_stat.last, b = 0;
+    FM1_INPUT_PROFILE_START(blank_start);
     fm1__led_lines(0);
+    FM1_INPUT_PROFILE_END(AP_INPUT_BLANK,blank_start);
+    FM1_INPUT_PROFILE_START(diag_start);
     fm1_in_stat.last = t0;
     while (b < FM1_GAP_BINS - 1u && g >= (150u * FM1_TICKS_PER_US << b))
         b++;
@@ -349,13 +374,25 @@ static void fm1_input_tick(void)
     fm1_in_stat.on[p] += g;
     if (g > fm1_in_stat.on_max[p])
         fm1_in_stat.on_max[p] = g;
+    FM1_INPUT_PROFILE_END(AP_INPUT_DIAGNOSTICS,diag_start);
+    FM1_INPUT_PROFILE_START(rows_start);
     fm1_in.raw[p] = (uint8_t)fm1__rows();          /* column p has been latched one tick */
-    fm1__sr_word(0xFFFFu ^ (1u << n) ^ (n < 2u ? 1u << (11u + n) : 0u));
+    FM1_INPUT_PROFILE_END(AP_INPUT_ROWS,rows_start);
+    FM1_INPUT_PROFILE_START(shift_start);
+    fm1__sr_word(fm1__column_word(n));
+    FM1_INPUT_PROFILE_END(AP_INPUT_SHIFT,shift_start);
+    FM1_INPUT_PROFILE_START(led_start);
     fm1__led_col(n);
+    FM1_INPUT_PROFILE_END(AP_INPUT_LED,led_start);
     fm1__tick_col = (uint8_t)n;
+    FM1_INPUT_PROFILE_START(keys_start);
     fm1__keys(p);                                  /* its keys now: no wait for the frame's end */
-    if (n == 0u)
+    FM1_INPUT_PROFILE_END(AP_INPUT_KEYS,keys_start);
+    if (n == 0u) {
+        FM1_INPUT_PROFILE_START(enc_start);
         fm1__frame();
+        FM1_INPUT_PROFILE_END(AP_INPUT_ENCODERS,enc_start);
+    }
     g = fm1_ticks() - t0;
     fm1_in_stat.cost_sum += g;
     fm1_in_stat.ticks++;

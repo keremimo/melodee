@@ -129,6 +129,9 @@ static void ui_power_on(void)
     for(uint32_t k=0;k<FX_STATE_COUNT;k++)resource_release(RES_FX0+k);
     fx_bus_result=fx_bus_pending=0;fx_bus_mix=fx_bus_target=0;
     memset(fx_state,0,sizeof fx_state);
+    kb_strum_pending = midi_strum_pending = 0;
+    memset(kb_strum, 0, sizeof kb_strum);
+    memset(chord_alternate, 0, sizeof chord_alternate);
     memset(trk, 0, sizeof trk);
     memset(&song, 0, sizeof song);
     memset(&chain, 0, sizeof chain);
@@ -150,6 +153,7 @@ static void ui_power_on(void)
     memset(&favorites, 0, sizeof favorites);
     memset(&brw, 0, sizeof brw);                  /* the browser: nothing pending, LIST ALL, RECENT empty */
     list_recent = 0;
+    list_forget();
     recent_n = 0;
     undo_clear();
     memset(pat_last, 0, sizeof pat_last);
@@ -871,18 +875,37 @@ static void one_note(track_t *t, uint32_t i, uint32_t note)
     t->step[i].note[0] = (uint8_t)note;
     t->step[i].vel = 100;
 }
+static uint32_t find_preset(uint32_t e, const char *name);
 static int test_track_count(void)
 {
     int bad = 0, ok;
     uint32_t i, n;
-    char a[32], b[40];
+    char a[32], b[CF_DETAIL];
+    static const char *const DEF[NTRK] = {"It's a Prophet 5", "SOLID BASS", "SYNTH.LEAD 1", "808 KIT"};
     ui_power_on();
     stop_transport();
     memset(proj_slot, 0, sizeof proj_slot);
     memset(proj_bank_slot, 0, sizeof proj_bank_slot);
     project_new_blank();
     go_home(); frame();
-    bad += check("a new song: one track, T1 selected", trk_n() == 1u && song.sel == 0);
+    ok = trk_n() == NTRK && song.sel == 0;
+    for (i = 0; i < NTRK; i++)
+        ok &= trk[i].eng_req == TRK_DEF[i][0] && trk[i].preset == find_preset(TRK_DEF[i][0], DEF[i]) &&
+              seq_is_empty(&trk[i]);
+    bad += check("a new song: four tracks, It's a Prophet 5, FM6 SOLID BASS, CZ-1 SYNTH.LEAD 1, 808 KIT; T1 selected",
+                 ok && TRK_DEF[0][0] == ENGI_PROPHET && TRK_DEF[1][0] == ENGI_FM6 && TRK_DEF[2][0] == ENGI_CZ &&
+                 TRK_DEF[3][0] == ENGI_DRUM);
+    bad += check("  NEW SONG without a template: all four", template_tracks() == NTRK);
+    song.ntrk = 1;                                      /* (a song down to one track) */
+    ui.force = 1; frame();
+    bad += check("UNUSED TRACKS SHOW: four rows, the places not in use greyed (Add track)", stage_rows() == NTRK &&
+                 st_row_h() == (ST_ROWS_H - 6) / 4 && stage.col[1] && stage.col[3]);
+    hold(B_HOME); ui.menu_sel = MI_TRACKS; press(B_OCTUP); hold(B_HOME);
+    ui.force = 1; frame();
+    bad += check("  menu UNUSED TRACKS (OCT+): HIDE, the one track the wide card",
+                 (GLO_SELECT & TRACKS_HIDE) && stage_rows() == 1u && st_row_h() == ST_ROWS_H);
+    hold(B_HOME); ui.menu_sel = MI_TRACKS; turn(EN_K1, -1); hold(B_HOME);
+    bad += check("  KNOB 1 left: SHOW again", !(GLO_SELECT & TRACKS_HIDE) && stage_rows() == NTRK && ui.home);
     bad += check("  no pattern at all: Stage's card shows no pattern pill, no steps (a synth)", stage_seq_idle(0));
     one_note(&trk[0], 3, 60);
     ok = !stage_seq_idle(0);
@@ -930,8 +953,10 @@ static int test_track_count(void)
     }
     set_engine_of(&trk[2], ENGI_DRUM);
     trk[2].p[P_E0] = 4;
-    pattern_at(1, 3)->step[5].time = ST_NOTE; pattern_at(1, 3)->step[5].n = 1; pattern_at(1, 3)->step[5].note[0] = 70;
-    pattern_at(2, 3)->step[6].time = ST_NOTE; pattern_at(2, 3)->step[6].n = 1; pattern_at(2, 3)->step[6].note[0] = 72;
+    pattern_t other; pattern_read(1, 3, &other);
+    other.step[5].time = ST_NOTE; other.step[5].n = 1; other.step[5].note[0] = 70; pattern_write(1, 3, &other);
+    pattern_read(2, 3, &other);
+    other.step[6].time = ST_NOTE; other.step[6].n = 1; other.step[6].note[0] = 72; pattern_write(2, 3, &other);
     motion_set_event(&trk[1], 4, P_PAN, 10);
     motion_set_event(&trk[2], 6, P_PAN, 20);
     motion_set_event(&trk[3], 8, P_PAN, 30);
@@ -982,7 +1007,7 @@ static int test_track_count(void)
     bad += check("  and silent", trk_quiet(&trk[3]));
     project_save(1);
     project_new_blank();
-    bad += check("a new song: one track again", trk_n() == 1u);
+    bad += check("a new song: four tracks again", trk_n() == NTRK);
     project_load(1);
     bad += check("a project keeps its count (3)", trk_n() == 3u && trk[2].step[3].note[0] == 63);
     project_load(0);
@@ -1022,6 +1047,7 @@ static int test_home_view(void)
     press(B_HOME);
     bad += check("  HOME from EDIT: back to the page it was on", ui.home && ui.home_pg == 1u);
     song.ntrk = 3;
+    apply_preset_to(&trk[1], find_preset(ENGI_FM6, "PAD"));   /* (a chord: a poly sound, not the power-on bass) */
     for (k = 0; k < NTRK; k++) trk[k].engine = trk[k].eng_req;
     memset(&view, 0, sizeof view);
     track_select(1);
@@ -1573,6 +1599,35 @@ static int test_browser(void)
     e = recent[0];
     turn(EN_PRESET, 1);
     bad += check("RECENT: browsing it loads the next one and keeps the order", recent[0] == e && preset_pos(&total) == 1u);
+
+    ui_power_on();                                         /* LIST is each track's (a user's report: a brass track, then
+                                                            * a bass one; PRESETS on the brass track loaded a bass) */
+    PREF_BITS |= PREF_ACCEL_OFF;
+    go_page(GR_BROWSE);
+    list_set(list_cat(CAT_BRASS));
+    turn(EN_K2, 1);
+    cur_entry(&src, &k);
+    ok = entry_cat(src, k) == CAT_BRASS;
+    track_select(1);
+    list_set(list_cat(CAT_BASS));
+    turn(EN_K2, 1);
+    cur_entry(&src, &k);
+    ok &= song.sel == 1u && entry_cat(src, k) == CAT_BASS;
+    track_select(0);
+    go_home();
+    turn(EN_PRESET, 1);
+    cur_entry(&src, &k);
+    bad += check("LIST is each track's: PRESETS on the brass track loads a brass after the bass track picked BASS",
+                 ok && song.sel == 0u && list_mode() == list_cat(CAT_BRASS) && entry_cat(src, k) == CAT_BRASS);
+    track_select(1);
+    bad += check("LIST: the bass track keeps BASS", list_mode() == list_cat(CAT_BASS));
+    track_select(0);
+    list_forget();                                         /* (a project loaded) */
+    turn(EN_PRESET, 1);
+    cur_entry(&src, &k);
+    bad += check("LIST: a track without one browses the category of its sound, not the last one picked",
+                 list_lcat == CAT_BASS && list_mode() == list_cat(CAT_BRASS) && entry_cat(src, k) == CAT_BRASS);
+    PREF_BITS &= (uint8_t)~PREF_ACCEL_OFF;
     list_set(LM_ALL);
     return bad;
 }
@@ -2678,8 +2733,10 @@ static int test_product_ux(void)
     bad += check("MIXER K3 is inert, never changes sequence length", TSEL->p[P_SLEN] == len && TSEL->p[P_RESERVED36] == send);
     press(B_GLO); ok = cur_page()->fam == FAM_GLO && str_eq(cur_page()->title, "GLOBAL");
     press(B_GLO); ok &= str_eq(cur_page()->title, "SYSTEM");
+    press(B_GLO); ok &= str_eq(cur_page()->title, "WEIGHTS");
+    press(B_GLO); ok &= str_eq(cur_page()->title, "WEIGHTS 2");
     press(B_GLO); ok &= cur_page()->graph == GR_TRK;
-    bad += check("GLO cycles MIXER > GLOBAL > SYSTEM > MIXER", ok);
+    bad += check("GLO cycles MIXER > GLOBAL > SYSTEM > WEIGHTS > WEIGHTS 2 > MIXER", ok);
     go_home(); hold(B_SEQ);
     bad += check("long SEQ goes directly to PATTERNS (the song under it) with no tap on release", cur_page()->graph == GR_PATGRID);
     turn(EN_SELECT, 1);
@@ -3352,7 +3409,7 @@ static int test_edit_cycle(void)
  * loads the BOOT project, else the template; CLK TUNE MIDI ROUT kept as last used (glo_poll, glo_restore) */
 static int test_old_storage_ui(void)
 {
-    int bad = 0; char tag[8], name[16], title[32], detail[40];
+    int bad = 0; char tag[8], name[16], title[32], detail[CF_DETAIL];
     ui_power_on(); stop_transport(); set_engine(9u); up_cache_reset();
     up_rec_t *old = up_rec(0); old->used = UP_USED; old->ver = 1; old->engine = 9u;
     for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].graph == GR_USER) { ui.page = (uint8_t)p; break; }
@@ -3460,10 +3517,14 @@ static int test_tempo_select(void)
     turn(EN_SELECT, 1);
     ok = song.g[G_BPM] == 120 && str_eq(cur_page()->title, "SYSTEM");
     turn(EN_SELECT, 1);
+    ok &= str_eq(cur_page()->title, "WEIGHTS");
+    turn(EN_SELECT, 1);
+    ok &= str_eq(cur_page()->title, "WEIGHTS 2");
+    turn(EN_SELECT, 1);
     ok &= str_eq(cur_page()->title, "GLOBAL");
     turn(EN_SELECT, -1);
-    bad += check("SELECT on GLO: GLOBAL -> SYSTEM -> GLOBAL (wraps), back the other way; the BPM untouched",
-                 ok && str_eq(cur_page()->title, "SYSTEM") && song.g[G_BPM] == 120);
+    bad += check("SELECT on GLO: GLOBAL -> SYSTEM -> WEIGHTS -> WEIGHTS 2 -> GLOBAL (wraps), back the other way; the BPM untouched",
+                 ok && str_eq(cur_page()->title, "WEIGHTS 2") && song.g[G_BPM] == 120);
     go_title("NOTES");
     cursor_set(4);
     turn(EN_SELECT, 1);
@@ -4183,7 +4244,7 @@ static int test_bughunt_ui(void)
     sheet_do("Erase");
     ok = ui.confirm == CF_ERASE_USER && ui.confirm_trk == 1u && up_used(1);
     {
-        char a[24], b[32];
+        char a[24], b[CF_DETAIL];
         confirm_text(a, b);
         ok &= str_eq(a, "ERASE U002?") && b[0];
     }
@@ -4293,12 +4354,10 @@ static int test_chord_page(void)
     t->p[P_VOICE] = V_POLY;
     go_home(); frame();
     press(B_SCL); frames(400);
-    ok = str_eq(cur_page()->title, "SCALES");
-    press(B_SCL); frames(400);
-    ok &= str_eq(cur_page()->title, "SCL");
+    ok = str_eq(cur_page()->title, "SCL");
     press(B_SCL); frames(400);
     ok &= str_eq(cur_page()->title, "CHORD") && cur_page()->graph == GR_CHORD && cur_page()->fam == FAM_SCL;
-    bad += check("SCL cycles SCALES, SCL, then CHORD: the CHORD page (CHRD VOIC, the chord graph)", ok && cur_page()->id[0] == P_CHRD &&
+    bad += check("SCL cycles settings then CHORD: the CHORD page (CHRD VOIC, the chord graph)", ok && cur_page()->id[0] == P_CHRD &&
                  cur_page()->id[1] == P_VOIC);
     screen_clear(); ui.force = 1; ui_draw();
     bad += check("  CHRD OFF: the page says what to do, MONO gray", screen_gray());
@@ -4814,6 +4873,31 @@ static int test_stage(void)
     return bad;
 }
 
+/* Stage's knobs after DRUM SOUND (the page HOME keeps): Stage's cards alone, nothing sent while they rest (last in
+ * main: its frames move the clock the breathing checks read) */
+static int test_stage_knobs_after_drum(void)
+{
+    int bad = 0;
+    uint32_t k;
+    uint64_t s0;
+    ui_power_on();
+    track_select(3);
+    set_engine_of(TSEL, ENGI_DRUM);
+    go_title("DRUM SOUND");
+    frame();
+    go_home();
+    frame(); frame();
+    turn(EN_K1, 1);
+    for (k = 0; k < ST_DROP + 2u; k++)
+        frame();
+    s0 = host_sent;
+    frames(160);
+    bad += check("Stage after DRUM SOUND: the knobs out, not redrawn over the page's cards each frame",
+                 stage.out && host_sent == s0 && memcmp(ui.col[0], "DRUM|", 5));
+    ui_power_on();
+    return bad;
+}
+
 /* Phase 4: Capture (REC held: what the selected track played in its last bars, unarmed, into its pattern), the jam log
  * (the patterns played since PLAY, a row per track 1 loop) and TAKE JAM, autosave (stopped and untouched) */
 static uint32_t cap_events(const track_t *t)
@@ -4940,33 +5024,50 @@ static int test_capture(void)
     return bad;
 }
 
-/* undo levels in the cache RAM's UI part (resources.c ui_cache): loads on two tracks, EDIT held twice undoes both
- * (newest first), EDIT + OCT+ redoes the older; without cache RAM one level */
+/* Exercise both cache readiness states in the same binary. The resident/cache
+ * profile keeps one fallback level; validated cache always supplies all eight. */
 static int test_undo_levels(void)
 {
     int bad = 0;
-    uint8_t p0, p1;
-    resource_host_cache_enabled = 0;
-    undo_lv = undo_sram; undo_nlv = UNDO_LV_MAX;
-    ui_power_on();
-    stop_transport();
-    p0 = trk[0].preset;
-    turn(EN_PRESET, 1);                                 /* T1: a sound load */
-    track_select(1);
-    p1 = trk[1].preset;
-    turn(EN_PRESET, 1);                                 /* T2: another (a level of its own) */
-    hold(B_EDIT);
-    hold(B_EDIT);
-    bad += check("ordinary SRAM: eight undo levels; EDIT held twice undoes T2's load, then T1's", undo_nlv == UNDO_LV_MAX &&
-                 trk[0].preset == p0 && trk[1].preset == p1 && msg_is("UNDO T1"));
-    edit_redo();
-    bad += check("  EDIT + OCT+ redoes the older first (T1), T2 stays undone", trk[0].preset != p0 && trk[1].preset == p1 &&
-                 msg_is("REDO T1"));
-    turn(EN_PRESET, 1);                                 /* a new load: the redo levels go */
-    edit_redo();
-    bad += check("  a new load drops what was left to redo", msg_is("NOTHING TO REDO"));
-    undo_lv = undo_sram;
-    undo_nlv = UNDO_LV_MAX;
+    for (uint32_t cache = 0; cache < 2u; cache++) {
+        resource_host_cache_enabled = cache;
+        undo_lv = undo_sram; undo_nlv = UNDO_SRAM_LEVELS;
+        ui_power_on();
+        stop_transport();
+        uint8_t p0 = trk[0].preset;
+        turn(EN_PRESET, 1);
+        track_select(1);
+        uint8_t p1 = trk[1].preset;
+        turn(EN_PRESET, 1);
+        uint32_t levels = cache ? UNDO_LV_MAX : UNDO_SRAM_LEVELS;
+        bad += check("undo uses only validated cache; fallback depth matches its storage",
+                     undo_nlv == levels && undo_lv == (cache ? (undo_t *)(void *)ui_cache() : undo_sram));
+        hold(B_EDIT);
+        bad += check("latest sound load is undoable with and without cache", trk[1].preset == p1);
+        hold(B_EDIT);
+        bad += check("older history is retained at full depth, bounded on cache failure",
+                     levels > 1u ? trk[0].preset == p0 && msg_is("UNDO T1") :
+                                   trk[0].preset != p0 && msg_is("NOTHING TO UNDO"));
+        edit_redo();
+        bad += check("redo uses the available history without crossing storage",
+                     levels > 1u ? trk[0].preset != p0 && trk[1].preset == p1 && msg_is("REDO T1") :
+                                   trk[1].preset != p1 && msg_is("REDO T2"));
+        turn(EN_PRESET, 1);
+        edit_redo();
+        bad += check("a new load drops redo", msg_is("NOTHING TO REDO"));
+        /* Fill past the ring depth on alternating tracks so browse coalescing
+         * cannot hide a write past the smaller failure-path buffer. */
+        for (uint32_t k = 0; k < 12u; k++) {
+            track_select(k % NTRK);
+            turn(EN_PRESET, 1);
+        }
+        bad += check("load history remains bounded after repeated loads", undo_top == levels && undo_cnt == levels);
+        for (uint32_t k = 0; k < levels; k++) hold(B_EDIT);
+        bad += check("all available load levels can be undone", undo_top == 0u);
+        for (uint32_t k = 0; k < levels; k++) edit_redo();
+        bad += check("all available load levels can be redone", undo_top == levels);
+    }
+    undo_lv = undo_sram; undo_nlv = UNDO_SRAM_LEVELS;
     resource_host_cache_enabled = 0;
     ui_power_on();
     return bad;
@@ -4993,9 +5094,10 @@ static int test_new_song(void)
     turn(EN_K1, 1); turn(EN_K1, 1);                     /* D */
     turn(EN_K3, 1);
     press(B_OCTUP);
-    bad += check("  OCT+: the ROLES screen, track 1 KEEP, the others -- (no template: one track)", nw.on == 2 &&
-                 nw.role[0] == NR_KEEP && nw.role[1] == NR_NONE && nw.role[3] == NR_NONE);
-    turn(EN_K2, 1); turn(EN_K2, 1); turn(EN_K2, 1);     /* track 2: BASS */
+    bad += check("  OCT+: the ROLES screen, every track KEEP (no template: all four)", nw.on == 2 &&
+                 nw.role[0] == NR_KEEP && nw.role[1] == NR_KEEP && nw.role[3] == NR_KEEP);
+    turn(EN_K2, 1); turn(EN_K2, 1);                     /* track 2: BASS */
+    turn(EN_K3, -1); turn(EN_K4, -1);                   /* tracks 3, 4: -- */
     press(B_OCTUP);
     for (k = 0; k < NTRK; k++) empty &= seq_is_empty(&trk[k]);
     song.sel = 1; cur_entry(&src, &k); song.sel = 0;
@@ -5008,8 +5110,8 @@ static int test_new_song(void)
     turn(EN_K3, 1);
     press(B_OCTUP);
     press(B_OCTUP);
-    turn(EN_K1, -1);                                    /* track 1: -- */
-    turn(EN_K3, 1); turn(EN_K3, 1); turn(EN_K3, 1);     /* track 3: BASS */
+    turn(EN_K1, -1); turn(EN_K2, -1); turn(EN_K4, -1);  /* tracks 1, 2, 4: -- */
+    turn(EN_K3, 1); turn(EN_K3, 1);                     /* track 3: BASS */
     press(B_OCTUP);
     cur_entry(&src, &k);
     bad += check("  track 1 --, track 3 BASS: one track, the BASS sound as track 1", !new_on() && trk_n() == 1u &&
@@ -5232,6 +5334,43 @@ static int test_seq_keys(void)
     press(B_OCTDN);
     bad += check("  .. OCT-: gone, pattern 3 as it was", !ui.confirm && pattern_used(0, 2) && song.grid != 2u);
     seq_hold_key(w3, 1100u);
+    {
+        char a[24], b[CF_DETAIL];
+        btn_up(B_SEQ); frame();
+        bad += check("  .. SEQ let go, nothing changed: the dialog stays", ui.confirm == CF_PAT_KEY);
+        btn_down(B_SEQ); frame();
+        tap_key(key_at(1, 3));
+        confirm_text(a, b);
+        bad += check("  .. C# (black key 4): pattern 3 halved, the dialog stays (SEQ held), its length in the title",
+                     ui.confirm == CF_PAT_KEY && pattern_at(0, 2)->timing[0] == 16 && msg_is("PATTERN HALVED") &&
+                     str_eq(a, "PATTERN 3 \xB7 16 STEPS") && ui.pat_did && song.sel == 0u);
+        tap_key(key_at(1, 4));
+        bad += check("  .. D# (black key 5): doubled, 32 steps, still up", ui.confirm == CF_PAT_KEY &&
+                     pattern_at(0, 2)->timing[0] == 32 && msg_is("PATTERN DOUBLED"));
+        ui_leds();
+        for (i = 0; i < 41u; i++)
+            led_pos[i] = (uint8_t)((i % FM1_NCOL) << 3 | (1u + i / FM1_NCOL));
+        fm1_ms += 500u - fm1_ms % 500u;
+        ui_leds();
+        bad += check("  .. C# D# lit, the track keys dark", key_light(14u + key_at(1, 3)) == 2u &&
+                     key_light(14u + key_at(1, 4)) == 2u && !key_light(14u + key_at(1, 0)));
+        fm1_ms += 250u;
+        ui_leds();
+        bad += check("  .. a quarter second on: dark (blinking)", !key_light(14u + key_at(1, 3)) &&
+                     !key_light(14u + key_at(1, 4)));
+        led_pos_init();
+        btn_up(B_SEQ); frame();
+        bad += check("  .. SEQ let go: closed, the keys play, still 32 steps, Stage stays", !ui.confirm &&
+                     song.grid != 2u && pattern_at(0, 2)->timing[0] == 32 && ui.home);
+        btn_down(B_SEQ); frame();
+        seq_hold_key(w3, 1100u);
+        btn_up(B_SEQ); frame();
+        tap_key(key_at(1, 4));
+        bad += check("  .. D# with SEQ already let go: doubled and closed at once", !ui.confirm &&
+                     pattern_at(0, 2)->timing[0] == 64);
+        btn_down(B_SEQ); frame();
+    }
+    seq_hold_key(w3, 1100u);
     tap_key(w3);
     bad += check("  .. its key again: pattern 3 deleted (not the one playing)", !ui.confirm && !pattern_used(0, 2) &&
                  msg_is("PATTERN DELETED") && TSEL->pattern == 1u);
@@ -5386,6 +5525,7 @@ int main(void)
     bad += test_bughunt_ui2();
     bad += test_piano_roll();
     bad += test_fm6_charts();
+    bad += test_stage_knobs_after_drum();
 
     if (getenv("UI_SCREEN_DIR")) chain_screens(getenv("UI_SCREEN_DIR"));
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);

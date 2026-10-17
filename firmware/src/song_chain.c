@@ -109,3 +109,17 @@ static void chain_tick(uint32_t n)
     chain.remaining = chain.config.row[chain.row].repeat;
     chain_apply();
 }
+/* Foreground preparation follows a queued manual choice or SONG's next row.
+ * STOP can always restore the original selections through the bounded fallback. */
+static void pattern_poll(void)
+{
+    for (uint32_t k = 0; k < NTRK; k++) {
+        uint32_t bank = trk[k].pattern_next;
+        if (chain.armed) bank = chain_patterns[0][k];
+        else if (chain.running) {
+            uint32_t row = chain.row + 1u;
+            bank = row < chain.config.count ? chain_patterns[row][k] : chain.original[k];
+        }
+        pattern_prepare(k, bank);
+    }
+}

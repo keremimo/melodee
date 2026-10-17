@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* MELODEE core types: tracks, voices, engines, parameters.
- * Up to four tracks (one to start with: song.ntrk), each a synth part: its own engine, preset, parameters, voices and
+ * Up to four tracks (all four to start with: song.ntrk), each a synth part: its own engine, preset, parameters, voices and
  * 64-step pattern. The parts share one budget of VBUDGET units of sounding voices (voice.c). Drums are the DRUM
  * engine (synthesized 808 on the General MIDI map) on any part.
  * Sections: sizes, parameters, voices and engines, tracks and the song, system. */
@@ -114,6 +114,7 @@ enum {                          /* per-track parameters */
     P_FXSEND, /* post-fader chain send, or send to slot 1 in separate mode */
     P_FXSEND2, P_FXSEND3,
     P_FXTONE, P_FX2TONE, P_FX3TONE, /* each slot's wet-input TONE (fx_tone_hz): appended so existing common IDs stay fixed */
+    P_STRUM, P_STROKE, /* chord sweep duration and direction; appended for stored-layout compatibility */
     P_E0, P_E1, P_E2, P_E3, P_E4, P_E5, P_E6, P_E7,
     P_COUNT
 };
@@ -168,6 +169,14 @@ enum {                          /* global parameters */
 };
 static int param_master_fx(uint32_t id){return id>=G_MFXTYPE && id<=G_MFX3CHAR;}
 #define G_DRLVL G_RESERVED25         /* (their meaning in a project from before 1.0: proj_drums_to_part) */
+/* GLO > WEIGHTS: device settings shown on unused ids (params.c page_desc). Never song.g, never in a project
+ * or the editor's tables: global_reserved() stays true for them. */
+#define G_WP5 G_RESERVED4
+#define G_WCZ G_RESERVED5
+#define G_WFM6 G_RESERVED6
+#define G_WSID G_RESERVED7
+#define G_WDRUM G_RESERVED8
+#define G_SAFETY G_RESERVED9
 #define G_DRREV G_RESERVED26
 
 static int param_reserved(uint32_t id)

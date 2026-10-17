@@ -26,10 +26,11 @@ static uint32_t ptc_next(uint32_t from, int32_t dir);
 /* pattern b of track k holds something: a note, a hit, a recorded note's step */
 static int pattern_used(uint32_t k, uint32_t b)
 {
-    const step_t *s = b == trk[k].pattern ? trk[k].step : pattern_at(k, b)->step;
+    pattern_t p;
+    pattern_read(k, b, &p);
     uint32_t i;
     for (i = 0; i < NSTEP; i++)
-        if (step_on(&s[i]) || (s[i].flags & SF_RECORDED))
+        if (step_on(&p.step[i]) || (p.step[i].flags & SF_RECORDED))
             return 1;
     return 0;
 }
@@ -45,25 +46,17 @@ static int pattern_empty(uint32_t k, uint32_t b)
     return 1;
 }
 /* track k's pattern b: its steps, length and division (the one playing: the track's own; its bank lags behind) */
-static const step_t *pat_steps(uint32_t k, uint32_t b, uint32_t *len, uint32_t *div)
+static void pat_timing(uint32_t k, uint32_t b, uint32_t *len, uint32_t *div)
 {
-    const track_t *t = &trk[k];
-    const pattern_t *p = pattern_at(k, b);
-    if (b == t->pattern) {
-        *len = (uint32_t)t->p[P_SLEN];
-        *div = (uint32_t)t->p[P_SDIV];
-        return t->step;
-    }
-    *len = (uint32_t)p->timing[0];
-    *div = (uint32_t)p->timing[1];
-    return p->step;
+    *len = (uint32_t)pattern_timing(k, b, 0);
+    *div = (uint32_t)pattern_timing(k, b, 1);
 }
 /* its bars, whole ones up (N_DIV: a step of 1/4 .. 4BAR; steps in 4 bars) */
 static uint32_t pat_bars(uint32_t k, uint32_t b)
 {
     static const uint8_t SPB4[] = {16, 32, 64, 128, 48, 96, 8, 4, 2, 1};
     uint32_t len, div, s;
-    pat_steps(k, b, &len, &div);
+    pat_timing(k, b, &len, &div);
     s = SPB4[div < NELEM(SPB4) ? div : 2u];
     len = len ? len : 1u;
     return (len * 4u + s - 1u) / s;
@@ -114,7 +107,10 @@ static void pt_prog_bar(int32_t x, int32_t y, uint32_t prog, uint16_t tc)   /* a
 static void pt_bars(uint32_t k, uint32_t b, int32_t x, int32_t y, uint16_t c)
 {
     uint32_t len, div, i, n[3] = {0, 0, 0}, m = 1;
-    const step_t *s = pat_steps(k, b, &len, &div);
+    pattern_t p;
+    pattern_read(k, b, &p);
+    const step_t *s = p.step;
+    len = (uint32_t)p.timing[0]; div = (uint32_t)p.timing[1];
     len = len > NSTEP ? NSTEP : len ? len : 1u;
     for (i = 0; i < len; i++)
         if (step_on(&s[i]))

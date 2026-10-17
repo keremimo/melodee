@@ -300,7 +300,7 @@ static int proj_unpack(project_t *q, const uint8_t *b)
                          NTRK * FM6_PACKED - PROJ_CZ_BYTES;
     memcpy(&magic, b, 4); memcpy(&size, b + 4, 4); memcpy(&sum, b + PROJ_STORE_SIZE - 4u, 4);
     if ((magic != PROJ_MAGIC && magic != PROJ_CUT_MAGIC && magic != PROJ_PRE_HP_MAGIC && magic != 0x46554E46u && magic != 0x46554E45u && magic != 0x46554E44u && magic != 0x46554E43u) || size != PROJ_STORE_SIZE || sum != proj_hash(b, PROJ_STORE_SIZE - 4u) ||
-        np < 8u || np > (magic==PROJ_CUT_MAGIC?PROJ_CUT_NP:P_COUNT) || (magic==PROJ_MAGIC && np!=P_COUNT) || (magic==PROJ_CUT_MAGIC && np!=PROJ_CUT_NP) || (magic==PROJ_PRE_HP_MAGIC && np!=119u) || (magic==0x46554E46u && np!=117u) || (magic==0x46554E45u && np!=116u) || (magic==0x46554E44u && np!=108u) || (magic==0x46554E43u && np!=104u) ||
+        np < 8u || np > (magic==PROJ_CUT_MAGIC?PROJ_CUT_NP:P_COUNT) || (magic==PROJ_MAGIC && np!=122u && np!=P_COUNT) || (magic==PROJ_CUT_MAGIC && np!=PROJ_CUT_NP) || (magic==PROJ_PRE_HP_MAGIC && np!=119u) || (magic==0x46554E46u && np!=117u) || (magic==0x46554E45u && np!=116u) || (magic==0x46554E44u && np!=108u) || (magic==0x46554E43u && np!=104u) ||
         b[62] >= NTRK || b[63] > NPART || b[64] > PROJ_PHYS ||
         68u + NTRK * (np - (magic==0x46554E44u?PROJ_FX_FIELDS:0u) + 2u + NSTEP * ((magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC || magic==PROJ_PRE_HP_MAGIC || magic==0x46554E46u || magic==0x46554E45u)?8u:9u)) + sizeof q->chain + sizeof q->motion > end)
         return 0;
@@ -339,6 +339,9 @@ static int proj_unpack(project_t *q, const uint8_t *b)
         if (q->t[t].engine >= NENGINES) return 0;  /* a fork's engine ID must not wrap into ours */
         for (i = 0; i < P_COUNT; i++) def[i] = param_desc_of(q->t[t].engine % NENGINES, i)->def;
         params_by_count(q->t[t].p, values, np, def);
+        if (magic == PROJ_CUT_MAGIC) {
+            q->t[t].p[P_STRUM] = q->t[t].p[P_STROKE] = 0; /* old high cuts occupied these new IDs */
+        }
         if (magic == PROJ_CUT_MAGIC)                   /* (FUN21: P_FXTONE.. held the low cuts, the high cuts after) */
             for (i = 0; i < FX_SLOTS; i++)
                 q->t[t].p[P_FXTONE + i] = proj_tone_of_cuts(values[P_FXTONE + i], values[P_FXTONE + FX_SLOTS + i]);
@@ -611,6 +614,7 @@ static void project_quick_save(void)
  * saved to when it differs from what that slot holds ("SAVED B"); a new project (no slot yet) waits for a save */
 static void project_autosave(void)
 {
+    if(AUDIO_LAB_GUARDED())return;
     project_t *p = &proj_scratch;
     uint32_t slot = proj_cur;
     if (slot >= 4u || transport_busy())
@@ -755,6 +759,7 @@ static int project_restore_runtime(const project_t *input)
     proj_name_get(proj_name, (const uint8_t *)p->name);
     proj_cur = PROJ_NO_SLOT;                            /* (project_load: its slot) */
     undo_clear();                                       /* (ui.c) the undo levels belong to the old project */
+    list_forget();                                      /* (browse.c) the tracks' LISTs too */
     undo_depth++;                                       /* and these loads take none */
     for (k = 0; k < NTRK; k++) {                        /* the power-on sounds: format 1 (tracks 2..4), old drums */
         track_t *t = &trk[k];
@@ -850,7 +855,7 @@ static int template_used(void) { return tmpl.magic == TMPL_MAGIC && tmpl.size ==
 /* a stored template (len bytes, as tmpl_t is laid out) is today's: its size and magic, valid tones */
 static uint32_t tmpl_param_count(uint32_t len)   /* (TPLJ, TPLI: a 16-byte master; TPLH none) */
 {
-    return len==sizeof(tmpl_t)?P_COUNT:len==sizeof(tmpl_t)+NTRK*2u*(PROJ_CUT_NP-P_COUNT)?PROJ_CUT_NP:
+    return len==sizeof(tmpl_t)?P_COUNT:len==sizeof(tmpl_t)-NTRK*2u*(P_COUNT-122u)?122u:len==sizeof(tmpl_t)+NTRK*2u*(PROJ_CUT_NP-P_COUNT)?PROJ_CUT_NP:
            len==sizeof(tmpl_t)-NTRK*2u*(P_COUNT-119u)-4u?119u:len==sizeof(tmpl_t)-NTRK*2u*(P_COUNT-117u)-4u?117u:
            len==sizeof(tmpl_t)-NTRK*2u*(P_COUNT-116u)-20u?116u:len==sizeof(tmpl_fx_single_t)?108u:len==sizeof(tmpl_fx_legacy_t)?104u:0u;
 }
@@ -858,7 +863,7 @@ static uint32_t tmpl_blob_schema(const uint8_t *b,uint32_t len)
 {
     uint32_t np=tmpl_param_count(len),size,magic;if(!np)return 0;
     memcpy(&size,b+len-8u,4);memcpy(&magic,b+len-4u,4);
-    return size==len && magic==(np==P_COUNT?TMPL_MAGIC:np==PROJ_CUT_NP?0x4B4C5054u:np==119u?0x4A4C5054u:np==117u?0x494C5054u:np==116u?0x484C5054u:np==108u?0x474C5054u:0x464C5054u) ? np : 0u;
+    return size==len && magic==((np==P_COUNT || np==122u)?TMPL_MAGIC:np==PROJ_CUT_NP?0x4B4C5054u:np==119u?0x4A4C5054u:np==117u?0x494C5054u:np==116u?0x484C5054u:np==108u?0x474C5054u:0x464C5054u) ? np : 0u;
 }
 static int tmpl_blob_valid(const uint8_t *b,uint32_t len)
 {
@@ -874,7 +879,7 @@ static int tmpl_blob_valid(const uint8_t *b,uint32_t len)
     if(np>=117u){uint32_t off=(uint32_t)((int32_t)__builtin_offsetof(tmpl_t,master)-delta);
         for(uint32_t i=0;i<13u;i++)if(b[off+i]>GP[G_MFXTYPE+i].max)return 0;
         if(b[off+13u]>(np>=119u?1u:0u))return 0;
-        if(np==P_COUNT){
+        if(np==P_COUNT || np==122u){
             for(uint32_t i=0;i<FX_SLOTS;i++)if(b[off+14u+i]<64u-FX_TONE_MAX || b[off+14u+i]>64u+FX_TONE_MAX || b[off+17u+i])return 0;
         }else if(np==PROJ_CUT_NP){
             for(uint32_t i=14u;i<20u;i++)if(b[off+i]>127u)return 0;
@@ -891,6 +896,7 @@ static int tmpl_take(const uint8_t *b,uint32_t len)
         int16_t def[P_COUNT],values[PROJ_CUT_NP];tmpl.t[k].engine=b[off++];tmpl.t[k].preset=b[off++];
         for(uint32_t i=0;i<P_COUNT;i++)def[i]=param_desc_of(tmpl.t[k].engine%NENGINES,i)->def;
         memcpy(values,b+off,np*2u);off+=np*2u;params_by_count(tmpl.t[k].p,values,np,def);
+        if(np==PROJ_CUT_NP)tmpl.t[k].p[P_STRUM]=tmpl.t[k].p[P_STROKE]=0;
         if(np==PROJ_CUT_NP)for(uint32_t i=0;i<FX_SLOTS;i++)tmpl.t[k].p[P_FXTONE+i]=proj_tone_of_cuts(values[P_FXTONE+i],values[P_FXTONE+FX_SLOTS+i]);
     }
     uint32_t native=__builtin_offsetof(tmpl_t,master)-__builtin_offsetof(tmpl_t,fm6);memcpy(tmpl.fm6,b+off,native);
@@ -898,7 +904,7 @@ static int tmpl_take(const uint8_t *b,uint32_t len)
     tmpl.master[12]=np>=117u?b[off+native+12u]:(uint8_t)GP[G_FXRETURN].def;if(tmpl.master[12]>127u)return 0;
     tmpl.master[13]=np>=119u?b[off+native+13u]:0;
     for(uint32_t i=0;i<FX_SLOTS;i++)
-        tmpl.master[14u+i]=np==P_COUNT?b[off+native+14u+i]:(uint8_t)(64+(np==PROJ_CUT_NP?proj_tone_of_cuts(b[off+native+14u+i],b[off+native+17u+i]):0));
+        tmpl.master[14u+i]=(np==P_COUNT || np==122u)?b[off+native+14u+i]:(uint8_t)(64+(np==PROJ_CUT_NP?proj_tone_of_cuts(b[off+native+14u+i],b[off+native+17u+i]):0));
     tmpl.magic=TMPL_MAGIC;tmpl.size=sizeof tmpl;
     for(uint32_t k=0;k<NTRK;k++)if(!fm6_fn_ok(tmpl.fm6_fn[k]))memcpy(tmpl.fm6_fn[k],FM6_FNDEF,FM6_NFN);
     return 1;
@@ -915,6 +921,7 @@ static void glo_restore(void)                     /* power-on, before the BOOT p
 /* main loop: a kept value changed (a knob, the editor, a project load): saved 1.5 s after the last change, stopped */
 static void glo_poll(void)
 {
+    if(AUDIO_LAB_GUARDED())return;
     static uint32_t t;
     static uint8_t dirty;
     uint32_t k;
@@ -1032,8 +1039,8 @@ static void template_load(void)
     ui_message("TEMPLATE LOADED");
 }
 
-/* NEW SONG (ui_new.c): the tracks a new song starts with: the template's (one of before: all), else one */
-static uint32_t template_tracks(void) { return !template_used() ? 1u : tmpl.ntrk ? tmpl.ntrk : NTRK; }
+/* NEW SONG (ui_new.c): the tracks a new song starts with: the template's (one of before: all), else all four */
+static uint32_t template_tracks(void) { return template_used() && tmpl.ntrk ? tmpl.ntrk : NTRK; }
 /* NEW SONG (ui_new.c): the template's key and tempo (track 1's ROOT, the song's SCALE, BPM), when there is one */
 static void template_key(uint32_t *root, uint32_t *scale, int32_t *bpm)
 {
@@ -1072,10 +1079,11 @@ static void project_new_blank(void)
     }
     undo_depth--;
     undo_clear();
+    list_forget();
     proj_cur = PROJ_NO_SLOT;
     proj_name[0] = 0;
     song.sel = 0;
-    song.ntrk = 1;                                      /* (one track to start with: Stage's sheet adds more) */
+    song.ntrk = NTRK;                                   /* (all four to start with: Stage's sheet removes them) */
     song.g[G_SLOT] = (int16_t)(project_free_slot() + 1u);
 }
 /* the music differs from its slot (none: it holds notes): a new song asks first. Packs the project (proj_wire_u) */
@@ -1108,7 +1116,7 @@ static void project_boot(void)
             project_load(settings_boot - 1u);
         return;
     }
-    song.ntrk = 1;                                      /* the power-on sounds: one track (theirs: the template's) */
+    song.ntrk = NTRK;                                   /* the power-on sounds: four tracks (theirs: the template's) */
     if (template_used()) {
         if (bootguard.failed)
             ui_message("TEMPLATE SKIPPED");
@@ -1239,6 +1247,7 @@ static uint32_t chain_prepare(void)
 
 static void settings_poll(void)
 {
+    if(AUDIO_LAB_GUARDED())return;
 #if MELODEE_FLASH
     persist_t p;
 #if MELODEE_SLICE

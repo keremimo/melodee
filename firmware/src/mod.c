@@ -48,6 +48,14 @@ enum { MD_OFF, MD_PITCH, MD_CUT, MD_SHP, MD_AMP, MD_PAN, MD_RESERVED6, MD_RESERV
 _Static_assert(NELEM(N_MSRC) == MS_N && NELEM(N_MDST) == MD_N, "N_MSRC / N_MDST == MS_* / MD_*");
 _Static_assert(P_M2SRC == P_M1SRC + 3 && P_M4AMT == P_M1SRC + 11 && P_M4AMT + 1 == P_FM1_ATK, "matrix slots: 3 ids each");
 #define NMSLOT 4u
+#ifndef MELODEE_MOD_CACHE
+#define MELODEE_MOD_CACHE 1
+#endif
+#if MELODEE_MOD_CACHE
+#define MOD_BEGIN_REFERENCE mod_begin_reference
+#else
+#define MOD_BEGIN_REFERENCE mod_begin
+#endif
 #define MS_VOICE(s) ((s) >= MS_ENV && (s) <= MS_RAND)             /* a value per voice */
 #define MS_BIPOLAR(s) ((s) == MS_LFO || (s) == MS_KEY || (s) == MS_RAND || (s) >= MS_SH)
 #define MD_ENGINE(d) ((d) >= MD_E1 && (d) < MD_E1 + 8)           /* E1..E8: P_E0..P_E7 */
@@ -151,7 +159,7 @@ static __attribute__((noinline)) int32_t mod_depth(const track_t *t, int32_t lfo
 
 /* before a part's block (mix.c mix_part): the per-track offsets, the per-block destinations into t->p.
  * 0 = no slot active (then nothing changed) */
-static __attribute__((noinline)) int mod_begin(track_t *t)
+static __attribute__((noinline)) int MOD_BEGIN_REFERENCE(track_t *t)
 {
     const int16_t *p = t->p;
     int32_t lfo, off[NMSLOT];
@@ -209,6 +217,102 @@ static __attribute__((noinline)) int mod_begin(track_t *t)
     }
     return 1;
 }
+
+/* Independently switchable Stage-2 experiment. Raw destinations, engine and
+ * valid-source/amount-zero membership key the prepared routing. Source
+ * selections, amounts, polarity and source/base values stay live at their block
+ * rate, including main-loop edits, MIDI, motion and undo/load. */
+#if MELODEE_MOD_CACHE
+typedef struct {
+    uint32_t key[NMSLOT];
+    uint8_t valid,engine,amp,nv,nk,nt,nd;
+    uint8_t kid[NMSLOT];
+    int16_t lo[NMSLOT],hi[NMSLOT];
+    struct {uint8_t index,slot;} term[NMSLOT];
+    struct {uint8_t dst,slot;} voice[NMSLOT];
+    uint8_t depth[NMSLOT];
+} mod_route_t;
+static mod_route_t mod_routes[NPART];
+#define MOD_ROUTE_ACTIVE (1u << 16)
+
+/* The active flag is checked by mod_begin before accessing this key. Invalid
+ * and disabled sources therefore have no prepared terms, while their raw
+ * nonzero values still retain the reference's active-flag behavior. */
+static uint32_t mod_route_key(const track_t *t, uint32_t slot)
+{
+    const int16_t *p = t->p + 3u*slot;
+    uint32_t source = (uint32_t)p[P_M1SRC];
+    return (uint16_t)p[P_M1DST] | ((source && source < MS_N && p[P_M1AMT] != 0) ? MOD_ROUTE_ACTIVE : 0);
+}
+
+static __attribute__((noinline)) void mod_route_prepare(mod_route_t *r,const track_t *t)
+{
+    const int16_t *p=t->p;
+    memset(r,0,sizeof *r);
+    r->engine=t->engine;r->valid=1;
+    for(uint32_t k=0;k<NMSLOT;k++){
+        uint32_t key=mod_route_key(t,k),d=(uint32_t)p[P_M1DST+3u*k];
+        r->key[k]=key;
+        if(!(key&MOD_ROUTE_ACTIVE))continue;
+        if(d==MD_DEPTH){
+            r->depth[r->nd++]=(uint8_t)k;
+        }
+        if(!d || d==MD_DEPTH || (d>=MD_RESERVED6 && d<=MD_RESERVED9) || d>=MD_N)continue;
+        if(d<=MD_AMP){
+            r->amp|=d==MD_AMP;
+            r->voice[r->nv].dst=(uint8_t)d;r->voice[r->nv++].slot=(uint8_t)k;
+            continue;
+        }
+        uint32_t j=0,id=mod_param(d);
+        for(;j<r->nk && r->kid[j]!=id;j++);
+        if(j==r->nk){
+            const param_desc_t *pd=id>=P_E0?&ENGINES[t->engine]->edit[id-P_E0]:&TP[id];
+            r->kid[j]=(uint8_t)id;r->lo[j]=pd->min;r->hi[j]=pd->max;r->nk++;
+        }
+        r->term[r->nt].index=(uint8_t)j;r->term[r->nt++].slot=(uint8_t)k;
+    }
+}
+
+static __attribute__((noinline)) int mod_begin(track_t *t)
+{
+    uint32_t first;
+    for(first=0;first<NMSLOT;first++)
+        if(t->p[P_M1SRC+3u*first] && (((0x1FFFFFu & ~0x3C1u)>>((uint32_t)t->p[P_M1DST+3u*first]&31u))&1u) && t->p[P_M1AMT+3u*first])break;
+    if(first==NMSLOT){mod.on=0;return 0;}
+    uintptr_t address=(uintptr_t)t,base=(uintptr_t)trk;
+    if(address<base || address>=base+sizeof trk || (address-base)%sizeof(track_t))return mod_begin_reference(t);
+    mod_route_t *r=&mod_routes[(address-base)/sizeof(track_t)];
+    uint32_t changed=!r->valid || r->engine!=t->engine;
+    for(uint32_t k=0;!changed && k<NMSLOT;k++)
+        changed=r->key[k]!=mod_route_key(t,k);
+    if(changed)mod_route_prepare(r,t);
+    mod.on=1;
+    int32_t lfo=mulq15(t->lfo_val,t->lfo_fade),off[NMSLOT]={0};
+    mod.amp=r->amp;mod.nv=0;mod.nk=r->nk;
+    mod.pit=mod.cut=mod.shp=0;mod.gain=mod.ldep=32767;
+    for(uint32_t k=0;k<r->nd;k++){
+        uint32_t slot=r->depth[k],s=(uint32_t)t->p[P_M1SRC+3u*slot];
+        mod.ldep=mulq15(mod.ldep,mod_gain(s==MS_LFO && t->p[P_LPOL]?MS_ENV:s,mod_tsrc(t,s,lfo),t->p[P_M1AMT+3u*slot]));
+    }
+    if(mod.ldep<32767)lfo=mulq15(lfo,mod.ldep);
+    for(uint32_t k=0;k<r->nv;k++){
+        uint32_t slot=r->voice[k].slot,s=(uint32_t)t->p[P_M1SRC+3u*slot],d=r->voice[k].dst;
+        int32_t a=t->p[P_M1AMT+3u*slot];
+        if(MS_VOICE(s)){
+            mod.vsrc[mod.nv]=(uint8_t)s;mod.vdst[mod.nv]=(uint8_t)d;mod.vamt[mod.nv++]=(int8_t)a;
+        }else mod_voice_add(s==MS_LFO && t->p[P_LPOL]?MS_ENV:s,d,mod_tsrc(t,s,lfo),a,&mod.pit,&mod.cut,&mod.shp,&mod.gain);
+    }
+    for(uint32_t j=0;j<mod.nk;j++){mod.kid[j]=r->kid[j];mod.keep[j]=t->p[r->kid[j]];}
+    for(uint32_t k=0;k<r->nt;k++){
+        uint32_t slot=r->term[k].slot,s=(uint32_t)t->p[P_M1SRC+3u*slot],j=r->term[k].index;
+        int32_t a=t->p[P_M1AMT+3u*slot];
+        off[j]+=(((mod_tsrc(t,s,lfo)*a)>>6)*(r->hi[j]-r->lo[j]))>>15;
+    }
+    for(uint32_t j=0;j<mod.nk;j++)t->p[r->kid[j]]=(int16_t)clamp(mod.keep[j]+off[j],r->lo[j],r->hi[j]);
+    return 1;
+}
+#endif
+#undef MOD_BEGIN_REFERENCE
 
 /* after the part's block (when mod.on): the stored values back */
 static __attribute__((noinline)) void mod_end(track_t *t)

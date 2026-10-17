@@ -124,6 +124,40 @@ static __attribute__((noinline)) float cz_native_wave(const cz_hw_pd_t *b,uint32
     float carrier=1.0f-(FM6_SIN[i]+(FM6_SIN[i+1u]-FM6_SIN[i])*f);
     return carrier*(1.0f-window*(1.0f/2048.0f))-1.0f;
 }
+#ifndef MELODEE_CZ_FAST
+#define MELODEE_CZ_FAST 1
+#endif
+#if MELODEE_CZ_FAST
+/* Window 4's upper half is exactly -1 for every sounding waveform. Wave 3
+ * retains its earlier exact zero return. Phase/noise/DC/envelopes still run
+ * in the caller; only this stateless phase/table evaluation is specialized.
+ * The lower half retains the original multiplication and interpolation order. */
+static __attribute__((noinline)) float cz_native_wave_window4(const cz_hw_pd_t *b,uint32_t ph,uint32_t toggle)
+{
+    float pos=(float)ph*(2048.0f/4294967296.0f),half=pos>=1024.0f?pos-1024.0f:pos;
+    float pivot=b->pivot,phase=0.0f,window=0.0f;
+    switch(b->wave[toggle&1u]){
+    case 0:phase=pos<pivot?pos*b->k0:1024.0f+(pos-pivot)*b->k1;break;
+    case 1:phase=(half<pivot?half*b->k0:1024.0f)+(pos>=1024.0f?1024.0f:0.0f);break;
+    case 2:phase=pos<pivot*2.0f?pos*b->k0:2048.0f;break;
+    case 3:return 0.0f;
+    case 4:phase=pos<pivot?pos*b->k0*2.0f:(pos-pivot)*b->k1*2.0f;break;
+    case 5:phase=pos<1024.0f?pos:pos<pivot+1024.0f?1024.0f+half*b->k0:2048.0f;break;
+    case 6:phase=pos*(1.0f+b->dcw*(1.0f/64.0f));break;
+    default:phase=half<pivot?half*b->k0:2048.0f;break;
+    }
+    if(pos>=1024.0f)return -1.0f;
+    phase-=(float)(uint32_t)(phase*(1.0f/2048.0f))*2048.0f;
+    window=pos*2.0f;
+    /* The normalized sine table is shared with FM6. Interpolate its cosine
+     * quadrant in float: no chip-phase or PCM truncation before the mixer. */
+    float x=phase*0.5f+256.0f;uint32_t i=(uint32_t)x;float f=x-(float)i;
+    i&=1023u;
+    float carrier=1.0f-(FM6_SIN[i]+(FM6_SIN[i+1u]-FM6_SIN[i])*f);
+    return carrier*(1.0f-window*(1.0f/2048.0f))-1.0f;
+}
+#endif
+
 static __attribute__((noinline)) float cz_native_vibrato(cz_voice_t *c, const uint8_t *b)
 {
     uint32_t delay = (uint32_t)b[6] | (uint32_t)b[7] << 8, inc = (uint32_t)b[9] | (uint32_t)b[10] << 8;
@@ -152,6 +186,9 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
     cz_voice_t *c=cz_voice(t,v);const cz_native_def_t (*defs)[3]=cz_part((uint32_t)(t-trk)%NTRK)->native_def;cz_hw_pd_t pd[2];
     uint32_t inc[2],ph[2]={v->ph[0],v->ph[1]},tg[2]={(uint32_t)v->s[0],(uint32_t)v->s[1]};
     float amp[2][2],step[2];
+#if MELODEE_CZ_FAST
+    float (*volatile wave_run[2])(const cz_hw_pd_t *,uint32_t,uint32_t);
+#endif
     uint32_t ls=b[0]&3u,first=ls==1u?1u:0u,last=ls>=2u?1u:first;
     float vib=cz_native_vibrato(c,b),oct=(b[0]>>2)==1u?12.0f:(b[0]>>2)==2u?-12.0f:0.0f;
     for(uint32_t l=0;l<2u;l++){
@@ -185,6 +222,9 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
         uint32_t word=(uint32_t)b[14u+off]<<8|b[15u+off];
         float dep=depth+(float)(m->cutoff+m->shape-(64<<8))*(1.0f/32.0f);
         cz_native_pd(&pd[l],word,dep);
+#if MELODEE_CZ_FAST
+        wave_run[l]=pd[l].window==4u?cz_native_wave_window4:cz_native_wave;
+#endif
     }
     v->s[4]=(int32_t)(c->native_eg[first][2].level*256.0f);
     uint32_t modulation=(b[15]>>3)&7u;
@@ -196,7 +236,12 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
                 c->noise^=c->noise<<13;c->noise^=c->noise>>17;c->noise^=c->noise<<5;
                 if(c->noise&1u)delta=(uint32_t)fm_minf((float)delta*(1625.0f/256.0f),2147483520.0f);
             }
-            float raw=cz_native_wave(&pd[l],ph[l],tg[l]);ph[l]+=delta;
+#if MELODEE_CZ_FAST
+            float raw=wave_run[l](&pd[l],ph[l],tg[l]);
+#else
+            float raw=cz_native_wave(&pd[l],ph[l],tg[l]);
+#endif
+            ph[l]+=delta;
             if(ph[l]<old)tg[l]^=1u;
             c->native_dc[l]+=(raw-c->native_dc[l])*(1.0f/1024.0f);
             raw=(raw-c->native_dc[l])*0.5f;

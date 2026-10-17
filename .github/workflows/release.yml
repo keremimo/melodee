@@ -22,7 +22,7 @@ permissions:
 jobs:
   firmware:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       JIELI_TOOLCHAIN: ${{ github.workspace }}/.nightly-deps/jieli/toolchain
       AC79_SDK: ${{ github.workspace }}/.nightly-deps/sdk
@@ -36,7 +36,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libharfbuzz-dev libfribidi-dev libraqm-dev
-          python -m pip install Pillow fonttools
+          python -m pip install Pillow fonttools mido
       - uses: actions/cache@v4
         with:
           path: .nightly-deps
@@ -51,9 +51,18 @@ jobs:
           fi
           test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
       - name: Build dual-core firmware and run full host suite
+        # Release packages use the nightly configuration; the CPU fast paths are source defaults.
+        env:
+          MELODEE_DUAL_CORE: '1'
+          MELODEE_CORE1_FALLBACK: '0'
+          MELODEE_RAM_AUDIO: '1'
+          MELODEE_CACHE_RAM: '1'
+          MELODEE_ADMISSION: '0'
+          MELODEE_AUDIO_PROFILE: '0'
+          MELODEE_AUDIO_BENCH: '0'
         run: |
           version=$(python tools/fm1_recover.py --version | awk '{print $NF}')
-          MELODEE_RAM_AUDIO=1 ./build.sh --release "$version"
+          ./build.sh --release "$version"
           cp "build/melodee-$version.fwsc" build/melodee.fwsc
           tests/run_tests.sh
           mkdir -p build/release-assets

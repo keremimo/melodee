@@ -115,7 +115,7 @@ static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
-#if MELODEE_DUAL_CORE
+#if MELODEE_DUAL_CORE && MELODEE_CORE1_FALLBACK
     if (audio_worker_online)
         fm1_core1_bar_set();                          /* one core on every boot until power-off */
 #endif
@@ -208,10 +208,11 @@ static void fm1_main(void)
     panel_init();
     melodee_init();
 #if MELODEE_DUAL_CORE
-    /* One core if stock supply setup failed, after a crash in the first 30 s (a second would enter UBOOT),
-     * and until power-off once CPU1 was retired or CPU0 crashed beside it. */
-    if (fm1_power_ready && !bootguard.failed && !fm1_core1_barred())
-        fm1_multicore_start();              /* bounded handshake; failure keeps serial rendering */
+    /* Default recovery chooses one core after failed supply setup, an early
+     * crash, or a retained CPU1 bar. No-fallback diagnostics bypass the last
+     * two choices and halt on failed supply setup instead. */
+    if (fm1_core1_boot_allowed(fm1_power_ready, bootguard.failed))
+        fm1_multicore_start();              /* bounded handshake; selected policy handles failure */
     /* CPU1 starts through mask-ROM before it reaches our RAM worker. Restrict
      * instruction fetch only after that bootstrap has returned, or stopped
      * the core on timeout. The captured first-device fault was DBG bit 10
@@ -240,6 +241,7 @@ static void fm1_main(void)
     for (;;) {
         uint32_t m = fm1_ms;
         fm1_wdt_feed();
+        pattern_poll();
         usb_retry(fm1_ms);
 #if MELODEE_USB_AUDIO
         if (ua_off_apply(fm1_ms)) {                     /* USB direction or capture mode changed: the host re-reads */
@@ -381,6 +383,9 @@ void fm1_cstart(void)
         *d = *s;                                /* resident audio profile: executable ordinary SRAM */
     fm1_mailbox_clear();
     fm1_power_ready = (uint8_t)fm1_power_init(); /* stock V15 supplies before cache, peripherals or CPU1 */
+#if !MELODEE_CORE1_FALLBACK
+    if (!fm1_power_ready) fm1_core1_failure(); /* failed setup must not become a one-core session */
+#endif
 #if MELODEE_CACHE_RAM
     {   /* XIP-to-SRAM exceeds the direct-call range on pi32v2. */
         void (*volatile init)(uint32_t) = fm1_cache_init;

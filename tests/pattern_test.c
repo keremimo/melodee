@@ -139,8 +139,107 @@ static int migrated_bank_rename(void)
 {
     return 0;
 }
+/* SEQ's pattern dialog, C# / D# (ui_input.c pattern_key_len): a bank halved (LEN only, the rest kept hidden) and
+ * doubled (its LEN steps, recorded notes and motion copied after themselves, what lay hidden there replaced); the
+ * bank playing: undoable, the sequence going on into the copy */
+static void rec_put(track_t *t, uint32_t actual, uint32_t note, uint32_t bits, uint32_t view)
+{
+    recorded_note_t r = {0};
+    uint32_t i = 0;
+    while (recording[i].vel) i++;
+    r.on = 1000; r.note = (uint8_t)note; r.vel = 100; r.owner = (uint8_t)recording_owner(t);
+    r.step = (uint8_t)(actual | bits);
+    note_duration(&r, RECORD_UNIT);
+    recording_restore_note(t, i, r);
+    t->step[view] = (step_t){{(uint8_t)note}, 1, ST_NOTE, SF_RECORDED, 100};
+}
+static int rec_has(const track_t *t, uint32_t note, uint32_t step)   /* (step: the byte as stored) */
+{
+    for (uint32_t i = 0; i < RECORD_MAX; i++)
+        if (recording[i].vel && (recording[i].owner & 31u) == recording_owner(t) && recording[i].note == note &&
+            recording[i].step == step) return 1;
+    return 0;
+}
+static int motion_at(uint32_t k, uint32_t step, int16_t value)
+{
+    for (uint32_t i = 0; i < motion.count; i++)
+        if (motion.event[i].place == (k << 6 | step) && motion.event[i].value == value) return 1;
+    return 0;
+}
+static int doubled_banks(void)
+{
+    int bad = 0; ui_power_on(); track_t *t = TSEL;
+    track_defaults_steps(t); t->p[P_SLEN] = 8;
+    t->step[5] = (step_t){{65}, 1, ST_NOTE, 0, 100};
+    t->step[12] = (step_t){{99}, 1, ST_NOTE, 0, 100};               /* (hidden, past LEN) */
+    rec_put(t, 3, 70, 0, 3);
+    rec_put(t, 7, 72, 64u | 128u, 0);                               /* (played late in the last step: shown on the first) */
+    rec_put(t, 9, 74, 0, 9);                                        /* (hidden) */
+    motion_set_event(t, 2, P_LEVEL, 50); motion_set_event(t, 10, P_LEVEL, 70);
+    pattern_key_len(0, 0, 1);
+    bad += check("D#: LEN x2, the steps copied after themselves over the hidden ones", t->p[P_SLEN] == 16 &&
+        t->step[13].note[0] == 65 && t->step[12].time == ST_REST && msg_is("PATTERN DOUBLED") && ui.pat_did);
+    bad += check("  recorded notes copied (a wrapped one's copy wraps from the new last step), the hidden one gone",
+        rec_has(t, 70, 3) && rec_has(t, 70, 11) && rec_has(t, 72, 7u | 192u) && rec_has(t, 72, 15u | 192u) &&
+        !rec_has(t, 74, 9));
+    bad += check("  motion copied, the hidden event gone", motion_count(t) == 2 && motion_at(0, 2, 50) &&
+        motion_at(0, 10, 50));
+    undo_swap();
+    bad += check("  EDIT held: all of it back (LEN, hidden steps, recorded notes, motion)", t->p[P_SLEN] == 8 &&
+        t->step[12].note[0] == 99 && rec_has(t, 74, 9) && !rec_has(t, 70, 11) && motion_at(0, 10, 70) &&
+        motion_count(t) == 2);
+    undo_step(1);
+    bad += check("  EDIT + OCT+: doubled again", t->p[P_SLEN] == 16 && rec_has(t, 70, 11) && motion_at(0, 10, 50));
+
+    ui_power_on(); t = TSEL; my_steps(t);                           /* (32 steps, notes on 0, 3 .. 30) */
+    motion_set_event(t, 1, P_LEVEL, 60);
+    pattern_key_len(0, 0, 1);
+    bad += check("no recorded notes: 64 steps, the motion copied too", t->p[P_SLEN] == 64 && t->step[35].note[0] == 43 &&
+        t->step[62].note[0] == 70 && motion_count(t) == 2 && motion_at(0, 1, 60) && motion_at(0, 33, 60));
+    pattern_key_len(0, 0, 1);
+    bad += check("  again: 64 STEPS MAX, nothing changed", t->p[P_SLEN] == 64 && msg_is("64 STEPS MAX"));
+    undo_swap();
+    bad += check("  EDIT held: 32 steps again, as a load", t->p[P_SLEN] == 32 && t->step[35].time == ST_REST &&
+        motion_count(t) == 1 && motion_at(0, 1, 60));
+    pattern_key_len(0, 0, 0);
+    bad += check("C#: LEN /2, what is past it and the motion kept", t->p[P_SLEN] == 16 && t->step[18].note[0] == 58 &&
+        msg_is("PATTERN HALVED") && motion_count(t) == 1);
+    undo_swap();
+    bad += check("  EDIT held: 32 again", t->p[P_SLEN] == 32 && motion_count(t) == 1);
+    t->p[P_SLEN] = 15; pattern_key_len(0, 0, 0);
+    bad += check("  15 steps: 8 (the middle one kept)", t->p[P_SLEN] == 8);
+    t->p[P_SLEN] = 1; pattern_key_len(0, 0, 0);
+    bad += check("  one step: 1 STEP MIN", t->p[P_SLEN] == 1 && msg_is("1 STEP MIN"));
+    pattern_t other; pattern_read(0, 3, &other);
+    other.timing[0] = 4; other.step[1] = (step_t){{61}, 1, ST_NOTE, 0, 100};
+    pattern_write(0, 3, &other);
+    pattern_key_len(0, 3, 1);
+    bad += check("another bank: its own LEN and steps, the one playing as it was", pattern_at(0, 3)->timing[0] == 8 &&
+        pattern_at(0, 3)->step[5].note[0] == 61 && t->p[P_SLEN] == 1);
+    pattern_key_len(0, 3, 0);
+    bad += check("  .. and halved", pattern_at(0, 3)->timing[0] == 4 && pattern_at(0, 3)->step[5].note[0] == 61);
+
+    ui_power_on(); t = TSEL; track_defaults_steps(t); t->p[P_SLEN] = 4;
+    motion_set_event(t, 0, P_LEVEL, 50);
+    for (uint32_t i = 0; motion.count < MOTION_MAX; i++) motion_set_event(&trk[1], i, P_LEVEL, 10);
+    pattern_key_len(0, 0, 1);
+    bad += check("no room for the motion's copy: PATTERN DATA FULL, nothing changed", t->p[P_SLEN] == 4 &&
+        msg_is("PATTERN DATA FULL") && motion_count(t) == 1);
+
+    ui_power_on(); t = TSEL; track_defaults_steps(t); t->p[P_SLEN] = 4;
+    seq_start(); events_block(32);
+    uint32_t period = div_samples(t->p[P_SDIV]);
+    events_block(period); events_block(period); events_block(period);
+    uint32_t before = t->seq_idx;
+    pattern_key_len(0, 0, 1);
+    events_block(period);
+    bad += check("playing, on its last step: on into the copy (not back to step 1)", before == 3u && t->seq_idx == 4u &&
+        t->p[P_SLEN] == 8);
+    seq_stop();
+    return bad;
+}
 int main(void)
 {
-    int bad = banks_and_chords()+independent_switches()+all_banks_persist()+panel_banks()+arranged_chords()+replaced_motion()+migrated_bank_rename();
+    int bad = banks_and_chords()+independent_switches()+all_banks_persist()+panel_banks()+arranged_chords()+replaced_motion()+migrated_bank_rename()+doubled_banks();
     printf("%s\n",bad ? "PATTERN TEST FAILED" : "pattern bank tests passed"); return !!bad;
 }

@@ -14,6 +14,11 @@ from fm1pkg_make import release_product, sfc
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ("windows-x64", "macos-arm64", "macos-x64", "linux-x64")
+# Build switches the release workflow sets (release.yml, firmware job); unlisted ones keep their defaults.
+BUILD_FLAGS = {"MELODEE_DUAL_CORE": 1, "MELODEE_CORE1_FALLBACK": 0, "MELODEE_RAM_AUDIO": 1, "MELODEE_CACHE_RAM": 1,
+               **{f"MELODEE_{name}": 1 for name in ("MOD_CACHE", "CONTROL_FAST", "MIX_FAST", "FX_DORMANT",
+                  "RECORD_INDEX", "PROPHET_FAST", "PANEL_FAST", "FM6_FAST", "CZ_FAST", "DRUM_FAST", "SID_FAST",
+                  "CAPTURE_FAST")}}
 
 
 def main():
@@ -41,8 +46,7 @@ def main():
     app_data = app.read_bytes()
     if decoded[0x120:0x120 + len(app_data)] != app_data:
         raise RuntimeError(f"Application binary differs from package: {app}")
-    packages[name] = {"MELODEE_DUAL_CORE": 1, "MELODEE_RAM_AUDIO": 1,
-                      "sha256": package.digest}
+    packages[name] = {**BUILD_FLAGS, "sha256": package.digest}
     recovery = {}
     for target in TARGETS:
         name = f"fm1-recover-{VERSION}-{target}.zip"
@@ -59,7 +63,7 @@ def main():
     with zipfile.ZipFile(out / f"melodee-{VERSION}-licenses.zip", "w", zipfile.ZIP_DEFLATED) as archive:
         for file in (ROOT / "LICENSE", ROOT / "LICENSING.md", *(ROOT / "LICENSES").glob("*.txt")):
             archive.write(file, str(file.relative_to(ROOT)))
-    info = {"version": VERSION, "product": expected, "branch": "main", "commit": commit,
+    info = {"version": VERSION, "product": expected, "branch": "next" if "-" in VERSION else "main", "commit": commit,
             "builtAt": datetime.now(timezone.utc).isoformat(), "core_builds": packages, "recovery_builds": recovery}
     (out / "BUILD_INFO.json").write_text(json.dumps(info, indent=2) + "\n")
     (out / "SHA256SUMS").write_text("".join(f"{sha256(p.read_bytes())}  {p.name}\n"

@@ -222,6 +222,15 @@ dsp_tracks() {
     step "TRACKS: 4-track pattern, live recording (lengths, swing), voice budget, engine switch, cost" \
         env TRACKS=build/tracks_demo "$OUT/hostsim" 15 0 1 "$OUT/tracks.wav"
 }
+fx_dormancy() {
+    build fx_dormant_test fx_dormant_test -O2 $FW -UMELODEE_FX_DORMANT -DMELODEE_FX_DORMANT=1 || return
+    step "Chorus dormancy: independent kernel PCM/state/ring parity and cost" "$OUT/fx_dormant_test"
+    build fx_dormant_reference fx_dormant_test -O2 $FW -UMELODEE_FX_DORMANT -DMELODEE_FX_DORMANT=0 || return
+    "$OUT/fx_dormant_reference" --trace > "$OUT/fx-dormant-reference.trace" || fail "FX reference route trace"
+    "$OUT/fx_dormant_test" --trace > "$OUT/fx-dormant-candidate.trace" || fail "FX candidate route trace"
+    step "FX dormant/active: exact insert/CHAIN/SPLIT traces with all other effects, tails, edits and wakeups" \
+        cmp "$OUT/fx-dormant-reference.trace" "$OUT/fx-dormant-candidate.trace"
+}
 prophet() {
     build prophet_test prophet_test -O2 $FW || return
     step "Prophet native frames, five voices, filters, sync and Poly-Mod" "$OUT/prophet_test"
@@ -260,11 +269,19 @@ if core; then
     t "aligned libc: copy/clear bounds, ordering and float aliasing" libc_word_test -O2 -fstrict-aliasing
     t "wire fields: byte order, cross-byte bounds and preserved surrounding bits" wire_bits_test -O2
     t "audio worker: stalled jobs and wrapping deadlines" audio_worker_test
+    t "CPU1 fallback disabled: failures halt, healthy work stays dual-core" core1_fallback_test
     t "cache RAM startup, memory faults and safe fallback" cache_ram_test
     t "system clock: read only, never written" clock_test -O1
     t "stock V15 supply startup, timeouts and read-back faults" power_test -O1
     job step "nightly and synth-only site preserve release and editor" python3 tests/nightly_site_test.py
     run "audio diagnostics schema compatibility" python3 tests/usb_audio_stats_test.py
+    t "audio profiling: histogram bounds and timer wrap" audio_profile_test
+    t "batch profiling: per-core accounting and failed-worker drops" audio_batch_profile_test
+    run "CPU baseline tool: bounded RAM restore and diagnostic decoding" python3 tests/audio_cpu_device_test.py
+    run "Normal firmware stress: continuous ten-minute polling, faults, wrap and native driver stderr" python3 tests/audio_cpu_stress_test.py
+    run "CPU USB capture: stereo/stems, actual frames and final driver errors" python3 tests/audio_cpu_usb_test.py
+    run "CPU sequence runner: memory fixtures, external-clock timing and guarded restoration" python3 tests/audio_cpu_sequence_test.py
+    run "CPU live takes: native replay comparison, timed input, failure cleanup and guarded restoration" python3 tests/audio_cpu_take_test.py
     run "target budget: natural loops and FPU decoding" python3 tests/target_budget_test.py
     t "retired synth identities, project/user patch preservation and favorites" engine_retirement_test -O2 $FW
     t "capture gating, derived caches and silent-track clocks" performance_test -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
@@ -272,6 +289,8 @@ if core; then
     t "user presets (UP_PUT parser, bank round trip, versions, PHYS DRUM -> DRUM, grid records)" upreset_test
     t "keys and buttons: fast press, long release, bouncy contacts (one note each), glitches, encoders, fast spins" input_test
     t "LED hardware PWM: pin ownership, duty per scan, overlapping planes, blanking" led_pwm_test
+    t "Panel fixed column words: full scan and GPIO/PWM fallback" led_pwm_fast:led_pwm_test -DMELODEE_PANEL_FAST=1
+    t "Rejected panel brightness cache: exact masks/edits/fallback and sparse/changing costs" panel_prepare_bench -O2
     t "TRS MIDI parser" midi_uart_test
     t "USB audio: routing, clock drift and stream recovery" usb_audio_test
     t "USB audio: endpoint lifecycle and packet ownership" usb_audio_driver_test
@@ -279,6 +298,7 @@ if core; then
     run "resident audio: call graph and flash/RAM ABI boundaries" python3 tests/audio_ram_test.py
     t "removed effects: old songs and motion, MIDI, physical input and dry output" no_effects_test -O1 $FW
     t "resident audio: four-track resource budget and removed buses" ram_audio_test -O2 $FW
+    t "resident/cache undo: validated eight levels and bounded fallback" ui_resident_cache:ui_test -DMELODEE_RAM_AUDIO=1 -DMELODEE_CACHE_RAM=1 $FW
     t "resident audio: expanded voice budget and CPU1 fallback" ram_voice_budget_test -O2 $FW
     t "audio: calibrated reservations, release tails and overlapping hits" audio_admission_test -O2 $FW
     t "USB audio: four isolated track stems through the real mixer" usb_audio_tracks_test -O2 $FW
@@ -307,11 +327,18 @@ if core && [ $TABLES = 1 ]; then
     t "motion, whole-step chance, an older parameter count, song restore and ARP repeat" motion_test -O1 $FW
     t "32 pattern banks: chords, ties, independent loop switching, copy and persistence" pattern_test \
         -O1 -DMELODEE_USB_AUDIO=1 $FW
+    t "compressed pattern pool: dense capacity, prepared switches and state-machine oracle" pattern_pool_test -O1 $FW
     t "recording/performance tools and legacy migrations" performance_tools_test -O1 $FW
     t "USB/TRS clock, bend, sustain, ownership and panic recovery" midi_control_test -O1 $FW
     t "MIDI timing: quantized TRS/USB recording, audio timeline, tempo changes and timer wrap" midi_timing_test -O1 $FW
     t "MIDI recording: raw events, quantization at take end, independent releases, banks and capacity" recording_test \
         -O1 $FW
+    t "Recording scheduler: reference-state parity, cache invalidation and live lists" recording_scheduler_test -O1 $FW
+    run "Recording storage codec probe: lossless roundtrip and malformed data" python3 tools/recording_storage_probe.py
+    t "Recording ownership: independent scanner, edits, duplicates, sparse/dense queries and rebuild cost" recording_index_test -O2 $FW
+    t "Timestamped releases: rollover, retrigger, 1024 cancellations, edits and track isolation" recording_queue_test -O1 $FW
+    t "Recording scheduler oracle against the countdown cursor" recording_scheduler_countdown:recording_scheduler_test -O1 $FW -DMELODEE_RECORD_QUEUE=0
+    t "Recording scheduler oracle against the original scanner" recording_scheduler_reference:recording_scheduler_test -O1 $FW -DMELODEE_RECORD_CURSOR=0
     t "Recording undo: whole takes, motion, early stops, redo, isolation and memory" recording_undo_test -O1 $FW
     t "Recorded notes: individual selection/deletion, zoom, undo, playback ownership and persistence" seq_notes_test \
         -O1 $FW
@@ -336,6 +363,7 @@ if core && [ $TABLES = 1 ]; then
     job ui_renders
     t "boot audio: codec waits for settled silent DMA and shuts down before I2S" audio_boot_test -w
     t "audio: overload protection, bounded fades and DMA diagnostics" audio_test $FW
+    t "GLO > WEIGHTS: per-engine budget points, SAFETY, device persistence and pages" voice_weights_test $FW
     t "audio: silent bench keeps synthesis running and silences physical output" audio_silent_test:audio_test \
         -DMELODEE_BENCH_SILENT=1 $FW
     t "384 shared presets: all-engine capacity, conversion, torn writes and high-slot identity" unified_presets_test $FW
@@ -344,7 +372,12 @@ if core && [ $TABLES = 1 ]; then
     t "first boot: reset unsupported preset banks, preserve good entries and retry cuts" preset_boot_reset_test $FW
     t "storage safety: protect unreadable records until confirmed replacement" storage_safety_test $FW
     t "full backup: CRC before writes, stale runtime, USB reset / timeout, malformed objects, older projects" backup_test $FW
+    t "CPU laboratory: persistence guard and RAM-only preference restoration" backup_lab:backup_test -DMELODEE_AUDIO_PROFILE=1 $FW
     t "editor: real C protocol, malformed transfers and queue recovery" editor_test $FW
+    t "CPU lab controls: native recording/transport, guarded protocol and exact restoration" audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 -DMELODEE_AUDIO_BENCH=1 $FW
+    t "CPU lab controls absent in normal firmware" cpu_lab_off:audio_cpu_lab_test -O2 $FW
+    t "CPU lab controls absent with profiling only" cpu_lab_profile:audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 $FW
+    t "CPU lab controls absent with benchmark only" cpu_lab_bench:audio_cpu_lab_test -O2 -DMELODEE_AUDIO_BENCH=1 $FW
     t "DX7 librarian: USB voice/bank receive, dump replies and malformed frame recovery" fm6_sysex_test $FW
     t "SWING: track + global at most 100, sequencer step lengths, the SWG display" swing_test -O2 $FW
     t "double-tap layers, SCREEN OFF, LFO 2 SYNC / TRIG / POL" layer_screen_test \
@@ -362,6 +395,7 @@ if sound && [ $TABLES = 1 ]; then
     t "paired FM6/Prophet voices: serial/concurrent sample equality and eight-voice allocation" dual_core_test \
         -O2 $FW -pthread
     t "audio: 1296 ordered engine assignments, releases, controls and concurrent PCM parity" audio_matrix_test -O2 $FW -pthread
+    t "Reverb inserts: private tanks, fallback and failed-worker drops" reverb_parallel_test -O2 $FW -pthread
     t "CZ-1: every knob changes a full tone; the dim ones leave INIT and factory tones bit for bit" cz1_knob_test -O2 $FW
     t "native fp32: independent numerical references, exact pitch, quiet signals and fractional envelopes" synth_fpu_test \
         -O2 $FW
@@ -369,6 +403,22 @@ if sound && [ $TABLES = 1 ]; then
     t "modulation matrix: off = bit-identical, the math, MIDI CC1 / CC11 / aftertouch, cost, demos" mod_test \
         -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -- "$OUT/mod_test" build/mod_demo
     t "matrix S&H / SLEW / DEPTH, SPREAD: off = bit-identical, stereo sides and routing" mod_spread_test -O2 $FW
+    t "modulation routing cache: independent reference parity and comparison cost" mod_route_test -O2 $FW
+    t "CPU playback fixtures: exact full-bank serialization across densities/timing/engines" audio_cpu_fixture -O2 $FW
+    t "CPU live takes: REC/overdub schedules, native simulation, jitter bounds, FBKK decoding" audio_cpu_take -O2 $FW
+    t "capture allocation: full-state parity with the original scan, path coverage and cost" capture_alloc_test -O2 $FW
+    t "capture allocation with the overview pitch index" capture_alloc_index:capture_alloc_test -O2 \
+        -UMELODEE_RECORD_INDEX -DMELODEE_RECORD_INDEX=1 $FW -- "$OUT/capture_alloc_index" 400 nocost
+    t "routing rebuild probes: full-state parity and rejected steady/changing costs" mod_churn_bench -O2 $FW
+    t "SID filter output: exact full state across models/waves/stacks/modes and costs" sid_filter_test -O2 $FW
+    t "808/909 metal preparation: exact pitches, states and steady/changing costs" drum_prepare_test -O2 $FW
+    t "CZ native window: exact phase kernel and full renderer through live edits" cz_window_test -O2 $FW
+    t "FM6 zero-level preparation: exact state and static/changing costs" fm6_prepare_test -O2 $FW
+    t "Prophet zero-wheel: exact shared state and static/changing cost" prophet_fast_test -O2 $FW
+    t "Prophet zero-wheel at 2x: exact shared state and static/changing cost" prophet_fast_os2:prophet_fast_test -O2 -DP5_OVERSAMPLE=2 $FW
+    t "centered bend fast path: full raw/range oracle and control cost" control_prepare_test -O2 $FW
+    job fx_dormancy
+    t "mono mixer fast path: output/send/peak/stem reference parity and cost" mix_fast_test -O2 $FW
     t "CZ: oscillator boundaries, native rate/target envelopes and independent lines" phase_test \
         -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
     t "SID: oscillator/LFSR/register semantics, revisions and 32 factory presets" sid_test -O2 $FW

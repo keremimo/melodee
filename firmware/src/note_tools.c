@@ -8,6 +8,7 @@ typedef struct {
     uint32_t generation, pattern_gen, signature;
     motion_store_t motion;
     uint8_t valid, redo, track, cursor, len, clear;
+    uint8_t slen;                /* LEN to swap in too (a doubled pattern), 0 = LEN stays */
 } note_transaction_t;
 static note_transaction_t *note_transaction_ptr;
 #define note_transaction (*note_transaction_ptr)
@@ -45,7 +46,7 @@ static int note_transaction_begin_track(track_t *t)
     memcpy(note_transaction.steps,t->step,sizeof note_transaction.steps);
     note_transaction.track=(uint8_t)trk_index(t);note_transaction.pattern_gen=t->pattern_gen;
     note_transaction.cursor=ui.cursor;note_transaction.len=(uint8_t)step_pattern_len(t);
-    note_transaction.valid=1;note_transaction.redo=note_transaction.clear=0;return 1;
+    note_transaction.valid=1;note_transaction.redo=note_transaction.clear=note_transaction.slen=0;return 1;
 }
 static int note_transaction_begin(void){return note_transaction_begin_track(TSEL);}
 static void note_transaction_end(void)
@@ -74,6 +75,7 @@ static int note_tools_history(int redo)
     fm1_irq_off();recording_stop(t);
     note_swap(recording,note_transaction.notes,sizeof recording);
     note_swap(t->step,note_transaction.steps,sizeof note_transaction.steps);
+    if(note_transaction.slen){uint8_t len=(uint8_t)t->p[P_SLEN];t->p[P_SLEN]=note_transaction.slen;note_transaction.slen=len;note_transaction.len=(uint8_t)step_pattern_len(t);}
     recording_reindex();uint8_t cursor=ui.cursor;if(t==TSEL)cursor_set(note_transaction.cursor);note_transaction.cursor=cursor;
     ui.note_pick=0;note_transaction.redo^=1u;note_transaction_end();fm1_irq_on();ui_message(redo?"REDO":"UNDO");return 1;
 }

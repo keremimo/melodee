@@ -2,9 +2,9 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 #ifndef MELODEE_STEP_SNAPSHOT_H
 #define MELODEE_STEP_SNAPSHOT_H
-/* Main-loop history only. Preserve every step field, including unused note
+/* Compact steps for history and the inactive-pattern pool. Preserve every field, including unused note
  * bytes and n on rests/ties. Three bounded control fields share one byte;
- * all other bytes remain exact. No variable-size allocation or audio decode. */
+ * all other bytes remain exact. */
 typedef struct {
     uint8_t note[4], meta, vel, hit, acc, probability;
 } step_snapshot_t;

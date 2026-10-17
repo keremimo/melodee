@@ -138,6 +138,16 @@ static inline void fm1_core1_stop(void)
 #endif
 }
 
+/* Diagnostic alternative to continuing with one core. Stop both execution
+ * paths without feeding the already-armed watchdog; do not save a CPU1 bar. */
+static __attribute__((noreturn)) void fm1_core1_failure(void)
+{
+    __asm__ volatile("cli" ::: "memory");
+    fm1_core1_stop();
+    for (;;)
+        ;
+}
+
 static void fm1_enter_uboot(void)
 {
     static const char k[16] = "usb_update_mode";

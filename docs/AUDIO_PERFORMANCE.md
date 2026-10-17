@@ -1,3 +1,17 @@
+# GLO > WEIGHTS and SAFETY (2026-10-16)
+
+The weights described below apply only to builds with `MELODEE_ADMISSION=1`.
+Default builds (admission off) cost a Prophet voice 2 points while the second
+core is online (3 in serial fallback), an FM6 voice 1, and CZ, SID and DRUM 2.
+GLO > WEIGHTS (P5, CZ-1, FM6, SID) and WEIGHTS 2 (DRUM, BUDGET, SAFETY) let the
+player replace each engine's cost with 1–15 points; AUTO keeps the built-in rule
+in either build. SAFETY defaults OFF; an explicitly saved ON choice is retained. SAFETY OFF ignores overload cut requests (`shed_voice`):
+releasing voices are no longer cut, late buffers and deadline misses are still
+counted, and a sustained overload can starve the main loop until its 8-s
+watchdog restarts the device. These are device settings in PER5 favorites row 8
+bytes 8–15 ('W', version 1; untagged bytes are the defaults), not project data.
+No weight here is calibrated against measured device cost.
+
 # Revision: shared workload budget
 
 The user rejected the initial fixed one-voice Prophet/FM6 and two-hit DRUM

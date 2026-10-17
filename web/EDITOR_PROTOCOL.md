@@ -1142,6 +1142,60 @@ laboratory coverage. Both reply `rc`. Neither writes saved projects or patches.
 These controls are absent from production builds. A passing performance contract
 must also be checked with normal admission and emergency protection enabled.
 
+### Laboratory persistence guard and transport/REC controls
+
+With `MELODEE_AUDIO_PROFILE=1`, editor 98 also accepts:
+
+- `[2]`: the bounded audio-envelope histogram. Reply `rc=0, 2, bins=64`,
+  then u32 bin width in TIMER4 ticks, u32 maximum envelope ticks and 64 u32 bin
+  counts (five 7-bit bytes each). The last bin counts every longer buffer.
+- `[3]` reads and `[3, 0|1]` clears/sets the persistence guard. Reply
+  `rc=0, 3, guard`. Setting it replies only `3` while the transport is busy
+  (playing, counting in, song chain, pending Start), a momentary snapshot or an
+  old template is active, or any voice sounds. The guard remembers the current
+  project slot; clearing restores it. While set, autosave, kept-value and settings
+  writes are skipped, storage commits fail, and editor 67 restores preferences in
+  RAM only. A malformed request replies only `1`.
+- `[4]`: committed storage headers. Reply `rc=0, 4, count`, then per object
+  a present flag and u32 length, CRC and sequence.
+
+Editor 101 exists only when **both** `MELODEE_AUDIO_PROFILE=1` and
+`MELODEE_AUDIO_BENCH=1`; other builds give it no reply. It drives the same
+queued transport and REC arming as the panel, for guarded CPU fixtures. It adds
+no state, persistence or audio-tick work. Request `[op, mask]`, exactly two bytes:
+
+| op | Action | mask |
+| --- | --- | --- |
+| 0 | Query | 0 |
+| 1 | Queue internal-clock Start (count-in applies as on the panel) | 0 |
+| 2 | Queue Stop; also cancels a pending Start or count-in | 0 |
+| 3 | Arm latched REC | tracks, 1–15 |
+| 4 | Arm one-pass REC | tracks, 1–15 |
+| 5 | Disarm (seal, finish and quantize the take as a REC tap does) | tracks, 1–15 |
+
+The reply is always ten bytes: `rc, schema=1, playing, counting, rec, rec_wait,
+rec_pass, rec_latch, pending, clock`. The fields are one snapshot taken after the
+operation with audio interrupts paused. `rec*` are four-track masks, `pending` is
+the queued transport request (0 none, 1 Start, 2 Stop, 3 restart) and `clock` is
+CLK (0 INT, 1 USB, 2 TRS).
+
+`rc` 0 means accepted. `rc` 1 is a malformed request: wrong length, op above 5,
+a mask of 16 or more, or a mask present for ops 0–2 or missing for ops 3–5.
+`rc` 3 is refused: no persistence guard (every op, including query); Start or
+arming while a song chain is armed or running, a momentary snapshot is active or
+the template is old; Start with external clock, while playing or counting in, or
+with any transport request pending; arming a track beyond the tracks in use.
+Stop and disarm need only the guard, so cleanup stays possible.
+
+Start acknowledges a queued request, not a running transport: the audio interrupt
+applies it at its next block. Poll query until `pending=0` and `playing=1` (or
+`counting=1`). Never resend Start after a lost reply; query, then Stop if needed.
+Query, Stop and disarm are idempotent. Arming follows native REC: during playback
+a newly armed track waits for loop zero (`rec_wait`), and a one-pass take disarms
+after its pass. Arming an already armed track leaves it, including its latch mode,
+unchanged, so a retried arm cannot alter the take. Recorded notes change only the
+live project, exactly as panel recording would.
+
 ### Shared workload budget
 
 Global ID 41 is BUDGET (`G_COUNT=42`), range 8–32 integer points. Existing
@@ -1151,6 +1205,12 @@ and template loads. A tagged high word (`0x5742`) in PER5 `ext.usb_off` stores
 nondefault budgets in bits 8–15 while retaining the low two USB flags. The
 604-byte settings record and project/template layouts are unchanged. Unknown
 or absent tags use the build default (16 with admission enabled).
+
+GLO > WEIGHTS shows device settings on the reserved global IDs 4–9 (P5, CZ-1,
+FM6, SID and DRUM points per voice, 0 = AUTO; SAFETY). They are panel-only:
+`global_reserved()` still covers these IDs, so the editor reads 0 and cannot set
+them, and projects never store them. PER5 favorites row 8 bytes 8–15 hold them
+('W', version 1, five points, bit 0 of the last byte SAFETY OFF).
 
 The shared pool borrows idle capacity and retains native engine slot counts.
 Its weights are Prophet 3 points with one active Prophet track, 4 with multiple
@@ -1185,3 +1245,17 @@ per slot (`P_COUNT=125`, `P_E0=117`, `G_COUNT=48`; FUN21 and TPLK, formats 17
 nearest TONE, the low cut when both were set; a low cut at or under 150 Hz counts
 as the effects' own and leaves the high cut (or FULL). FUN20/TPLJ and all previously
 supported imports load TONE FULL and retain their routing and engine/motion values.
+
+### Chord strum
+
+Common track IDs 114 `STRUM` and 115 `STROKE` are appended before the engine
+parameters: `P_COUNT=124`, `P_E0=116`, `G_COUNT=45`. Earlier common IDs retain
+their values; engine IDs are read from INFO. STRUM is an enum: 0 OFF, 1 1/8,
+2 1/16, 3 1/32, 4 1/64, 5 1/128, 6 16T, 7 32T. STROKE is 0 DOWN, 1 UP,
+2 ALT. Both default to 0 and survive sound loads. The device abbreviates STROKE to DIR. Projects map older counts
+with STRUM OFF; existing engine values retain their mapping.
+
+The division is the complete first-to-last sweep, with an immediate first tone
+and evenly spaced remaining tones. Input release and STOP cancel pending tones;
+MIDI sustain follows existing ownership. ARP bypasses strumming. Live recording
+captures the staggered onsets; STEP entry continues to write a complete chord.

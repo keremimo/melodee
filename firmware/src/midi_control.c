@@ -108,6 +108,7 @@ static void midi_release(uint32_t ch, uint32_t note)
             n = m->n;
             for (i = 0; i < n; i++)
                 nn[i] = m->note[i];
+            midi_strum_pending &= ~(1u << (uint32_t)(m - mchord));
             m->id = 0;
         }
         for (i = 0; i < n; i++) {
@@ -136,19 +137,19 @@ static int midi_play(track_t *t, uint32_t ch, uint32_t note, uint32_t vel)
         n = 1;
         nn[0] = (uint8_t)note;
     }
-    for (i = 0; i < n; i++) {
-        step_midi_edge(trk_index(t), nn[i], 1, ch, note);   /* (SEQ > STEP: the cursor step) */
-        if (!midi_note_held(t, nn[i]) && !midi_local_held(t, nn[i]))
-            input_on(t, nn[i], vel);
-    }
+    for (i = 0; i < n; i++)
+        step_midi_edge(trk_index(t), nn[i], 1, ch, note); /* step entry keeps the complete chord */
     if (n > 1u || nn[0] != note) {
         mchord_t *m = &mchord[f];
-        m->ch = (uint8_t)ch;
-        m->src = (uint8_t)note;
-        m->n = (uint8_t)n;
-        for (i = 0; i < n; i++)
-            m->note[i] = nn[i];
+        m->ch = (uint8_t)ch; m->src = (uint8_t)note; m->n = 0;
+        memcpy(m->note, nn, n);
+        n = chord_strum_begin(t, m->note, n, &m->strum, vel);
+        m->strum.vel = (uint8_t)vel;
         m->id = (uint8_t)(trk_index(t) + 1u);
+        for (i = 0; i < n; i++) midi_chord_tone(m);
+        if (m->strum.total) midi_strum_pending |= 1u << f;
+    } else if (!midi_note_held(t, nn[0]) && !midi_local_held(t, nn[0])) {
+        input_on(t, nn[0], vel);
     }
     return 1;
 }
@@ -196,6 +197,10 @@ static void midi_pedal_up(uint32_t ch)
 static void __attribute__((noinline)) midi_forget_track(uint32_t track)
 {
     uint32_t ch, note;
+    for (uint32_t k = 0; k < 27u; k++)
+        if (kb_trk[k] == track && kb_chn[k]) key_off(k, &trk[track]);
+    for (uint32_t k = 0; k < MCHORD_N; k++)
+        if (mchord[k].id == track + 1u) midi_strum_pending &= ~(1u << k);
     memset(live_held[track], 0, sizeof live_held[track]);
     step_midi_edge(track, 0, 2, 0, 0);          /* one UI release for the whole track */
     for (ch = 0; ch < 16u; ch++) {

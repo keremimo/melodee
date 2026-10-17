@@ -31,6 +31,11 @@ Multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. Current rel
 The stock-restore installer accepts 1.4's backup capabilities. Existing Melodee 1.4.0
 users can return to official V15 directly from the updated web installer.
 
+Release candidate: **[Melodee 1.4.2-rc.1](https://github.com/keremimo/melodee/releases/tag/v1.4.2-rc.1)**
+([release notes](docs/RELEASE_1.4.2-rc.1.md)); choose **RC** in the web installer.
+It adds four-track songs, chord strums, pattern halve/double, voice weights and the
+nightly CPU optimizations. The stable installer remains on 1.4.1.
+
 The stable installer includes the latest UI, recording, effects, SID and preset-bank
 changes. Read the [illustrated manual](https://keremimo.github.io/melodee/webapp/manual/)
 for this release, or the [nightly guide](https://keremimo.github.io/melodee/webapp/manual/nightly/)
@@ -506,6 +511,11 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
 - **BPM**, the song's **SWG** and the selected track's recording **QNT** are on **SEQ > TEMPO**:
   the project's, saved and loaded with it (power-on: the BOOT project's, the template's or 120);
   GLO > GLOBAL keeps CLK and TUNE, the device's
+- **GLO > WEIGHTS** sets how many BUDGET points one voice of **P5** (Prophet), **CZ-1**, **FM6** and **SID** costs;
+  **WEIGHTS 2** has **DRUM**, **BUDGET** and **SAFETY**. AUTO keeps the built-in cost; 1–15 replaces it, so a
+  heavier weight lets fewer voices of that engine start. **SAFETY OFF** stops an overload from cutting releasing
+  voices: the audio may glitch instead, and an overload that lasts several seconds can freeze the panel and
+  restart the FM-1. Device settings, kept across projects
 - SCL, ENV, LFO, EDIT, GLO, SAVE, ARP and SEQ open their pages; press again for the next page.
   HOME returns home; on HOME, tap HOME again for its second page: the chord in the middle of a wheel
   of the twelve notes in fifths (the key's notes marked, the notes sounding lit in their track's colour and joined
@@ -590,7 +600,10 @@ holding notes glow, the one waiting for the loop end breathes. Picking an empty 
 pattern with notes, hit its key twice quickly to arm REC. These shortcuts record one pattern pass
 and automatically disarm. Selecting an empty pattern preserves existing explicit REC arming.
 Hold a pattern key alone for a second: a small dialog asks what next: press it again to delete the pattern, another
-pattern key to copy it there, OCT- to leave it. With SEQ held the first four black keys (F#, G#, A#, C#) select
+pattern key to copy it there, OCT- to leave it. In the dialog the 4th and 5th black keys (C#, D#) blink: C# halves the
+pattern (LEN /2, the steps past it kept hidden), D# doubles it (LEN x2, its steps, recorded notes and motion copied
+after themselves; 64 steps at most). While SEQ is held the dialog stays, its title saying the length, so either can
+be pressed again; letting go of SEQ closes it. On the pattern playing EDIT held undoes them. With SEQ held the first four black keys (F#, G#, A#, C#) select
 tracks 1–4 (the selected one lit, an armed one breathing). **SEQ + SELECT** also chooses a pattern. While playing,
 destructive edits wait for the track's loop end, as a pattern change does: deleting or clearing a pattern, clearing
 its motion, copying over a pattern in use or the one playing (the header says **… AT LOOP END**, the pattern's key
@@ -963,3 +976,23 @@ Melodee code and modifications: Copyright (C) 2026 Kerem Kilic (Ellic Studio)\
 Retained Felucca portions: Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 
 See [Recording and performance controls](docs/RECORDING_PERFORMANCE.md) for count-in, metronome, drum levels, temporary knob edits, additive chords and MIDI parameter control.
+
+### Beat-synced chord strumming
+
+On **SCL → CHORD**, KNOB 1 selects the chord, KNOB 2 the voicing,
+KNOB 3 **STRUM** and KNOB 4 **DIR** (stroke direction). STRUM defaults to OFF. Choose
+1/8, 1/16, 1/32, 1/64, 1/128, 16T or 32T to spread a complete chord across
+that musical duration. DOWN plays low to high; UP plays high to low; ALT
+alternates each press. The first tone sounds immediately, the last one division
+later, and all played tones ring until release. At 120 BPM, a 1/64 sweep lasts
+31.25 ms and a 1/16 sweep 125 ms.
+
+Panel keys and incoming MIDI use the same timing, following internal tempo or
+the selected MIDI clock. Releasing a key cancels its unplayed tones; STOP cancels
+pending sweeps. Sustain pedal retains MIDI-held chords. Live recording captures
+the actual staggered onsets and releases (use recording QNT OFF to retain them).
+STEP entry still writes the complete chord. ARP takes priority and receives the
+whole chord immediately. Kits and single-voice modes retain their normal behavior.
+Strum settings belong to the track, survive sound loads and save with projects;
+older projects load with STRUM OFF. Existing manually entered sequencer chords
+are unchanged; recorded strums replay their captured timing.

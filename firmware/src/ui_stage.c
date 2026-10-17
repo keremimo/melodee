@@ -27,7 +27,7 @@
 
 static int32_t st_row_h(void)
 {
-    int32_t n = (int32_t)trk_n();
+    int32_t n = (int32_t)stage_rows();
     return (ST_ROWS_H - 2 * (n - 1)) / n;
 }
 static int32_t st_row_y(uint32_t k) { return ST_ROW_Y + (int32_t)k * (st_row_h() + 2); }
@@ -193,7 +193,7 @@ static uint32_t stage_picture(int32_t *v)
 {
     const page_t *sp = stage_page();
     uint32_t hot = ui.hot_col & 3u, id = sp->id[hot], k;
-    if (!stage_knobs_out())
+    if (!stage.out)                                     /* (the frame's: the clock may pass ST_KNOB_MS while it draws) */
         return SP_NONE;
     if (sp->scope == SC_P5) {
         const uint8_t *r = p5_patch_of(TSEL)->raw;
@@ -445,7 +445,7 @@ static void stage_row(uint32_t k)
     uint32_t lv = stage_rec_lv(k);
     uint32_t ph = song.playing && t->seq_idx < len ? t->seq_idx : 0xFFFFu, nb = st_bars(t);
     uint32_t next = t->pattern_next < NPAT ? t->pattern_next + 1u : 0u, sig, src, kk, cat, g;
-    uint32_t n = trk_n(), wide = n == 1u, idle = wide && stage_seq_idle(k);
+    uint32_t n = stage_rows(), wide = n == 1u, idle = wide && stage_seq_idle(k);
     int pending = sel && browse_pending();
     int32_t h = st_row_h(), y = st_row_y(k), top, cs = h >= 80 ? 34 : 26, tx = 6 + cs + 10, room = BOX_W - 6 - tx;
     st_lay_t lay = {4, 4, 1, 1, ST_PMIN, 0, 0};
@@ -592,6 +592,31 @@ static void stage_row(uint32_t k)
     }
 }
 
+/* a place not in use (UNUSED TRACKS SHOW): its row greyed, the numeral and "Add track" (Stage's sheet adds it). Stage
+ * and MIXER: *drawn their row's signature */
+static void stage_free(uint32_t k, uint32_t *drawn)
+{
+    int32_t h = st_row_h(), y = st_row_y(k), cs = h >= 80 ? 34 : 26, tx = 6 + cs + 10, top;
+    const aafont_t *nf = h >= 80 ? TY_VL : TY_TX;
+    uint16_t bg = ux_mix(T_BG, T_DIM, 8), nc = ux_mix(T_BG, T_DIM, 28);
+    char d[2] = {(char)('1' + k), 0};
+    uint32_t sig = 0xADDu + (uint32_t)h * 211u + (uint32_t)y * 7u + ux.gen * 977u + ux.pal * 31u;
+    if (stage.out || (!ui.force && sig == *drawn))
+        return;
+    *drawn = sig;
+    for (top = 0; top < h; top += (int32_t)(CV_MAX / BOX_W)) {   /* (a tall row: in slices) */
+        int32_t sh = h - top < (int32_t)(CV_MAX / BOX_W) ? h - top : (int32_t)(CV_MAX / BOX_W);
+        cv_begin(BOX_W, (uint32_t)sh, T_BG);
+        cv_oy = -top;
+        cv_rrect(0, 0, BOX_W, h, 8, bg, T_BG);
+        cv_rrect(6, h / 2 - cs / 2, cs, cs, 7, nc, bg);
+        cv_text_c(6 + cs / 2, ty_y(h / 2, cs > 30 ? TY_VL : TY_TX), cs > 30 ? TY_VL : TY_TX, d, T_DIM, nc);
+        cv_free_text(tx, ty_y(h / 2, nf), nf, "Add track", T_DIM, bg, BOX_W - 6 - tx);
+        cv_oy = 0;
+        cv_blit(BOX_X, (uint32_t)(y + top));
+    }
+}
+
 /* the knobs: out while one turns (and ST_KNOB_MS after), dropping in over ST_DROP frames (each its cells' bottom rows,
  * more each frame); their picture under them; gone at once, the rows whole again */
 static void stage_knobs(void)
@@ -637,7 +662,10 @@ static void stage_draw(void)
         return;
     if (stage.out && !ui.home_pg)
         stage_shape();
-    for (k = 0; k < trk_n(); k++)
-        stage_row(k);
+    for (k = 0; k < stage_rows(); k++)
+        if (k < trk_n())
+            stage_row(k);
+        else
+            stage_free(k, &stage.col[k]);
     stage_band();
 }

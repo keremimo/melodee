@@ -1,0 +1,38 @@
+gen_909_tables: EXP pot ranges -> /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/x0x_drum_tables.h
+size: 1088 main-loop functions built for size (40 not in this build)
+audio RAM: 375 reachable functions; 85 flash/RAM call boundaries
+loader: image 8596 B at 0x1c0a800, bss end 0x1c0f570
+loader: ota.bin 7378 B
+kerning: 1635 pairs at 28 px, shared = 2946 B
+face LB: Rubik[wght].ttf@500 16px h19 base15  105 glyphs x 2  data 4342 B + table 1680 B + kern classes 0 B = 6032 B   digit adv 10.00px
+face TX: Rubik[wght].ttf@500 20px h24 base19  105 glyphs x 2  data 5601 B + table 1680 B + kern classes 0 B = 7291 B   digit adv 13.00px
+face VL: Rubik[wght].ttf@500 28px h34 base27  105 glyphs x 1  data 4464 B + table 840 B + kern classes 0 B = 5314 B   digit adv 18.00px
+face HR: Rubik[wght].ttf@500 48px h57 base45  79 glyphs x 1  data 6628 B + table 632 B + kern classes 158 B = 7496 B   digit adv 31.00px
+face PIX: melodee_pixel.txt 105 glyphs, 1 bit, roles [('LB', 2), ('TX', 2), ('VL', 3), ('HR', 5)] = 2287 B
+fonts total 31366 B  -> /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/ui_fonts.h
+icons 12px: 61 cells, 4523 B
+icons 16px: 34 cells, 4483 B
+icons 24px: 7 cells, 2147 B
+icons total 11153 B -> /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/ui_icons.h   (61 drawings)
+keycaps: 25 labels -> /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/ui_keycaps.h
+tables: /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/melodee_tables.h
+fm6 patches: 8 -> /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/melodee_fm6.h
+cz1 factory: 64 tones, 5389 B packed -> /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/melodee_cz1.h
+Prophet factory: 200 exact native programs -> /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/gen/melodee_prophet_factory.h
+stub: 2268 B of 3808 (59.6%), version 3, sha256 baee55ed142fe1cc
+  ok    .ram_text: 1058 insns, no calls
+  ok    audio RAM: 373 linked functions verified in SRAM; optional bounded FX inserts
+  ok    FM6: sample kernel and operator helpers in internal DSP RAM
+  ok    CPU1: RAM polling loop, private 8 KiB stacks, bounded startup/join
+  ok    image 532136 B; RAM .data+.bss 97016 B of 98304; pool 162112 B of 344064
+  ok    audio working arena 56768 B available on demand (minimum 49152)
+  ok    low SRAM tail 696 B: 0x01c07c48..0x01c07f00 (end exclusive)
+  ok    data SRAM tail 1288 B: 0x01c1faf8..0x01c20000 (end exclusive)
+  ok    retained SRAM tail 848 B: 0x01c7fa00..0x01c7fd50 (end exclusive)
+  ok    total audio resources 59600 B in four separate SRAM banks; reclaimed 2832 B
+  ok    cache RAM: optional 28672 B after boot self-test; UI 14336 B, audio 14336 B; maximum audio resources 73936 B
+  ok    register access: hal/ only (src/, loader/ clean)
+app      /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/melodee.bin  532136 B
+loader   /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/loader/ota.bin  7378 B
+package  /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/melodee-1.4.2-rc.1.fwsc  610534 B, identity FM-1_91042
+release  /private/tmp/claude-501/-Users-kerem-code-personal-Felucca/8484db04-f3ba-4d59-ba28-97c1078f2f90/scratchpad/rc/build/release-1.4.2-rc.1/

@@ -87,6 +87,10 @@ static uint32_t home_select(void) { return HOME_SELECT < HS_N ? HOME_SELECT : HS
 #define GLO_SELECT (favorites.factory[15][24])
 static uint32_t glo_select(void) { return ((GLO_SELECT >> 1) & 15u) < HS_N ? (GLO_SELECT >> 1) & 15u : HS_BPM; }
 static void glo_select_set(uint32_t v) { GLO_SELECT = (uint8_t)((GLO_SELECT & ~0x1Eu) | (v & 15u) << 1); }
+/* UNUSED TRACKS (the menu): HIDE in bit 5 of the same byte. SHOW (0): Stage and MIXER keep a greyed row for each
+ * place not in use, saying "Add track"; HIDE: the tracks in use share the rows (one track: the wide card) */
+#define TRACKS_HIDE 32u
+static uint32_t stage_rows(void) { return GLO_SELECT & TRACKS_HIDE ? trk_n() : NTRK; }
 
 static uint8_t sync_reload;                  /* engine / preset / project / user preset loaded: editor RELOAD push */
 
@@ -119,7 +123,8 @@ static struct {
     uint8_t fam_last[FAM_COUNT]; /* last page used per family */
     uint8_t bank;                /* SEQ: 16-step bank (follows the cursor) */
     uint8_t pat_key, pat_copy, pat_track;          /* SEQ + white-key bank gesture */
-    uint8_t pat_tap, pat_dlg;                      /* .. the key last tapped (+1), the one held to its dialog */
+    uint8_t pat_tap, pat_dlg, pat_did;             /* .. the key last tapped (+1), the one held to its dialog, its
+                                                    * length changed there (Cancel: Done) */
     uint32_t pat_ms, pat_tap_ms;                   /* .. when it went down, when the tapped one was let go */
     uint8_t ptc_on, ptc_trk, ptc_src, ptc_dst;     /* PATTERNS' Copy to: track ptc_trk's pattern src to dst
                                                     * (ui_patterns.c) */
@@ -609,8 +614,9 @@ static int seq_is_empty(const track_t *t)
  * loads changed (held again: the level before, EDIT + OCT+ redoes), so steps recorded after a sound load, or a sound
  * edited after a pattern load, stay as they are. Loads in a row on one track with nothing changed in between (the
  * PRESETS knob through the list, one pattern after the other, an editor audition) keep the copy from before the first,
- * so the undo goes back past the whole browse. Eight levels fit in ordinary SRAM,
- * leaving the data cache available for flash reads. Not snapshotted: power-on, projects (a project load drops them all) */
+ * so the undo goes back past the whole browse. Eight levels use ordinary SRAM or validated cache RAM.
+ * The resident/cache profile keeps one SRAM fallback level if cache startup fails.
+ * Not snapshotted: power-on, projects (a project load drops them all) */
 enum { UNDO_SOUND = 1, UNDO_PAT = 2 };
 #include "step_snapshot.h"
 typedef struct {
@@ -633,9 +639,16 @@ typedef struct {
 } undo_t;
 #define UNDO_LV_MAX 8u
 _Static_assert(UNDO_LV_MAX * sizeof(undo_t) <= UI_CACHE_BYTES, "undo levels fit the cache RAM's UI part");
-static undo_t undo_sram[UNDO_LV_MAX] __attribute__((section(".pool")));
+#if MELODEE_RAM_AUDIO && MELODEE_CACHE_RAM
+/* Reserve the engine arena even when cache startup fails. Never borrow a live
+ * audio allocation from the UI or use unvalidated cache memory. */
+#define UNDO_SRAM_LEVELS 1u
+#else
+#define UNDO_SRAM_LEVELS UNDO_LV_MAX
+#endif
+static undo_t undo_sram[UNDO_SRAM_LEVELS] __attribute__((section(".pool")));
 static undo_t *undo_lv = undo_sram;
-static uint8_t undo_nlv = UNDO_LV_MAX, undo_top, undo_cnt;   /* levels; undoable 0 .. top-1, redoable top .. cnt-1 */
+static uint8_t undo_nlv = UNDO_SRAM_LEVELS, undo_top, undo_cnt;   /* levels; undoable 0 .. top-1, redoable top .. cnt-1 */
 static undo_t *undo_last(void) { return &undo_lv[undo_top ? undo_top - 1u : 0u]; }
 #define undo (*undo_last())      /* the latest level (tests, the layers: undo.keep); none: level 0 */
 static void undo_clear(void) { undo_top = undo_cnt = 0; undo_lv[0].trk = undo_lv[0].keep = 0; }
@@ -896,7 +909,7 @@ static void track_defaults_steps(track_t *t)
 static int param_kept(uint32_t i)
 {
     return i == P_LEVEL || i == P_PAN || i == P_MUTE || (i >= P_AMODE && i <= P_SGATE) ||
-           i == P_CHRD || i == P_VOIC || i == P_MPCDEG || i == P_RECQ || param_fx(i) || param_fx_send(i);
+           i == P_CHRD || i == P_VOIC || i == P_STRUM || i == P_STROKE || i == P_MPCDEG || i == P_RECQ || param_fx(i) || param_fx_send(i);
 }
 
 /* SCL, QNT and the MPC degree are the song's: one scale for every part, kept the same in each track's own slots
@@ -1159,21 +1172,23 @@ static void confirm_open(uint32_t kind, uint32_t trk)
 #include "note_tools.c"
 
 #define TL_MAX 4u
-/* s wrapped into at most m lines of w px in face f (at spaces; a word wider than the line: at the last character that
- * fits), each line up to 31 characters; the number of lines */
+/* s wrapped into at most m lines of w px in face f (at spaces, always at a '\n'; a word wider than the line: at the
+ * last character that fits), each line up to 31 characters; the number of lines */
 static uint32_t text_lines(const char *s, char (*l)[32], uint32_t m, int32_t w, const aafont_t *f)
 {
     uint32_t k = 0;
     while (*s && k < m) {
         uint32_t i, cut = 0;
-        while (*s == ' ')
+        while (*s == ' ' || *s == '\n')
             s++;
         for (i = 1; s[i - 1] && i < 32u; i++) {
             str_cpy(l[k], s, i + 1u);
             if (text_w(f, l[k]) > w)
                 break;
-            if (!s[i] || s[i] == ' ')
+            if (!s[i] || s[i] == ' ' || s[i] == '\n')
                 cut = i;
+            if (s[i] == '\n')
+                break;
         }
         if (!cut) {                                     /* (one long word: as much of it as fits) */
             for (cut = 1; s[cut] && cut < 31u; cut++) {

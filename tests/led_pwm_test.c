@@ -50,6 +50,8 @@ static uint32_t duty(uint32_t r)
 int main(void)
 {
     uint32_t i, r, frame, a0, h0, im1, im3, global;
+    for (i = 0; i < FM1_NCOL; i++)
+        CHECK(fm1__column_word(i) == (0xFFFFu ^ (1u << i) ^ (i < 2u ? 1u << (11u + i) : 0u)));
     for (i = 0; i < 64; i++) {
         pwm[i] = 0x12345678u;
         iomap[i] = 0x87654321u;

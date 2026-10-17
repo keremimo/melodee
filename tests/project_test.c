@@ -37,7 +37,7 @@ int main(void)
     int bad = 0, ok;
 
     bad += check("layout: SLICER after DETUNE, then the matrix just before P_E0",
-                 P_RESERVED45 == P_DETUNE + 1 && P_RESERVED48 + 1 == P_M1SRC && P_M4AMT + 1 == P_FM1_ATK && P_FM4_LEVEL + 1 == P_CHRD && P_VOIC + 1 == P_MPCDEG && P_MPCDEG + 1 == P_LN0 && P_LN7 + 1 == P_LSYNC && P_SPRD + 1 == P_FXTYPE && P_FX3CHAR + 1 == P_FXSEND && P_FXSEND + 1 == P_FXSEND2 && P_FXSEND2 + 1 == P_FXSEND3 && P_FXSEND3 + 1 == P_FXTONE && P_FX3TONE + 1 == P_E0 && P_E0 == 114);
+                 P_RESERVED45 == P_DETUNE + 1 && P_RESERVED48 + 1 == P_M1SRC && P_M4AMT + 1 == P_FM1_ATK && P_FM4_LEVEL + 1 == P_CHRD && P_VOIC + 1 == P_MPCDEG && P_MPCDEG + 1 == P_LN0 && P_LN7 + 1 == P_LSYNC && P_SPRD + 1 == P_FXTYPE && P_FX3CHAR + 1 == P_FXSEND && P_FXSEND + 1 == P_FXSEND2 && P_FXSEND2 + 1 == P_FXSEND3 && P_FXSEND3 + 1 == P_FXTONE && P_FX3TONE + 1 == P_STRUM && P_STRUM + 1 == P_STROKE && P_STROKE + 1 == P_E0 && P_E0 == 116);
     bad += check("FUN16 fits its record", sizeof(project_store_t) == PROJ_STORE_SIZE);
 
     /* a project_t round trip (the host's RAM slots): as stored (a matrix slot, a retired engine's byte, a DRUM step
@@ -77,7 +77,7 @@ int main(void)
         uint32_t i, zero = 1;
         bad += check("FUN16: the name at the end of the record, the FM6 patches before the tones, after the data",
                      PROJ_NAME_OFF == PROJ_STORE_SIZE - 16u && PROJ_FM6_OFF == 3104u && 68u + NTRK * (P_COUNT + 2u + NSTEP * 8u) +
-                     sizeof(chain_config_t) + sizeof(motion_store_t) + 196u == PROJ_FM6_OFF);
+                     sizeof(chain_config_t) + sizeof(motion_store_t) + 188u == PROJ_FM6_OFF);
         blank(&a);
         a.t[1].p[P_LEVEL] = 99;
         a.sum = proj_sum(&a);

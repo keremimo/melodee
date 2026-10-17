@@ -29,6 +29,7 @@ static inline __attribute__((always_inline)) uint32_t fm1_aw_ticks(void) { retur
 #define AW_HOLD() fm1_core1_stop()
 #define AW_RETIRED() fm1_core1_bar_set()
 #define AW_FAULTS() fm1_core1_fault.count
+#define AW_FAILURE() fm1_core1_failure()
 #if MELODEE_CORE1_TEST
 static int core1_test_count_only;            /* editor command 79 mode 7: count misreads, keep CPU1 */
 #define AW_MISREAD(n) ((void)(n), core1_test_count_only)
@@ -38,6 +39,7 @@ static int core1_test_count_only;            /* editor command 79 mode 7: count 
 #undef AW_RAM_LOOP
 #undef AW_MISREAD
 #undef AW_FAULTS
+#undef AW_FAILURE
 #undef AW_HOLD
 #undef AW_RETIRED
 #undef AW_TIMEOUT_TICKS
@@ -88,5 +90,8 @@ static int fm1_multicore_start(void)
     audio_worker_online = fm1_aw_load(&audio_worker.ready) != 0;
     if (!audio_worker_online) fm1_core1_stop();
     *(volatile uint32_t *)0x10008u = div;
+#if !MELODEE_CORE1_FALLBACK
+    if (!audio_worker_online) fm1_core1_failure();
+#endif
     return audio_worker_online;
 }

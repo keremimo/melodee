@@ -60,6 +60,13 @@ static void fm1_delay_ms(uint32_t ms) { (void)ms; }
 #include "../firmware/src/midi_uart.c"                /* TRS MIDI IN: its parser (um_byte) feeds midi_in_q */
 #include "../firmware/src/song_chain.c"
 #include "../firmware/src/seq.c"
+/* Assertions can inspect a bank without exposing mutable pool internals.
+ * Mutating fixtures must publish through pattern_write. */
+static const pattern_t *pattern_at(uint32_t k, uint32_t bank)
+{
+    static pattern_t view[4]; static uint32_t next;
+    pattern_t *p = &view[next++ % 4u]; pattern_read(k, bank, p); return p;
+}
 #define inst (trk[0])                   /* the single-part renders below: part 1 */
 
 static void wav_hdr(FILE *f, uint32_t frames)
@@ -145,8 +152,13 @@ static void host_preset(track_t *t, uint32_t e, uint32_t pi)
     t->engine = t->eng_req;
 }
 
-/* part k's power-on sound (main.c, TRK_DEF) */
-static void host_power_on_sound(track_t *t, uint32_t k) { host_preset(t, TRK_DEF[k][0], TRK_DEF[k][1]); }
+/* the demo song's bass and pad (k 0, 1): the power-on sounds until 2026-10-16 (TRK_DEF since: a Prophet, FM6 SOLID
+ * BASS, a CZ-1 lead), kept so the sound regressions hear the same song */
+static void host_power_on_sound(track_t *t, uint32_t k)
+{
+    static const uint8_t DEMO[2][2] = {{ENGI_PROPHET, 4}, {ENGI_FM6, 4}};
+    host_preset(t, DEMO[k % 2u][0], DEMO[k % 2u][1]);
+}
 
 /* the plain synth a test plays when the engine is not what it tests (ANALOG's place until 2.0 retired it): CZ-1,
  * on the generic voice path (NPOLY voices, no cap of its own) as ANALOG was */

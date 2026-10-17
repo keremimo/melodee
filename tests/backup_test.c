@@ -491,6 +491,26 @@ int main(void)
     bad += native_archive();
     bad += prophet_archive();
     bad += full_pattern_archive();
+#if MELODEE_AUDIO_PROFILE
+    reset();
+    {
+        persist_t original;settings_export(&original);
+        persist_t saved=persist_saved;
+        uint32_t writes=erases;
+        audio_lab_guard=1;
+        settings_budget=24;settings_save();
+        bad+=check("lab guard blocks settings and direct persistent writes",
+            persist_pending && erases==writes && st_save(OBJ_SETTINGS,&original,sizeof original)==-9);
+        song.g[G_CLOCK]^=1;glo_poll();
+        bad+=check("lab guard keeps saved global preferences untouched",!memcmp(settings_glo,original.ext.glo,sizeof settings_glo));
+        bad+=check("lab preferences restore RAM without updating flash bookkeeping",
+            !put_all(1,&original,sizeof original,st_crc32(&original,sizeof original)) &&
+            settings_budget==VOICE_BUDGET_DEFAULT && erases==writes && !memcmp(&persist_saved,&saved,sizeof saved));
+        original.magic=0;
+        bad+=check("lab preferences reject invalid data",put_all(1,&original,sizeof original,st_crc32(&original,sizeof original))==2);
+        audio_lab_guard=0;
+    }
+#endif
     printf("backup test %s\n", bad ? "FAILED" : "passed");
     return (bad + expanded_bad) != 0;
 }

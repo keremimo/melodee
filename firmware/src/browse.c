@@ -166,11 +166,11 @@ static int entry_ok(uint32_t src, uint32_t k)              /* (a RECENT entry ma
     return src < NENGINES && eng_ok(src) && k < ENGINES[src]->npresets;
 }
 
-/* the entry the selected track plays (USER_GENERAL, UP_SLOTS: none of the list's) */
-static void cur_entry(uint32_t *src, uint32_t *k)
+/* the entry track t plays (USER_GENERAL, UP_SLOTS: none of the list's) */
+static void cur_entry_of(const track_t *t, uint32_t *src, uint32_t *k)
 {
-    uint32_t u = user_of(TSEL), e = TSEL->eng_req % NENGINES, np = ENGINES[e]->npresets;
-    if (u < USER_NONE && TSEL->user_native) {
+    uint32_t u = user_of(t), e = t->eng_req % NENGINES, np = ENGINES[e]->npresets;
+    if (u < USER_NONE && t->user_native) {
         *src = e == ENGI_PROPHET ? USER_NATIVE_P5 : e == ENGI_FM6 ? USER_NATIVE_FM : USER_NATIVE_CZ;
         *k = u;
     } else if (u < UP_SLOTS) {
@@ -178,9 +178,10 @@ static void cur_entry(uint32_t *src, uint32_t *k)
         *k = u;
     } else {
         *src = e;
-        *k = np ? TSEL->preset % np : 0u;
+        *k = np ? t->preset % np : 0u;
     }
 }
+static void cur_entry(uint32_t *src, uint32_t *k) { cur_entry_of(TSEL, src, k); }
 
 /* RECENT: the sounds loaded by browsing, newest first (src << 8 | k; RAM only) */
 #define RECENT_N 8u
@@ -202,29 +203,53 @@ static void recent_push(uint32_t src, uint32_t k)
     recent[0] = v;
 }
 
-/* LIST: 0 ALL, 1 FAV, 2 RECENT, then a category (CAT_ORDER). The category is kept with the settings in a byte no
- * engine uses (lcat: CAT_*, 0 none; earlier firmware ignores it and keeps showing ALL / FAV as favorites.filter says,
- * as do the editor and backups); RECENT is not kept */
+/* LIST: 0 ALL, 1 FAV, 2 RECENT, then a category (CAT_ORDER). Each track browses its own (list_trk, RAM): the one picked
+ * while it was selected, so PRESETS on one track never turns its sound into the kind another track picked. A track
+ * without one (power-on, a project, a new track) takes the last one picked, kept with the settings: a category as the
+ * one of its own sound. The category is kept in a byte no engine uses (lcat: CAT_*, 0 none; earlier firmware ignores
+ * it and keeps showing ALL / FAV as favorites.filter says, as do the editor and backups); RECENT is not kept */
 #define list_lcat (favorites.factory[15][29])
 enum { LM_ALL, LM_FAV, LM_RECENT, LM_CAT };
 #define LM_N (LM_CAT + NELEM(CAT_ORDER))
 static uint8_t list_recent;
+static uint8_t list_trk[NTRK];                             /* each track's LIST + 1, 0 none */
 static struct { uint8_t on, trk, mode, x; uint16_t n; uint32_t t; } brw;   /* the pending place: list index n; x the
                                                                              * turn's acceleration (the browser's badge) */
-static uint32_t list_mode(void)
+static uint32_t list_cat(uint32_t c)                       /* category c's LIST (none: ALL) */
 {
     uint32_t i;
+    for (i = 0; i < NELEM(CAT_ORDER) && CAT_ORDER[i] != c; i++)
+        ;
+    return i < NELEM(CAT_ORDER) ? LM_CAT + i : LM_ALL;
+}
+static uint32_t list_saved(void)                            /* the last LIST picked */
+{
     if (favorites.filter)
         return LM_FAV;
     if (list_recent)
         return LM_RECENT;
-    for (i = 0; i < NELEM(CAT_ORDER); i++)
-        if (CAT_ORDER[i] == list_lcat)
-            return LM_CAT + i;
-    return LM_ALL;
+    return list_lcat ? list_cat(list_lcat) : LM_ALL;
 }
-static void list_set(uint32_t m)
+static uint32_t trk_list(uint32_t t)                        /* the LIST track t browses */
 {
+    uint32_t m = list_trk[t % NTRK], src, k;
+    if (m)
+        return m - 1u;
+    m = list_saved();
+    if (m < LM_CAT)
+        return m;
+    cur_entry_of(&trk[t % NTRK], &src, &k);
+    return list_cat(entry_cat(src, k));
+}
+static uint32_t list_mode(void) { return trk_list(song.sel); }
+static void list_forget(void) { memset(list_trk, 0, sizeof list_trk); }   /* every track: the last LIST picked */
+static void list_set(uint32_t m)                            /* the selected track's LIST (the others keep theirs) */
+{
+    uint32_t t;
+    for (t = 0; t < NTRK; t++)
+        if (!list_trk[t])
+            list_trk[t] = (uint8_t)(trk_list(t) + 1u);
+    list_trk[song.sel % NTRK] = (uint8_t)(m + 1u);
     favorites.filter = m == LM_FAV;
     list_recent = m == LM_RECENT;
     list_lcat = (uint8_t)(m >= LM_CAT && m < LM_N ? CAT_ORDER[m - LM_CAT] : 0u);

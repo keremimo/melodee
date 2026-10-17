@@ -9,6 +9,7 @@ static motion_store_t motion;
  * enable bits and event pool remain unchanged. */
 static uint8_t motion_design_pause;
 static int recording_copy(track_t *t, uint32_t source, uint32_t dest, int apply);
+static int recording_double(track_t *t, uint32_t bank, uint32_t len, int apply);
 static void recording_drop(track_t *t, uint32_t owner);
 static void recording_reindex(void);
 static void step_clear(step_t *st);
@@ -450,7 +451,9 @@ static int pattern_copy_at(track_t *t, uint32_t source, uint32_t dest, int live)
     if (recording_copy(t, source, dest, 0)) { motion_unguard(f); return 2; }
     pattern_commit(t);
     recording_copy(t, source, dest, 1);
-    *pattern_at(k, dest) = *pattern_at(k, source);
+    pattern_t copy;
+    pattern_read(k, source, &copy);
+    pattern_write(k, dest, &copy);
     n = 0;
     for (i = 0; i < motion.count; i++) if ((motion.event[i].place >> 6) != k || motion_pattern[i] != dest) {
         motion_pattern[n] = motion_pattern[i]; motion.event[n++] = motion.event[i];
@@ -483,19 +486,84 @@ static void motion_clear_bank(track_t *t, uint32_t b)
 static int pattern_clear(track_t *t, uint32_t bank)
 {
     uint32_t k = trk_index(t), i, n = 0, f;
-    pattern_t *p;
+    pattern_t p;
     if (bank >= NPAT || bank == t->pattern) return 1;
     f = motion_guard();
     if (chain.running || chain.armed) { motion_unguard(f); return 1; }
     recording_drop(t, k * NPAT + bank);
     recording_reindex();
-    p = pattern_at(k, bank);
-    for (i = 0; i < NSTEP; i++) step_clear(&p->step[i]);
+    pattern_read(k, bank, &p);
+    for (i = 0; i < NSTEP; i++) step_clear(&p.step[i]);
+    pattern_write(k, bank, &p);
     for (i = 0; i < motion.count; i++) if ((motion.event[i].place >> 6) != k || motion_pattern[i] != bank) {
         motion_pattern[n] = motion_pattern[i]; motion.event[n++] = motion.event[i];
     }
     motion.count = (uint8_t)n;
     motion.rsv[0] = 1;
+    motion_unguard(f);
+    return 0;
+}
+/* track t's pattern bank twice as long: its LEN steps, their recorded notes and motion copied after themselves (what
+ * lay hidden there, past LEN, goes). The one playing goes on into the copy. apply 0: only asks. 1 = refused (a song
+ * running), 2 = no room, 3 = 64 steps at most */
+static int pattern_double(track_t *t, uint32_t bank, int apply)
+{
+    uint32_t k = trk_index(t), len, i, j, n = 0, add = 0, drop = 0, f;
+    step_t *s;
+    pattern_t copy;
+    int16_t *lp;
+    if (bank >= NPAT) return 1;
+    f = motion_guard();
+    if (chain.running || chain.armed) { motion_unguard(f); return 1; }
+    pattern_read(k, bank, &copy);
+    s = copy.step;
+    lp = copy.timing;
+    len = (uint32_t)clamp(*lp, 1, NSTEP);
+    if (2u * len > NSTEP) { motion_unguard(f); return 3; }
+    for (i = 0; i < motion.count; i++) if ((motion.event[i].place >> 6) == k && motion_pattern[i] == bank) {
+        j = motion.event[i].place & 63u;
+        if (j < len) add++;
+        else if (j < 2u * len) drop++;
+    }
+    if (motion.count - drop + add > MOTION_MAX || recording_double(t, bank, len, 0)) { motion_unguard(f); return 2; }
+    if (!apply) { motion_unguard(f); return 0; }
+    recording_double(t, bank, len, 1);
+    for (i = 0; i < len; i++) s[len + i] = s[i];
+    for (i = 0; i < motion.count; i++) {
+        j = motion.event[i].place & 63u;
+        if ((motion.event[i].place >> 6) != k || motion_pattern[i] != bank || j < len || j >= 2u * len) {
+            motion_pattern[n] = motion_pattern[i]; motion.event[n++] = motion.event[i];
+        }
+    }
+    motion.count = (uint8_t)n;
+    for (i = 0; i < n; i++)
+        if ((motion.event[i].place >> 6) == k && motion_pattern[i] == bank && (motion.event[i].place & 63u) < len) {
+            motion.event[motion.count] = motion.event[i];
+            motion.event[motion.count].place = (uint8_t)(motion.event[i].place + len);
+            motion_pattern[motion.count++] = (uint8_t)bank;
+        }
+    motion.rsv[0] = 1;
+    *lp = (int16_t)(2u * len);
+    pattern_write(k, bank, &copy);
+    recording_reindex();
+    motion_unguard(f);
+    return 0;
+}
+/* .. half as long (an odd LEN keeps its middle step): what is past it stays, hidden, as LEN turned down leaves it.
+ * apply 0: only asks. 1 = refused (a song running), 3 = one step already */
+static int pattern_half(track_t *t, uint32_t bank, int apply)
+{
+    uint32_t len, f;
+    int16_t *lp;
+    if (bank >= NPAT) return 1;
+    pattern_t copy;
+    f = motion_guard();
+    if (chain.running || chain.armed) { motion_unguard(f); return 1; }
+    pattern_read(trk_index(t), bank, &copy);
+    lp = copy.timing;
+    len = (uint32_t)clamp(*lp, 1, NSTEP);
+    if (len < 2u) { motion_unguard(f); return 3; }
+    if (apply) { *lp = (int16_t)((len + 1u) / 2u); pattern_write(trk_index(t), bank, &copy); }
     motion_unguard(f);
     return 0;
 }
