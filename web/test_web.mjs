@@ -16,8 +16,8 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
-import { logicalImage, productOf } from "./fm1pkg.js";
-import { MELODEE_LOADER, STOCK_LOADER, Updater, pack7, unpack7 } from "./fm1ota.js";
+import { blockCount, logicalImage, productOf, validateStockPackage } from "./fm1pkg.js";
+import { MELODEE_LOADER, STOCK_LOADER, Updater, melodeeLoader, pack7, unpack7 } from "./fm1ota.js";
 
 let failed = 0;
 const ok = (cond, what) => { console.log(`${what.padEnd(64)} ${cond ? "ok" : "FAIL"}`); if (!cond) failed++; };
@@ -1379,6 +1379,18 @@ function samplesMatch() {
 
 /* ------------------------------------------------------- packages: JS == Python --- */
 async function packages() {
+  /* SMK-37 Pro: the stock v016 package has 36 interleave blocks (outside the repo, read only; skipped without it) */
+  const v016 = join(process.env.SMK_STOCK_DIR || join(HERE, "no-stock-packages"), "SMK-37_Pro_016.fwsc");
+  if (existsSync(v016)) {
+    const raw = readFileSync(v016);
+    const logical = py(`import sys; raw = open(sys.argv[1], "rb").read()
+sys.stdout.buffer.write(b"".join(raw[i * 48:i * 48 + 47] for i in range(36)) + raw[36 * 48:])`, v016);
+    ok(blockCount(raw) === 36 && eq(logicalImage(raw), logical) && productOf(raw) === "SMK-37 Pro_016",
+      "fm1pkg.js: stock SMK-37_Pro_016.fwsc: 36 blocks, identity SMK-37 Pro_016");
+    const st = await validateStockPackage(new Uint8Array(raw));
+    ok(st.product === "SMK-37 Pro_016" && eq(st.image, logical) && st.head.from === 1024 && st.head.to === 1024 + 0x4000,
+      "fm1pkg.js: the official SMK-37 Pro V016 is accepted for the return (CHECK HEAD range: flash.bin's first 16 KiB)");
+  } else console.log("packages: SMK-37 Pro stock package skipped (SMK_STOCK_DIR not set)");
   const pkg = join(HERE, "../build/melodee.fwsc");
   if (!existsSync(pkg)) {
     console.log("packages: skipped (run ./build.sh first)");
@@ -1508,6 +1520,23 @@ async function updater() {
   ok(e && e.code === "lost" && e.lastRead === 0x40, "fm1ota.js: unplugged in step 1 -> error code 'lost', last read address");
   const e2 = await new Updater({ inputs: new Map(), outputs: new Map() }).install(image, "FM-1_900", null, MELODEE_LOADER).then(() => null, (x) => x);
   ok(e2 && e2.code === "notfound", "fm1ota.js: no device -> error code 'notfound'");
+
+  /* the SMK-37 models (SMK-37 Pro, SMK-37 Elite, MKE-P37): a package installs only on exactly its model */
+  for (const [dev, pkg] of [["SMK-37 Pro_016", "SMK-37 Elite_900"], ["SMK-37 Pro_016", "FM-1_900"], ["FM-1_015", "SMK-37 Pro_900"],
+                            ["MKE-P37_016", "SMK-37 Pro_900"]]) {
+    const d = new FakeFM1(image, { identity: dev });
+    const m = await new Updater(d.access).install(image, pkg, null, melodeeLoader(pkg)).then(() => null, (x) => x);
+    ok(m && m.code === "model" && d.served === 0, `fm1ota.js: ${pkg} on ${dev} -> 'model', nothing sent`);
+  }
+  const elite = new FakeFM1(image, { afterWrite: "SMK-37 Elite_900" });
+  elite.boot("ota-SMK-37 Elite_900", "Melodee Update");
+  const r1 = await new Updater(elite.access).resume(image, null, "SMK-37 Pro_900", melodeeLoader("SMK-37 Pro_900"));
+  ok(r1 === false && elite.served === 0, "fm1ota.js: an SMK-37 Elite in update mode is never given an SMK-37 Pro package");
+  const r2 = await new Updater(elite.access).resume(image, null, "SMK-37 Elite_900", melodeeLoader("SMK-37 Elite_900"));
+  ok(r2 === true && elite.served > 0 && elite.bad === 0 && elite.identity === "SMK-37 Elite_900",
+    "fm1ota.js: ... its own model's package resumes and finishes");
+  ok(melodeeLoader("FM-1_906") === MELODEE_LOADER && melodeeLoader("MKE-P37_900") === "ota-MKE-P37_900",
+    "fm1ota.js: a package's own loader under its model (the FM-1's as before)");
 }
 
 async function patternProtocol() {
@@ -1536,7 +1565,7 @@ async function stockRestore() {
   const HEAD = {from:1024, to:1024 + 0x4000};
   // loader: the identity of the update loader the FM-1 is waiting in (false: running firmware);
   // button: "stock-go" (Return to official V15) or "go" (Install)
-  async function run({skip = false, loader = false, recovery = false, supported = false, confirm = true, backupError = false, motionVersion = 2, backupVersion = 1, backupCaps = 1, installError = null, button = "stock-go"} = {}) {
+  async function run({skip = false, loader = false, recovery = false, supported = false, confirm = true, backupError = false, motionVersion = 2, backupVersion = 1, backupCaps = 1, installError = null, button = "stock-go", stockProduct = "FM-1_015", device = "FM-1"} = {}) {
     const calls = [], writes = [], elements = new Map();
     const element = (id) => {
       if (!elements.has(id)) elements.set(id, {checked:false, disabled:false, textContent:"", value:0, listeners:{}, options:[],
@@ -1552,17 +1581,17 @@ async function stockRestore() {
         body:{append() {}}, createElement:() => ({click() { calls.push("save"); }, remove() {}})},
       window:{addEventListener() {}},
       fetch:async (url) => { calls.push("fetch " + url); return {ok:true, arrayBuffer:async () => Uint8Array.of(2).buffer}; },
-      STOCK_V15_SIZE:1, MELODEE_LOADER, STOCK_LOADER,
+      STOCK_V15_SIZE:1, STOCK_SMK016_SIZE:705252, MELODEE_LOADER, STOCK_LOADER, melodeeLoader,
       validateStockPackage:async (bytes) => {
         if (bytes.length !== 1 || bytes[0] !== 1) throw Error("Not the selected file");
-        return {product:"FM-1_015", image:bytes, head:HEAD};
+        return {product:stockProduct, image:bytes, head:HEAD};
       },
       productOf:() => "FM-1_9010", logicalImage:bytes => bytes,
       URL:{createObjectURL:() => "blob:test", revokeObjectURL() {}}, Blob, setTimeout:() => 0,
       confirm:(message) => { calls.push("confirm"); calls.push(message); return confirm; },
       Updater:class {
         async find(filter) {
-          const id = loader ? {model:"ota-FM-1", text:loader} : {model:"FM-1", text:"FM-1_9010"};
+          const id = loader ? {model:loader.split("_")[0], text:loader} : {model:device, text:device + "_9010"};
           return filter(id) ? {id, link:{input:{},output:{},close() {}}} : null;
         }
         async install(image, product, step, own) {
@@ -1655,6 +1684,26 @@ async function stockRestore() {
   }
   r = await run({button:"go", installError:fail("wrongloader", {detail:STOCK_LOADER})});
   ok(r.status.includes("official update mode"), "install: an official loader started by step 1 gets nothing");
+  const smk = {stockProduct:"SMK-37 Pro_016", device:"SMK-37 Pro"}, smkOfficial = [1, "SMK-37 Pro_016", "ota-SMK-37 Pro_016"];
+  r = await run({...smk, skip:true});
+  ok(same(r.writes, [smkOfficial]) && r.calls.includes("install"),
+    "stock (SMK-37 Pro): the official V016 goes to the running SMK-37 Pro, through its official loader only");
+  r = await run({...smk, skip:true, loader:"ota-SMK-37 Pro_016"});
+  ok(same(r.writes, [smkOfficial]) && r.calls.includes("resume"), "stock (SMK-37 Pro): resumes in its official loader");
+  r = await run({...smk, skip:true, installError:fail("stopped", {lastRead:HEAD.from + 0x200})});
+  ok(r.status.includes("CHECK HEAD"), "stock (SMK-37 Pro): a stop at CHECK HEAD is refused as on the FM-1");
+  for (const other of [STOCK_LOADER, "ota-SMK-37 Elite_016", "ota-SMK-37 Pro_900"]) {
+    r = await run({...smk, skip:true, recovery:true, loader:other});
+    ok(!r.writes.length, `stock (SMK-37 Pro): never resumes in ${other}`);
+  }
+  r = await run({skip:true, device:"SMK-37 Pro"});
+  ok(!r.writes.length, "stock: the FM-1's V15 never goes to an SMK-37");
+  r = await run({stockProduct:"SMK-37 Pro_016", skip:true});
+  ok(!r.writes.length, "stock: the SMK-37 Pro's V016 never goes to an FM-1");
+  for (const official of ["ota-SMK-37 Pro_016", "ota-SMK-37 Elite_016", "ota-MKE-P37_016"]) {
+    r = await run({button:"go", loader:official});
+    ok(!r.writes.length && r.status.includes("official update mode"), `install: ${official} is an official update mode`);
+  }
 }
 async function installerBuilds() {
   const installer = readFileSync(join(HERE, "index_pkg.html"), "utf8");
@@ -1679,7 +1728,7 @@ async function installerBuilds() {
     window:{addEventListener() {}},
     fetch:async (url) => { fetched.push(url); return {ok:true, arrayBuffer:async () => new Uint8Array(Buffer.from(url)).buffer}; },
     productOf:(pkg) => /-rc\./.test(String.fromCharCode(...pkg)) ? "FM-1_91040" : /nightly/.test(String.fromCharCode(...pkg)) ? "FM-1_900" : "FM-1_91002", logicalImage:(pkg) => String.fromCharCode(...pkg),
-    MELODEE_LOADER, STOCK_LOADER,
+    MELODEE_LOADER, STOCK_LOADER, melodeeLoader,
     Updater:class { async find() { return null; } async install(image, product, step, loader) { installed.push([image, product, loader]); } },
   });
   vm.runInContext(script, context);
@@ -1726,7 +1775,7 @@ async function installerBuildRaces() {
     document:{documentElement:{},querySelectorAll:()=>[],getElementById:element,createElement:()=>({})},window:{addEventListener(){}},
     fetch:url=>new Promise(resolve=>pending.set(url,resolve)),
     productOf:pkg=>String.fromCharCode(...pkg)==="older"?"FM-1_91001":"FM-1_91002",
-    logicalImage:pkg=>String.fromCharCode(...pkg), MELODEE_LOADER, STOCK_LOADER,
+    logicalImage:pkg=>String.fromCharCode(...pkg), MELODEE_LOADER, STOCK_LOADER, melodeeLoader,
     Updater:class { async find(){ return null; } async install(img){installed=img;await new Promise(resolve=>installDone=resolve);} }
   });
   const finish = url => pending.get(url)({ok:true,arrayBuffer:async()=>Uint8Array.from(Buffer.from(url)).buffer});

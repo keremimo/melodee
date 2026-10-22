@@ -617,6 +617,9 @@ static int project_save_as(uint32_t slot, const char *name)
     proj_wire_gen++;
     if (!bank_pack(proj_wire_u.raw, p, 1)) { ui_message("SAVE FORMAT ERROR"); return 2; }
 
+#if BOARD_SMK37 && MELODEE_FLASH
+    if (slot >= ST_SMK_PROJECTS) { ui_message("SMK: PROJECTS A, B ONLY"); return 2; }   /* (storage.c: no flash for C, D) */
+#endif
     if (proj_write_slot(slot, proj_wire_u.raw, BANK_STORE_SIZE)) { ui_message("SAVE ERROR"); return 2; }
     proj_name_get(proj_name, (const uint8_t *)p->name);
     proj_cur = (uint8_t)(slot & 3u);
@@ -704,6 +707,9 @@ static int project_rename(uint32_t slot, const char *name)
         proj_bound(p); chain_defaults(&p->chain);
         if (!bank_pack(proj_wire_u.raw, p, 0)) return 2;
     }
+#if BOARD_SMK37 && MELODEE_FLASH
+    if (slot >= ST_SMK_PROJECTS) { ui_message("SMK: PROJECTS A, B ONLY"); return 2; }   /* (storage.c: no flash for C, D) */
+#endif
     if (proj_write_slot(slot, proj_wire_u.raw, BANK_STORE_SIZE)) { ui_message("SAVE ERROR"); return 2; }
     if (proj_cur == (slot & 3u))
         proj_name_get(proj_name, (const uint8_t *)p->name);
@@ -1189,18 +1195,28 @@ static uint8_t persist_repair;                  /* boot repair must retry even w
 static uint32_t persist_retry_ms;
 #endif
 
+#ifndef FL_JEDEC_OK
+#define FL_JEDEC_OK(id) ((id) == 0x856014u)   /* (host tests without hal/fm1_flash_map.h: the FM-1's part) */
+#endif
 static void persist_boot(void)                    /* before settings_init / panel_init */
 {
 #if MELODEE_FLASH
     persist_t p;
     boot_work.state = 0;
     uint32_t f = irq_save();
-    flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;       /* the expected 1 MiB part, else stay RAM-only */
+    flash_ok = FL_JEDEC_OK(FL_FAR(fl_jedec_ram)());      /* the expected 1 MiB part, else stay RAM-only */
     irq_restore(f);
     if (!flash_ok)
         return;
-    fl_plain_window_init();                        /* flash above 0x93000 reads as plaintext through XIP
+    fl_plain_window_init();                        /* flash above 0x93000 (SMK 0x9D000) reads as plaintext through XIP
                                                     * (user sample sets are played from there) */
+#if BOARD_SMK37
+    if (st_owner_check() < 0) {                    /* never parse another ported firmware's store (storage.c): */
+        flash_ok = 0;                              /* not cleared, so RAM-only until the next boot */
+        st_foreign = 1;
+        return;
+    }
+#endif
 #if MELODEE_SLICE
     slc_store_boot();                              /* (the scans read each slot's stored slices) */
 #endif

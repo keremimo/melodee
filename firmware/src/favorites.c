@@ -12,7 +12,8 @@
  *          30 bit 0 retired, bit 1 KNOB ACCEL OFF (ui.c PREF_BITS), bits 2..4 retired (OVERCLOCK until 1.3.4 / 1.4),
  *          30 bit 5 PICKER OFF, bit 6 FONT PIXEL (ui.c PREF_BITS), bit 7 retired (STAGE EFFECTS OFF, 1.4.0-rc.4),
  *          31 the quick layers seen (ui_layer.c), 25 HOME SELECT (ui.c HOME_SELECT), 24 bits 1..4 GLO SELECT (ui.c
- *          GLO_SELECT), 24 bit 5 UNUSED TRACKS HIDE (ui.c TRACKS_HIDE); free: 24 bits 6..7
+ *          GLO_SELECT), 24 bit 5 UNUSED TRACKS HIDE (ui.c TRACKS_HIDE), 24 bit 6 TRS MIDI OUT OFF (SMK-37, ui.c
+ *          TRS_OUT_OFF); free: 24 bit 7
  *   row 0 bytes 2..27 hold all 201 Prophet factory stars, tagged in bytes 28..31;
  *         bytes 0..1 held retired ANALOG's stars.
  *   row 1 bytes 28..31 mark validated Melodee settings (MDS + version 1).

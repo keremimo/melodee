@@ -64,6 +64,160 @@ static uint32_t st_crc32(const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per
     return ~c;
 }
 
+#if BOARD_SMK37
+/* SMK-37. The SMK has less free flash than Melodee uses on the FM-1 (432 KiB of objects): its stock region table
+ * keeps BTIF / USRTRIM 0xC0000..0xC1FFF (key calibration), USR 0xF4000..0xFDFFF and key_mac 0xFF000 and a larger
+ * app area (PRCT 0x9D000). Every object keeps its number, size and A/B scheme; the SMK holds (fm1_flash_map.h)
+ *   store A, FL_DATA 0x9D000..0xBAFFF (the stock VM), 4 KiB A/B neighbours:
+ *     0x9D000 settings, 0x9F000 user preset banks 1-2, 0xA3000 FM6 bank (native FM 3),
+ *     0xA5000 user preset banks 3-4, 0xA9000 FM6 bank ext (native FM 4), 0xAB000 native FM 1-2,
+ *     0xAF000 the store owner tag (st_owner_check), 0xB0000 Prophet user banks 1-5, 0xBA000 spare
+ *   store B, FL_UFL 0xC2000..0xE9FFF (USRFLASH below its end marker; Melodee has no user samples):
+ *     0xC2000 project banks A, B: two five-sector copies each; 0xD6000 their two-sector extensions;
+ *     0xDE000 CZ banks 1-6
+ *   0xEA000 the stock end marker's sector: never data (FL_STOCKTAG, only erased as the release below)
+ *   store C, FL_GAP 0xEB000..0xF3FFF (unlisted, below USR):
+ *     0xEB000 CZ banks 7-8, 0xEF000 the shared preset pair, 0xF1000..0xF3FFF spare
+ * Not on the SMK: project slots C and D (14 sectors each; ST_SMK_PROJECTS) and the legacy single-pattern
+ * projects (retired everywhere). Their objects read as empty and refuse a save. */
+#define ST_SMK_PROJECTS 2u                         /* project slots with flash on the SMK: A, B */
+#define ST_SMK_HAS(obj) (!((obj) >= OBJ_PROJECT0 && (obj) < OBJ_PROJECT0 + 4u) && \
+                         !((obj) >= OBJ_BANK0 + ST_SMK_PROJECTS && (obj) < OBJ_BANK0 + 4u))
+#define ST_SMK_TAG 0xAF000u
+#define ST_SMK_P5_LO 0xB0000u
+#define ST_SMK_BANK_LO FL_UFL_LO
+#define ST_SMK_EXT_LO (ST_SMK_BANK_LO + ST_SMK_PROJECTS * 10u * ST_SECTOR)
+#define ST_SMK_CZ_LO (ST_SMK_EXT_LO + ST_SMK_PROJECTS * 4u * ST_SECTOR)
+#define ST_SMK_CZ_IN_UFL 6u                        /* CZ banks in store B; the rest in store C */
+#define ST_SMK_CZ2_LO FL_GAP_LO
+#define ST_SMK_SHARED_LO (ST_SMK_CZ2_LO + (8u - ST_SMK_CZ_IN_UFL) * 2u * ST_SECTOR)
+_Static_assert(ST_SMK_CZ_LO + ST_SMK_CZ_IN_UFL * 2u * ST_SECTOR == FL_UFL_HI, "SMK store B: CZ banks 1-6 end at FL_UFL_HI");
+_Static_assert(ST_SMK_SHARED_LO + 2u * ST_SECTOR <= FL_GAP_HI, "SMK store C: past FL_GAP");
+_Static_assert(ST_SMK_P5_LO + 10u * ST_SECTOR <= FL_DATA_HI && FL_DATA_LO == 0x9D000u, "SMK store A: past FL_DATA");
+_Static_assert(OBJ_SHARED_EXT + 1u == OBJ_COUNT && OBJ_P5BANK0 + 5u == OBJ_SHARED_EXT && OBJ_NATIVEFM0 + 2u == OBJ_P5BANK0 &&
+               OBJ_UPFM6_EXT + 1u == OBJ_NATIVEFM0 && OBJ_UPRESET_EXT0 + 2u == OBJ_UPFM6_EXT &&
+               OBJ_CZBANK0 + 8u == OBJ_UPRESET_EXT0 && OBJ_BANK0 + 4u == OBJ_CZBANK0,
+               "SMK store: the object numbers changed, check the layout");
+static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy A (0) / B (1); 0: none on the SMK */
+{
+    copy &= 1u;
+    if (obj >= OBJ_COUNT || !ST_SMK_HAS(obj)) return 0;
+    if (obj == OBJ_SHARED_EXT) return ST_SMK_SHARED_LO + copy * ST_SECTOR;
+    if (obj >= OBJ_P5BANK0) return ST_SMK_P5_LO + (obj - OBJ_P5BANK0) * 2u * ST_SECTOR + copy * ST_SECTOR;
+    if (obj >= OBJ_NATIVEFM0) return 0xAB000u + (obj - OBJ_NATIVEFM0) * 2u * ST_SECTOR + copy * ST_SECTOR;
+    if (obj == OBJ_UPFM6_EXT) return 0xA9000u + copy * ST_SECTOR;
+    if (obj >= OBJ_UPRESET_EXT0) return 0xA5000u + (obj - OBJ_UPRESET_EXT0) * 2u * ST_SECTOR + copy * ST_SECTOR;
+    if (obj >= OBJ_CZBANK0 + ST_SMK_CZ_IN_UFL)
+        return ST_SMK_CZ2_LO + (obj - OBJ_CZBANK0 - ST_SMK_CZ_IN_UFL) * 2u * ST_SECTOR + copy * ST_SECTOR;
+    if (obj >= OBJ_CZBANK0) return ST_SMK_CZ_LO + (obj - OBJ_CZBANK0) * 2u * ST_SECTOR + copy * ST_SECTOR;
+    if (obj >= OBJ_BANK0) return ST_SMK_BANK_LO + (obj - OBJ_BANK0) * 10u * ST_SECTOR + copy * 5u * ST_SECTOR;
+    if (obj == OBJ_SETTINGS) return 0x9D000u + copy * ST_SECTOR;
+    if (obj == OBJ_FM6BANK) return 0xA3000u + copy * ST_SECTOR;
+    return 0x9F000u + (obj - OBJ_UPRESET0) * 2u * ST_SECTOR + copy * ST_SECTOR;   /* OBJ_UPRESET0, +1 */
+}
+
+/* The owner of the store. Several FM-1 firmwares are ported to the SMK-37 with the same board layer and
+ * the same store area, each with its own object formats: a firmware must never parse another's data. The
+ * sector 0xAF000 (the same in every port) holds "SMK37DATA" + the firmware family (FELUCCA_DATA_FAMILY,
+ * build.py; Melodee: MELODEE). Ours: load as ever. Erased (data from before the tag) or another family's:
+ * clear Melodee's whole store (A, B and C; the other firmware's projects, its own backups are its business)
+ * and take it; FELUCCA_DATA_UNTAGGED_OK=1 would keep untagged data (Melodee never wrote any on an SMK).
+ * Calibration, BT pairing, USR and key_mac lie outside the three windows: never touched. */
+#ifndef FELUCCA_DATA_FAMILY
+#define FELUCCA_DATA_FAMILY "MELODEE"
+#endif
+#ifndef FELUCCA_DATA_UNTAGGED_OK
+#define FELUCCA_DATA_UNTAGGED_OK 0
+#endif
+#ifndef ST_IDLE
+#define ST_IDLE() ((void)0)                        /* (firmware: the watchdog, storage_hw.c) */
+#endif
+_Static_assert(ST_SMK_TAG >= FL_DATA_LO && ST_SMK_TAG + ST_SECTOR <= FL_DATA_HI, "SMK store owner: outside FL_DATA");
+_Static_assert(sizeof FELUCCA_DATA_FAMILY - 1u >= 1u && sizeof FELUCCA_DATA_FAMILY - 1u <= 7u, "FELUCCA_DATA_FAMILY: 1..7 characters");
+/* The stock firmware's mapping in USRFLASH (global settings at 0xC2000, magic A3 3A; 8 presets from 0xC3000 every
+ * 0x5000, 0x29E3 bytes each, the rest erased; the end marker "usrdata\0" at 0xEAFF8, FL_STOCKTAG): the stock firmware
+ * trusts the area while the marker is there and never rebuilds it, so after a return to stock Melodee's store B
+ * would be its key, knob and fader mapping (every key one note). So: an intact stock mapping is kept (it reads as
+ * empty banks), and the marker is released (its sector erased: the stock firmware rebuilds its factory mapping at
+ * its next start) before the first erase in USRFLASH (storage_hw.c st_erase) and at boot when it stands
+ * over anything else (st_owner_check: ours, an older build's, another firmware's). */
+static int st_stock_tagged(void)
+{
+    static const uint8_t TAG[8] = {'u', 's', 'r', 'd', 'a', 't', 'a', 0};
+    uint8_t t[8];
+    uint32_t i;
+    if (st_read(FL_STOCKTAG_OFF, t, 8))
+        return 0;
+    for (i = 0; i < 8u; i++)
+        if (t[i] != TAG[i])
+            return 0;
+    return 1;
+}
+static int st_stock_intact(void)                /* the marker over the stock layout */
+{
+    uint8_t b[8];
+    uint32_t n, k, i, ff;
+    if (!st_stock_tagged() || st_read(FL_UFL_LO, b, 2) || b[0] != 0xA3u || b[1] != 0x3Au)
+        return 0;
+    for (n = 0; n < 8u; n++)                    /* each preset: its head written, its last two sectors erased */
+        for (k = 0; k < 3u; k++) {
+            if (st_read(FL_UFL_LO + 0x1000u + n * 0x5000u + (k ? 0x2000u + k * 0x1000u : 0u), b, 8))
+                return 0;
+            for (ff = 1, i = 0; i < 8u; i++)
+                ff &= b[i] == 0xFFu;
+            if (ff != (k != 0u))
+                return 0;
+        }
+    return 1;
+}
+static void st_stock_release(void)              /* erase the marker's sector, once: later calls find no marker */
+{
+    if (st_stock_tagged())
+        st_erase(FL_STOCKTAG_LO);
+}
+static inline int st_in_usrflash(uint32_t off) { return off >= FL_UFL_LO && off < FL_STOCKTAG_LO; }
+static uint8_t st_foreign;                         /* the store could not be cleared: RAM-only this boot (persist_boot) */
+static int st_owner_check(void)                    /* 1: another firmware's (or untagged) store was cleared; -1: an erase
+                                                    * failed: not tagged as ours, so the next boot clears it again */
+{
+    static const char FAM[] = FELUCCA_DATA_FAMILY;
+    uint8_t tag[16], want[16];
+    uint32_t i, erased = 1, ours = 1, s, cleared = 0, keep, bad = 0;
+    for (i = 0; i < 16u; i++)
+        want[i] = i < 9u ? (uint8_t)"SMK37DATA"[i] : i - 9u < sizeof FAM - 1u ? (uint8_t)FAM[i - 9u] : 0u;
+    if (!st_stock_intact())
+        st_stock_release();                     /* the marker over anything but the stock mapping: let it rebuild */
+    if (st_read(ST_SMK_TAG, tag, 16))
+        return 0;
+    for (i = 0; i < 16u; i++) {
+        erased &= tag[i] == 0xFFu;
+        ours &= tag[i] == want[i];
+    }
+    if (ours)
+        return 0;
+    if (!erased || !FELUCCA_DATA_UNTAGGED_OK) {     /* not ours: clear the store */
+        for (s = FL_DATA_LO; s < FL_DATA_HI; s += ST_SECTOR)
+            if (s != ST_SMK_TAG) {
+                bad |= st_erase(s) != 0;
+                ST_IDLE();
+            }
+        keep = st_stock_intact();                   /* the stock mapping: kept until Melodee writes there */
+        for (s = FL_UFL_LO; !keep && s < FL_UFL_HI; s += ST_SECTOR) {
+            bad |= st_erase(s) != 0;
+            ST_IDLE();
+        }
+        for (s = FL_GAP_LO; s < FL_GAP_HI; s += ST_SECTOR) {
+            bad |= st_erase(s) != 0;
+            ST_IDLE();
+        }
+        cleared = 1;
+    }
+    if (bad || st_erase(ST_SMK_TAG) || st_prog(ST_SMK_TAG, want, 16))
+        return -1;                                  /* the tag only over a store that is all ours */
+    return (int)cleared;
+}
+#else
+static int st_owner_check(void) { return 0; }
 static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy A (0) / B (1) */
 {
     if (obj == OBJ_SHARED_EXT) return 0x9D000u+copy*ST_SECTOR;
@@ -83,6 +237,7 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
         return 0xDC000u + (obj - OBJ_UPRESET0) * 2u * ST_SECTOR + copy * ST_SECTOR;
     return 0x97000u + (obj - OBJ_PROJECT0) * 2u * ST_SECTOR + copy * ST_SECTOR;
 }
+#endif
 
 static int st_banked(uint32_t obj) { return obj >= OBJ_BANK0 && obj < OBJ_CZBANK0; }
 /* New preset objects start directly after the commit header, leaving the last
@@ -99,7 +254,11 @@ static uint32_t st_payload_off_header(uint32_t obj,const st_hdr_t *h)
 }
 static uint32_t st_extension(uint32_t obj, uint32_t copy)
 {
+#if BOARD_SMK37
+    return ST_SMK_EXT_LO + ((obj - OBJ_BANK0) * 2u + copy) * 2u * ST_SECTOR;
+#else
     return ST_BANK_EXT_LO + ((obj - OBJ_BANK0) * 2u + copy) * 2u * ST_SECTOR;
+#endif
 }
 /* Keep existing five-sector copies in place. Each copy has its own two-sector
  * extension in unused flash, so migration never overwrites the current copy.
@@ -126,6 +285,9 @@ static uint32_t st_address(uint32_t obj,uint32_t copy,uint32_t off,uint32_t *spa
 static int st_read_range(uint32_t obj, uint32_t copy, uint32_t off, void *dst, uint32_t n)
 {
     if (obj >= OBJ_COUNT || copy > 1u || off > st_capacity(obj) || n > st_capacity(obj) - off) return -1;
+#if BOARD_SMK37
+    if (!ST_SMK_HAS(obj)) return -1;               /* no flash for it on the SMK */
+#endif
     uint8_t *d = dst;
     while (n) {
         uint32_t span, addr = st_address(obj, copy, off, &span), k = n < span ? n : span;
@@ -144,6 +306,10 @@ static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record 
 {
     if (obj >= OBJ_COUNT || copy > 1u || st_retired(obj))
         return -1;
+#if BOARD_SMK37
+    if (!ST_SMK_HAS(obj))
+        return -1;                                 /* no flash for it on the SMK: always empty */
+#endif
     if (st_read(st_sector(obj, copy), h, sizeof *h))
         return -1;
     if (h->magic != ST_MAGIC || h->type != obj || h->slot != copy || h->len > st_capacity(obj) ||
@@ -220,6 +386,10 @@ static int st_save(uint32_t obj, const void *src, uint32_t len)
     st_hdr_t h;
     if (obj >= OBJ_COUNT || st_retired(obj) || len > st_capacity(obj))
         return -1;
+#if BOARD_SMK37
+    if (!ST_SMK_HAS(obj))
+        return -1;                                 /* no flash for it on the SMK: SAVE ERROR */
+#endif
     cur = st_current(obj, &h);
     seq = cur < 0 ? 0u : h.seq;
     base = st_sector(obj, cur == 0 ? 1u : 0u);       /* write the other copy */

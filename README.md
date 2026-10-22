@@ -54,6 +54,7 @@ runs Felucca.
 - Install: [web installer](https://keremimo.github.io/melodee/) (Chrome or Edge, USB), or `tools/fm1_install.py` from a terminal
 - Editor: [web editor](https://keremimo.github.io/melodee/webapp/editor/)
 - Build: [BUILDING.md](BUILDING.md)
+- SMK-37 (beta): [SMK37.md](SMK37.md)
 
 Tagged releases from 1.4.4 use the [FM-1 shared build workflow](https://github.com/zvenson/fm1-build)
 to build and attest firmware from the tagged source. See [release verification](BUILDING.md#releases)

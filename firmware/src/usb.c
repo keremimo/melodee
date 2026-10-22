@@ -126,6 +126,9 @@ static int midi_enqueue(uint32_t pkt, uint32_t source)
 
 static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 {
+#if BOARD_SMK37 && defined(SMO_RING)                /* (the update loader has no TRS queue) */
+    smo_put(pkt);                                   /* the TRS jack, with or without a computer */
+#endif
     if (usb.config && mo_w - mo_r < MQ) {
         midi_out_q[mo_w % MQ] = pkt;
         RING_PUBLISH();
@@ -197,7 +200,16 @@ static const uint8_t STR1[] = {26, 3, 'E', 0, 'l', 0, 'l', 0, 'i', 0, 'c', 0, ' 
                                'i', 0, 'o', 0};
 /* Keep FM-1 in the USB name: macOS may retain this MIDI port name after a
  * firmware switch, and other installers recognise the hardware family. */
+#if BOARD_SMK37                                         /* the SMK-37 builds: its family, never FM-1 */
 #ifdef MELODEE_LOADER
+static const uint8_t STR2[] = {44, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
+                               'S', 0, 'M', 0, 'K', 0, '-', 0, '3', 0, '7', 0, ' ', 0, 'U', 0, 'p', 0,
+                               'd', 0, 'a', 0, 't', 0, 'e', 0};
+#else
+static const uint8_t STR2[] = {30, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
+                               'S', 0, 'M', 0, 'K', 0, '-', 0, '3', 0, '7', 0};
+#endif
+#elif defined(MELODEE_LOADER)
 static const uint8_t STR2[] = {40, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
                                'F', 0, 'M', 0, '-', 0, '1', 0, ' ', 0, 'U', 0, 'p', 0,
                                'd', 0, 'a', 0, 't', 0, 'e', 0};

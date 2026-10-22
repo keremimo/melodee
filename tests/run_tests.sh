@@ -186,6 +186,38 @@ old_to_new() {                                    # a package of another app (th
         python3 tools/fm1pkg_make.py "$OUT/old_app.bin" build/loader/ota.bin "$OUT/old.fwsc" >/dev/null &&
         "$OUT/ldr_test" "$OUT/old.fwsc" build/melodee.fwsc
 }
+smk_packages() {                                  # SMK-37 layout packages of this build's binaries (BOARD_SMK37 tests)
+    python3 tools/fm1pkg_make.py --board smk37 build/melodee.bin build/loader/ota.bin "$OUT/smk_new.fwsc" >/dev/null &&
+        head -c 200000 build/melodee.bin > "$OUT/smk_old_app.bin" &&
+        python3 tools/fm1pkg_make.py --board smk37 "$OUT/smk_old_app.bin" build/loader/ota.bin "$OUT/smk_old.fwsc" >/dev/null
+}
+smk_tests() {                                     # the SMK-37 (SMK37.md): flash map and store, package, update entry, loader
+    build smk_midi_out_test smk_midi_out_test &&
+        step "SMK-37 TRS MIDI OUT: USB-MIDI packets to bytes, the ring, one byte a tick, OFF, no UART: no stall" \
+            "$OUT/smk_midi_out_test"
+    build smk_flash_test smk_flash_test -DBOARD_SMK37=1 -Ifirmware/hal &&
+        step "SMK-37 flash map and store: never the head, BTIF/USRTRIM, USR, key_mac; the stock marker only released" \
+            "$OUT/smk_flash_test"
+    smk_packages || { fail "SMK-37 packages (fm1pkg_make.py --board smk37)"; return; }
+    step "SMK-37 package layout (fm1pkg_make --board smk37): PRCT 0x9D000, stock region table" \
+        python3 tests/smk_pkg_test.py "$OUT/smk_new.fwsc"
+    for m in 0 1 2; do                            # the pro, elite and mke builds of ota.c
+        build ota_test_smk$m ota_test -DBOARD_SMK37=1 -DT_MODEL=$m &&
+            step "M-UPGRADE entry, SMK-37 build $m (staging 0xBB000, the model's parm identity, the board check)" \
+                "$OUT/ota_test_smk$m" "$OUT/smk_new.fwsc"
+    done
+    build ldr_test_smk ldr_test -DBOARD_SMK37=1 &&
+        step "update loader, SMK-37: app area 0x4000-0x9CFFF, the store and the protected ranges untouched" \
+            "$OUT/ldr_test_smk" "$OUT/smk_old.fwsc" "$OUT/smk_new.fwsc"
+    build boot_stub_test_smk boot_stub_test -O2 -DBOARD_SMK37=1 &&
+        step "boot stub, SMK-37 build: staged loader at 0xBB000, the model's record" "$OUT/boot_stub_test_smk"
+    for f in build/melodee-smk37.fwsc build/melodee-smk37-elite.fwsc build/melodee-smk37-mke.fwsc; do
+        [ -f "$f" ] || continue                   # the packages BOARD=smk37 MODEL=... ./build.sh made
+        id="SMK-37 Pro_900"
+        case $f in *-elite.fwsc) id="SMK-37 Elite_900" ;; *-mke.fwsc) id="MKE-P37_900" ;; esac
+        step "SMK-37 package $f: identity $id, stock region table" python3 tests/smk_pkg_test.py "$f" "$id"
+    done
+}
 powercut_tests() {
     python3 tests/boot_fixtures.py &&
         "$OUT/loader_powercut_test" build/host/boot-fixtures/legacy.fwsc build/melodee.fwsc \
@@ -314,6 +346,7 @@ if core; then
     fi
     t "update loader: other app -> this build" ldr_test -- old_to_new
     run "installer CLI (fm1_install.py) against a simulated FM-1" python3 tests/install_test.py
+    job smk_tests
     run "ROM USB recovery: backup, protected regions, interrupted writes and transport failures" python3 tests/recovery_test.py
     run "recovery diagnostics: legacy and boot-protected retained RAM" python3 tests/retained_ram_test.py
     run "release assets: firmware identity, application bytes, native provenance and ZIP integrity" python3 tests/release_assets_test.py

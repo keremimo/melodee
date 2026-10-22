@@ -406,7 +406,7 @@ static void graph_chord(const track_t *t, uint16_t c)
     char b[12];
     const char *cap = "LAST";
     if (!t->p[P_CHRD]) {
-        panel_note("CHORD KEYS OFF", "[K1] DIA3: IN-KEY CHORDS", 0);   /* (the title says what they are) */
+        panel_note("CHORD KEYS OFF", "[" UI_K1 "] DIA3: IN-KEY CHORDS", 0);   /* (the title says what they are) */
         return;
     }
     if (chord_kit(t)) {

@@ -7,6 +7,22 @@
 /* ----------------------------------------------------------- LEDs --- */
 /* The LED picture is built off-line and copied one byte per column: clearing
  * and relighting would let the 10 kHz scan catch the dark gap and flicker. */
+#if BOARD_SMK37
+static uint8_t smk_fbank, smk_fbank_new;           /* FADER BANK: A level, B filter, C envelope, D FX (main.c) */
+/* SMK-37: one flag per id. Ids 0..18 are the button LEDs (smk_input.h); the note keys (no LEDs of
+ * their own) take LED_KEY(k); ui_leds shows the white keys F3..G5 on the 16 RGB pads. */
+#define LED_BUF 64u
+#define LED_KEY(k) (32u + (k))
+static void led_pos_init(void) {}
+static void led_put(uint8_t *nl, uint32_t id, int on)
+{
+    if (id < LED_BUF && on)
+        nl[id] = 1;
+}
+static int led_get(const uint8_t *nl, uint32_t id) { return id < LED_BUF && nl[id]; }
+#else
+#define LED_BUF FM1_NCOL
+#define LED_KEY(k) (14u + (k))
 static uint8_t led_pos[41];                        /* (col << 3) | row bit, 0xFF = none */
 
 static void led_pos_init(void)
@@ -32,6 +48,7 @@ static int led_get(const uint8_t *nl, uint32_t id)
     uint8_t q = led_pos[id];
     return q != 0xFF && ((nl[q >> 3] >> (q & 7u)) & 1u);
 }
+#endif
 
 static const uint8_t FAM_BTN[FAM_COUNT] = {B_HOME, B_ENV, B_LFO, B_SCL, B_EDIT, B_GLO, B_SAVE,
                                            B_ARP, B_SEQ, B_GLO, B_FX};   /* GLO: mixer + global settings; REC is transport */
@@ -423,9 +440,61 @@ static const uint8_t LIGHTS_MASK[LIGHTS_N] = {0, 7, 3, 1, 0};   /* the dim keys'
 static const uint8_t BREATH[8] = {0, 1, 3, 7, 0xFF, 7, 3, 1};
 static uint32_t breath_on(void) { return BREATH[(fm1_ms / 125u) & 7u] != 0xFFu; }
 
+#if BOARD_SMK37
+/* SMK-37: the 16 RGB pads show the 16 white keys (smk_input.h SMK_WHITE_NOTE), the same grammar in three colours told
+ * apart by colour, not only by level, every pad always lit: off dark orange nothing there (a key that plays nothing, an
+ * empty pattern or step; LIGHTS off: also what is only there), on light blue something there (a key in the layout,
+ * MIDI's notes), a brighter blue a pattern or a step holding something, active bright white-blue happening now (a key
+ * held, the step playing). Waiting (the breathing plane: a pattern for the bar) pulses in orange. While the transport
+ * runs, the pads show the selected track's steps on the page that plays. The button LEDs are on / off: the breathing
+ * ones (PLAY counting in, REC armed) blink. */
+static const uint8_t SMK_OFF[3] = {110, 38, 0}, SMK_ON[3] = {40, 120, 210}, SMK_FILLED[3] = {70, 170, 255},
+                     SMK_ACT[3] = {190, 230, 255};
+static const uint8_t PAD_WAIT[3] = {255, 110, 0};
+static const uint8_t SMK_LV_BREATH[8] = {255, 176, 128, 100, 92, 100, 128, 176};   /* (BREATH's steps) */
+static void smk_pad(uint32_t c, const uint8_t *col, uint32_t lv)
+{
+    padled_set(c, (uint8_t)(col[0] * lv >> 8), (uint8_t)(col[1] * lv >> 8), (uint8_t)(col[2] * lv >> 8));
+}
+static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb, const uint8_t *nw, uint32_t steps)
+{
+    uint32_t c, on = 0, ph = 0xFFu, blink = ((fm1_ms / 250u) & 1u) == 0u, br = (fm1_ms / 125u) & 7u;
+    for (c = 0; c < SMK_NLED; c++)
+        fm1_led[c] = (uint8_t)(nl[c] || (nw[c] && blink));
+    if (panel_btn_of(SMK_BTN_FADER_BANK) == NB)
+        fm1_led[SMK_BTN_FADER_BANK] = smk_fbank != 0;   /* FADER BANK lit off bank A */
+    if (panel_btn_of(SMK_BTN_KNOB_BANK) == NB)
+        fm1_led[SMK_BTN_KNOB_BANK] = ui.menu != 0;      /* KNOB BANK lit while the menu is up */
+    if (padled_hold_until && (int32_t)(fm1_ms - padled_hold_until) >= 0)
+        padled_hold_until = 0;                          /* (0: no hold, also after 24.8 days up) */
+    if (padled_hold_until)
+        return;                                         /* (console padtest) */
+    if (steps) {                                        /* playing: the selected track's steps on the page that plays */
+        const track_t *t = TSEL;
+        uint32_t len = (uint32_t)t->p[P_SLEN], b0 = t->seq_idx / 16u * 16u;
+        for (c = 0; c < 16u && b0 + c < len; c++) {
+            const step_t *st = &seq_steps(t)[b0 + c];
+            on |= (uint32_t)(st->hit || (st->n && st->time != ST_REST)) << c;
+        }
+        ph = t->seq_idx < len ? t->seq_idx % 16u : 0xFFu;
+    }
+    for (c = 0; c < SMK_NPAD; c++) {                    /* pad c: its white key's light, step c (1-8 top row) */
+        uint32_t id = LED_KEY(SMK_WHITE_NOTE[SMK_WHITE_OF_PAD(c)]);
+        if (nl[id] || c == ph)
+            smk_pad(c, SMK_ACT, 256u);
+        else if (nw[id])
+            smk_pad(c, PAD_WAIT, SMK_LV_BREATH[br]);
+        else if (steps)
+            smk_pad(c, (on >> c) & 1u ? SMK_FILLED : SMK_OFF, 256u);
+        else
+            smk_pad(c, nb[id] ? SMK_FILLED : nd[id] ? SMK_ON : SMK_OFF, 256u);
+    }
+}
+#endif
+
 static void ui_leds(void)
 {
-    uint8_t nl[FM1_NCOL] = {0}, nd[FM1_NCOL] = {0}, nb[FM1_NCOL] = {0}, nw[FM1_NCOL] = {0};
+    uint8_t nl[LED_BUF] = {0}, nd[LED_BUF] = {0}, nb[LED_BUF] = {0}, nw[LED_BUF] = {0};
     uint32_t k, c, play, lights = settings_lights % LIGHTS_N, pdim = 0, pbr = 0;
     uint32_t fam = cur_fam();
     uint32_t armed = song.rec != 0u, rolling = song.playing != 0u, counting = (uint32_t)seq_counting();
@@ -458,14 +527,17 @@ static void ui_leds(void)
 #endif
     for (k = 0; k < 27u; k++) {
         uint32_t lv = play ? play_key_led(TSEL, k) : KL_OFF;   /* playing: the layout, MIDI's notes too (LIGHTS) */
-        led_put(nl, 14u + k, (int)(((c >> k) & 1u) || lv == KL_ON));
-        led_put(nd, 14u + k, lv == KL_DIM && lights != LIGHTS_OFF);
-        led_put(nb, 14u + k, (int)((pdim >> k) & 1u));  /* the patterns holding something: selectable, so lit with
+        led_put(nl, LED_KEY(k), (int)(((c >> k) & 1u) || lv == KL_ON));
+        led_put(nd, LED_KEY(k), lv == KL_DIM && lights != LIGHTS_OFF);
+        led_put(nb, LED_KEY(k), (int)((pdim >> k) & 1u));   /* the patterns holding something: selectable, so lit with
                                                          * LIGHTS OFF too (the buttons' plane) */
-        led_put(nw, 14u + k, (int)((pbr >> k) & 1u));
+        led_put(nw, LED_KEY(k), (int)((pbr >> k) & 1u));
     }
     for (k = 0; lights != LIGHTS_OFF && k < NB; k++)   /* the buttons glow when idle (one breathing: not under it) */
         led_put(nb, panel.btn[k], !led_get(nw, panel.btn[k]));
+#if BOARD_SMK37
+    smk_leds_out(nl, nd, nb, nw, play && song.playing);
+#else
     fm1_led_dim_mask[0] = LIGHTS_MASK[lights];
     fm1_led_dim_mask[1] = BTN_DIM_MASK;
     fm1_led_dim_mask[2] = BREATH[(fm1_ms / 125u) & 7u];
@@ -475,6 +547,7 @@ static void ui_leds(void)
         fm1_led_dim[2][c] = breath_on() ? nw[c] : 0u;
         fm1_led[c] = nl[c];
     }
+#endif
 }
 
 /* ---------------------------------------------------------- input --- */
@@ -957,12 +1030,12 @@ static void step_edit(uint32_t slot, int32_t steps)
     if (live_rec_sel()) { ui_message("STOP RECORDING"); return; }
     if (notes_selected(TSEL) < RECORD_MAX) {
         uint32_t fine = slot == 2u ? ui.step_mods & (1u << panel.btn[B_ENV]) : 0u;
-        ui.step_used |= (uint16_t)fine;
+        ui.step_used |= (ui_btnmask_t)fine;
         notes_event_edit(fine ? 4u : slot, steps);
         return;
     }
     if (grid_on()) { grid_edit(slot, steps); return; }
-    if(slot==2u){uint32_t fine=ui.step_mods&(1u<<panel.btn[B_ENV]);ui.step_used|=(uint16_t)fine;note_manual_length(steps,fine?RECORD_UNIT/16u:RECORD_UNIT/4u);return;}
+    if(slot==2u){uint32_t fine=ui.step_mods&(1u<<panel.btn[B_ENV]);ui.step_used|=(ui_btnmask_t)fine;note_manual_length(steps,fine?RECORD_UNIT/16u:RECORD_UNIT/4u);return;}
     fm1_irq_off();
     uint32_t at = notes_manual_start(TSEL);
     if (at >= NSTEP && (slot != 1u || (TSEL->step[ui.cursor].flags & SF_RECORDED))) { fm1_irq_on(); ui_message("SELECT A NOTE"); return; }
@@ -977,10 +1050,10 @@ static void step_edit(uint32_t slot, int32_t steps)
         }
         last_note = st->note[notes_manual_slot(st)];
     } else if (slot == 2u) {
-        ui.step_used |= (uint16_t)(ui.step_mods & (1u << panel.btn[B_ENV]));
+        ui.step_used |= (ui_btnmask_t)(ui.step_mods & (1u << panel.btn[B_ENV]));
         step_note_resize(TSEL, at, (int32_t)step_note_length(TSEL, at) + steps);
     } else if (ui.step_mods & (1u << panel.btn[B_ENV])) {
-        ui.step_used |= (uint16_t)(1u << panel.btn[B_ENV]);
+        ui.step_used |= (ui_btnmask_t)(1u << panel.btn[B_ENV]);
         if (steps > 0) st->flags |= SF_SLIDE; else st->flags &= (uint8_t)~SF_SLIDE;
     } else {
         st->vel = (uint8_t)clamp((int32_t)(st->flags & SF_ACCENT ? 127 : st->vel ? st->vel : 96) + steps, 1, 127);
@@ -1358,7 +1431,7 @@ static uint32_t step_modifier_mask(void)                /* (EDIT: NOTES only) */
  * and through release-frame encoder detents, just like undo/redo chords. */
 static void step_edit_combo(void)
 {
-    ui.step_used |= (uint16_t)(ui.step_mods & (1u << panel.btn[B_EDIT]));
+    ui.step_used |= (ui_btnmask_t)(ui.step_mods & (1u << panel.btn[B_EDIT]));
     if (ui.edit_t0) ui.edit_t0 |= 2u;
 }
 
@@ -1726,7 +1799,7 @@ static int step_gesture(int32_t s)
     uint32_t env = 1u << panel.btn[B_ENV], scl = 1u << panel.btn[B_SCL];
     if (!step_modifier_context() || !((ui.step_mods & (env | scl)) || ui.entry_open))
         return 0;
-    ui.step_used |= (uint16_t)(ui.step_mods & (env | scl));
+    ui.step_used |= (ui_btnmask_t)(ui.step_mods & (env | scl));
     if (chain_busy()) {
         ui_message("STOP TO EDIT");
     } else if (ui.step_mods & scl) {
@@ -1758,14 +1831,19 @@ static void seq_erase_update(uint32_t pressed)
         fm1_irq_on();
     }
     if (ui.erase_gesture) {
-        ui.step_used |= (uint16_t)ed; /* release is never an additional delete tap */
+        ui.step_used |= (ui_btnmask_t)ed; /* release is never an additional delete tap */
         if (!context || ui.erase_owner != recording_owner(TSEL) + 1u || ui.erase_generation != TSEL->pattern_gen || ui.erase_transport != seq_erase_transport)
             ui.erase_owner = 0;
     }
     uint32_t request = ui.erase_owner && context && (fm1_in.buttons & ed) ?
         0x80000000u | ((ed | rec) << 16) | (ui.erase_owner - 1u) : 0u;
     fm1_irq_off();
+#if BOARD_SMK37
+    seq_erase_button = ed;                              /* (all 18 button bits) */
+    seq_erase_allow = request ? ed | rec : 0u;          /* (SMK-37: REC's id is past the request's 14 bits) */
+#else
     seq_erase_button = (uint16_t)ed;
+#endif
     seq_erase_generation = ui.erase_generation;
     seq_erase_request = request;
     fm1_irq_on();
@@ -1879,7 +1957,7 @@ static int bulk_jog(int32_t delta)
     bulk.end=(uint16_t)to;ui.bulk_hold=0;oct_eat|=2u;ui.oct_t0|=2u;ui.force=1;ui_message(slots?"PRESETS SELECTED":"Moving..");return 1;
 }
 static void notes_bulk_copy(void){note_copy_arm();}
-static const sheet_row_t SHEET_NOTE_BULK[]={{"Move: KNOB 1",0,0,note_move_arm,0},{"Copy: KNOB 1",0,0,notes_bulk_copy,0},{"Quantize",nt_quantize_v,nt_quantize_grid,nt_quantize,0},{"Delete selected",0,0,notes_bulk_delete,0},{"Clear selection",0,0,bulk_clear,0}};
+static const sheet_row_t SHEET_NOTE_BULK[]={{"Move: " UI_KNOB1,0,0,note_move_arm,0},{"Copy: " UI_KNOB1,0,0,notes_bulk_copy,0},{"Quantize",nt_quantize_v,nt_quantize_grid,nt_quantize,0},{"Delete selected",0,0,notes_bulk_delete,0},{"Clear selection",0,0,bulk_clear,0}};
 static void notes_bulk_sheet_open(void){sheet_open("Selected notes","",SHEET_NOTE_BULK,NELEM(SHEET_NOTE_BULK));}
 
 /* SELECT on HOME (both its pages): the menu's HOME SELECT (ui.c home_select); with GLO held, on any page, its GLO SELECT
@@ -2038,6 +2116,24 @@ static void ui_input(void)
     if(momentary.active && (pressed&(1u<<panel.btn[B_OCTUP]))){
         momentary.active=momentary.count=momentary.native=0;pressed&=~(1u<<panel.btn[B_OCTUP]);ui_message("KEPT");
     }
+#if BOARD_SMK37
+    /* the SMK's own buttons, unless HARDWARE CALIBRATION gave them an FM-1 label: < > one detent of SELECT
+     * (pages, patterns, the note in the roll: whatever SELECT does there); FADER BANK what the faders set;
+     * KNOB BANK what holding HOME does (the menu, or leave it: below) */
+    uint32_t smk_kb = ((pressed >> SMK_BTN_KNOB_BANK) & 1u) && panel_btn_of(SMK_BTN_KNOB_BANK) == NB;
+    for (id = SMK_BTN_LEFT; id <= SMK_BTN_RIGHT; id++)
+        if (((pressed >> id) & 1u) && panel_btn_of(id) == NB) {
+            uint32_t l = fm1__lock();
+            fm1_in.enc_steps[panel.enc[EN_SELECT]] += (int16_t)((id == SMK_BTN_RIGHT ? 1 : -1) * panel.dir[EN_SELECT]);
+            fm1__unlock(l);
+        }
+    if (((pressed >> SMK_BTN_FADER_BANK) & 1u) && panel_btn_of(SMK_BTN_FADER_BANK) == NB) {
+        static const char *const FB[4] = {"A  LEVEL", "B  FILTER", "C  ENVELOPE", "D  FX"};
+        smk_fbank = (uint8_t)((smk_fbank + 1u) % 4u);
+        smk_fbank_new = 1;
+        ui_say("FADER BANK ", FB[smk_fbank]);
+    }
+#endif
     uint32_t bank_notes = notes;
     uint32_t home = btn_hold(&ui.home_t0, B_HOME, now, 1);
     uint32_t rec = btn_hold(&ui.rec_t0, B_REC, now, !ui.menu && !ui.confirm && !name_on());   /* held: MIXER */
@@ -2073,7 +2169,7 @@ static void ui_input(void)
         edit = BT_NONE;
     }
     if (step_modifier_context()) {
-        ui.step_mods |= (uint16_t)(pressed & step_modifier_mask());
+        ui.step_mods |= (ui_btnmask_t)(pressed & step_modifier_mask());
         uint32_t ed = 1u << panel.btn[B_EDIT];
         if ((ui.step_mods & ed) && ((pressed & ~ed) || notes || step_midi_r != step_midi_w)) step_edit_combo();
     } else {
@@ -2153,6 +2249,10 @@ static void ui_input(void)
     if(bulk.on && (ui.home || slot_kind()==SK_PROJECT || bulk.track!=song.sel || bulk.pattern!=TSEL->pattern || bulk.engine!=library_engine() ||
        (!slot_kind() && (cur_page()->graph!=GR_ROLL || (bulk.on==1u?bulk.generation!=TSEL->pattern_gen:bulk.generation!=recording_generation)))))bulk_clear();
     step_history_sync();                                /* (seq_undo.c: a change from elsewhere: a fresh history) */
+#if BOARD_SMK37
+    if (smk_kb && !lay && home == BT_NONE && !ui.home_t0)
+        home = BT_HOLD;                                 /* SMK-37 KNOB BANK: as HOME held */
+#endif
     if (home == BT_HOLD) {                              /* HOME held: open the menu, or leave it */
         if (ui.menu) {
         momentary_restore();
@@ -2253,7 +2353,7 @@ static void ui_input(void)
         if (lytap)
             layer_tap(lytap);
         b = ui.pg_down & ~fm1_in.buttons;
-        ui.pg_down &= (uint16_t)~b;
+        ui.pg_down &= (ui_btnmask_t)~b;
         for (id = 0; b; id++, b >>= 1)
             if (b & 1u)
                 page_tap(panel_btn_of(id));
@@ -2301,7 +2401,7 @@ static void ui_input(void)
             qsave_chord();
         qsave_poll();
     }
-    for (id = 0; id < 14u; id++) {
+    for (id = 0; id < FM1_NBTN; id++) {
         if (!((pressed >> id) & 1u))
             continue;
         if ((ui.step_mods >> id) & 1u)
@@ -2365,13 +2465,13 @@ static void ui_input(void)
         }
         default:                                        /* page buttons (GLO SCL ENV LFO EDIT ARP): when let go */
             if (!lay)                                   /* (with a layer held: swallowed) */
-                ui.pg_down |= (uint16_t)(1u << id);
+                ui.pg_down |= (ui_btnmask_t)(1u << id);
             break;
         }
     }
-    if(momentary.active)ui.pg_down&=(uint16_t)~(1u<<panel.btn[B_LFO]);
+    if(momentary.active)ui.pg_down&=(ui_btnmask_t)~(1u<<panel.btn[B_LFO]);
     b = ui.pg_down & ~fm1_in.buttons;
-    ui.pg_down &= (uint16_t)~b;
+    ui.pg_down &= (ui_btnmask_t)~b;
     for (id = 0; b; id++, b >>= 1)
         if (b & 1u)
             page_tap(panel_btn_of(id));
@@ -2502,9 +2602,9 @@ static void ui_input(void)
     if (step_modifier_context()) {
         seq_entry_finish();                             /* final SELECT detent precedes key release */
         uint32_t released = ui.step_mods & ~fm1_in.buttons;
-        for (k = 0; k < 14u; k++) if ((released >> k) & 1u) {
+        for (k = 0; k < FM1_NBTN; k++) if ((released >> k) & 1u) {
             uint32_t bit = 1u << k;
-            ui.step_mods &= (uint16_t)~bit;
+            ui.step_mods &= (ui_btnmask_t)~bit;
             if (!(ui.step_used & bit)) {
                 b = panel_btn_of(k);
                 if (b != B_EDIT)
@@ -2514,7 +2614,7 @@ static void ui_input(void)
                 else
                     step_delete_edit();                 /* EDIT tapped: the note with its ties */
             }
-            ui.step_used &= (uint16_t)~bit;
+            ui.step_used &= (ui_btnmask_t)~bit;
         }
         ui.step_oct_used &= (uint8_t)(((fm1_in.buttons >> panel.btn[B_OCTDN]) & 1u) |
                                      (((fm1_in.buttons >> panel.btn[B_OCTUP]) & 1u) << 1));
@@ -2576,7 +2676,7 @@ static void panel_setup(void)
             if (fm1_ms - t0 > SETUP_IDLE_MS)
                 goto timeout;
         }
-        for (id = 0; id < 14u; id++)
+        for (id = 0; id < FM1_NBTN; id++)
             if (((p & ~used) >> id) & 1u)
                 break;
         panel.btn[i] = (uint8_t)id;
@@ -2587,17 +2687,17 @@ static void panel_setup(void)
         uint32_t e;
         int32_t st = 0;
         setup_show("TURN RIGHT", E_NAME[i]);
-        for (e = 0; e < 7u; e++)
+        for (e = 0; e < FM1_NENC; e++)
             fm1_enc_take(e);
         t0 = fm1_ms;
         for (;;) {
             fm1_wdt_feed();
             if (fm1_ms - t0 > SETUP_IDLE_MS)
                 goto timeout;
-            for (e = 0; e < 7u; e++)
+            for (e = 0; e < FM1_NENC; e++)
                 if (!((used >> e) & 1u) && (st = fm1_enc_take(e)) != 0)
                     break;
-            if (e < 7u)
+            if (e < FM1_NENC)
                 break;
         }
         panel.enc[i] = (uint8_t)e;

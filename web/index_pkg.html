@@ -319,11 +319,14 @@ choose();
 
 // an update loader that is not the package's own gets nothing: the official one would write a Melodee
 // package's head over the boot data, Melodee's would write only V15's application (docs/RECOVERY.md)
-const refuseLoader = (id) => id === STOCK_LOADER ? sayK("loaderStock") : id === MELODEE_LOADER ? sayK("loaderMelodee") : sayK("loaderUnknown", id);
+// (the SMK-37 builds: the official loader of each model, "ota-SMK-37 Pro_016", is official too)
+const SMK_STOCK_LOADER = /^ota-(SMK-37 Pro|SMK-37 Elite|MKE-P37)_016$/;
+const refuseLoader = (id) => id === STOCK_LOADER || SMK_STOCK_LOADER.test(id) ? sayK("loaderStock")
+  : id === melodeeLoader(id.slice(4)) ? sayK("loaderMelodee") : sayK("loaderUnknown", id);
 
 $("go").addEventListener("click", async () => {
   if (writing || !image) return;
-  const product = selection().channel.product;
+  const product = selection().channel.product, own = melodeeLoader(product);   // (the SMK-37 builds: their model's)
   lockInstaller(true);
   let midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
@@ -343,10 +346,10 @@ $("go").addEventListener("click", async () => {
     const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
       ota.link.close();
-      if (ota.id.text !== MELODEE_LOADER) refuseLoader(ota.id.text);
-      else sayK((await up.resume(image, step, product, MELODEE_LOADER)) ? "done" : "stopped");
+      if (ota.id.text !== own) refuseLoader(ota.id.text);
+      else sayK((await up.resume(image, step, product, own)) ? "done" : "stopped");
     } else {
-      await up.install(image, product, step, MELODEE_LOADER);
+      await up.install(image, product, step, own);
     }
   } catch (e) {
     if (e && e.code === "wrongloader") refuseLoader(e.detail);
@@ -362,7 +365,7 @@ $("stock-file").addEventListener("change", async () => {
   const epoch = ++stockFileEpoch, file = $("stock-file").files[0]; stock = null; lockInstaller(false);
   if (!file) return;
   try {
-    if (file.size !== STOCK_V15_SIZE) throw new Error("FM-1 V15 / FM-1.fwsc");
+    if (file.size !== STOCK_V15_SIZE && file.size !== STOCK_SMK016_SIZE) throw new Error("FM-1 V15 / FM-1.fwsc, SMK-37 Pro V016 / SMK-37_Pro_016.fwsc");
     const verified = await validateStockPackage(new Uint8Array(await file.arrayBuffer()));
     if (epoch !== stockFileEpoch) return;
     stock = verified; if (!writing) sayK("stockValid"); lockInstaller(writing);
@@ -388,7 +391,9 @@ async function leaveMelodee(target) {
   if (writing || (target === "stock" && !stock)) return;
   if (!navigator.requestMIDIAccess) { sayK("nomidi"); return; }
   let selected = stock;
-  const transit = target === "transit", ownLoader = transit ? MELODEE_LOADER : STOCK_LOADER;
+  // the official file goes to its model's official loader (FM-1: STOCK_LOADER; SMK-37 Pro: "ota-SMK-37 Pro_016")
+  const transit = target === "transit", ownLoader = transit ? MELODEE_LOADER : "ota-" + stock.product;
+  const model = transit ? "FM-1" : stock.product.split("_")[0];
   const skipBackup = $(target + "-skip-backup").checked;
   const confirmation = () => confirm(t(target + (skipBackup ? "ConfirmNoBackup" : "Confirm")));
   const complete = () => { $("bar").value = 100; sayK(transit ? "transitDone" : "done"); };
@@ -414,7 +419,7 @@ async function leaveMelodee(target) {
       if (await up.resume(selected.image, step, selected.product, ownLoader)) complete();
       else sayK("stopped");
     } else {
-      const device = await up.find(id => id.model === "FM-1");
+      const device = await up.find(id => id.model === model);
       if (!device) { sayK("notfound"); return; }
       const input = device.link.input, output = device.link.output; device.link.close();
       if (!skipBackup) {

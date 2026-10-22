@@ -53,8 +53,9 @@ def check_package(pkg):
     """the package's bytes and identity; refuses anything that is not a Melodee package"""
     raw = pkg.read_bytes()
     product = product_of(raw)
-    if not re.fullmatch(r"FM-1_9\d{2,4}", product):
-        raise SystemExit(f"{pkg}: identity {product!r} is not a Melodee package (FM-1_9 and two to four digits)")
+    if not re.fullmatch(r"(FM-1|SMK-37 Pro|SMK-37 Elite|MKE-P37)_9\d{2,4}", product):
+        raise SystemExit(f"{pkg}: identity {product!r} is not a Melodee package (FM-1, SMK-37 Pro, SMK-37 Elite or MKE-P37, "
+                         "_9 and two to four digits)")
     if b"FELUCCA-LOADER-1" not in raw:              # Melodee loader marker: never publish a package with vendor files
         raise SystemExit(f"{pkg}: no Melodee loader in it; the site ships only fm1pkg_make.py packages "
                          "(a package patched from an official one carries vendor files)")

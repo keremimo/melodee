@@ -229,7 +229,14 @@ static void rec_release(track_t *t, uint32_t note);
 static volatile uint32_t seq_erase_request, seq_erase_generation;
 static uint32_t seq_erase_transport;
 static uint8_t seq_erase_seen[NTRK];
+#if BOARD_SMK37
+static volatile uint32_t seq_erase_button;              /* (EDIT may be calibrated to button 16 or 17) */
+static volatile uint32_t seq_erase_allow;               /* the buttons that may be held with EDIT (18 on the SMK-37) */
+#define SEQ_ERASE_ALLOW(request) seq_erase_allow
+#else
 static volatile uint16_t seq_erase_button;
+#define SEQ_ERASE_ALLOW(request) (((request) >> 16) & 0x3FFFu)
+#endif
 static int seq_erase_active(const track_t *t);
 static int rec_on(const track_t *t) { return (((song.rec & ~song.rec_wait) >> trk_index(t)) & 1u) && song.playing && !chain.running; }
 static void recording_undo_capture(track_t *t);
@@ -681,6 +688,12 @@ static void input_off(track_t *t, uint32_t note)
     if (!recording_owns(t, note)) trk_note_off(t, note); /* other mode (ARP switched while held) */
 }
 
+#if BOARD_SMK37
+/* SMK-37: velocity keys and pads; a key's velocity (a pad: its white key's, smk_input.h) */
+#define KEY_VEL(k) ((uint32_t)fm1_in.key_vel[SMK_KEY_F3 + (k)])
+#else
+#define KEY_VEL(k) 100
+#endif
 /* Start only this tone's ownership before input_on: note-triggered recording can
  * re-enter seq_advance(0). Shared tones retain the existing single-note policy. */
 static void key_chord_tone(uint32_t k, track_t *t)
@@ -688,14 +701,14 @@ static void key_chord_tone(uint32_t k, track_t *t)
     uint32_t x = kb_chord[k][kb_chn[k]], held = midi_local_held(t, x);
     kb_chn[k]++;
     if (held) return;
-    input_on(t, x, 100);
-    midi_out_event(0x09u | (0x90u | trk_midi_ch(trk_index(t))) << 8 | x << 16 | 100u << 24);
+    input_on(t, x, KEY_VEL(k));
+    midi_out_event(0x09u | (0x90u | trk_midi_ch(trk_index(t))) << 8 | x << 16 | KEY_VEL(k) << 24);
 }
 
 static void key_on(uint32_t k, track_t *t)
 {
     uint32_t n = chord_build(t, kb_note[k], kb_chord[k]);
-    n = chord_strum_begin(t, kb_chord[k], n, &kb_strum[k], 100);
+    n = chord_strum_begin(t, kb_chord[k], n, &kb_strum[k], KEY_VEL(k));
     kb_chn[k] = 0;
     /* Publish pending work after the first tone: input_on may start transport. */
     for (uint32_t i = 0; i < n; i++) key_chord_tone(k, t);
@@ -777,9 +790,74 @@ static __attribute__((noinline)) void kb_lat(uint32_t k)
 }
 #endif
 
+#if BOARD_SMK37
+/* the SMK's 10 keys beyond the FM-1's 27 (C3..E3 below F3, G#5..C6 above G5): the keyboard continued, on the
+ * selected track, with velocity, the chord keys, OCT, TRANS and the scale layouts (as kb_map). An engine with its
+ * own key map (the DRUM kit: a GM note a key) continues it chromatically. Not while a layer's button is held, on
+ * the DRUM grid or in NAME (the 27 keys are the UI's there); a key-up always ends what its key-down started */
+static uint8_t ext_chord[FM1_NKEY][CHORD_MAX], ext_chn[FM1_NKEY], ext_trk[FM1_NKEY];
+static uint32_t smk_ext_map(const track_t *t, int32_t ks)     /* ks: -5..-1 below key 0 (F3), 27..31 above */
+{
+    const engine_t *e = ENGINES[eng_idx(t->eng_req)];
+    int32_t n, b;
+    if (e->keys && (b = e->keys(t, 0)) >= 0)
+        return (uint32_t)clamp(b + ks, 0, 127);
+    n = 53 + ks;
+    if (t->p[P_QUANT] == Q_SNAP) {
+        if (micro_active(t)) {
+            uint32_t note = micro_snap(t, n + t->p[P_TRANS]);
+            return note == KB_SILENT ? note : micro_degree_map(t, (int32_t)note - 60, 12 * song.octave, 1);
+        }
+        uint32_t mask = scale_mask(t), guard = 12;
+        n += 12 * song.octave + t->p[P_TRANS];
+        while (guard-- && !((mask >> (uint32_t)((n - t->p[P_ROOT] + 120) % 12)) & 1u))
+            n--;
+        return (uint32_t)clamp(n, 0, 127);
+    }
+    return scale_map(t, n, 12 * song.octave);
+}
+static void ext_keys_block(void)
+{
+    int32_t e;
+    while ((e = smk_extkey_take()) >= 0) {
+        uint32_t k = (uint32_t)e >> 8, v = (uint32_t)e & 0xFFu, i, n, mc;
+        track_t *t;
+        if (k >= FM1_NKEY)
+            continue;
+        if (!v) {                                     /* up: the notes it started, on its track */
+            t = &trk[ext_trk[k] % NTRK];
+            mc = trk_midi_ch(trk_index(t));
+            for (i = 0; i < ext_chn[k]; i++) {
+                input_off(t, ext_chord[k][i]);
+                midi_out_event(0x08u | (0x80u | mc) << 8 | (uint32_t)ext_chord[k][i] << 16);
+            }
+            ext_chn[k] = 0;
+            continue;
+        }
+        if (ext_chn[k] || kb_asleep || kb_lock || (fm1_in.buttons & kb_mask) || song.grid)   /* (as the 27 keys) */
+            continue;
+        t = TSEL;
+        n = smk_ext_map(t, (int32_t)k - (int32_t)SMK_KEY_F3);
+        if (n == KB_SILENT)
+            continue;
+        ext_trk[k] = (uint8_t)song.sel;
+        mc = trk_midi_ch(trk_index(t));
+        n = chord_build(t, n, ext_chord[k]);
+        for (i = 0; i < n; i++) {
+            input_on(t, ext_chord[k][i], v);
+            midi_out_event(0x09u | (0x90u | mc) << 8 | (uint32_t)ext_chord[k][i] << 16 | v << 24);
+        }
+        ext_chn[k] = (uint8_t)n;
+    }
+}
+#endif
+
 static void keyboard_block(void)
 {
     uint32_t cur = fm1_in.notes, ch, k;
+#if BOARD_SMK37
+    ext_keys_block();
+#endif
     ch = cur ^ kb_prev;                           /* keys also sound while entering steps */
     if (!ch)
         return;

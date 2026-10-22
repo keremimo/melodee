@@ -39,9 +39,20 @@
  *   ldr_progress(done, total)
  * plus the ota.c hooks (frames, time, idle). */
 #define LDR_APP_LO 0x4000u
+#if BOARD_SMK37
+/* SMK-37: app area up to the stock PRCT end (the stub, the body and the marker at the FM-1's places; the sectors
+ * from 0x93000 up hold what the package holds there); records only in the VM, so the record scan can never erase
+ * BTIF / USRTRIM (0xC0000..0xC1FFF, the key calibration) or anything above */
+#define LDR_APP_HI 0x9D000u
+#define LDR_REC_LO 0x9D000u
+#define LDR_REC_HI 0xC0000u
+_Static_assert(LDR_APP_HI <= LDR_REC_LO && LDR_REC_HI <= 0xC0000u && LDR_APP_LO >= 0x4000u,
+               "SMK loader windows must stay below BTIF / USRTRIM and above the head");
+#else
 #define LDR_APP_HI 0x93000u
 #define LDR_REC_LO 0x93000u                     /* update records live above the app ... */
 #define LDR_REC_HI 0xFC000u                     /* ... and below Melodee's globals */
+#endif
 #define LDR_STUB_SEC 0x4000u                    /* the directory and the boot stub */
 #define LDR_MARK_SEC 0x91000u                   /* stub_core.h STUB_MARK_SEC, STUB_MARK_OFF */
 #define LDR_MARK_OFF 0x91FE0u
