@@ -246,6 +246,9 @@ static void draw_head(void)
           (ui.bpm_t != 0) * 31u + low * 7777u + (chain.running ? (chain.row + 1u) * 104729u : 0u) + ux.gen * 977u +
           (ui.home ? ui.home_pg * 40503u : ui.page * 2654435761u) + page_sheet() * 524287u;
     sig ^= str_hash(13u,px);
+#if MELODEE_USB_HOST
+    sig += uh.on ? (1u + uh.run) * 6151u : 0u;          /* the HOST tag: waiting, or a controller connected */
+#endif
     if (bpm != ui.roll_bpm) {
         char a[8];
         fmt_int(a, ui.roll_bpm);
@@ -290,7 +293,20 @@ static void draw_head(void)
     } else {
         int32_t cw = text_w(TY_TX, chip) + 4;           /* (where you are: plain words in the track's colour;
                                                          * PATTERNS plain, the grid is in colour) */
+#if MELODEE_USB_HOST
+        int32_t hw = uh.on ? text_w(TY_LB, "HOST") + 10 : 0;   /* USB HOST: the port is a host, dim until a controller answers */
+#else
+        int32_t hw = 0;
+#endif
         if (octave) {                                   /* selected MPC bank's octave, else the shared octave */
+            int32_t w;
+            b[0] = octave > 0 ? '+' : '-';
+            fmt_int(b + 1, octave < 0 ? -octave : octave);
+            w = text_w(TY_LB, b) + 12;
+            if (hw && x + 2 + w + 8 > 236 - cw - (low ? 22 : 0) - hw - 6)
+                octave = 0;                             /* the HOST tag is status: the optional pill gives way */
+        }
+        if (octave) {
             int32_t w;
             b[0] = octave > 0 ? '+' : '-';
             fmt_int(b + 1, octave < 0 ? -octave : octave);
@@ -303,12 +319,12 @@ static void draw_head(void)
         if (chain.running) {                            /* the song's row (where there is room) */
             str_cpy(b, "ROW ", 8);
             fmt_int(b + 4, (int32_t)chain.row + 1);
-            if (x + 2 + text_w(TY_LB, b) + 6 <= 236 - cw - (low ? 22 : 0) - 6)
+            if (x + 2 + text_w(TY_LB, b) + 6 <= 236 - cw - (low ? 22 : 0) - hw - 6)
                 x = cv_text_on(x + 2, ty_y(H_HEAD / 2, TY_LB), TY_LB, b, T_MID, T_BG) + 6;
         }
         if (!ui.home) {                                 /* a page: where it is in its family */
-            head_pages(x + 6, 236 - cw - (low ? 22 : 0));
-        } else if (x + 6 + 28 <= 236 - cw - (low ? 22 : 0) - 6) {   /* HOME: its two pages (Stage, the chord view),
+            head_pages(x + 6, 236 - cw - (low ? 22 : 0) - hw);
+        } else if (x + 6 + 28 <= 236 - cw - (low ? 22 : 0) - hw - 6) {   /* HOME: its two pages (Stage, the chord view),
                                                                    * where there is room */
             uint32_t i;
             for (i = 0, x += 6; i < 2u; i++) {
@@ -319,6 +335,10 @@ static void draw_head(void)
         }
         if (low)                                        /* the battery, only when it runs low */
             cv_icon_mid(236 - cw - 20, H_HEAD / 2, 16, batt_level() ? ICON_X_BAT1 : ICON_X_BAT0, T_REC, T_BG);
+#if MELODEE_USB_HOST
+        if (hw)
+            cv_text_on(236 - cw - (low ? 22 : 0) - hw + 4, ty_y(H_HEAD / 2, TY_LB), TY_LB, "HOST", uh.run ? T_THEME : T_MID, T_BG);
+#endif
         cv_text_r(236, ty_y(H_HEAD / 2, TY_TX), TY_TX, chip,
                   !ui.home && cur_page()->graph == GR_PATGRID && !ptc_on() ? T_MID : T_THEME, T_BG);
     }

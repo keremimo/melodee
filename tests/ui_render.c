@@ -1576,6 +1576,45 @@ static void sweep_waiting_headers(const char *out)
     render_pixel = previous_face;
 }
 
+#if MELODEE_USB_HOST
+/* USB HOST's ongoing state is the header's HOST tag: present in both faces and every palette while the port is a
+ * host (waiting or connected), clear of the battery, octave and page marks, gone with the state. */
+static void sweep_host_headers(void)
+{
+    int previous_face = render_pixel;
+    static const int scenes[] = {S_HOME, S_TEMPO, S_PATGRID};   /* (PRESETS, SONG and MENU draw their own headers) */
+    static uint16_t screen[240 * 240];
+    for (uint32_t face = 0; face < 2u; face++) for (uint32_t p = 0; p < UI_PAL_ENTRIES; p++)
+    for (uint32_t s = 0; s < NELEM(scenes); s++) for (uint32_t run = 0; run < 2u; run++) {
+        char name[96];
+        uint32_t seen = 0;
+        render_pixel = face;
+        setup(scenes[s]); pal(p);
+        song.octave = 2; song.batt_raw = 520;
+        ui.msg_t = 0;
+        uh.on = 1; uh.run = (uint8_t)run;
+        snprintf(name, sizeof name, "%s%s/%s/usb_host%u", face ? "PIXEL " : "", UI_PALETTES[p].name, S_NAME[scenes[s]], run);
+        cur_name = name;
+        draw(-1); lint();
+        for (uint32_t i = 0; i < nscr; i++)
+            seen |= !strcmp(scr[i].s, "HOST") && scr[i].y0 >= 0 && scr[i].y1 <= H_HEAD;
+        if (!seen || toast_shown) { fprintf(rep, "MISSING %s: HOST tag in the header without a toast\n", name); nfind++; }
+        uh.on = uh.run = 0;                             /* the state ends: the incremental redraw equals a full one */
+        nscr = npend = 0;
+        ui_draw(); lint();
+        memcpy(screen, host_screen, sizeof screen);
+        ui.force = 1; ui_draw();
+        if (memcmp(screen, host_screen, sizeof screen)) {
+            fprintf(rep, "STALE %s: HOST tag end differs from full redraw\n", name); nfind++;
+        }
+        for (uint32_t i = 0; i < nscr; i++)
+            if (!strcmp(scr[i].s, "HOST")) { fprintf(rep, "STALE %s: HOST tag after the state ended\n", name); nfind++; break; }
+    }
+    uh.on = uh.run = 0;
+    render_pixel = previous_face;
+}
+#endif
+
 /* Lists must show their labels and complete enum values, including rows scrolled off the initial screen. */
 static void sweep_list_rows(void)
 {
@@ -2118,6 +2157,9 @@ int main(int argc, char **argv)
         write_ppm(out, "PIXEL", S_NAME[s]);
     }
     sweep_waiting_headers(out);
+#if MELODEE_USB_HOST
+    sweep_host_headers();
+#endif
     sweep_screen_messages();
     sweep_mpc_octaves(out);
     sweep_list_rows();
@@ -2146,6 +2188,9 @@ int main(int argc, char **argv)
         if (fmp_charts - c0 != 96u) { fprintf(stderr, "ui_render: %u FM6 charts drawn of 96\n", fmp_charts - c0); return 1; }
     }
     sweep_waiting_headers(out);
+#if MELODEE_USB_HOST
+    sweep_host_headers();
+#endif
     sweep_screen_messages();
     sweep_list_rows();
     sweep_columns();

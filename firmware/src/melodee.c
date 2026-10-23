@@ -25,6 +25,10 @@
 #define MELODEE_USB_AUDIO 1      /* Duplex USB audio (usb_audio.c): "Melodee" plays through the FM-1 and
                                   * records stereo master or four tracks; 16 / 24 bit, 44.1 kHz. Needs EP2 / EP3: no CDC */
 #endif
+#ifndef MELODEE_USB_HOST
+#define MELODEE_USB_HOST 1       /* USB MIDI host (usb_host.c): the menu's USB HOST turns the USB-C port into a host
+                                  * for a class compliant controller, alone or behind a powered hub. Off at every boot */
+#endif
 #ifndef MELODEE_CDC
 #define MELODEE_CDC !MELODEE_USB_AUDIO   /* USB CDC-ACM serial console */
 #endif

@@ -181,6 +181,14 @@ place status cards over knobs, lists, waveforms, or notes.
 - **Screens with their own headers:** while waiting, use the shared transport header; restore the screen's header
   on start, cancel, or a change to a track that is not waiting. Dialogs and pickers retain the header above them.
 
+- **`HOST` (USB HOST, 2026-10-21):** the USB-C port is a USB-MIDI host (menu USB HOST). State: `uh.on`; lifetime: from
+  switching USB HOST on to switching it off (or a power-cycle: it is never saved); priority: normal context, below
+  `ERASING`, `WAIT LOOP` and messages; label `HOST` in the compact label font left of the page name and the
+  low-battery glyph, taking its width from the page marks. Dim (`T_MID`) while no controller answers, theme colour
+  while one is connected. A controller found, lost or not MIDI, and a low-speed device, are brief toasts.
+  The optional octave pill gives way when the tag needs the room. Screens that draw their own header (PRESETS, SONG,
+  MENU) do not show the tag yet; the USB HOST row in the menu shows the state there.
+
 Brief action results (saved, copied, invalid action) use the existing header-message area; a long explanation may
 wrap in a temporary toast. A question requiring a decision uses a dialog; a value being edited stays at its
 control. These are feedback and interaction, rather than ongoing state indicators.

@@ -17,7 +17,8 @@
  * Their endpoints are served from the TIMER5 ISR by elapsed time (ua_service,
  * main.c), nested in the render too; usb_poll never runs nested, so the two
  * never interleave. Either can be left out of the configuration (ua_off, the
- * menu's USB AUDIO); usb_replug makes the host see the change. The update
+ * menu's USB AUDIO); usb_replug makes the host see the change. MELODEE_USB_HOST=1 adds usb_host.c: the menu's
+ * USB HOST makes the port the host of a USB-MIDI controller (usb.up is 0 meanwhile). The update
  * loader leaves both off: MIDI only. */
 #include "../hal/fm1_usb.h"   /* registers; relative, so the loader and the host tests find it too */
 #ifndef MELODEE_CDC
@@ -28,6 +29,9 @@
 #endif
 #if MELODEE_USB_AUDIO && MELODEE_CDC
 #error "MELODEE_USB_AUDIO and MELODEE_CDC share EP2 / EP3: build one of them"
+#endif
+#ifndef MELODEE_USB_HOST
+#define MELODEE_USB_HOST 0                              /* melodee.c turns it on; the update loader never has it */
 #endif
 enum { S_FADDR = 0, S_POWER = 1, S_INTRTX1 = 2, S_INTRTX2 = 3, S_INTRRX1 = 4, S_INTRRX2 = 5, S_INTRUSB = 6,
        S_INTRTX1E = 7, S_INTRTX2E = 8, S_INTRRX1E = 9, S_INTRRX2E = 10, S_INTRUSBE = 11, S_FRAME1 = 12,
@@ -834,9 +838,17 @@ static void ep3_tx(void)                                /* <= 63 bytes per packe
 }
 #endif
 
+#include "usb_host.c"                                   /* MELODEE_USB_HOST: the port as a MIDI host (menu USB HOST) */
+
 static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
 {
     uint32_t iu, it, ir;
+#if MELODEE_USB_HOST
+    if (uh.run) {                                       /* a host: one IN endpoint, nothing of the device side */
+        uh_poll();
+        return;
+    }
+#endif
     if (!usb.up)
         return;
     if (fm1_usb_sof_take()) {                           /* SOF pending: NOT a reliable "host is there" */
@@ -962,6 +974,10 @@ static void usb_retry(uint32_t now_ms)
 {
     if (usb.up || usb.detached || now_ms - usb.retry_ms < 1000u)
         return;
+#if MELODEE_USB_HOST
+    if (uh.on)
+        return;                                         /* the port is a host: uh_task owns it */
+#endif
     usb.retry_ms = now_ms;
     usb.retries++;
     usb_start();
@@ -1031,5 +1047,9 @@ static void usb_detach(void)
 {
     usb.detached = 1;
     usb.up = 0;
+#if MELODEE_USB_HOST
+    uh.run = 0;
+    uh.on = uh.want = 0;
+#endif
     fm1_usb_off();
 }

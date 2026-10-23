@@ -4,6 +4,7 @@
 /* Melodee menu (HOME held): COLOR, FONT (the type: RUBIK or PIXEL, ui.c TY_*), HOLD (the layer threshold), LIGHTS (the keys' and buttons'
  * glow: ui_input.c ui_leds), KNOB ACCEL (ui_input.c accel_by), USB AUDIO (IN+OUT, IN, OUT or OFF; usb.c ua_off_set),
  * USB INPUT (stereo master or four track stems; usb.c ua_tracks_set),
+ * USB HOST (the USB-C port hosts a USB-MIDI controller instead of talking to a computer; not saved; usb_host.c),
  * AUTOSAVE (automatic project saves after five seconds stopped and untouched), HOME SELECT (what SELECT turns on HOME:
  * ui.c HS_*), GLO SELECT (what SELECT turns with GLO held, on any page: the same choices), UNUSED TRACKS (SHOW:
  * Stage and MIXER keep a greyed "Add track" row for each place not in use; HIDE: the tracks in use only, ui.c
@@ -16,11 +17,17 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #if MELODEE_USB_AUDIO
        MI_USB, MI_USB_INPUT,
 #endif
+#if MELODEE_USB_HOST
+       MI_USB_HOST,
+#endif
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
 static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #if MELODEE_USB_AUDIO
                                               "USB AUDIO", "USB INPUT",
+#endif
+#if MELODEE_USB_HOST
+                                              "USB HOST",
 #endif
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
                                               "AUTOSAVE", "PICKER POPUPS", "KNOB ACCEL", "HOME SELECT", "GLO SELECT", "UNUSED TRACKS", "SCREEN OFF", "CALIBRATION", "ABOUT", "SOUND DESIGNER", "BACK"};
@@ -289,6 +296,9 @@ static void draw_menu(void)
                 if (i == MI_USB_INPUT) value = ua_tracks_want ? "4 TRACKS" : "STEREO";
                 if (i == MI_USB) value = (const char *const[]){"In + Out", "In", "Out", "Off"}[ua_off_want & 3u];
 #endif
+#if MELODEE_USB_HOST
+                if (i == MI_USB_HOST) value = uh.want ? "ON" : "OFF";
+#endif
                 if (i == MI_HOLD) {                         /* "0.4 s" */
                     str_cpy(b, "0.4 s", sizeof b);
                     b[2] = (char)('0' + HOLD_MS[settings_hold % 4u] / 100u);
@@ -374,6 +384,13 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         ua_off_set(UA_OFF_OUT, !(v & UA_OFF_OUT), fm1_ms);
         ua_off_set(UA_OFF_IN, !(v & UA_OFF_IN), fm1_ms);
         ok = 0;
+    }
+#endif
+#if MELODEE_USB_HOST
+    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_USB_HOST) {
+        /* KNOB 1 right ON, left OFF, OCT+ toggles. Not saved: the next boot is a device again (usb_host.c) */
+        uh.want = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !uh.want);
+        ui.force = 1; ok = 0;                           /* (the row is not part of the menu's signature) */
     }
 #endif
     if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_LIGHTS) {

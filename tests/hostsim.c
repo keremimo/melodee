@@ -61,6 +61,9 @@ static const uint8_t *cz_fac(uint32_t k)
 #include "../firmware/src/voice.c"
 #include "../firmware/src/mix.c"
 static void fm1_delay_ms(uint32_t ms) { (void)ms; }
+#if MELODEE_USB_HOST
+static void fm1_wdt_feed(void);                       /* (usb_host.c's waits; the including test defines it) */
+#endif
 #include "../firmware/src/usb.c"
 #include "../firmware/src/midi_uart.c"                /* TRS MIDI IN: its parser (um_byte) feeds midi_in_q */
 #include "../firmware/src/song_chain.c"
