@@ -1,5 +1,8 @@
-/* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
+/* SPDX-License-Identifier: MPL-2.0
+ * Copyright (C) 2026 johnskiller (https://github.com/johnskiller)
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 /* WT: a wavetable engine (eng_wt.c).
  *
  *   E0 BANK    the wavetable bank (melodee_wt.h, tools/gen_wt_tables.py)
@@ -78,7 +81,7 @@ static void wt_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     if (trk)
         mf += (m->pitch16 - 60 * 16) * (160 * (int32_t)trk);   /* LOW / MID / HIGH: up the bank */
     mf = clamp(mf, 0, WT_TOP);
-    tsvf_coef(&fc, clamp(p[P_E4] * 256 + (m->cutoff >> 3), 0, 127 << 8), clamp(p[P_E5], 0, 127));
+    tsvf_coef_k(&fc, clamp(p[P_E4] * 256 + (m->cutoff >> 3), 0, 127 << 8), 8192 - clamp(p[P_E5], 0, 127) * 7600 / 127);   /* RES 0..127: damping 2.0 .. ~0.15 (dsp.c's old tsvf_coef) */
     for (i = 0; i < n; i++) {
         int32_t x, y;
         ph += m->inc;
