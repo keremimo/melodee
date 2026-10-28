@@ -1478,7 +1478,7 @@ static int test_browser(void)
                 ok &= (c = preset_cat(e, k)) >= 1u && c < CAT_N && CAT_LETTER[c] == PRESET_CAT[e][k];
         }
     for (i = 0; i < NENG_SHOWN; i++)
-        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || eng_vis(i) == ENGI_DRUM || eng_vis(i) == 11u;
+        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || eng_vis(i) == ENGI_DRUM || eng_vis(i) == 11u || eng_vis(i) == ENGI_WT;
     bad += check("BROWSE: a category letter for each factory preset of every engine shown", ok);
     bad += check("BROWSE: factory categories (Prophet, FM6, CZ-1, the kits)",
                  preset_cat(ENGI_PROPHET, find_preset(ENGI_PROPHET, "Fat Poly Bass")) == CAT_BASS &&
@@ -3585,6 +3585,50 @@ static int test_tempo_select(void)
                  song.g[G_SWING] == 10);
     memset(proj_slot, 0, sizeof proj_slot);
     memset(proj_bank_slot, 0, sizeof proj_bank_slot);
+    return bad;
+}
+
+/* HOME: SELECT the next / previous engine of the selected track (as PRESETS' KNOB 4), its INIT sound; elsewhere
+ * untouched (the pages still turn) */
+static int test_home_select_engine(void)
+{
+    int bad = 0, ok;
+    ui_power_on();
+    stop_transport();
+    set_engine_of(TSEL, ENGI_FM6);
+    HOME_SELECT = HS_ENGINE;                             /* (this branch's addition: the ENGINE choice) */
+    go_home(); frame();
+    turn(EN_SELECT, 1);
+    ok = TSEL->eng_req == ENGI_CZ && ui.home && msg_is("ENGINE CZ-1");
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == 3u;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_DRUM;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_WT;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_PROPHET;
+    turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_FM6;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_PROPHET;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_WT;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_DRUM;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == 3u;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_CZ;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_FM6;
+    bad += check("SELECT on HOME: FM6 -> CZ-1 -> SID -> DRUM -> WT -> PROPHET -> FM6 (wraps), back; stays HOME; says it", ok);
+    go_title("GLOBAL");
+    uint32_t e = TSEL->eng_req;
+    turn(EN_SELECT, 1);
+    bad += check("SELECT off HOME still turns the pages, engine untouched",
+                 str_eq(cur_page()->title, "SYSTEM") && TSEL->eng_req == e);
+    HOME_SELECT = HS_BPM;                                /* (the default again) */
     return bad;
 }
 
@@ -5772,6 +5816,7 @@ int main(void)
     bad += test_save_edit_holds();
     bad += test_midi_status();
     bad += test_tempo_select();
+    bad += test_home_select_engine();
 #if MELODEE_SLICE
 #if SMP_USER_SLOTS
     bad += test_slices();
