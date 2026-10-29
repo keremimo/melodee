@@ -16,6 +16,15 @@ static void seq_erase_clear(step_t *st)
     st->time = ST_REST;
 }
 
+/* The step an erase pass claims a recorded note for: the unswung step its onset
+ * plays in. SWING stretches each even step over the next one's straight onset, so
+ * a note played on the grid for an odd step is stored in the even interval; one
+ * tap must not take it with the even step. Straight, this is its actual interval. */
+static uint32_t seq_erase_step(const track_t *t, const recorded_note_t *r, uint32_t period, uint32_t len)
+{
+    return recording_raw_on(t, r, period) / period % len;
+}
+
 /* Rebuild all affected rounded overview cells in one pass. A late hit can
  * share its rounded cell with an unvisited interval, including across zero. */
 static void seq_erase_rebuild(track_t *t, uint64_t touched)
@@ -65,9 +74,11 @@ static void seq_erase_pass(track_t *t, uint32_t step, int entered)
     int starting = !seq_erase_seen[tr];
     seq_erase_seen[tr] = 1;
     uint64_t touched = 0;
+    uint32_t len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), source = step;
+    uint32_t period = seq_div_samples((uint32_t)t->p[P_SDIV]);
     for (uint32_t i = recording_head[recording_owner(t)]; i < RECORD_MAX;) {
         uint32_t next = recording_next[i];
-        if (recording_active(t, i) && (recorded_step(&recording[i]) == step ||
+        if (recording_active(t, i) && (seq_erase_step(t, &recording[i], period, len) == step ||
             (starting && (recording_sounding(i) || (recording_flags[i] & 1u))))) {
             recording_undo_capture(t);
             touched |= (uint64_t)1u << recording_view(t, &recording[i]);
@@ -77,7 +88,6 @@ static void seq_erase_pass(track_t *t, uint32_t step, int entered)
     }
     seq_erase_rebuild(t, touched);
     /* A manual tied chord is one note: remove its onset and its whole tail. */
-    uint32_t len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), source = step;
     for (uint32_t n = 0; n < len && t->step[source].time == ST_TIE; n++) source = (source + len - 1u) % len;
     if (!(t->step[source].flags & SF_RECORDED)) {
         if (t->step[source].time == ST_NOTE && (t->step[source].n || t->step[source].hit)) step = source;

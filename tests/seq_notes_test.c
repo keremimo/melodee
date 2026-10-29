@@ -394,6 +394,18 @@ static int live_erase_scope_and_drums(void)
     seq_advance(1);bad+=check("swung erase follows the extended step's exact boundary",!step_on(&t->step[1]));
     erase_up();seq_stop();song.rec=0;
 
+    /* QNT OFF, played on the straight grid: step 3's note lands in step 2's stretched interval */
+    raw_begin();t=TSEL;t->p[P_SSWING]=50;
+    for(uint32_t s=0;s<4;s++){input_on(t,60+s,100);seq_advance(1536);input_off(t,60+s);seq_advance(period-1536);}
+    seq_stop();song.rec=0;
+    bad+=check("fixture: a straight odd-step note is stored in the swung even interval",recorded_step(&recording[3])==2&&recording_view(t,&recording[3])==3);
+    go_page(GR_ROLL);raw_replay();seq_advance(2u*period+600u);song.rec=1;frame();erase_down();seq_advance(1);erase_up();
+    bad+=check("a swung EDIT tap erases its step's note, not the next step's",!recording[2].vel&&recording[3].vel&&step_on(&t->step[3]));
+    erase_down();seq_advance(span-602u);
+    bad+=check("a held swung erase keeps the odd step's note until that step's boundary",recording[3].vel&&step_on(&t->step[3]));
+    seq_advance(1);bad+=check("the odd step's boundary erases its straight-played note",!recording[3].vel&&!step_on(&t->step[3]));
+    erase_up();seq_stop();song.rec=0;
+
     raw_begin();t=TSEL;set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;
     seq_advance(100);input_on(t,36,100);input_on(t,38,115);seq_advance(100);input_off(t,36);input_off(t,38);
     seq_advance(6144);input_on(t,42,90);seq_advance(100);input_off(t,42);seq_stop();song.rec=0;
