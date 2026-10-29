@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* NOTES uses the original onset interval, not the rounded STEP overview.
+/* NOTES uses the original onset interval (unswung: recording_grid_step), not the rounded STEP overview.
  * Selection is ordered by onset, pitch, then storage index: repeated pitches
  * and independent chord notes are individually reachable. Selection never edits note data. */
 /* One shared copy keeps precise event editing and undo compact. */
@@ -10,7 +10,7 @@ static void note_assign(recorded_note_t *dest,const recorded_note_t *source)
 }
 static int notes_in_step(const track_t *t, uint32_t i)
 {
-    return i < RECORD_MAX && recording_active(t, i) && recorded_step(&recording[i]) == ui.cursor;
+    return i < RECORD_MAX && recording_active(t, i) && recording_grid_step(t, &recording[i]) == ui.cursor;
 }
 static int notes_before(uint32_t a, uint32_t b)
 {
@@ -79,6 +79,19 @@ static void notes_cycle(int32_t delta)
     }
     ui.note_pick = (uint16_t)(chosen + 1u);
     notes_preview();
+}
+/* A whole-step move under SWING goes by grid steps and keeps the note's distance from its step's swung onset,
+ * inside the target step: a note on the swing stays on it, one played on the straight grid stays there. */
+static void notes_swung_move(const track_t *t, const recorded_note_t *r, int32_t delta, recorded_note_t *out)
+{
+    uint32_t len = step_pattern_len(t), period = seq_div_samples((uint32_t)t->p[P_SDIV]);
+    uint32_t at = recording_raw_on(t, r, period), grid = recording_grid_step(t, r);
+    int32_t off = (int32_t)at - (int32_t)recording_prefix(t, period, grid), target = ((int32_t)grid + delta) % (int32_t)len;
+    if (at / period >= len) off -= (int32_t)recording_loop(t, period);   /* (an odd LEN's last tail: early for step zero) */
+    if (target < 0) target += (int32_t)len;
+    at = (uint32_t)clamp((int32_t)recording_prefix(t, period, (uint32_t)target) + off,
+                         target * (int32_t)period, (target + 1) * (int32_t)period - 1);
+    recording_quant_position(r, at, step_samples(t, period, 0), step_samples(t, period, 1), len, out);
 }
 static uint32_t notes_span(void) { return 16u >> ui.note_zoom; }
 static uint32_t notes_base(void) { return ui.cursor / notes_span() * notes_span(); }

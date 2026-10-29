@@ -541,6 +541,15 @@ static uint32_t recording_raw_on(const track_t *t, const recorded_note_t *r, uin
     uint32_t span = step_samples(t, period, recorded_step(r));
     return (recording_prefix(t, period, recorded_step(r)) + (uint32_t)(((uint64_t)r->on * span + RECORD_UNIT / 2u) / RECORD_UNIT)) % loop;
 }
+/* The step an event belongs to on the grid (NOTES selection, live erase): the unswung step its onset plays in.
+ * SWING stretches each even step over the next one's straight onset, so a note played on the grid for an odd step
+ * is stored in the even interval. Straight, this is its actual interval. */
+static uint32_t recording_grid_step(const track_t *t, const recorded_note_t *r)
+{
+    if (!track_swing(t)) return recorded_step(r);
+    uint32_t period = seq_div_samples((uint32_t)t->p[P_SDIV]);
+    return recording_raw_on(t, r, period) / period % (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP);
+}
 static uint32_t recording_quant_on(const track_t *t, const recorded_note_t *r, uint32_t period, uint32_t q)
 {
     uint32_t loop = recording_loop(t, period), at = recording_raw_on(t, r, period);

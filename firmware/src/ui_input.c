@@ -1434,10 +1434,11 @@ static void notes_event_edit(uint32_t slot, int32_t delta)
         int32_t actual = ((int32_t)recorded_step(&before) + delta) % (int32_t)len;
         if (actual < 0) actual += len;
         uint32_t view = (actual + ((before.step & 64u) != 0u)) % len;
+        recorded_set_step(&after, (uint32_t)actual, recorded_rounded(&before), !view && actual);
+        if (track_swing(TSEL)) { notes_swung_move(TSEL, &before, delta, &after); view = recording_view(TSEL, &after); }
         if (notes_manual_occupied(TSEL, view)) {
             fm1_irq_on(); ui_message("STEP OCCUPIED"); return;
         }
-        recorded_set_step(&after, (uint32_t)actual, recorded_rounded(&before), !view && actual);
     } else if (slot == 1u) {
         if(drum_track(TSEL))after.pitch=(int8_t)clamp(before.pitch+delta,-24,24);
         else recorded_set_note(&after,(uint8_t)clamp((int32_t)recorded_note(&before)+delta,1,127));
@@ -1461,7 +1462,7 @@ static void notes_event_edit(uint32_t slot, int32_t delta)
     notes_rebuild(TSEL, oldview);
     if (view != oldview) notes_rebuild(TSEL, view);
     step_history.recording_gen = recording_generation;
-    if (slot == 0u) cursor_set(recorded_step(&after));
+    if (slot == 0u) cursor_set(recording_grid_step(TSEL, &after));
     ui.note_pick = (uint16_t)(i + 1u); note_assign(&ui.note_identity,&after);
     ui.note_generation = recording_generation;
     fm1_irq_on(); ui.force = 1;
