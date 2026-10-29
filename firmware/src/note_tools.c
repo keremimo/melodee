@@ -157,7 +157,7 @@ static void note_manual_length(int32_t delta,uint32_t quantum)
     if(!snapshot)recording_prune(TSEL);
     else if(!note_transaction_begin()){fm1_irq_on();return;}
     if(!note_convert(at)){if(snapshot)note_transaction.valid=0;fm1_irq_on();return;}
-    for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])if(recorded_step(&recording[i])==at){
+    for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])if(recording_view(TSEL,&recording[i])==at){/* (the converted notes, not a swung neighbour stored in this interval) */
         uint32_t duration=recording[i].duration*(1u<<(recorded_exponent(&recording[i])));
         note_duration(&recording[i],(uint32_t)clamp(note_snap((int32_t)duration,delta,quantum),(int32_t)quantum,128*RECORD_UNIT));
     }
@@ -167,7 +167,7 @@ static void note_manual_length(int32_t delta,uint32_t quantum)
 }
 /* Fine moves and range transforms snap to quarter-step boundaries. A range's
  * offsets stay intact; copy shifts a duplicate. */
-static int bulk_note_has(uint32_t i) { return bulk.on==2u ? (bulk.notes[i/8u]>>(i%8u))&1u : bulk_has(recorded_step(&recording[i])); }
+static int bulk_note_has(uint32_t i) { return bulk.on==2u ? (bulk.notes[i/8u]>>(i%8u))&1u : bulk_has(recording_grid_step(TSEL,&recording[i])); }
 static void notes_bulk_delete(void)
 {
     if(chain_busy()||live_rec_sel()){ui_message("STOP TO EDIT");return;}
@@ -241,7 +241,7 @@ static void note_transform(int32_t delta,uint32_t quantum,int mode)
     }
     note_rebuild_all();
     for(uint32_t k=0;k<len;k++)if(TSEL->step[k].flags&SF_RECORDED){TSEL->step[k].probability=(uint8_t)metadata[k];TSEL->step[k].flags|=(metadata[k]>>8)&SF_SLIDE;}
-    if(focus<RECORD_MAX){cursor_set(recorded_step(&recording[focus]));ui.note_pick=(uint16_t)(focus+1u);note_assign(&ui.note_identity,&recording[focus]);ui.note_generation=recording_generation;}
+    if(focus<RECORD_MAX){cursor_set(recording_grid_step(TSEL,&recording[focus]));ui.note_pick=(uint16_t)(focus+1u);note_assign(&ui.note_identity,&recording[focus]);ui.note_generation=recording_generation;}
     if(bulk.on){bulk.on=2;memcpy(bulk.notes,moved,sizeof moved);bulk.generation=recording_generation;}note_transaction_end();fm1_irq_on();ui_message(quantize?"NOTES QUANTIZED":copy?"Copying..":"Moving..");
 }
 static void note_move_snapped(int32_t delta,uint32_t quantum,int copy){note_transform(delta,quantum,copy);}

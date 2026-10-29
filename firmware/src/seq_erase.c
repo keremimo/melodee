@@ -65,9 +65,10 @@ static void seq_erase_pass(track_t *t, uint32_t step, int entered)
     int starting = !seq_erase_seen[tr];
     seq_erase_seen[tr] = 1;
     uint64_t touched = 0;
+    /* (a note played on the grid for the next step, stored in this swung interval, waits for its own step) */
     for (uint32_t i = recording_head[recording_owner(t)]; i < RECORD_MAX;) {
         uint32_t next = recording_next[i];
-        if (recording_active(t, i) && (recorded_step(&recording[i]) == step ||
+        if (recording_active(t, i) && (recording_grid_step(t, &recording[i]) == step ||
             (starting && (recording_sounding(i) || (recording_flags[i] & 1u))))) {
             recording_undo_capture(t);
             touched |= (uint64_t)1u << recording_view(t, &recording[i]);

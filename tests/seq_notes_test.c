@@ -394,6 +394,18 @@ static int live_erase_scope_and_drums(void)
     seq_advance(1);bad+=check("swung erase follows the extended step's exact boundary",!step_on(&t->step[1]));
     erase_up();seq_stop();song.rec=0;
 
+    /* QNT OFF, played on the straight grid: step 3's note lands in step 2's stretched interval */
+    raw_begin();t=TSEL;t->p[P_SSWING]=50;
+    for(uint32_t s=0;s<4;s++){input_on(t,60+s,100);seq_advance(1536);input_off(t,60+s);seq_advance(period-1536);}
+    seq_stop();song.rec=0;
+    bad+=check("fixture: a straight odd-step note is stored in the swung even interval",recorded_step(&recording[3])==2&&recording_view(t,&recording[3])==3);
+    go_page(GR_ROLL);raw_replay();seq_advance(2u*period+600u);song.rec=1;frame();erase_down();seq_advance(1);erase_up();
+    bad+=check("a swung EDIT tap erases its step's note, not the next step's",!recording[2].vel&&recording[3].vel&&step_on(&t->step[3]));
+    erase_down();seq_advance(span-602u);
+    bad+=check("a held swung erase keeps the odd step's note until that step's boundary",recording[3].vel&&step_on(&t->step[3]));
+    seq_advance(1);bad+=check("the odd step's boundary erases its straight-played note",!recording[3].vel&&!step_on(&t->step[3]));
+    erase_up();seq_stop();song.rec=0;
+
     raw_begin();t=TSEL;set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;
     seq_advance(100);input_on(t,36,100);input_on(t,38,115);seq_advance(100);input_off(t,36);input_off(t,38);
     seq_advance(6144);input_on(t,42,90);seq_advance(100);input_off(t,42);seq_stop();song.rec=0;
@@ -517,9 +529,54 @@ static int bulk_and_pattern_clears(void)
     return bad;
 }
 
+/* SWING, QNT OFF, played on the straight grid: odd-step notes are stored in the stretched even interval */
+static void swung_take(uint32_t mask)
+{
+    raw_begin();track_t *t=TSEL;t->p[P_SSWING]=50;
+    uint32_t period=seq_div_samples((uint32_t)t->p[P_SDIV]);
+    for(uint32_t s=0;s<6;s++){if((mask>>s)&1u)input_on(t,60+s,100);seq_advance(1536);if((mask>>s)&1u)input_off(t,60+s);seq_advance(period-1536);}
+    seq_stop();song.rec=0;go_page(GR_ROLL);
+}
+static void scl_move(int32_t steps)
+{
+    fm1_in.buttons|=1u<<panel.btn[B_SCL];host_pressed|=1u<<panel.btn[B_SCL];frame();
+    turn(EN_K1,steps);fm1_in.buttons&=~(1u<<panel.btn[B_SCL]);frame();
+}
+static int swung_notes_editing(void)
+{
+    swung_take(0x0Fu);track_t *t=TSEL;recorded_note_t saved[4];memcpy(saved,recording,sizeof saved);
+    uint32_t count;cursor_set(3);frame();
+    int bad=check("swung NOTES selects a straight-played odd-step note on its own step",
+                  recorded_step(&recording[3])==2&&notes_selected(t)==3&&notes_rank(t,3,&count)==1&&count==1);
+    cursor_set(2);frame();
+    bad+=check("..and the even step holds only its own note",notes_selected(t)==2&&notes_rank(t,2,&count)==1&&count==1);
+    cursor_set(3);frame();press(B_EDIT);
+    bad+=check("swung EDIT on the odd step deletes its note only",!recording[3].vel&&!step_on(&t->step[3])&&
+               !memcmp(&saved[2],&recording[2],sizeof saved[2])&&step_on(&t->step[2]));
+    hold(B_EDIT);bad+=check("swung delete undo restores the note and its focus",!memcmp(saved,recording,sizeof saved)&&ui.cursor==3&&notes_selected(t)==3);
+    delete_range(3,3);
+    bad+=check("a swung range over the odd step deletes its note, not the even step's",!recording[3].vel&&!memcmp(&saved[2],&recording[2],sizeof saved[2]));
+    hold(B_EDIT);
+
+    swung_take(0x09u);t=TSEL;cursor_set(3);frame();uint32_t i=notes_selected(t);
+    scl_move(1);
+    bad+=check("a swung whole-step move lands one grid step on, the straight note on the straight grid",
+               i<RECORD_MAX&&ui.cursor==4&&notes_selected(t)==i&&recorded_step(&recording[i])==4&&recording[i].on==0&&step_on(&t->step[4])&&!step_on(&t->step[3]));
+    scl_move(1);
+    bad+=check("the next move is the next grid step",ui.cursor==5&&notes_selected(t)==i&&recording_grid_step(t,&recording[i])==5&&recording_view(t,&recording[i])==5);
+    scl_move(-2);
+    bad+=check("moving back keeps every turn one grid step",ui.cursor==3&&notes_selected(t)==i&&recording_grid_step(t,&recording[i])==3&&recording[0].vel==100);
+
+    swung_take(0x08u);t=TSEL;manual_hit(t,2,50);cursor_set(2);frame();
+    recorded_note_t odd=recording[0];note_manual_length(1,RECORD_UNIT/4u);
+    bad+=check("lengthening a manual note leaves the swung odd-step note stored in its interval",
+               recorded_note(&recording[0])==63&&!memcmp(&odd,&recording[0],sizeof odd)&&step_note_length(t,2)==1&&step_on(&t->step[3]));
+    return bad;
+}
+
 int main(void)
 {
-    int bad=selection_and_delete()+deletion_history()+loop_drums_and_playback()+timing_geometry_and_context()+control_clashes()+property_edits_and_mixed_patterns()+manual_chord_controls()+dense_selection_and_protection()+drum_recording_layout()+live_erase_manual()+live_erase_raw()+live_erase_scope_and_drums()+erase_edit_hold_conflicts()+bulk_and_pattern_clears();
+    int bad=selection_and_delete()+deletion_history()+loop_drums_and_playback()+timing_geometry_and_context()+control_clashes()+property_edits_and_mixed_patterns()+manual_chord_controls()+dense_selection_and_protection()+drum_recording_layout()+live_erase_manual()+live_erase_raw()+live_erase_scope_and_drums()+erase_edit_hold_conflicts()+bulk_and_pattern_clears()+swung_notes_editing();
     printf("Recorded note editing: %s\n",bad?"FAILED":"all passed");
     return !!bad;
 }
