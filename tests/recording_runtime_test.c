@@ -12,7 +12,7 @@ static int capture_index_handoff(void)
 {
     raw_begin();seq_stop();song.rec=0;track_t *t=TSEL;
     for(uint32_t i=0;i<3u;i++){
-        recorded_note_t r={.duration=1000,.note=(uint8_t)(60+i),.vel=100};
+        recorded_note_t r={.duration=1000,.note7=(uint8_t)(60+i),.vel=100};
         recording_restore_note(t,i,r);
         recording_flags[i]=1;recording_run[i].held=1000u;
     }
@@ -36,7 +36,7 @@ static int complete_store(void)
         memset(&t->step[s],0,sizeof t->step[s]);t->step[s].time=ST_NOTE;t->step[s].flags=SF_RECORDED;
     }
     for(uint32_t i=0;i<RECORD_MAX;i++){
-        recorded_note_t r={.duration=1,.note=(uint8_t)(i%128u),.vel=100};
+        recorded_note_t r={.duration=1,.note7=(uint8_t)(i%128u),.vel=100};
         recorded_set_step(&r,i%NSTEP,0,0);recording_restore_note(t,i,r);
         recording_flags[i]=1;recording_run[i].held=1000u+i*6000u;
     }
@@ -65,7 +65,7 @@ static int complete_store(void)
 static int recapture_and_capture_pause(void)
 {
     raw_begin();seq_stop();song.rec=0;track_t *t=TSEL;
-    recorded_note_t r={.duration=1000,.note=60,.vel=100};recording_restore_note(t,0,r);
+    recorded_note_t r={.duration=1000,.note7=60,.vel=100};recording_restore_note(t,0,r);
     t->step[0].time=ST_NOTE;t->step[0].flags=SF_RECORDED;recording_reindex();
     recording_fire(t,0,RECORD_UNIT,0);
     int ok=recording_sounding(0) && recording_heap_count[0]==1;

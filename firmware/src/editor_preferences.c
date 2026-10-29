@@ -3,10 +3,11 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Optional device preferences, advertised in INFO. No preset format changes. The font weight
  * (ED_UI_FONT) is gone: one weight; UI_SET of it answers rc 2 (not supported), UI_STATE 127. */
-enum { ED_UI_PALETTE = 1, ED_UI_FONT = 2, ED_UI_MONITOR = 4, ED_UI_FAVORITES = 8, ED_UI_RECORDING = 16, ED_UI_PERFORMANCE = 32 };
+enum { ED_UI_PALETTE = 1, ED_UI_FONT = 2, ED_UI_MONITOR = 4, ED_UI_FAVORITES = 8, ED_UI_RECORDING = 16, ED_UI_PERFORMANCE = 32,
+       ED_UI_CLICK_PERCENT = 64 };   /* click level 0..100 % (before: 0 LOW, 1 MID, 2 HIGH) */
 static uint32_t ed_ui_caps(void)
 {
-    uint32_t caps = ED_UI_PALETTE | ED_UI_RECORDING | ED_UI_PERFORMANCE;
+    uint32_t caps = ED_UI_PALETTE | ED_UI_RECORDING | ED_UI_PERFORMANCE | ED_UI_CLICK_PERCENT;
 #ifdef MELODEE_MONITOR
     caps |= ED_UI_MONITOR;
 #endif
@@ -70,7 +71,7 @@ static uint32_t ed_ui_set(const uint8_t *a, uint32_t n)
 {
     if (n != 2u || a[0] > 10u) return 1;
     if (!(ed_ui_caps() & (a[0]>=9u?ED_UI_PERFORMANCE:a[0]>=4u?ED_UI_RECORDING:1u << a[0]))) return 2;
-    if (a[1] >= (a[0] == 0 ? NPALETTES : a[0]==10u ? 5u : a[0] == 2 || (a[0]>=4 && a[0]<=6) ? 3u : 2u)) return 1;
+    if (a[1] >= (a[0] == 0 ? NPALETTES : a[0]==10u ? 5u : a[0]==5u ? 101u : a[0] == 2 || a[0]==4u || a[0]==6u ? 3u : 2u)) return 1;
     switch (a[0]) {
     case 9:return 2; /* retired preference */
     case 10:scr_put(a[1]);break;

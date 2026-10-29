@@ -15,7 +15,7 @@ The gamelan selections are specific measured or just-intonation examples, not un
 
 QNT OFF retains the normal 12-tone chromatic keyboard. With a microtonal selection and QNT enabled,
 MIDI note address 60 is the root at C4 + ROOT + TRN. ALL advances one degree per key, WHITE advances
-one degree per white key, MPC advances one degree per pad, and SNAP finds the scale tone below a
+one degree per white key, MPC advances one degree per pad, and SNAP finds the scale tone nearest a
 conventional input pitch. ROOT and TRN remain semitone offsets; octave buttons and ARP OCT advance
 one scale period. Bohlen–Pierce repeats at 3:1, and the measured SLENDR period is 1208 cents.
 DIA3/DIA7 stack every other degree; fixed chord shapes choose the nearest available degrees to

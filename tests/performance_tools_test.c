@@ -8,7 +8,7 @@ static void reset_tools(void)
 {
     seq_stop(); momentary_restore(); ui_power_on(); set_engine_of(&trk[0], 3); recording_reset();   /* (SID: knobs and CC macros on p[]) */ memset(&midi_clock,0,sizeof midi_clock); song.master_q12=4096;
     settings_click=settings_countin=settings_preview=settings_chord_add=0;
-    settings_click_level=1; memset(cin_n,0,sizeof cin_n); clk.env=click_req=0;
+    settings_click_level=CLICK_LEVEL_DEFAULT; memset(cin_n,0,sizeof cin_n); clk.env=click_req=0;
 }
 static void advance(uint32_t samples)
 {
@@ -43,39 +43,38 @@ static void test_click_volume(void)
 {
     reset_tools();
     int32_t reference[2*CTL], actual[2*CTL];
+    static const uint8_t PCT[]={0,1,12,25,50,75,100};
     for(uint32_t beat=1;beat<=2;beat++) {
         uint32_t previous_peak=0;
-        for(uint32_t level=0;level<3;level++) {
-            settings_click_level=level;song.master_q12=4096;
+        for(uint32_t l=0;l<sizeof PCT;l++) {
+            settings_click_level=PCT[l];song.master_q12=4096;
             memset(reference,0,sizeof reference);click_req=beat;click_render(reference,CTL);
             uint32_t peak=0;
             for(uint32_t i=0;i<2*CTL;i++) { uint32_t a=(uint32_t)abs(reference[i]);if(a>peak)peak=a; }
-            assert(peak>previous_peak);previous_peak=peak;
+            assert(PCT[l]?peak>previous_peak:!peak);previous_peak=peak;
+            /* the level is its own: MASTER (the mixer) leaves it as it is */
             for(uint32_t master=0;master<=4096;master+=1024) {
                 song.master_q12=master;memset(actual,0,sizeof actual);click_req=beat;click_render(actual,CTL);
-                for(uint32_t i=0;i<2*CTL;i++)
-                    assert(abs(actual[i]-((reference[i]*(int32_t)master)>>12))<=1);
-                if(!master)for(uint32_t i=0;i<2*CTL;i++)assert(!actual[i]);
+                assert(!memcmp(actual,reference,sizeof actual));
             }
         }
+        /* 100 % reaches (near) DAC full scale on the downbeat, half of it on a beat */
+        assert(beat==2?previous_peak>30000u:previous_peak>15000u && previous_peak<16500u);
     }
-    /* Master changes apply to a sounding tail without waiting for another beat. */
+    /* A sounding tail keeps its level when MASTER changes. */
+    settings_click_level=CLICK_LEVEL_DEFAULT;song.master_q12=4096;click_req=2;
+    memset(reference,0,sizeof reference);click_render(reference,CTL);
     song.master_q12=0;
     memset(actual,0,sizeof actual);click_render(actual,CTL);
-    for(uint32_t i=0;i<2*CTL;i++)assert(!actual[i]);
-    song.master_q12=4096;
-    memset(actual,0,sizeof actual);click_render(actual,CTL);
     int energy=0;for(uint32_t i=0;i<2*CTL;i++)energy|=actual[i];assert(energy);
-    /* Count-in follows master even when AUDIO CLICK is off. */
+    /* Count-in sounds at the click level even when AUDIO CLICK is off, whatever MASTER is. */
     for(uint32_t master=0;master<=4096;master+=1024) {
         seq_stop();settings_click=CLICK_OFF;settings_countin=1;song.rec=1;song.master_q12=master;
         transport_req=1;events_block(0);assert(seq_counting() && click_req==2);
         memset(actual,0,sizeof actual);click_render(actual,CTL);
-        for(uint32_t i=0;i<2*CTL;i++)
-            assert(abs(actual[i]-((reference[i]*(int32_t)master)>>12))<=1);
-        if(!master)for(uint32_t i=0;i<2*CTL;i++)assert(!actual[i]);
+        assert(!memcmp(actual,reference,sizeof actual));
     }
-    seq_stop();
+    seq_stop();song.master_q12=4096;
 }
 static void test_editing_tools(void)
 {
@@ -119,10 +118,19 @@ static void test_midi_and_levels(void)
 }
 static void test_compatibility(void)
 {
-    reset_tools();settings_click=2;settings_click_level=0;settings_countin=2;settings_preview=settings_chord_add=1;
-    persist_t p={0};settings_export(&p);settings_click=settings_countin=settings_preview=settings_chord_add=0;settings_click_level=1;
-    assert(settings_import(&p,sizeof p));assert(settings_click==2 && !settings_click_level && settings_countin==2 && settings_preview && settings_chord_add);
-    p.zoom=1;assert(settings_import(&p,sizeof p));assert(!settings_click && settings_click_level==1 && !settings_countin && !settings_preview && !settings_chord_add);
+    reset_tools();settings_click=2;settings_click_level=15;settings_countin=2;settings_preview=settings_chord_add=1;
+    persist_t p={0};settings_export(&p);settings_click=settings_countin=settings_preview=settings_chord_add=0;settings_click_level=CLICK_LEVEL_DEFAULT;
+    assert(settings_import(&p,sizeof p));assert(settings_click==2 && settings_click_level==15 && settings_countin==2 && settings_preview && settings_chord_add);
+    /* older builds read the nearest LOW/MID/HIGH from the zoom word: 15 % is MID (0) */
+    assert(((p.zoom>>10)&3u)==0u);
+    settings_click_level=0;settings_export(&p);assert(((p.zoom>>10)&3u)==1u);
+    settings_click_level=100;settings_export(&p);assert(((p.zoom>>10)&3u)==2u);
+    /* records from before the percentage: LOW/MID/HIGH become 6/12/25 %, as heard at the default MASTER */
+    for(uint32_t old=0;old<3;old++) {
+        memset(p.favorites.factory[1]+24,0,4);p.zoom=0x52500000u|((old<<2)|1u)<<8;
+        assert(settings_import(&p,sizeof p));assert(settings_click_level==(old==1u?6u:old==2u?25u:12u));
+    }
+    p.zoom=1;assert(settings_import(&p,sizeof p));assert(!settings_click && settings_click_level==CLICK_LEVEL_DEFAULT && !settings_countin && !settings_preview && !settings_chord_add);
     project_t q,back;project_store_t current;project_capture(&q);q.t[0].p[P_E4]=53;
     for(uint32_t t=0;t<NPART;t++)q.t[t].p[P_RESERVED35]=77;   /* delay sends and their automation (a FUN16's are kept) */
     q.g[G_RESERVED25]=3;q.g[G_RESERVED26]=9;q.g[G_RESERVED4]=2;q.motion.count=1;q.motion.event[0]=(motion_event_t){0,P_RESERVED35,100};q.sum=proj_sum(&q);

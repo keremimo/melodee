@@ -22,6 +22,17 @@ static uint16_t midi_owners[NTRK];           /* avoids rescanning all 2048 entri
 /* MIDI Track accepts a selectable input plus optional TRS. Releases follow
  * the stream that started the note, even after its input setting changes. */
 static uint32_t midi_owner_trs[16][4];
+#if MELODEE_BLE
+static uint32_t midi_owner_ble[16][4];
+#endif
+static uint32_t midi_note_source(uint32_t ch, uint32_t note)
+{
+    uint32_t mask = 1u << (note & 31u);
+#if MELODEE_BLE
+    if (midi_owner_ble[ch][note >> 5] & mask) return 3u;
+#endif
+    return midi_owner_trs[ch][note >> 5] & mask ? 2u : 1u;
+}
 #define MIDI_PEDAL_NOTE 0x80u
 _Static_assert(NTRK < 16u, "a note's owner fits a nibble");
 static uint32_t mn_get(uint32_t ch, uint32_t note)
@@ -181,11 +192,18 @@ static void midi_note_event(uint32_t ch, uint32_t note, uint32_t vel)
         uint32_t mask = 1u << (note & 31u);
         if (midi_event_source == 2u) midi_owner_trs[ch][note >> 5] |= mask;
         else midi_owner_trs[ch][note >> 5] &= ~mask;
+        #if MELODEE_BLE
+        if (midi_event_source == 3u) midi_owner_ble[ch][note >> 5] |= mask;
+        else midi_owner_ble[ch][note >> 5] &= ~mask;
+#endif
         midi_owners[trk_index(t)]++;
         c->owned[trk_index(t)]++;
     } else if (id) {
-        if (midi_event_source && midi_track_only(&trk[id - 1u]) &&
-            !!(midi_owner_trs[ch][note >> 5] & (1u << (note & 31u))) != (midi_event_source == 2u)) return;
+        if (midi_event_source && (midi_track_only(&trk[id - 1u])
+#if MELODEE_BLE
+            || midi_event_source == 3u || midi_note_source(ch, note) == 3u
+#endif
+            ) && midi_note_source(ch, note) != midi_event_source) return;
         if (c->pedal && !drum_track(&trk[id - 1u])) {
             step_midi_edge(id - 1u, 0, 0, ch, note);   /* physical release ends step entry, even under sustain */
             mn_set(ch, note, mn_get(ch, note) | MIDI_PEDAL_NOTE);

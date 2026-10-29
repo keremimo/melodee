@@ -4,7 +4,7 @@
 #include "storage_test.c"
 #undef main
 #include <assert.h>
-#define LEN (ST_BANK_BASE_MAX+ST_BANK_EXT_MAX)
+#define LEN ST_PROJECT_MAX
 static uint8_t old[LEN],next[LEN],readback[LEN],saved[sizeof nor];
 static int transfer(st_stream_t *w)
 {
@@ -38,15 +38,15 @@ int main(void)
     assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,old,LEN));
     assert(!st_read_range(w.obj,w.head.slot,0,readback,LEN)&&!memcmp(readback,next,LEN));
     assert(!st_stream_publish(&w));assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,next,LEN));
-    original();io_calls=0;assert(!transfer(&w));uint32_t programs=(uint32_t)w.pos/256u+1u;
-    for(uint32_t n=0;n<300u;n++){
+    original();program_calls=0;assert(!transfer(&w));uint32_t programs=program_calls;
+    for(uint32_t n=0;n<=programs;n++){
         original();fail_after=(int)n;int rc=transfer(&w);fail_after=-1;
         assert(st_load(OBJ_BANK0,readback,LEN)==LEN);
         assert(!memcmp(readback,rc?old:next,LEN));
-        if(!rc){programs=n;break;}
+        assert(!rc == (n==programs));
     }
     uint32_t faults=0;
-    for(uint32_t n=0;n<=LEN+sizeof(st_hdr_t);n++){
+    for(uint32_t n=0;n<=LEN+2u*sizeof(st_hdr_t);n++){
         if(n>32u && n<LEN && n%256u>1u && n%256u<255u)continue;
         original();fail_bytes=(int)n;int rc=transfer(&w);fail_bytes=-1;
         assert(st_load(OBJ_BANK0,readback,LEN)==LEN);
@@ -65,19 +65,23 @@ int main(void)
     assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,old,LEN));
     original();assert(!st_stream_begin(&w,OBJ_BANK0,LEN));
     assert(st_stream_write_at(&w,LEN-1u,next,2u)&&st_stream_publish(&w));
-    for(uint32_t n=0;n<300u;n++){
+    original();program_calls=0;assert(!generated(&w));uint32_t generated_programs=program_calls;
+    for(uint32_t n=0;n<=generated_programs;n++){
         original();fail_after=(int)n;int rc=generated(&w);fail_after=-1;
-        assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,rc?old:next,LEN));if(!rc)break;
+        assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,rc?old:next,LEN));assert(!rc == (n==generated_programs));
     }
-    for(uint32_t n=0;n<=LEN+sizeof(st_hdr_t);n++){
+    for(uint32_t n=0;n<=LEN+2u*sizeof(st_hdr_t);n++){
         if(n>32u && n<LEN && n%256u>1u && n%256u<255u)continue;
         original();fail_bytes=(int)n;int rc=generated(&w);fail_bytes=-1;
         assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,rc?old:next,LEN));
     }
     original();write_protected=1;assert(transfer(&w));write_protected=0;
     assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,old,LEN));
-    for(uint32_t i=0;i<7u;i++){
-        original();fail_erase_off=i<5u?st_sector(OBJ_BANK0,1)+i*ST_SECTOR:st_extension(OBJ_BANK0,1)+(i-5u)*ST_SECTOR;
+    original();assert(!st_stream_begin(&w,OBJ_BANK0,LEN));
+    st_hdr_t target=w.head;
+    uint8_t sectors[ST_PROJECT_SECTORS];
+    for(uint32_t k=0,n=st_rec_sectors(&target,sectors);k<n;k++){
+        original();fail_erase_off=st_pool_at(sectors[k]);
         assert(st_stream_begin(&w,OBJ_BANK0,LEN));
         assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,old,LEN));
     }
@@ -85,6 +89,12 @@ int main(void)
     assert(!st_save(OBJ_BANK0,next,LEN));assert(st_stream_publish(&w));
     original();uint32_t calls=io_calls;assert(st_stream_begin(&w,OBJ_SETTINGS,LEN)&&io_calls==calls);
     assert(st_stream_begin(&w,OBJ_BANK0,LEN+1u)&&io_calls==calls);
-    printf("Bank stream: %u program cutoffs, %u page/header byte cutoffs, unpublished snapshots, all seven erase boundaries, write protection and stale publication passed\n",programs,faults);
+    original();st_stream_t other;
+    assert(!st_stream_begin(&w,OBJ_BANK0,LEN));
+    assert(!st_stream_begin(&other,OBJ_BANK0+1,LEN));
+    assert(st_stream_write(&w,next,1u)&&st_stream_publish(&w));
+    assert(!st_stream_write(&other,next,LEN)&&!st_stream_publish(&other));
+    assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,old,LEN));
+    printf("Bank stream: %u program cutoffs, %u page/header byte cutoffs, unpublished snapshots, all allocated erase boundaries, write protection and stale publication passed\n",programs,faults);
     return 0;
 }

@@ -338,12 +338,13 @@ async function editorMock() {
   const cut = E.parse[E.CMD.NAMES]([15, 4, 65, 0, 66, 0, 67]);   /* 0.11: CZ-1's names overran the 600-byte reply */
   ok(cut.names.join() === "A,B,PRESET 3,PRESET 4" && !cut.titles.length, "editor: a NAMES reply cut short keeps its whole names");
   let prefs = await E.readDevicePreferences(rq, info, names);
-  ok(info.uiCaps === 57 && prefs.palettes.length === 8 && prefs.palettes[0] === "MONO" && prefs.palettes.includes("HI-CON"),
+  ok(info.uiCaps === 121 && prefs.palettes.length === 8 && prefs.palettes[0] === "MONO" && prefs.palettes.includes("HI-CON"),
      "editor: preference capabilities (palette, favorites) and palette names");
-  for(const [id,key,value] of [[4,"click",2],[5,"clickLevel",0],[6,"countin",2],[7,"preview",1],[8,"chordAdd",1]]) {
+  ok(prefs.state.clickLevel===12,"click level reports a percentage (capability bit 6), 12 % (the old MID at MASTER 0.5) by default");
+  for(const [id,key,value] of [[4,"click",2],[5,"clickLevel",73],[6,"countin",2],[7,"preview",1],[8,"chordAdd",1]]) {
     const changed=E.parse[E.CMD.UI_SET](await rq(E.req.uiSet(id,value)));
     ok(changed.rc===0 && changed[key]===value,`recording preference ${key} round trip`);
-    const invalid=E.parse[E.CMD.UI_SET](await rq(E.req.uiSet(id,id<=6?3:2)));
+    const invalid=E.parse[E.CMD.UI_SET](await rq(E.req.uiSet(id,id===5?101:id<=6?3:2)));
     ok(invalid.rc===1 && invalid[key]===value,`recording preference ${key} rejects invalid values`);
   }
   ok(!(E.parse[E.CMD.UI_STATE]([25,0,127,127,0,0,0,0,0,0,0,0,0]).caps&16),"recording preferences require a complete state suffix");
@@ -490,8 +491,8 @@ function mockTables() {
     ok([2,5,6,7,9,11].every((i) => m0.tables.ENG[i].name === "-" && !m0.tables.ENG[i].presets.length),
        "editor: PHASE, VOICE, TRIO, WHEEL, PHYS and NOISE retired with their original IDs reserved");
     ok(dr.name === "DRUM" && dr.edit.map((d) => d.label).join() === "KIT,TUNE,TONE,DECY,SNAP,ACC,KICK,DRV" &&
-       dr.edit[0].names.join() === "808,909,SID" && dr.edit[0].min === 4 && dr.edit[0].max === 6 && dr.presets.length === 4 && dr.presets[0].name === "808 KIT" && dr.presets[2].name === "SID KIT" && dr.presets[3].name === "SID DIGI",
-       "editor: DRUM engine 10 (KIT TUNE TONE DECY SNAP ACC KICK DRV, KIT 808), 808, 909 and SID kits");
+       dr.edit[0].names.join() === "808,909,SID,CR78,FM" && dr.edit[0].min === 4 && dr.edit[0].max === 8 && dr.presets.length === 6 && dr.presets[0].name === "808 KIT" && dr.presets[2].name === "SID KIT" && dr.presets[3].name === "SID DIGI" && dr.presets[4].name === "CR78 KIT" && dr.presets[5].name === "FM KIT",
+       "editor: DRUM engine 10 (KIT TUNE TONE DECY SNAP ACC KICK DRV, KIT 808), 808, 909, SID, CR78 and FM kits");
   }
   const dj = join(HERE, "../build/host/desc.json");
   if (!existsSync(dj)) { console.log("editor: mock tables == firmware (no build/host/desc.json)        skip"); return; }
@@ -1613,8 +1614,34 @@ async function patternProtocol() {
   const request=E.req.bankSong(1,rows);
   const reply=E.parse[E.CMD.BANK_SONG]([1,0,2,0,0,0,...request[1].slice(2)]);
   ok(JSON.stringify(reply.rows)===JSON.stringify(rows),"patterns: SONG carries independent banks for every track");
-  let invalid=false; try { E.req.bankSong(1,[{banks:[0,1,2,8],repeat:1}]); } catch { invalid=true; }
+  let invalid=false; try { E.req.bankSong(1,[{banks:[0,1,2,10],repeat:1}]); } catch { invalid=true; }
   ok(invalid,"patterns: invalid bank-song values rejected before transport");
+  const extended = E.parse[E.CMD.INFO]([...base,0,0x55,1,9,0x4d,2,64,1,0x42,1,3,0x50,2,8,64]);
+  ok(extended.chainRows === 64 && extended.songRests, "SONG v2 advertises 64 sections and explicit rests");
+  const longRows = Array.from({length:64}, (_,i)=>({banks:[i%9,8,0,7],repeat:i%16+1}));
+  const longRequest = E.req.bankSong(1,longRows);
+  const longReply = E.parse[E.CMD.BANK_SONG]([1,0,64,0,0,0,...longRequest[1].slice(2)]);
+  ok(JSON.stringify(longReply.rows) === JSON.stringify(longRows), "SONG v2 round-trips all 64 sections and resting cells");
+  ok(eq(E.req.bankSong(2,[],63)[1],[2,63]), "SONG v2 start carries the selected section");
+  const blocks = E.parse[E.CMD.INFO]([...base,0,0x55,1,9,0x4d,2,64,1,0x42,1,3,0x50,3,8,64]);
+  ok(blocks.songBlocks && blocks.songRests, "SONG v3 advertises block continuations");
+  const blockRows = [{banks:[0,1,8,8],repeat:1},{banks:[0,9,8,8],repeat:1}];
+  const blockRequest = E.req.bankSong(1,blockRows);
+  ok(JSON.stringify(E.parse[E.CMD.BANK_SONG]([1,0,2,0,0,0,...blockRequest[1].slice(2)]).rows)===JSON.stringify(blockRows), "SONG v3 preserves a block across section boundaries");
+  let orphan=false; try { E.req.bankSong(1,[{banks:[9,1,8,8],repeat:1}]); } catch { orphan=true; }
+  ok(orphan, "SONG v3 rejects a continuation without its source block");
+  const loopInfo=E.parse[E.CMD.INFO]([...base,0,0x55,1,9,0x4d,2,64,1,0x42,1,3,0x50,4,8,64]);
+  ok(loopInfo.songLoop && loopInfo.songBlocks, "SONG v4 advertises the loop setting");
+  ok(eq(E.req.bankSong(4,[],1)[1],[4,1]) && E.parse[E.CMD.BANK_SONG]([4,0,0,0,0,0,1]).loop, "SONG v4 loop request and reply preserve the setting");
+  const loopMock=E.makeMockDevice({auto:false,advancedSong:true,songLoop:true});
+  const loopLink=new E.Link(d=>[...loopMock.access.outputs.values()][0].send(d),{timeout:100});
+  [...loopMock.access.inputs.values()][0].onmidimessage=e=>loopLink.receive(e.data);
+  const loopReply=E.parse[E.CMD.BANK_SONG](await loopLink.request(E.req.bankSong(4,[],1)));
+  const keepLoop=E.parse[E.CMD.BANK_SONG](await loopLink.request(E.req.bankSong(1,blockRows)));
+  ok(loopReply.loop && keepLoop.loop,"SONG v4 retains loop mode when editing the arrangement");
+  loopLink.close();loopMock.stop();
+  let tooLong=false; try { E.req.bankSong(1,[...longRows,longRows[0]]); } catch { tooLong=true; }
+  ok(tooLong, "SONG v2 rejects more than 64 sections");
   const B=await import("./fm1backup.js");
   const ids=[0,1,2,3,4,5,6,7,8], manifest=[1,0,9];
   ids.forEach(id=>manifest.push(id,...B.bkU32(id===0?20224:id===1?604:0),...B.bkU32(0)));

@@ -93,7 +93,7 @@ static void track_blank(uint32_t k)
     t->p[P_ROOT] = TSEL->p[P_ROOT];                     /* the song's key */
     scale_share(TSEL);
     fm1_irq_off();
-    for (b = 0; b < NPAT; b++) {                        /* the other patterns empty too */
+    for (b = 0; b < trk_npat(k % NTRK); b++) {          /* the other patterns empty too */
         pattern_t p;
         pattern_read(k % NTRK, b, &p);
         for (i = 0; i < NSTEP; i++)
@@ -102,6 +102,7 @@ static void track_blank(uint32_t k)
             p.timing[i] = TP[P_SLEN + i].def;
         pattern_write(k % NTRK, b, &p);
     }
+    memset(pattern_sound[k % NTRK], 0, sizeof pattern_sound[0]);
     pattern_switch(t, 0);
     t->pattern_next = 0xff;
     t->pattern_gen++;

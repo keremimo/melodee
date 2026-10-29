@@ -35,18 +35,26 @@
 #ifndef MELODEE_UART
 #define MELODEE_UART 1           /* TRS MIDI IN on UART1 / PH8 */
 #endif
+#ifndef MELODEE_BLE
+#define MELODEE_BLE 1           /* Optimist LE MIDI: one bidirectional peripheral or central link */
+#endif
 #ifndef MELODEE_ID
 #define MELODEE_ID "FM-1_900"    /* package identity (build.py: the .fwsc marker string) */
 #endif
 #ifndef MELODEE_VERSION
-#define MELODEE_VERSION "v1.5.1" /* shown in the menu, the console and the editor; build.py --release X.Y[.Z] */
+#define MELODEE_VERSION "v1.6.0-rc.7" /* shown in the menu, the console and the editor; build.py --release X.Y[.Z] */
 #endif
 #if MELODEE_OTA && !MELODEE_FLASH
 #error "MELODEE_OTA needs MELODEE_FLASH"
 #endif
 
+/* the resource region (res.c): data read in place at 0xEA020 (app.ld .mres), installed after an update */
+#define MELODEE_RES __attribute__((section(".mres"), aligned(4)))
+#define RES_OK() (res_ok != 0u)
+
 /* ------------------------------------------------------------- HAL --- */
 #include <stdint.h>
+static uint8_t res_ok;                  /* res.c: installed and this build's; else the readers fall back */
 #include "fm1_time.h"
 #include "fm1_sys.h"
 #include "fm1_power.h"
@@ -83,7 +91,13 @@
 /* ------------------------------------------------- MIDI, sequencer --- */
 #define MIDI_TIME_NOW() fm1_ticks()
 #define MIDI_TICKS_PER_MS (1000u * FM1_TICKS_PER_US)
+#if MELODEE_BLE
+#include "midi_ble.h"
+#endif
 #include "usb.c"
+#if MELODEE_BLE
+#include "midi_ble.c"
+#endif
 #if MELODEE_UART
 #include "midi_uart.c"
 #endif
@@ -106,6 +120,7 @@
 #include "fm1_flash.h"
 #include "storage_hw.c"
 #include "storage.c"
+#include "res.c"                 /* the resource region (needs the storage hooks) */
 #endif
 #include "upreset.c"             /* user presets (RAM mirror; flash with MELODEE_FLASH) */
 #include "project.c"

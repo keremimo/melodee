@@ -2,16 +2,17 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Complete musical archive: no raw addresses are accepted. Objects are staged
- * in bounded RAM or an unpublished A/B copy, then validated before publication.
+ * in bounded RAM or the shared unpublished project workspace, then validated before publication.
  * Runtime and saved projects include all 32 pattern banks. Retired user sample
  * slots are absent from the inventory and cannot be restored over project data.
  */
 #ifndef ED_BK_FLASH_PTR
 #define ED_BK_FLASH_PTR(off) fm1_xip_ptr(off)
 #endif
-static const uint8_t ED_BK_IDS[29] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28};
+/* 2..5: projects 1..4; 64..91: projects 5..32 (project.c PROJ_SLOTS) */
+static const uint8_t ED_BK_IDS[57] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91};
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
-#define ED_BK_MAX BANK_STORE_SIZE
+#define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a compact one (project_stream.c PJ_HEAD) */
 #define ED_BK_RAW (wire_take())             /* reuse the existing serialized main-loop scratch */
 #define ed_bk_set set_rec    /* id 1: the settings record (+ the template), in the settings save's staging (project.c):
                              * a save while a backup runs rewrites it, and the archive's CRC then fails */
@@ -23,11 +24,12 @@ static uint32_t ed_bk_source_obj, ed_bk_source_copy, ed_bk_source_crc;
 /* Runtime LIST snapshots and PUT uploads have exclusive lifetimes. Neither
  * has a committed header until an explicitly validated saved-slot restore. */
 static st_stream_t ed_bk_stage;
-static int ed_bk_project(uint32_t id){return id==0u || (id>=2u && id<=5u);}
 /* Profiling builds keep the original RAM-only archive workspace. Guarded
  * sessions must capture and restore live music without any flash mutation. */
 static int ed_bk_ram_only(void){return AUDIO_LAB_GUARDED();}
 #endif
+static int ed_bk_project(uint32_t id){return id==0u || (id>=2u && id<=5u) || (id>=64u && id<60u+PROJ_SLOTS);}
+static uint32_t ed_bk_slot(uint32_t id) { return id < 6u ? id - 2u : id - 60u; }   /* a saved project's id -> slot */
 static void ed_bk_u32(uint32_t n) { for (uint32_t i = 0; i < 5u; i++) ed_b((n >> (i * 7u)) & 127u); }
 static uint32_t ed_bk_r32(const uint8_t *p)
 {
@@ -70,23 +72,24 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
     if (id == 0u) {
         *len=BANK_STORE_SIZE;
 #if MELODEE_FLASH
-        if(!ed_bk_ram_only()){ed_bk_source_obj=ed_bk_stage.obj;ed_bk_source_copy=ed_bk_stage.head.slot;ed_bk_source_crc=ed_bk_stage.head.crc;}
+        if(!ed_bk_ram_only()){*len=ed_bk_stage.head.len;ed_bk_source_obj=ed_bk_stage.obj;ed_bk_source_copy=ed_bk_stage.head.slot;ed_bk_source_crc=ed_bk_stage.head.crc;}   /* (compact) */
 #endif
         return ED_BK_RAW;
     }
     if (id == 1u) { *len = ed_bk_set_len; return (const uint8_t *)&ed_bk_set; }
-    if (id >= 2u && id <= 5u) {
-        uint32_t slot = id - 2u;
+    if (id && ed_bk_project(id)) {
+        uint32_t slot = ed_bk_slot(id);
 #if MELODEE_FLASH
         st_hdr_t h;
-        uint32_t obj = OBJ_BANK0 + slot;
+        uint32_t obj = st_proj_obj(slot);
         int copy = st_current(obj, &h);
         if (copy >= 0) {
             *len = h.len; ed_bk_source_obj = obj; ed_bk_source_copy = (uint32_t)copy; ed_bk_source_crc = h.crc;
-            return ED_BK_FLASH_PTR(st_sector(obj, (uint32_t)copy) + ST_PAYLOAD_OFF);
+            return ED_BK_FLASH_PTR(st_sector(obj, (uint32_t)copy) + st_payload_off_header(obj, &h));
         }
         return ED_BK_RAW;                   /* empty: a valid pointer, zero length */
 #else
+        if (slot >= 4u) return (const uint8_t *)&proj_slot[0];   /* (host fixtures: four slots) */
         if (bank_valid(proj_bank_slot[slot], BANK_STORE_SIZE) &&
             !memcmp(proj_bank_slot[slot] + 8u, &proj_slot[slot], sizeof proj_slot[slot])) {
             *len = BANK_STORE_SIZE; return proj_bank_slot[slot];
@@ -113,7 +116,7 @@ static uint32_t ed_bk_capture(void)
 #endif
     {
     if(!flash_ok || !proj_image_capture(1))return 2;
-    if(proj_stream_generate(&ed_bk_stage,OBJ_BANK0+(proj_cur<4u?proj_cur:0u)))return 4;
+    if(proj_stream_generate(&ed_bk_stage,st_proj_obj(proj_cur<PROJ_SLOTS?proj_cur:0u)))return 4;
     }
 #else
     project_capture(&proj_scratch);
@@ -170,7 +173,7 @@ static uint32_t ed_bk_commit_inner(void)
     if(ed_bk_project(ed_bk_id) && ed_bk_len && !ed_bk_ram_only()){
         if(ed_bk_pos!=ed_bk_len || ~ed_bk_stage.crc!=ed_bk_crc || st_stream_check(&ed_bk_stage) ||
            !proj_stream_load(ed_bk_stage.obj,ed_bk_stage.head.slot,ed_bk_len))return 2;
-        int full=bank_full(ed_bk_len);
+        int full=bank_full(ed_bk_len)||pj.on;
         if(!ed_bk_id){
             up_boot();if(up_migration_error)return 4;
             if(project_restore_runtime(&proj_scratch))return 2;
@@ -178,20 +181,20 @@ static uint32_t ed_bk_commit_inner(void)
             return 0;
         }
         if(!full){
-            proj_bound(&proj_scratch);chain_defaults(&proj_scratch.chain);
+            proj_bound(&proj_scratch);chain_legacy_defaults(&proj_scratch.chain);
             if(!bank_pack_tail(proj_image_tail(),&proj_scratch,0))return 2;
             if(proj_stream_generate(&ed_bk_stage,ed_bk_stage.obj))return 4;
         }
-        if(proj_publish_slot(ed_bk_id-2u,&ed_bk_stage))return 4;
-        if(proj_cur==ed_bk_id-2u)proj_cur=PROJ_NO_SLOT;
+        if(proj_publish_slot(ed_bk_slot(ed_bk_id),&ed_bk_stage))return 4;
+        if(proj_cur==ed_bk_slot(ed_bk_id))proj_cur=PROJ_NO_SLOT;
         sync_reload=1;ui.force=1;return 0;
     }
 #endif
     if (ed_bk_pos != ed_bk_len || st_crc32(raw, ed_bk_len) != ed_bk_crc) return 2;
-    if (ed_bk_id == 0u || (ed_bk_id >= 2u && ed_bk_id <= 5u)) {
+    if (ed_bk_project(ed_bk_id)) {
 #if !MELODEE_FLASH || MELODEE_AUDIO_PROFILE
         int full = bank_full(ed_bk_len);
-        bank_wide = 0;
+        bank_wide = bank_p16 = 0;
         if (ed_bk_len && !(full ? bank_valid(raw, ed_bk_len) : proj_import(&proj_scratch, raw, (int)ed_bk_len))) return 2;
         if (ed_bk_id == 0u) {
             if (!ed_bk_len) return 2;
@@ -204,13 +207,13 @@ static uint32_t ed_bk_commit_inner(void)
             return 0;
         }
         if (ed_bk_len && !full) {
-            proj_bound(&proj_scratch); chain_defaults(&proj_scratch.chain);
+            proj_bound(&proj_scratch); chain_legacy_defaults(&proj_scratch.chain);
             if (!bank_pack(raw, &proj_scratch, 0)) return 2;
             ed_bk_len = BANK_STORE_SIZE;
         }
 #endif
-        if (proj_write_slot(ed_bk_id - 2u, raw, ed_bk_len)) return 4;
-        if (proj_cur == ed_bk_id - 2u) proj_cur = PROJ_NO_SLOT;
+        if (proj_write_slot(ed_bk_slot(ed_bk_id), raw, ed_bk_len)) return 4;
+        if (proj_cur == ed_bk_slot(ed_bk_id)) proj_cur = PROJ_NO_SLOT;
         sync_reload = 1; ui.force = 1;
         return 0;
     } else if (ed_bk_id == 1u) {
@@ -233,7 +236,7 @@ static uint32_t ed_bk_commit_inner(void)
             memcpy(&tm, t + tl - 4u, 4);
         }
         if (!(ed_bk_len>=sizeof *p && ed_bk_len<=sizeof ed_bk_set && p->magic==PERSIST_MAGIC &&
-              p->ext.usb_off<=3u && p->ext.boot<=4u &&
+              p->ext.usb_off<=3u && p->ext.boot<=PROJ_SLOTS &&
               (ed_bk_len==sizeof *p || tmpl_blob_valid(t,tl))) || !palette_stored_ok(p->palette) ||
             p->lowcut > 2u || (p->zoom & 0xFFu) > 1u || (p->zoom > 0xFFu && (p->zoom & 0xFFFF0000u) != RECORD_PREF_TAG) || !hold_stored_ok(p->bold) || p->favorites.filter > 1u || !ed_bk_panel_valid(&p->panel)) return 2;
         if(tl && ed_bk_len>sizeof *p && !tmpl_blob_valid(t,tl))return 2;
@@ -270,6 +273,11 @@ static uint32_t ed_bk_commit_inner(void)
         panel_init(); settings_init(); palette_set(settings.palette);
 #if MELODEE_FLASH
         persist_saved = ed_bk_set.p; persist_pending = persist_repair = 0;
+#if MELODEE_BLE
+        /* The musical archive contains preferences/template, not device keys.
+         * Reattach this device's BLE trailer on the next quiet A/B save. */
+        persist_pending = 1; mb_revision++;
+#endif
 #endif
     }
     sync_reload = 1; ui.force = 1;
@@ -278,22 +286,22 @@ static uint32_t ed_bk_commit_inner(void)
 static uint32_t ed_bk_commit(void) { return ed_bk_commit_inner(); }
 static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
 {
-    if (n < 2u || a[0] > 3u || a[1] > 28u) return 1;
+    if (n < 2u || a[0] > 3u || (a[1] > 28u && !ed_bk_project(a[1]))) return 1;
     if (ed_flash_stop()) return 3;
     if (a[0] == 0u) {
         if (n != 12u || a[6] > 15u || a[11] > 15u) return 1;
         uint32_t len = ed_bk_r32(a + 2);
-        if (len > ED_BK_MAX || (a[1] == 0u && !bank_full(len) && len != sizeof(project_store_t)) ||
+        if (len > ED_BK_MAX || (a[1] == 0u && !len) ||
             (a[1] == 1u && len != sizeof(persist_t) && !tmpl_param_count(len - sizeof(persist_t))) ||
-            (a[1] >= 2u && a[1] <= 5u && len && !bank_full(len) && len != sizeof(project_store_t)) ||
+            (!ed_bk_project(a[1]) && len > BANK_STORE_SIZE) ||
             (ed_bk_preset_bank(a[1])<UP_BANKS && len>3840u) ||
             (a[1]==8u && len)) return 1;
         ed_bk_valid=ed_bk_put=0;
         ed_bk_gen=++proj_wire_gen;
 #if MELODEE_FLASH
         if(ed_bk_project(a[1]) && len && !ed_bk_ram_only()){
-            uint32_t slot=a[1]?a[1]-2u:proj_cur<4u?proj_cur:0u;
-            if(!flash_ok || st_stream_begin(&ed_bk_stage,OBJ_BANK0+slot,len))return 4;
+            uint32_t slot=a[1]?ed_bk_slot(a[1]):proj_cur<PROJ_SLOTS?proj_cur:0u;
+            if(!flash_ok || st_stream_begin(&ed_bk_stage,st_proj_obj(slot),len))return 4;
         }else if(len>sizeof proj_wire_u.raw)return 1;
 #endif
         ed_bk_put = 1; ed_bk_id = a[1]; ed_bk_len = len;
@@ -333,7 +341,7 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             const uint8_t *p = ed_bk_object(ED_BK_IDS[i], &len);
             uint32_t crc;
 #if MELODEE_FLASH
-            if (ed_bk_source_obj < OBJ_COUNT) crc = ed_bk_source_crc;
+            if (st_obj_ok(ed_bk_source_obj)) crc = ed_bk_source_crc;
             else
 #endif
                 crc = st_crc32(p, len);
@@ -350,7 +358,8 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             n != 8u || a[5] > 15u || !p || !count || count > 256u || off > len || count > len - off ? 1u : 0u;
         uint32_t data_off = off;
 #if MELODEE_FLASH
-        if (!rc && ed_bk_source_obj < OBJ_COUNT) {
+        if (!rc && !a[0] && !ed_bk_ram_only() && ed_bk_stage.generation != st_stream_generation) rc = 5;
+        if (!rc && st_obj_ok(ed_bk_source_obj)) {
             if (st_read_range(ed_bk_source_obj, ed_bk_source_copy, off, ed_transfer_buf, count)) rc = 4;
             p = ed_transfer_buf; data_off = 0;
         }

@@ -95,6 +95,9 @@ void fm1_timer5_irq(void)
         owed &= ~2u;
     }
 #endif
+#if MELODEE_BLE
+    if (!melodee_dbg.in_audio) mel_ble_drain();
+#endif
     if (melodee_dbg.in_audio) {
         melodee_dbg.nested++;
         uint32_t elapsed=fm1_ticks()-t0;t5_nested_ticks+=elapsed;
@@ -194,6 +197,23 @@ static void melodee_init(void)
     ui.force = 1;
 }
 
+#if MELODEE_BLE
+static int mel_ble_flash_read(void *ctx, uint32_t off, uint8_t *dst, uint32_t n)
+{
+    (void)ctx;
+    /* Read only. Never erase or write a stock VM candidate. */
+    if (off > 0x100000u || n > 0x100000u - off) return -1;
+    return st_read(off, dst, n);
+}
+static void mel_ble_radio_start(const struct ble_rf_trims *t)
+{
+    uint32_t ie = fm1_icfg(); fm1_irq_off();
+    audio_silence();
+    /* No render can start while IRQs are off; CPU1 is in its resident idle loop. */
+    ble_hw_wl82_start(t);
+    fm1_icfg_set(ie);
+}
+#endif
 static void fm1_main(void)
 {
     int32_t knob = 512 * 16;
@@ -206,6 +226,9 @@ static void fm1_main(void)
     lcd_sync();
     dsp_tables_init();                        /* the RAM lookup tables (FM6), before anything renders */
     persist_boot();
+#if MELODEE_BLE
+    mel_ble_boot();
+#endif
 #if MELODEE_OTA
     if (flash_ok && boot_work.state != 2u)
         ota_boot_cleanup();                             /* staging area left by an update */
@@ -262,6 +285,7 @@ static void fm1_main(void)
     glo_restore();                            /* CLK TUNE MIDI ROUT as last used, */
     project_boot();                           /* then the BOOT project or the template (theirs win) */
     fm1_delay_ms(400);
+    fm1_audio_unmute();                       /* the codec settled on silent I2S since audio_init: no cold-boot click */
     if (boot_work.state != 2u)
         lcd_fill(0, 0, 240, 240, T_BG);
 
@@ -368,6 +392,10 @@ static void fm1_main(void)
         melodee_dbg.stage = 1;
         ui_input();
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
+#if MELODEE_BLE
+        mel_ble_poll();
+        if (mb_revision != mb_committed) persist_pending = 1;
+#endif
         settings_poll();                              /* queued settings save: only while stopped */
         melodee_dbg.stage = 2;
         ui_leds();

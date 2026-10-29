@@ -44,7 +44,7 @@ static int stage_seq_idle(uint32_t k)
     uint32_t b;
     if (trk[k].pattern_next < NPAT || ((song.rec >> k) & 1u))
         return 0;
-    for (b = 0; b < NPAT; b++)
+    for (b = 0; b < trk_npat(k); b++)
         if (!pattern_empty(k, b))
             return 0;
     return 1;
@@ -458,7 +458,9 @@ static void stage_row(uint32_t k)
     uint16_t tc = mute ? T_DIM : T_TRK(k), bg = ux_mix(T_BG, tc, sel ? 24 : 11);   /* (the track's tint) */
     const aafont_t *lf = TY_LB, *nf = h >= 80 ? TY_VL : TY_TX;
     char nm[24], line[48], more[48], ml[TL_MAX][32], d[3] = {(char)('1' + k), 0, 0}, role[16];
-    char pt[3] = {'P', (char)('1' + t->pattern % NPAT), 0}, pn[3] = {'P', (char)('0' + next), 0};
+    char pt[4] = {'P', 0, 0, 0}, pn[4] = {'P', 0, 0, 0};
+    pat_num(pt + 1, t->pattern);
+    if (next) pat_num(pn + 1, next - 1u);
     uint32_t nx = 0, i;
     int32_t pw = text_w(lf, pt) + 8, pills = idle ? 0 : pw + (next ? pw + 4 : 0);   /* (the pattern, the next one) */
     if (pending) {                                      /* browsing: the sound the list shows, not yet loaded */

@@ -23,9 +23,11 @@
 #define PAT_BLOCKS ((NSTEP + PAT_BLOCK_STEPS - 1u) / PAT_BLOCK_STEPS)
 #define PAT_CHUNK_BYTES 16u
 #define PAT_BLOCK_CHUNKS ((PAT_BLOCK_STEPS * STEP_PACKED_BYTES + PAT_CHUNK_BYTES - 1u) / PAT_CHUNK_BYTES)
-#define PAT_SHARED_LIMIT (NPAT > 8u || NSTEP > 64u)
+#define PAT_SHARED_LIMIT 0                       /* (a RAM budget shared by the banks: the pool holds them all dense instead) */
 #define PAT_DENSE_BUDGET (NTRK * 8u * 4u * PAT_BLOCK_CHUNKS)
-#define PAT_CHUNKS (PAT_SHARED_LIMIT ? PAT_DENSE_BUDGET : NTRK * (NPAT - 1u) * PAT_BLOCKS * PAT_BLOCK_CHUNKS)
+/* every inactive bank dense: the parts' NPAT - 1, the MIDI-only tracks' NPAT_MIDI - 1. Encoding a bank never runs out
+ * (whatever path wrote the playing pattern); what a project may hold is the save's room (pattern_room) */
+#define PAT_CHUNKS ((NPART * (NPAT - 1u) + NMIDI * (NPAT_MIDI - 1u)) * PAT_BLOCKS * PAT_BLOCK_CHUNKS)
 #define PAT_RETAINED_CHUNKS (PAT_CHUNKS < 960u ? PAT_CHUNKS : 960u)   /* (the retained SRAM .noinit leaves) */
 #define PAT_NONE 0x7FFFu
 #define PAT_REPEAT 0x8000u
@@ -40,8 +42,8 @@ static uint8_t pattern_chunks_ram[PAT_CHUNKS - PAT_RETAINED_CHUNKS][PAT_CHUNK_BY
 /* Links and staging with the large buffers too: the MIDI-only tracks' banks outgrew data SRAM */
 static uint16_t pattern_link[PAT_CHUNKS] __attribute__((section(".pool")));
 static uint16_t pattern_free, pattern_pool_used, pattern_pool_peak;
-static pattern_block_t pattern_blocks[NTRK][NPAT][PAT_BLOCKS];
-static int16_t pattern_timings[NTRK][NPAT][4];
+static pattern_block_t pattern_blocks[NTRK][NPAT][PAT_BLOCKS] __attribute__((section(".pool")));
+static int16_t pattern_timings[NTRK][NPAT][4] __attribute__((section(".pool")));
 static struct { pattern_t data; uint8_t bank, pending; } pattern_stage[NTRK] __attribute__((section(".pool")));
 static uint32_t pattern_fallbacks;
 static volatile uint8_t pattern_full;
@@ -151,30 +153,57 @@ static uint32_t pattern_total_cost(void)
     }
     return cost;
 }
+/* What a project may hold is what its save can: FBKP keeps a bank with something in it as an 8-byte step mask plus
+ * 8 bytes a step set (pattern_store.c pattern_room: the tail's room for them). Edits past it are refused
+ * (PATTERN STORAGE FULL) so the music can always be saved; loading a project (pattern_loading) is not. Every bank
+ * counts, the parts' playing ones too (the FUN record keeps those: conservative). */
+static uint32_t pattern_room(void);
+static uint8_t pattern_loading;
+static uint32_t pattern_steps_n(const step_t *steps, uint32_t n)
+{
+    step_t empty = {{0}, 0, ST_REST};
+    uint32_t c = 0;
+    for (uint32_t i = 0; i < n; i++) c += (uint32_t)(memcmp(&steps[i], &empty, sizeof empty) != 0);
+    return c;
+}
+static uint32_t pattern_bank_steps(uint32_t k, uint32_t bank)
+{
+    if (bank == trk[k].pattern) return pattern_steps_n(trk[k].step, NSTEP);
+    if (pattern_stage[k].pending && pattern_stage[k].bank == bank) return pattern_steps_n(pattern_stage[k].data.step, NSTEP);
+    uint32_t c = 0;
+    for (uint32_t b = 0; b < PAT_BLOCKS; b++) c += (uint32_t)__builtin_popcount(pattern_blocks[k][bank][b].mask);
+    return c;
+}
+static uint32_t pattern_file_bytes(uint32_t n) { return n ? 8u + 8u * n : 0u; }
+static uint32_t pattern_file_cost(void)
+{
+    uint32_t c = 0;
+    for (uint32_t k = 0; k < NTRK; k++)
+        for (uint32_t b = 0; b < trk_npat(k); b++) c += pattern_file_bytes(pattern_bank_steps(k, b));
+    return c;
+}
+/* bank of track k holding n steps set instead of what it holds now: still saveable */
+static int pattern_fits(uint32_t k, uint32_t bank, uint32_t n)
+{
+    if (pattern_loading) return 1;
+    uint32_t now = pattern_file_bytes(pattern_bank_steps(k, bank)), next = pattern_file_bytes(n);
+    return next <= now || pattern_file_cost() - now + next <= pattern_room();
+}
 /* Call under the same guard as the eventual publication. Querying room never
  * flushes staging or invalidates a prepared pattern. */
 static int pattern_can_write(uint32_t k, uint32_t bank, const pattern_t *p)
 {
-    if (k >= NTRK || bank >= NPAT) return 0;
-#if PAT_SHARED_LIMIT
-    return pattern_total_cost() - pattern_bank_cost(k, bank) + pattern_steps_cost(p->step, NSTEP) <= PAT_DENSE_BUDGET;
-#else
-    (void)p; return 1;
-#endif
+    if (k >= NTRK || bank >= trk_npat(k)) return 0;
+    return pattern_fits(k, bank, pattern_steps_n(p->step, NSTEP));
 }
 static int pattern_set_step(track_t *t, uint32_t index, const step_t *step)
 {
     if (index >= NSTEP) return 0;
-    uint32_t f = pattern_guard();
-#if PAT_SHARED_LIMIT
-    uint32_t base = index / PAT_BLOCK_STEPS * PAT_BLOCK_STEPS;
-    step_t block[PAT_BLOCK_STEPS]; memcpy(block, t->step + base, sizeof block);
-    block[index - base] = *step;
-    if (pattern_total_cost() - pattern_steps_cost(t->step + base, PAT_BLOCK_STEPS) +
-        pattern_steps_cost(block, PAT_BLOCK_STEPS) > PAT_DENSE_BUDGET) {
-        pattern_full = 1; pattern_unguard(f); return 0;
-    }
-#endif
+    uint32_t f = pattern_guard(), k = (uint32_t)(t - trk);
+    step_t empty = {{0}, 0, ST_REST};
+    uint32_t n = pattern_steps_n(t->step, NSTEP) - (uint32_t)(memcmp(&t->step[index], &empty, sizeof empty) != 0) +
+                 (uint32_t)(memcmp(step, &empty, sizeof empty) != 0);
+    if (!pattern_fits(k, t->pattern, n)) { pattern_full = 1; pattern_unguard(f); return 0; }
     t->step[index] = *step; pattern_unguard(f); return 1;
 }
 static void pattern_encode_block(pattern_block_t *b, const step_t *steps)
@@ -310,6 +339,7 @@ static void pattern_apply(track_t *t, uint32_t bank)
 }
 static void pattern_init(void)
 {
+    song_sound_reset();
     recording_reset(); pattern_epoch++;
     pattern_pool_used = pattern_pool_peak = 0; pattern_fallbacks = 0; pattern_free = 0; pattern_full = 0;
     for (uint32_t i = 0; i < PAT_CHUNKS; i++) pattern_link[i] = (uint16_t)(i + 1u < PAT_CHUNKS ? i + 1u : PAT_NONE);
@@ -326,5 +356,7 @@ static void pattern_init(void)
 }
 static void pattern_switch(track_t *t, uint32_t bank)
 {
-    pattern_commit(t); pattern_apply(t, bank); t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
+    pattern_commit(t); pattern_apply(t, bank);
+    if (song.playing) pattern_sound_switch((uint32_t)(t - trk), bank);
+    t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
 }

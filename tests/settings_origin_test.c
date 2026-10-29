@@ -24,7 +24,7 @@ static int defaults(void)
     int ok = settings.palette == UI_DEFAULT_INDEX && !settings.zoom && !settings.lowcut &&
         !settings_boot && settings_drumch == 10u && settings_hold == HOLD_DEF &&
         settings_lights == LIGHTS_MID && tuning_a4 == A4_DEFAULT &&
-        settings_autosave && !settings_screen && !settings_click && settings_click_level == 1u &&
+        settings_autosave && !settings_screen && !settings_click && settings_click_level == CLICK_LEVEL_DEFAULT &&
         !settings_countin && !settings_preview && !settings_chord_add &&
         !ua_off && !ua_off_want && !ua_tracks && !ua_tracks_want &&
         !memcmp(&panel, &PANEL_DEFAULT, sizeof panel) && !template_used() && !template_old();

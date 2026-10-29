@@ -13,7 +13,7 @@ static void queue_fixture(uint32_t count)
         for(uint32_t s=0;s<NSTEP;s++){trk[tr].step[s].time=ST_NOTE;trk[tr].step[s].flags=SF_RECORDED;}
     }
     for(uint32_t i=0;i<count;i++){
-        recorded_note_t r={0};r.duration=1000;r.note=(uint8_t)(i%128u);r.vel=100;r.step=(uint8_t)(i%64u);
+        recorded_note_t r={0};r.duration=1000;recorded_set_note(&r,(uint8_t)(i%128u));r.vel=100;r.step=(uint8_t)(i%64u);
         recording_restore_note(TSEL,i,r);
     }
     recording_reindex();
@@ -60,7 +60,7 @@ static int queue_invariants(void)
 static int rollover_and_retrigger(void)
 {
     queue_fixture(2);track_t *t=TSEL;
-    recording[0].note=0;recording[1].note=127;recording[0].duration=recording[1].duration=100;
+    recorded_set_note(&recording[0],0);recorded_set_note(&recording[1],127);recording[0].duration=recording[1].duration=100;
     recording_clock[0]=UINT32_MAX-99u;
     recording_fire(t,0,RECORD_UNIT,0);recording_fire(t,1,RECORD_UNIT,0);
     int bad=check("pitch 0/127 release tags and a zero deadline remain active",recording_run[0].left==0 && recording_sounding(0) && recording_message[0]==128 && recording_message[1]==255 && queue_invariants());
@@ -131,7 +131,7 @@ static void spread_fixture(const uint32_t share[NTRK])
 {
     recording_reset();queue_fixture(0);
     for(uint32_t tr=0,i=0;tr<NTRK;tr++)for(uint32_t k=0;k<share[tr];k++,i++){
-        recorded_note_t r={0};r.duration=(uint16_t)(1000u+(i*7919u)%50000u);r.note=(uint8_t)(i%128u);r.vel=100;
+        recorded_note_t r={0};r.duration=(uint16_t)(1000u+(i*7919u)%50000u);recorded_set_note(&r,(uint8_t)(i%128u));r.vel=100;
         r.step=(uint8_t)(i%64u);recorded_set_owner(&r,recording_owner(&trk[tr]));
         recording_restore_note(&trk[tr],i,r);
     }

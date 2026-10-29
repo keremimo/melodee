@@ -32,7 +32,7 @@ from fm1_install import STOCK_V15_SHA256, logical_image, product_of
 from fm1pkg_make import chipkey_decode, crc16, enc, sfc
 
 APP_LO, APP_HI, FLASH_SIZE, SECTOR = 0x4000, 0x93000, 0x100000, 4096
-VERSION = "1.5.1"
+VERSION = "1.6.0-rc.7"
 LOADER_SHA256 = "d9de9f1c81a3bb52998e5bced678f0ca851223014a7d43965b03f0719a44eb55"
 LOADER_ADDRESS = 0x1C02000
 

@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Synthetic CPU playback workloads. Reuse the actual serializer/validator;
  * no personal input, project slots or snapshot files. --emit writes only the
- * temporary FBKK runtime bytes to stdout for the guarded Python runner. */
+ * temporary FBKP runtime bytes to stdout for the guarded Python runner. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 #include <assert.h>
@@ -42,14 +42,14 @@ static int make_fixture(uint32_t count,uint32_t quant,uint32_t spread,uint32_t t
         uint32_t on=quant?0u:8192u+(local*1777u)%49152u;
         uint32_t round=!quant && on>=32768u,view=(cell+round)%NSTEP;
         recorded_note_t r={0};r.on=(uint16_t)on;r.duration=(uint16_t)(14000u+(i*109u)%42000u);
-        r.note=category>=4u?DRUM_LANE_NOTE[(cell+group)%NLANE]:(uint8_t)(48u+(cell%12u)+group*3u);
-        r.vel=(uint8_t)(70u+i%58u);r.owner=(uint8_t)(k*NPAT+(tails?3u<<5:0));
+        recorded_set_note(&r,category>=4u?DRUM_LANE_NOTE[(cell+group)%NLANE]:(uint8_t)(48u+(cell%12u)+group*3u));
+        r.vel=(uint8_t)(70u+i%58u);recorded_set_owner(&r,k*NPAT);recorded_set_exponent(&r,tails?3u:0u);
         r.step=(uint8_t)(cell|(round?64u:0u)|(round && cell==63u?128u:0u));
         recording[i]=r;
         step_t *s=&t->step[view];s->time=ST_NOTE;s->flags|=SF_RECORDED;s->vel=r.vel;
-        uint32_t j=0;for(;j<s->n && s->note[j]!=r.note;j++);
-        if(j==s->n && s->n<4u)s->note[s->n++]=r.note;
-        if(category>=4u)for(uint32_t lane=0;lane<NLANE;lane++)if(DRUM_LANE_NOTE[lane]==r.note)s->hit|=1u<<lane;
+        uint32_t j=0;for(;j<s->n && s->note[j]!=recorded_note(&r);j++);
+        if(j==s->n && s->n<4u)s->note[s->n++]=recorded_note(&r);
+        if(category>=4u)for(uint32_t lane=0;lane<NLANE;lane++)if(DRUM_LANE_NOTE[lane]==recorded_note(&r))s->hit|=1u<<lane;
         assert(recording_valid(&r));
     }
     recording_reindex();memcpy(fixture_notes,recording,sizeof recording);
@@ -62,7 +62,7 @@ static int make_fixture(uint32_t count,uint32_t quant,uint32_t spread,uint32_t t
     if(memcmp(recording,fixture_notes,sizeof fixture_notes))return 0;
     uint32_t active=0,owners=0;
     for(uint32_t i=0;i<RECORD_MAX;i++)if(recording[i].vel){
-        active++;owners|=1u<<((recording[i].owner&31u)/NPAT);
+        active++;owners|=1u<<(recorded_owner(&recording[i])/NPAT);
         if(!recording_present(&recording[i]))return 0;
         if((quant && recording[i].on) || (!quant && !recording[i].on))return 0;
     }

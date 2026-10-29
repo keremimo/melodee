@@ -45,6 +45,8 @@ static uint32_t micro_snap(const track_t *t, int32_t pitch)
     relative -= cycle * s->pitch[s->count];
     while (degree + 1 < s->count && s->pitch[degree + 1] <= relative)
         degree++;
+    if (s->pitch[degree + 1] - relative < relative - s->pitch[degree])
+        degree++;
     return micro_degree_map(t, cycle * s->count + degree, 0, 1);
 }
 static uint32_t scale_note_period(const track_t *t)

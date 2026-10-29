@@ -58,7 +58,8 @@ def pack(patches):
     return ([f"#define P5_FACTORY_BYTES {per}u",
              "static const uint8_t P5_FBASE[133] = {"] + rows(base) + ["};",
              "static const uint8_t P5_FWIDTH[133] = {"] + rows(width) + ["};",
-             f"static const uint8_t P5_FPACK[{len(data)}] = {{"] + rows(list(data)) + ["};"])
+             "#ifndef MELODEE_RES", "#define MELODEE_RES  /* melodee.c: the resource region (res.c) */", "#endif",
+             f"static const uint8_t P5_FPACK[{len(data)}] MELODEE_RES = {{"] + rows(list(data)) + ["};"])
 
 
 def main():

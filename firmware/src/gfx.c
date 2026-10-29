@@ -37,6 +37,9 @@ typedef struct { const char *label; } kc_t;
 /* the type's roles (docs/design/README.md "Large type"): Rubik, or Melodee Pixel as Settings > FONT says (ui.c
  * ty_pixel). A role's two faces share its line height and baseline, so a layout holds in both; widths differ (a
  * layout fits the wider) */
+#ifndef RES_OK
+#define RES_OK() 1                               /* melodee.c: the resource region (res.c) is installed */
+#endif
 static uint32_t ty_pixel(void);
 #define TY_LB (ty_pixel() ? &AP_LB : &AF_LB)  /* labels, units, chips, tags: 16 px, pixel 2 x */
 #define TY_TX (ty_pixel() ? &AP_TX : &AF_TX)  /* names, rows, the header, text: 20 px, pixel 2 x */

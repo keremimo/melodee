@@ -61,7 +61,8 @@ Hold HOME to open the menu. The following device preferences also appear in
 the web editor's settings and survive power-off:
 
 - **AUDIO CLICK:** OFF, REC (while a track is armed and playback runs), or ON.
-- **CLICK LEVEL:** LOW, MID, HIGH. The first beat of each four-beat bar is accented.
+- **CLICK LEVEL:** 0..100 % (KNOB 1 steps 5 %), its own level apart from MASTER and the mixer; 100 % peaks at
+  full scale. The first beat of each four-beat bar is accented.
   This sets both metronome and count-in volume relative to mix MASTER;
   MASTER at zero silences both. The click goes to headphones/line out and
   speaker, after effects and USB capture, so recordings contain no click.

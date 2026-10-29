@@ -11,7 +11,8 @@ used as evidence of authorship.
 
 ## Controls
 
-Tap FX: track rack. Hold FX: silent effect keys. Double tap: lock the layer;
+Tap FX: track rack; on SONG, the section's saved punches using the same visual selector.
+Hold FX: silent effect keys. Double tap: lock the layer;
 tap again: unlock. Last pressed key wins; its release fades dry in 64 samples.
 A previously held musical key remains a musical key. Closing the layer while
 an effect key is still down leaves that effect active until its key releases.
@@ -38,8 +39,10 @@ Stop, project changes and modal cancellation end a request.
 
 ## Audio and memory
 
-The stereo master sum, including shared returns and master gain, enters punch
-DSP before the DC blocker and limiter. Stereo USB capture receives that master;
+The stereo master sum, including shared returns, enters punch DSP before the
+DC blocker and limiter. Master volume attenuates their finished output, so held
+loops, freeze and other sounding tails follow the volume knob, including silence
+at zero. Stereo USB capture receives that master;
 USB stems remain individual tracks. Buffered SLOOP effects intentionally use a
 mono PCM16 history, as upstream; filters/kills retain independent stereo state.
 Loops/gate align to local or externally clocked transport phase, and loop

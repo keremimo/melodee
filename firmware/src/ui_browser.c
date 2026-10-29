@@ -35,7 +35,7 @@ static int browser_can_back(void) { return browse_loads != browse_mark || browse
 /* the top: the track's numeral (filled in its colour), the list in its colour, the place at the right (or the message) */
 static void browser_top(uint32_t cur, uint32_t total)
 {
-    if (head_waiting()) { draw_head(); return; }
+    if (head_shared_status() || song_picker.active) { draw_head(); return; }
     char d[2] = {(char)('1' + song.sel % NTRK), 0}, r[20];
     const aafont_t *tf = TY_TX, *lf = TY_LB;
     int pending = browse_pending(), badge = pending && brw.x > 1u;
@@ -137,6 +137,7 @@ static void browser_draw(void)
  * since are one undo level: ui.c load_begin); either way back to Stage */
 static void browser_key(int keep)
 {
+    if (song_picker.active) { song_preset_finish(keep); return; }
     if (keep) {
         browse_commit();
     } else if (browser_can_back()) {

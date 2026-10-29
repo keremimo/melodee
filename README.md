@@ -57,6 +57,21 @@ to build and attest firmware from the tagged source. See [release verification](
 for the process and the command to check a downloaded package. An attestation establishes
 build provenance; hardware validation is a separate check.
 
+## 1.6 release candidate
+
+**[Melodee 1.6.0-rc.7](https://github.com/keremimo/melodee/releases/tag/v1.6.0-rc.7)** fixes
+two bugs: a song started from a later row no longer plays a burst of earlier
+recorded notes, and the dim key lights no longer shimmer. It keeps rc.6's CR-78
+and FM drum kits, a preset for each pattern, note lengths editable while
+playing, range and copy PITCH edits, pattern copy to another track,
+nearest-degree SNAP for microtonal scales, OCTAVE on SELECT, MASTER on the final
+output and USB HOST for audio+MIDI devices and two-chip hubs, with the 16
+patterns, shared project storage, section presets, timed punch FX and Bluetooth
+MIDI from earlier candidates.
+Stable remains 1.5.1; choose the candidate channel to try the RC. Read the
+[candidate release notes](docs/RELEASE_1.6.0-rc.7.md) for project-format
+compatibility and hardware-validation limits.
+
 ## What's new in 1.5.1
 
 - **Web editor connection hotfix:** fixes “Error: Invalid favorites reply” when connecting to 1.5 firmware.
@@ -1016,7 +1031,7 @@ The list also includes **54 microtonal selections**, for **70 scales in total**:
 selected equal divisions from 5 to 53, just intonation, harmonic scales, Partch, historical temperaments,
 maqam models, shruti, gamelan examples and Bohlen–Pierce. See the [complete catalogue and
 playing notes](assets/scales/README.md). QNT WHITE, ALL and MPC play consecutive degrees;
-SNAP rounds the keyboard and incoming MIDI pitches down to a scale degree. QNT OFF bypasses
+SNAP rounds the keyboard and incoming MIDI pitches to the nearest scale degree. QNT OFF bypasses
 microtonal tuning. ROOT and TRN shift pitch in ordinary semitones. The octave buttons,
 ARP OCT and chord voicings move by the scale's repeat period (3:1 for Bohlen–Pierce).
 Microtonal notes display as degrees, such as D1 and D3+1, and retain separate identities

@@ -177,6 +177,7 @@ static void fm6_rom_patch(const fm6_rom_t *r, uint8_t *v)   /* a Melodee factory
 static void fm6_factory(uint32_t k, uint8_t *pk)
 {
     uint8_t v[FP_SIZE + 1u];
+    if (!RES_OK()) { memcpy(pk, FM6_INIT, FM6_PACKED); return; }   /* (res.c: the factory voices not installed) */
     if (k < FM6_NFACTORY) {
         memcpy(pk, FM6_FACTORY[k], FM6_PACKED);
         return;

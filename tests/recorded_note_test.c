@@ -17,11 +17,11 @@ static void legacy_bytes(void)
         struct { uint16_t on,duration;uint8_t note,vel,owner,step;int8_t pitch;uint8_t length; } old={.on=52341,.duration=37421,.note=127,.vel=91,
             .owner=(uint8_t)(owner+32u*exponent),
             .step=(uint8_t)(step+64u*(flags&3u)),.pitch=-24,.length=(uint8_t)(flags>>2)};
-        recorded_note_t v={.on=52341,.duration=37421,.note=127,.vel=91,.pitch=-24};
+        recorded_note_t v={.on=52341,.duration=37421,.note7=127,.vel=91,.pitch=-24};
         recorded_set_owner(&v,owner);recorded_set_step(&v,step,flags&1u,flags&2u);
         recorded_set_exponent(&v,exponent);recorded_set_gate(&v,flags&4u);
         /* Canonical ten-byte fixtures stay independent of packed fields. */
-        uint8_t canonical[10]={v.on,v.on>>8,v.duration,v.duration>>8,v.note,v.vel,v.owner,v.step,(uint8_t)v.pitch,recorded_legacy_length(&v)};
+        uint8_t canonical[10]={v.on,v.on>>8,v.duration,v.duration>>8,recorded_note(&v),v.vel,v.owner,v.step,(uint8_t)v.pitch,recorded_legacy_length(&v)};
         assert(sizeof old==10u && !memcmp(&old,canonical,sizeof old));
     }
 }
@@ -31,7 +31,7 @@ static void expanded_edits(void)
     for (uint32_t step=0;step<128u;step++)
     for (uint32_t exponent=0;exponent<8u;exponent++)
     for (uint32_t flags=0;flags<8u;flags++) {
-        recorded_note_t v={.on=65535,.duration=49321,.note=0,.vel=127,.pitch=24};
+        recorded_note_t v={.on=65535,.duration=49321,.note7=0,.vel=127,.pitch=24};
         recorded_set_exponent(&v,exponent);recorded_set_step(&v,step,flags&1u,flags&2u);
         recorded_set_gate(&v,flags&4u);recorded_set_owner(&v,owner);
         recorded_note_t snapshot=v;
@@ -46,7 +46,7 @@ static void expanded_edits(void)
         assert(recorded_owner(&v)==63u-owner && recorded_step(&v)==127u-step);
         assert(recorded_exponent(&v)==7u-exponent && recorded_gate(&v)==!(flags&4u));
         assert(recorded_rounded(&v)==!(flags&1u) && recorded_wrapped(&v)==!(flags&2u));
-        assert(v.on==65535 && v.duration==49321 && v.note==0 && v.vel==127 && v.pitch==24);
+        assert(v.on==65535 && v.duration==49321 && recorded_note(&v)==0 && v.vel==127 && v.pitch==24);
         recorded_set_step(&v,step,flags&1u,flags&2u);recorded_set_gate(&v,flags&4u);
         recorded_set_exponent(&v,exponent);recorded_set_owner(&v,owner);
         assert(!memcmp(&v,&snapshot,sizeof v));

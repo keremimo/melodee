@@ -35,14 +35,14 @@ static void seq_erase_rebuild(track_t *t, uint64_t touched)
         found |= (uint64_t)1u << view;
         step_t *st = &t->step[view];
         if (r->vel > st->vel) st->vel = r->vel;
-        uint32_t lane = drum_lane(r->note);
-        if (drum_track(t) && r->note == DRUM_LANE_NOTE[lane]) {
+        uint32_t lane = drum_lane(recorded_note(r));
+        if (drum_track(t) && recorded_note(r) == DRUM_LANE_NOTE[lane]) {
             st->hit |= (uint8_t)(1u << lane);
             if (r->vel > 110u) st->acc |= (uint8_t)(1u << lane);
         } else {
             uint32_t j;
-            for (j = 0; j < st->n && st->note[j] != r->note; j++);
-            if (j == st->n && st->n < 4u) st->note[st->n++] = r->note;
+            for (j = 0; j < st->n && st->note[j] != recorded_note(r); j++);
+            if (j == st->n && st->n < 4u) st->note[st->n++] = recorded_note(r);
         }
         if (st->vel > 110u) st->flags |= SF_ACCENT;
     }
@@ -65,9 +65,10 @@ static void seq_erase_pass(track_t *t, uint32_t step, int entered)
     int starting = !seq_erase_seen[tr];
     seq_erase_seen[tr] = 1;
     uint64_t touched = 0;
+    /* (a note played on the grid for the next step, stored in this swung interval, waits for its own step) */
     for (uint32_t i = recording_head[recording_owner(t)]; i < RECORD_MAX;) {
         uint32_t next = recording_next[i];
-        if (recording_active(t, i) && (recorded_step(&recording[i]) == step ||
+        if (recording_active(t, i) && (recording_grid_step(t, &recording[i]) == step ||
             (starting && (recording_sounding(i) || (recording_flags[i] & 1u))))) {
             recording_undo_capture(t);
             touched |= (uint64_t)1u << recording_view(t, &recording[i]);

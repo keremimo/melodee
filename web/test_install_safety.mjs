@@ -143,15 +143,20 @@ try {
 const libraries = execFileSync('python3',['-c',"import sys;sys.path.insert(0,'web');from make_site import installer_libraries;print(installer_libraries())"],{encoding:'utf8'});
 const firmware = new Uint8Array(readFileSync(new URL('../build/melodee.fwsc',import.meta.url)));
 const digest = createHash('sha256').update(firmware).digest('hex');
+// a resource region (fm1res.js): MRS1, the payload length, a CRC-32 the fake device reports back, then the payload
+const region = new Uint8Array(32 + 3000).map((_,i) => (i * 13 + 5) & 255);
+new DataView(region.buffer).setUint32(0,0x3153524d,true);new DataView(region.buffer).setUint32(4,3000,true);
+const serve = url => url.includes('-res.bin') ? {ok:true,status:200,arrayBuffer:async()=>region.slice().buffer}
+  : {ok:true,status:200,arrayBuffer:async()=>firmware.slice().buffer};
 for (const valid of [false,true]) {
   const page = new JSDOM(html.replace(/<script type="module">[\s\S]*?<\/script>/,''),{url:'https://example.test/webapp/installer/',runScripts:'outside-only'});
   const win=page.window;let midiCalls=0;
-  const simulated=fakeAccess({images:{firmware:logicalImage(firmware)},identity:'FM-1_015',after:productOf(firmware),loader:MELODEE_LOADER,stride:128,timers:clock});
+  const simulated=fakeAccess({images:{firmware:logicalImage(firmware),res:region},identity:'FM-1_015',after:productOf(firmware),loader:MELODEE_LOADER,stride:128,timers:clock});
   const pageSet=win.setTimeout.bind(win);win.setTimeout=(f,ms=0,...a)=>pageSet(f,ms>=1000?ms/20:ms,...a);
   win.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
   win.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
   win.TextEncoder=TextEncoder;Object.defineProperty(win.crypto,'subtle',{value:webcrypto.subtle});
-  win.fetch=async()=>({ok:true,arrayBuffer:async()=>firmware.slice().buffer});
+  win.fetch=async url=>serve(url);
   win.navigator.requestMIDIAccess=async()=>{midiCalls++;return simulated.access;};
   const metadata={version:'1.4.5',product:productOf(firmware),pkg:{dual:'test.fwsc'},sha256:{dual:valid?digest:'0'.repeat(64)}};
   const script=html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace('/*LIB*/',()=>libraries).replace('/*META*/{}',JSON.stringify(metadata)).replace('/*INSTALLER*/',()=>`(() => {${controllerSource}})();`);
@@ -176,10 +181,64 @@ for (const valid of [false,true]) {
     assert.equal(win.document.getElementById('run').dataset.state,'done',win.document.getElementById('log').textContent);
     assert.equal(win.document.getElementById('bar').getAttribute('aria-valuenow'),'100');
     assert(simulated.device.log.includes('written: '+productOf(firmware)));
+    assert(simulated.device.log.includes('resources installed'),win.document.getElementById('log').textContent);
+    assert.match(win.document.getElementById('endtips').textContent,/fonts and factory sounds are installed/);
+    assert(!win.document.querySelector('#phases [data-ph="setup"]').hidden);
   }else assert(!win.document.getElementById('pagefail').hidden);
   page.window.close();
 }
-console.log('Published bundle: starts with actual firmware; checksum mismatch blocks Install; cancellation sends no MIDI; complete controller install verifies the returned identity');
+console.log('Published bundle: starts with actual firmware; checksum mismatch blocks Install; cancellation sends no MIDI; complete controller install verifies the returned identity and writes the resource region');
+
+// The resource region: a refused write is shown with Finish setup, which writes it alone; Find offers Finish setup
+// for an FM-1 that runs this build without it; another build's region is never written.
+for (const scenario of ['refused','offer','other-build']) {
+  const page = new JSDOM(html.replace(/<script type="module">[\s\S]*?<\/script>/,''),{url:'https://example.test/webapp/installer/',runScripts:'outside-only'});
+  const win=page.window,doc=win.document,$=id=>doc.getElementById(id);
+  const wanted=scenario==='other-build'?region.slice():region;
+  if(scenario==='other-build')new DataView(wanted.buffer).setUint32(8,0xBAD,true);
+  const simulated=fakeAccess({images:{firmware:logicalImage(firmware),res:wanted},identity:scenario==='refused'?'FM-1_015':productOf(firmware),
+    after:productOf(firmware),loader:MELODEE_LOADER,stride:128,timers:clock,resRefuse:scenario==='refused'?3:0});
+  const pageSet=win.setTimeout.bind(win);win.setTimeout=(f,ms=0,...a)=>pageSet(f,ms>=1000?ms/20:ms,...a);
+  win.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
+  win.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
+  win.TextEncoder=TextEncoder;Object.defineProperty(win.crypto,'subtle',{value:webcrypto.subtle});
+  win.fetch=async url=>serve(url);
+  win.navigator.requestMIDIAccess=async()=>simulated.access;
+  const metadata={version:'1.4.5',product:productOf(firmware),pkg:{dual:'test.fwsc'},sha256:{dual:digest}};
+  win.eval(html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace('/*LIB*/',()=>libraries).replace('/*META*/{}',JSON.stringify(metadata)).replace('/*INSTALLER*/',()=>`(() => {${controllerSource}})();`));
+  await new Promise(r=>nativeSet(r,30));
+  const until=async(test,ms=8000)=>{const end=Date.now()+ms;while(!test() && Date.now()<end)await new Promise(r=>nativeSet(r,10));};
+  $('find').click();await until(()=>!$('device').hidden);
+  if(scenario==='refused'){
+    assert($('finish').hidden);
+    $('go').click();await tick();
+    $('pfok').checked=true;$('pfok').dispatchEvent(new win.Event('change'));
+    doc.querySelector('#preflight form').dispatchEvent(new win.SubmitEvent('submit',{cancelable:true,submitter:$('pfgo')}));
+    await until(()=>$('run').dataset.state!=='running');
+    assert.equal($('run').dataset.state,'setup',$('log').textContent);
+    assert.match($('endtips').textContent,/couldn't make room/);
+    const again=[...$('endactions').children].find(b=>b.textContent==='Finish setup');
+    assert(again && again.classList.contains('primary'));
+    again.click();await until(()=>$('run').dataset.state==='done');
+    assert.equal($('runtitle').textContent,'Finishing setup');assert.equal($('endtitle').textContent,'Setup is finished');
+    assert(simulated.device.log.includes('resources installed'));
+  }else if(scenario==='offer'){
+    await until(()=>!$('finish').hidden,3000);
+    assert(!$('finish').hidden);assert.equal($('devchip').textContent,'Setup unfinished');assert(!$('go').classList.contains('primary'));
+    const written=simulated.device.sends.filter(s=>s.bytes[1]===0x22).length;
+    $('finish').click();await until(()=>$('run').dataset.state==='done');
+    assert.equal($('run').dataset.state,'done',$('log').textContent);assert.equal($('endtitle').textContent,'Setup is finished');
+    assert.equal(simulated.device.sends.filter(s=>s.bytes[1]===0x22).length,written,'Finish setup never sends the firmware');
+    assert(simulated.device.log.includes('resources installed'));
+    assert($('finish').hidden);assert.notEqual($('devchip').textContent,'Setup unfinished');
+  }else{
+    await new Promise(r=>nativeSet(r,200));
+    assert($('finish').hidden,'another build\'s region is never offered');
+    assert(!simulated.device.log.some(s=>s.startsWith('resources')));
+  }
+  page.window.close();
+}
+console.log('Resource region: refused write shows Finish setup and retries alone; Find offers it for this build only; firmware untouched');
 
 // Saadet's optional last stage, with the real pinned boot package.
 const bootRaw=new Uint8Array(readFileSync(new URL('m-bootloader/fm1-uboot.fwsc',import.meta.url)));
@@ -202,7 +261,7 @@ for(const scenario of ['update+boot','boot-only','refused','bad-boot-hash','wron
  win.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
  win.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
  win.TextEncoder=TextEncoder;Object.defineProperty(win.crypto,'subtle',{value:webcrypto.subtle});
- win.fetch=async url=>({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
+ win.fetch=async url=>url.includes('-res.bin')?{ok:false,status:404}:({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
  win.navigator.requestMIDIAccess=async()=>model.access;
  const metadata={version:'1.4.5',product:PRODUCT,pkg:{dual:'test.fwsc'},sha256:{dual:createHash('sha256').update(releaseRaw).digest('hex')},
   boot:{version:'1.2',pkg:'boot.fwsc',sha256:scenario==='bad-boot-hash'?'0'.repeat(64):bootDigest}};

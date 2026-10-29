@@ -52,6 +52,15 @@ static void mapping(void)
     assert(kb_map(t, 7) == 60 && kb_map(t, 8) == KB_SILENT && kb_map(t, 11) == 62);
     t->p[P_QUANT] = Q_SNAP;
     assert(kb_map(t, 11) == 68 && midi_map(t, 64) == 68);
+    t->p[P_SCALE] = scale_id("19EDO");                    /* SNAP takes the nearest degree: */
+    assert(kb_map(t, 12) == 68 && midi_map(t, 65) == 68); /* F, the 505-cent fourth (not 442) */
+    assert(kb_map(t, 10) == 65 && kb_map(t, 17) == 76);   /* Eb 316, Bb 1011 (not 253, 947) */
+    assert(kb_map(t, 13) == 69);                          /* F#: the 600-cent tie takes the lower */
+    t->p[P_SCALE] = scale_id("5EDO");                     /* past the last degree: the next period's first */
+    assert(midi_map(t, 71) == 65 && midi_map(t, 59) == 60);
+    t->p[P_SCALE] = scale_id("JI-12");
+    assert(midi_map(t, 62) == 62);                        /* 9/8 is 3.9 cents above D: no longer C#'s 16/15 */
+    t->p[P_SCALE] = scale_id("24EDO");
     t->p[P_QUANT] = Q_MPC; t->p[P_MPCDEG] = 24;
     assert(midi_map(t, 101) == 83 && midi_map(t, 99) == KB_SILENT);
     t->p[P_QUANT] = Q_OFF;

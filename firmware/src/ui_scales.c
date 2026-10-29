@@ -46,7 +46,7 @@ static void scales_draw(void)
     }
     sig = total * 7u + rank * 3001u + ui.scale_family * 13u + song.sel * 131u + ux.gen * 977u + ux.pal * 31u + 1u +
           (message ? str_hash(3u, ui.msg) : 0u);
-    if (head_waiting()) {
+    if (head_shared_status()) {
         draw_head();
     } else if (sig != scv.top) {                        /* the numeral, the family, the place */
         char d[2] = {(char)('1' + song.sel % NTRK), 0};

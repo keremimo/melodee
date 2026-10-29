@@ -80,8 +80,8 @@ def build_take(spec, manifest):
     plan = _helper(['--plan', *args]).decode('ascii')
     if not _check({**manifest['firmware_sha256'], **sources}):
         raise RuntimeError('Take sources changed during construction')
-    if not 12 <= len(base) <= 256*1024 or base[:4] != b'FBKK' or int.from_bytes(base[4:8], 'little') != len(base):
-        raise RuntimeError('Take helper did not emit a bounded FBKK base')
+    if not 12 <= len(base) <= 256*1024 or base[:4] not in (b'FBKP', b'FBKK') or int.from_bytes(base[4:8], 'little') != len(base):
+        raise RuntimeError('Take helper did not emit a bounded FBKP/FBKK base')
     header = [line.split()[1:] for line in plan.splitlines() if line.startswith('H ')]
     notes = [tuple(map(int, line.split()[1:])) for line in plan.splitlines() if line.startswith('N ')]
     if len(header) != 1 or len(header[0]) != 9 or len(notes) != spec['notes']:

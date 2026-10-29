@@ -97,6 +97,8 @@ cpu/CZ-1/00_INIT_TONE 1741
 cpu/DRUM/01_909_KIT 1745
 cpu/DRUM/02_SID_KIT 501
 cpu/DRUM/03_SID_DIGI 539
+cpu/DRUM/04_CR78_KIT 848
+cpu/DRUM/05_FM_KIT 809
 
 # Native fp32 CZ-1 and Prophet factory programs.
 cpu/CZ-1/01_BRASS_1 2442

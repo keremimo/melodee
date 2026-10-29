@@ -25,7 +25,7 @@ int main(void)
     project_load(0);
     bad += check("unreadable project load keeps its flash bytes", !strcmp(ui.msg, "OLD FORMAT") && same_object(OBJ_BANK0, old, sizeof old));
 
-    reset(); st_save(OBJ_UPRESET0, old, sizeof old); up_cache_reset();
+    reset(); st_pair_save(OBJ_UPRESET0, old, sizeof old); up_cache_reset();
     bad += check("live access protects a wrong-shape bank until boot", up_old(0) && up_old(15) && !up_used(0) && same_object(OBJ_UPRESET0, old, sizeof old));
     up_rec_t rec = {0}; rec.used = UP_USED; rec.ver = UP_VER; rec.engine = 9u; rec.np = P_COUNT; strcpy(rec.name, "NEW");
     for (uint32_t i = 0; i < P_COUNT; i++) rec.packed[i] = 64;

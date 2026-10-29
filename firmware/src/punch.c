@@ -34,9 +34,14 @@ static volatile uint32_t punch_panel_mask, punch_claimed;
 static volatile uint8_t punch_panel_lock, punch_memory_failed;
 static uint8_t punch_alloc_tried;
 static uint32_t punch_epoch;
+/* Song automation is independent of momentary keys. A held key takes priority. */
+static int8_t punch_song_req = -1;
+static uint8_t punch_song_buffered;
+static uint32_t punch_song_gate;
 
 static struct {
     volatile int8_t req;          /* effect asked for by the keys (-1 none), ISR keyboard_block */
+    uint32_t song_gate;           /* restart a new song punch even when its effect is unchanged */
     fx_state_t freeze;
     uint8_t was_freeze;
     uint32_t keybit;              /* the key that started it */
@@ -79,7 +84,8 @@ static int punch_needs_ring(int32_t fx)
 }
 static int punch_armed(void)
 {
-    return (fm1_in.buttons & punch_panel_mask) || punch_panel_lock || punch.keybit;
+    return (fm1_in.buttons & punch_panel_mask) || punch_panel_lock || punch.keybit ||
+        punch_song_buffered || punch_song_req >= 0;
 }
 static int punch_memory(void)
 {
@@ -274,8 +280,8 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
         }
         return;
     }
-    if (punch_armed()) punch_memory();
-    int32_t want = punch.req;
+    if (punch_song_buffered || punch.keybit || punch_panel_lock || (fm1_in.buttons & punch_panel_mask)) punch_memory();
+    int32_t want = punch.req >= 0 ? punch.req : punch_song_req;
     if (want < -1 || want >= (int32_t)PUNCH_NFX) want = -1;
     if (punch_needs_ring(want) && !punch_ring) want = -1;
     uint32_t beat, step, echo_d, binc, fdec;
@@ -286,8 +292,10 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
             punch_ring[punch.w++ & (PUNCH_N - 1u)] = (int16_t)clamp((l[i] + r[i]) >> 4, -32768, 32767);
         return;
     }
-    if (punch.cur < 0 && want >= 0)
-        punch_start(want);
+    if (punch.cur < 0 && want >= 0) {
+        punch_start(want); punch.song_gate = punch_song_gate;
+    }
+    int restart = punch.req < 0 && punch.song_gate != punch_song_gate;
     if(punch.cur==PX_FREEZE)punch_freeze_block(l,r,n,kl,kr);
     beat = beat_samples();                              /* per block: no divide per sample */
     step = beat / 4u ? beat / 4u : 1u;
@@ -322,7 +330,7 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
     for (i = 0; i < n; i++) {
         int32_t dry_l=l[i],dry_r=r[i];
         int32_t x=clamp(dry_l,-131071,131071),y=clamp(dry_r,-131071,131071),wl=x,wr=y,m=(x+y)>>1;
-        uint32_t target = fx >= 0 && want == fx ? 32767u : 0u;
+        uint32_t target = fx >= 0 && want == fx && !restart ? 32767u : 0u;
         if (punch_ring && !punch.was_freeze && !punch_owns(fx, punch.w))                   /* (a held loop keeps its material) */
             punch_ring[punch.w & (PUNCH_N - 1u)] = (int16_t)clamp(m >> 3, -32768, 32767);
         switch (fx) {
@@ -457,7 +465,7 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
         punch.w++;
         punch.t++;
     }
-    if (!punch.g && want != punch.cur) {
+    if (!punch.g && (want != punch.cur || restart)) {
         punch.cur=-1;
         if(punch.was_freeze){memset(punch_ring,0,PUNCH_N*sizeof *punch_ring);punch.was_freeze=0;}
     }

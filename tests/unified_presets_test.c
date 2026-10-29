@@ -138,7 +138,7 @@ static int legacy_conversion(void)
     for(uint32_t b=0;b<4u;b++){
         uint8_t bytes[3816];memset(bytes,0,sizeof bytes);up_bank_t *bank=(up_bank_t *)bytes;bank->magic=UP_BANK_MAGIC;bank->rsize=238;bank->nslot=16;
         for(uint32_t j=0;j<16u;j++){up_rec_t r;memset(&r,0,sizeof r);r.used=UP_USED;r.ver=UP_VER;r.engine=j?ENGI_DRUM:ENGI_FM6;r.np=P_COUNT;memcpy(r.name,"OLD GENERAL",11);for(uint32_t i=0;i<P_COUNT;i++)up_set_value(&r,i,param_desc_of(r.engine,i)->def);memcpy(bytes+8u+j*sizeof r,&r,sizeof r);}
-        bad+=check("legacy general bank fixture commits",!st_save(b<2u?OBJ_UPRESET0+b:OBJ_UPRESET_EXT0+b-2u,b<2u?bytes:bytes+8u,b<2u?3816u:3808u));
+        bad+=check("legacy general bank fixture commits",!(b<2u?st_pair_save:st_save)(b<2u?OBJ_UPRESET0+b:OBJ_UPRESET_EXT0+b-2u,b<2u?bytes:bytes+8u,b<2u?3816u:3808u));
     }
     favorites.user=1;favorites_user_hi=0;favorites.factory[12][3]|=1;favorites.factory[15][8]|=2;
     check_maintenance=1;
@@ -180,15 +180,20 @@ static int wipe_recovery(void)
     bad+=check("every wipe erase follows a visible keep-power screen",maintenance_erases && !hidden_maintenance);
     check_maintenance=0;
     int copies=1,unrelated=1;up_disk_bank_t disk;
-    for(uint32_t b=0;b<UP_BANKS;b++)for(uint32_t copy=0;copy<2u;copy++){
-        st_hdr_t h;copies &= !st_head(up_obj(b),copy,&h) && !st_body(up_obj(b),copy,&h);
-        if(st_read_range(up_obj(b),copy,0,&disk,sizeof disk))copies=0;
-        else for(uint32_t j=0;j<UP_PER_BANK;j++)for(uint32_t i=0;i<sizeof(up_disk_rec_t);i++)copies &= !((uint8_t *)&disk.r[j])[i];
-        uint32_t base=st_sector(up_obj(b),copy);memcpy(before+base,nor+base,ST_SECTOR);
-        for(uint32_t i=3840u;i<ST_SECTOR;i++)copies &= nor[base+i]==255u;
+    for(uint32_t b=0;b<UP_BANKS;b++){
+        /* the pool: the current copy of every bank is empty, and so is any older copy still readable (none resurrects) */
+        st_hdr_t cur;copies &= st_current(up_obj(b),&cur)>=0;
+        for(uint32_t i=0;i<st_cands(up_obj(b));i++){
+            st_hdr_t h;uint32_t copy=st_cand(up_obj(b),i);
+            if(st_head(up_obj(b),copy,&h)||st_body(up_obj(b),copy,&h))continue;
+            uint32_t base=st_sector(up_obj(b),copy);memcpy(before+base,nor+base,ST_SECTOR);
+            if(st_read_range(up_obj(b),copy,0,&disk,sizeof disk)){copies=0;continue;}
+            for(uint32_t j=0;j<UP_PER_BANK;j++)for(uint32_t k=0;k<sizeof(up_disk_rec_t);k++)copies &= !((uint8_t *)&disk.r[j])[k];
+            if(h.seq==cur.seq)for(uint32_t k=3840u;k<ST_SECTOR;k++)copies &= nor[base+k]==255u;
+        }
     }
     unrelated=!memcmp(before,nor,sizeof nor);
-    bad+=check("both copies of every old/shared bank are empty; loader tails erased",copies);
+    bad+=check("every readable copy of every shared bank is empty; loader tails erased",copies);
     bad+=check("wipe leaves projects, settings and every other flash region untouched",unrelated);
     uint32_t writes=erases,flushes=lcd_flushes;up_boot();
     bad+=check("later boots neither migrate nor wipe again",erases==writes && lcd_flushes==flushes && !up_count());
@@ -275,7 +280,7 @@ int main(void)
     bad+=check("unfinished archive conversion blocks writes to its source bank",native_put(ENGI_PROPHET,288,(uint8_t *)&old_bank.patch[0])==2);
     up_boot();bad+=check("finalizing old archive preserves all 26 source programs",!up_migration_error&&up_count()==26u);
     reset();uint8_t unknown[3816];memset(unknown,0,sizeof unknown);up_rec_t future;memset(&future,0,sizeof future);future.used=UP_USED;future.ver=99;memcpy(future.name,"FUTURE",6);memset(future.note,0x6a,sizeof future.note);memset(future.flags,0x59,sizeof future.flags);
-    uint32_t magic=UP_BANK_MAGIC;uint16_t record_size=238,records=16;memcpy(unknown,&magic,4);memcpy(unknown+4,&record_size,2);memcpy(unknown+6,&records,2);memcpy(unknown+8,&future,sizeof future);st_save(OBJ_UPRESET0,unknown,sizeof unknown);up_cache_reset();
+    uint32_t magic=UP_BANK_MAGIC;uint16_t record_size=238,records=16;memcpy(unknown,&magic,4);memcpy(unknown+4,&record_size,2);memcpy(unknown+6,&records,2);memcpy(unknown+8,&future,sizeof future);st_pair_save(OBJ_UPRESET0,unknown,sizeof unknown);up_cache_reset();
     uint8_t original[3816];bad+=check("unknown legacy records retain all phrase/opaque bytes",up_old_bank(0)&&st_load(OBJ_UPRESET0,original,sizeof original)==sizeof original&&!memcmp(original,unknown,sizeof original));
     set_engine_of(TSEL,ENGI_CZ);preset_old_allow(1);fail_after=1;int failed=up_store(0,"REPLACE");fail_after=-1;preset_old_allow(0);
     bad+=check("failed confirmed whole-bank replacement retains opaque source",failed==2&&up_old_bank(0)&&st_load(OBJ_UPRESET0,original,sizeof original)==sizeof original&&!memcmp(original,unknown,sizeof original));

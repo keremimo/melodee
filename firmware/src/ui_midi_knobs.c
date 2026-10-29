@@ -3,9 +3,19 @@
 /* Foreground only. Absolute parameter values cover their full range. Absolute
  * navigation is a jog: the first value establishes position without jumping.
  * Histories are separate for each USB/TRS channel, including after overflow. */
-static uint8_t midi_knob_last[2][16][8] __attribute__((section(".pool")));
-static uint8_t midi_knob_seen[2][16], midi_knob_ui_usb_epoch;
+#ifndef MIDI_KNOB_SOURCES
+#if MELODEE_BLE
+#define MIDI_KNOB_SOURCES 3u
+#else
+#define MIDI_KNOB_SOURCES 2u
+#endif
+#endif
+static uint8_t midi_knob_last[MIDI_KNOB_SOURCES][16][8] __attribute__((section(".pool")));
+static uint8_t midi_knob_seen[MIDI_KNOB_SOURCES][16], midi_knob_ui_usb_epoch;
 static uint32_t midi_knob_ui_config;
+#if MELODEE_BLE
+static uint8_t midi_knob_ui_ble_epoch;
+#endif
 static int32_t midi_knob_relative(uint32_t value, uint32_t mode)
 {
     if (mode == MK_REL1) return (int32_t)value - 64;
@@ -23,6 +33,12 @@ static void midi_knobs_poll(void)
         memset(midi_knob_seen[0], 0, sizeof midi_knob_seen[0]);
         midi_knob_ui_usb_epoch = midi_knob_usb_epoch;
     }
+#if MELODEE_BLE
+    if (midi_knob_ui_ble_epoch != midi_knob_ble_epoch) {
+        memset(midi_knob_seen[2], 0, sizeof midi_knob_seen[2]);
+        midi_knob_ui_ble_epoch = midi_knob_ble_epoch;
+    }
+#endif
     if (config != midi_knob_ui_config || midi_knob_overflow) {
         memset(midi_knob_seen, 0, sizeof midi_knob_seen);
         midi_knob_ui_config = config;
@@ -41,8 +57,12 @@ static void midi_knobs_poll(void)
         RING_PUBLISH();
         midi_knob_r++;
         if (((pkt >> 16) & 15u) != config) continue;
-        uint32_t v = pkt & 127u, k = (pkt >> 7) & 7u, ch = (pkt >> 10) & 15u, src = (pkt >> 14) & 1u;
+        uint32_t v = pkt & 127u, k = (pkt >> 7) & 7u, ch = (pkt >> 10) & 15u, src = (pkt >> 14) & 3u;
+        if (src >= MIDI_KNOB_SOURCES) continue;
         if (!src && ((pkt >> 20) & 255u) != midi_knob_ui_usb_epoch) continue;
+#if MELODEE_BLE
+        if (src == 2u && ((pkt >> 20) & 255u) != midi_knob_ui_ble_epoch) continue;
+#endif
         uint32_t mode = settings_midi_knob_mode, seen = midi_knob_seen[src][ch] & (1u << k);
         int32_t delta = mode == MK_ABSOLUTE ? seen ? (int32_t)v - midi_knob_last[src][ch][k] : 0 :
                         midi_knob_relative(v, mode);

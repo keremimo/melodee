@@ -50,9 +50,9 @@ class Device:
         time.sleep(.2)
     def close(self):
         self.incoming.close(); self.outgoing.close()
-    def request(self, cmd, args=()):
+    def request(self, cmd, args=(), timeout=5):
         self.outgoing.send(mido.Message('sysex', data=HEADER+[cmd]+list(args)))
-        end = time.monotonic()+5
+        end = time.monotonic()+timeout
         while time.monotonic()<end:
             for message in self.incoming.iter_pending():
                 if message.type=='sysex' and list(message.data[:4])==HEADER+[cmd]:

@@ -65,6 +65,15 @@ static int32_t ed_rv(const uint8_t *a) { return (int32_t)(a[0] | (uint32_t)a[1] 
 static void ed_str(const char *s, uint32_t n) { (void)s; (void)n; }
 #include "../firmware/src/editor_preferences.c"
 
+/* slot 1's current record as the loader reads it (a compact image expanded) */
+static int flash_image(uint8_t *dst)
+{
+    st_hdr_t h; int copy = st_current(OBJ_BANK0, &h);
+    if (copy < 0) return -1;
+    pj.on = !st_read_range(OBJ_BANK0, (uint32_t)copy, 0, &pj.h, PJ_HEAD) && pj.h.magic == PJ_MAGIC;
+    return pj_read(OBJ_BANK0, (uint32_t)copy, 0, dst, BANK_STORE_SIZE) ? -1 : (int)BANK_STORE_SIZE;
+}
+
 static int check(const char *what, int ok)
 {
     printf("persist: %-66s %s\n", what, ok ? "ok" : "FAIL");
@@ -215,7 +224,7 @@ int main(void)
     project_save(0);
     fail_after = -1;
     bad += check("failed project save keeps RAM and old flash", !strcmp(ui.msg, "SAVE ERROR") &&
-                  !memcmp(&proj_slot[0], &old, sizeof old) && st_load(OBJ_BANK0, got, sizeof got) == (int)sizeof got &&
+                  !memcmp(&proj_slot[0], &old, sizeof old) && flash_image(got) == (int)sizeof got &&
                   !memcmp(got + 8u, &old, sizeof old));
     project_save(0);
     bad += check("successful project save publishes new RAM", !strcmp(ui.msg, "SAVED") &&
@@ -244,7 +253,7 @@ int main(void)
         fail_after = 1;
         bad += check("failed project rename: SAVE ERROR, the slot and flash as they were",
                       project_rename(0, "DUB") == 2 && !strcmp(ui.msg, "SAVE ERROR") && !memcmp(&proj_slot[0], &keep, sizeof keep) &&
-                      st_load(OBJ_BANK0, got, sizeof got) == (int)sizeof got && !memcmp(got + 8u, &keep, sizeof keep));
+                      flash_image(got) == (int)sizeof got && !memcmp(got + 8u, &keep, sizeof keep));
         fail_after = -1;
         before = erases;
         transport_req = 1;

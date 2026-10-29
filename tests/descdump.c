@@ -6,6 +6,7 @@
  * power-on sounds and the protocol constants. web/test_web.mjs compares the editor's mock device
  * (web/editor.html makeMockDevice) with it, so the mock cannot drift from the firmware.
  *   build/host/descdump > build/host/desc.json      (run_tests.sh) */
+#define MELODEE_BLE 1 /* default device descriptors, including BLE input/clock */
 #define main hostsim_main
 #include "hostsim.c"
 #undef main

@@ -21,8 +21,9 @@ def analyze(ir, dis, src):
     usb = (src / 'usb_host.c').read_text()
     if not ("if (song.playing || cin_left" in seq and
             "if (started) seq_advance(0);" in seq and
-            "return depth == 0u ? uh_hub_probe" in usb and
-            "uh_probe(1, m)" in usb):
+            "#define UH_HUB_LEVELS 2u" in usb and
+            "return depth < UH_HUB_LEVELS ? uh_hub_probe" in usb and
+            "uh_probe((uint8_t)(level + 1u), m)" in usb):
         raise ValueError(
             'review stack re-entry bounds after transport/USB changes')
     source = '\n'.join(p.read_text()
@@ -201,11 +202,12 @@ def analyze(ir, dis, src):
             starts_note = name == 'input_on' and target == 'seq_advance'
             if starts_note and note_started:
                 continue
-            # Only one hub level is supported. The port helper calls the
-            # child probe with depth=1, which rejects hubs. Depending on
-            # inlining, that call can also appear inside uh_probe itself.
+            # Two hub levels are supported (UH_HUB_LEVELS). The port helper
+            # calls the child probe one level down; at depth 2 it rejects
+            # hubs. Depending on inlining, that call can also appear inside
+            # uh_probe itself.
             probes_child = name in {'uh_probe', 'uh_hub_port_probe'} and target == 'uh_probe'
-            if probes_child and hub_depth:
+            if probes_child and hub_depth >= 2:
                 continue
             children.append(depth(target, note_started or starts_note,
                                   hub_depth + int(probes_child)))
@@ -215,7 +217,7 @@ def analyze(ir, dis, src):
         cache[key] = (frames.get(name, 0) + size, [name] + path)
         return cache[key]
     roots = ('fm1_cstart', 'isr_alnk0', 'isr_timer5',
-             'fm1_core1_main', 'fm1_fault_c')
+             'fm1_core1_main', 'fm1_fault_c', 'isr_ble_event', 'isr_ble_rx')
     paths = {name: depth(name)for name in roots if name in asm}
     reachable = {key[0] for key in cache}
     missing = [item for item in missing if item[0] in reachable]
@@ -239,9 +241,14 @@ def check(report, foreground, irq, worker, worker_user=None):
     if need > foreground:
         errors.append(
             f'foreground stack needs {need} B including margin, has {foreground} B')
+    ble_roots = {'isr_ble_event', 'isr_ble_rx'}
+    if ble_roots & paths.keys() and not ble_roots <= paths.keys():
+        errors.append('missing BLE interrupt stack root')
+    ble_stack = max((paths[n][0] for n in ble_roots if n in paths), default=0)
+    # BLE runs below audio; audio and TIMER5 can both preempt it.
     # TIMER5 preempts audio. Fatal handling can preempt either; include its
     # entire CPU0 display/recovery path and assembly exception context.
-    need = paths['isr_alnk0'][0] + \
+    need = ble_stack + paths['isr_alnk0'][0] + \
         paths['isr_timer5'][0]+paths['fm1_fault_c'][0]+128
     if need > irq:
         errors.append(

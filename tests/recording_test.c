@@ -117,7 +117,7 @@ static int raw_capacity(void)
     int bad=check("a full recorder preserves all existing notes and reports the capacity limit",recording_full && !memcmp(saved,recording,sizeof saved));
     bad+=check("a full bank copy fails before changing the destination or source",pattern_copy(t,0,7)==2 && !memcmp(saved,recording,sizeof saved));
     seq_stop();step_clear(&t->step[0]);song.rec=1;seq_start();seq_advance(0);input_on(t,65,95);input_off(t,65);
-    bad+=check("clearing recorded steps makes their event slots reusable",recording[0].note==65);
+    bad+=check("clearing recorded steps makes their event slots reusable",recorded_note(&recording[0])==65);
     return bad;
 }
 static int replace_during_replay(void)
@@ -133,6 +133,7 @@ static int standalone_and_template(void)
     raw_begin();track_t *t=&trk[0];seq_stop();pattern_switch(t,7);seq_start();seq_advance(0);
     seq_advance(600);input_on(t,60,90);seq_advance(300);input_off(t,60);seq_stop();
     project_capture(&proj_scratch);project_store_t bytes;project_t decoded;
+    bank_p16=bank_wide=0;                     /* (a FUN16 on its own: its note directory, four parts of eight banks) */
     int ok=proj_pack(&bytes,&proj_scratch) && proj_import(&decoded,bytes.raw,sizeof bytes) && !project_restore_runtime(&decoded);
     raw_replay();seq_advance(599);ok &= t->pattern==7 && !gate_note(t,60);seq_advance(1);ok &= gate_note(t,60);
     int bad=check("standalone FUN16 restores the active bank and original recorded timing",ok);
@@ -276,7 +277,7 @@ static int pattern_passes(void)
         ui_notices();
         bad += check("INT/USB/TRS punch-in at swung loop zero retains a held note's original velocity",
             rec_on(t) && !song.rec_wait && song.rec_pass == 1 && t->seq_idx == 0 && !t->seq_pos &&
-            recording[0].note == 60 && recording[0].vel == 83 && !recording[0].on && !(recording[0].step & 63u) && !recording[1].vel);
+            recorded_note(&recording[0]) == 60 && recording[0].vel == 83 && !recording[0].on && !(recording[0].step & 63u) && !recording[1].vel);
         bad += check("punch-in clears the persistent waiting header", !head_waiting());
         ui_leds();
         bad += check("REC becomes steady when the pattern pass starts", !pass_led(2, panel.btn[B_REC]) && pass_led(0, panel.btn[B_REC]));
@@ -311,7 +312,7 @@ static int pattern_passes(void)
     bad += check("STOP clears pending runtime state and leaves the track armed for the next start", song.rec == 1 && !song.rec_wait && !song.rec_pass);
     seq_start(); seq_advance(0); input_on(t, 65, 99);
     seq_advance(recording_loop(t, period));
-    bad += check("an armed stopped start records immediately and seals at the first real end", !song.rec && song.playing && recording[0].note == 65 && !(recording_flags[0] & 1u));
+    bad += check("an armed stopped start records immediately and seals at the first real end", !song.rec && song.playing && recorded_note(&recording[0]) == 65 && !(recording_flags[0] & 1u));
     input_off(t, 65); seq_stop();
 
     pass_begin(0, 2, 0); t = &trk[0];
@@ -369,7 +370,7 @@ static int pattern_passes(void)
     for (uint32_t i = 0; i < CAP_N + 1u; i++) { input_on(t, 62, 95); input_off(t, 62); }
     seq_advance(recording_loop(t, seq_div_samples(t->p[P_SDIV])));
     bad += check("a held punch-in note retains its velocity even after the jam capture ring wraps",
-        recording[0].vel == 73 && recording[0].note == 60 && !recording[1].vel);
+        recording[0].vel == 73 && recorded_note(&recording[0]) == 60 && !recording[1].vel);
     input_off(t, 60); seq_stop(); led_pos_init(); return bad;
 }
 
@@ -391,7 +392,7 @@ static int explicit_rec(void)
         motion_capture(t, P_LEVEL, 79);
         seq_advance(loop * 2u);
         bad += check("later loops still record notes and motion after explicit REC",
-            rec_on(t) && recording[1].note == 67 && recording[1].vel == 104 && motion.count == 1 && motion.event[0].value == 79);
+            rec_on(t) && recorded_note(&recording[1]) == 67 && recording[1].vel == 104 && motion.count == 1 && motion.event[0].value == 79);
         press(B_REC);
         bad += check("a second explicit REC finishes and quantizes the take while playback continues",
             !song.rec && !song.rec_latch && !song.rec_wait && !song.rec_pass && song.playing &&
@@ -404,7 +405,7 @@ static int explicit_rec(void)
         input_on(t, 64, 87);
         seq_advance(loop * 3u);
         bad += check("a note-started explicit REC stays armed through one-step loops",
-            rec_on(t) && song.rec_latch == 1 && recording[0].note == 64);
+            rec_on(t) && song.rec_latch == 1 && recorded_note(&recording[0]) == 64);
         seq_stop();
         bad += check("STOP finalizes a latched take and keeps explicit arming for the next start",
             song.rec == 1 && song.rec_latch == 1 && !song.rec_pass && !song.rec_wait && !(recording_flags[0] & 1u));
@@ -482,7 +483,7 @@ static int first_note_start(void)
         for (uint32_t i = 0; i < NVOICE; i++) voices += t->v[i].active && t->v[i].gate && t->v[i].note == note;
         bad += check("the first armed key/USB/TRS note starts at zero, skips count-in and sounds only once",
             song.playing && rec_on(t) && song.rec_pass == 1 && !song.rec_wait && !seq_counting() && !transport_req &&
-            !midi_sync_active && !t->seq_idx && !t->seq_pos && recording[0].note == note &&
+            !midi_sync_active && !t->seq_idx && !t->seq_pos && recorded_note(&recording[0]) == note &&
             recording[0].vel == (source ? 86u : 100u) && !recording[0].on && !(recording[0].step & 63u) &&
             !recording[1].vel && voices == 1 && !ui.entry_open && !memcmp(&untouched, &t->step[5], sizeof untouched));
         seq_advance(500);
@@ -522,13 +523,13 @@ static int first_note_start(void)
     t->p[P_AMODE] = 1;
     input_on(t, 60, 90);
     bad += check("an armed ARP starts on the first note and records its generated onset at zero",
-        song.playing && rec_on(t) && t->arp_note == 60 && recording[0].note == 60 && !recording[0].on && !(recording[0].step & 63u) && !recording[1].vel);
+        song.playing && rec_on(t) && t->arp_note == 60 && recorded_note(&recording[0]) == 60 && !recording[0].on && !(recording[0].step & 63u) && !recording[1].vel);
     input_off(t, 60); seq_stop();
 
     timing_reset(0, 24000000u); t = TSEL;
     set_engine_of(t, ENGI_DRUM); t->engine = t->eng_req;
     input_on(t, 36, 105);
-    bad += check("the first armed drum hit starts the take and is recorded at zero", song.playing && recording[0].note == 36 && !recording[0].on && recording[0].vel == 105);
+    bad += check("the first armed drum hit starts the take and is recorded at zero", song.playing && recorded_note(&recording[0]) == 36 && !recording[0].on && recording[0].vel == 105);
     input_off(t, 36); seq_stop();
 
     for (uint32_t source = 0; source < 3; source++) {
@@ -538,7 +539,7 @@ static int first_note_start(void)
         if (!source) key_down(5);
         else { timing_packet(timing_now, 0x90, root, 97, source); events_block(0); }
         for (uint32_t i = 0; i < count; i++)
-            exact &= recording[i].note == chord[i] && !recording[i].on && !(recording[i].step & 63u);
+            exact &= recorded_note(&recording[i]) == chord[i] && !recording[i].on && !(recording[i].step & 63u);
         uint32_t voices = 0;
         for (uint32_t i = 0; i < NVOICE; i++) voices += t->v[i].active && t->v[i].gate;
         bad += check("a first-note chord starts once and captures every tone at zero without duplicate voices",
@@ -554,7 +555,7 @@ static int first_note_start(void)
         input_on(t, 60, 87);
         bad += check("note start with an owned MIDI clock restarts at zero without count-in or changing clock source",
             song.playing && midi_sync_active == source && midi_clock.mode == source && !seq_counting() &&
-            !t->seq_idx && !t->seq_pos && recording[0].note == 60 && !recording[0].on);
+            !t->seq_idx && !t->seq_pos && recorded_note(&recording[0]) == 60 && !recording[0].on);
         input_off(t, 60);
         uint32_t start = timing_now;
         for (uint32_t pulse = 0; pulse <= 18; pulse++) {

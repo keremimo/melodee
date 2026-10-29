@@ -10,7 +10,7 @@
  * contiguous POOL bank for engine state and note history. */
 enum { RES_ENGINE0, RES_NOTE_HISTORY = RES_ENGINE0 + NPART, RES_FX0,
        RES_RECORD_UNDO = RES_FX0 + FX_STATE_COUNT,
-       RES_STEP_UNDO, RES_LOAD_UNDO,
+       RES_STEP_UNDO, RES_LOAD_UNDO, RES_SONG_UNDO, RES_SONG_SOUNDS, RES_SONG_BASE, RES_SONG_PREVIEW,
 #if MELODEE_USB_AUDIO
        RES_USB_TRACKS,
 #endif
@@ -144,14 +144,14 @@ static inline void *resource_get(uint32_t id, uint32_t bytes)
         || id==RES_USB_TRACKS
 #endif
        ) &&
-       (resource[RES_STEP_UNDO].size || resource[RES_LOAD_UNDO].size)){
-        resource_release(RES_STEP_UNDO);resource_release(RES_LOAD_UNDO);
+       (resource[RES_STEP_UNDO].size || resource[RES_LOAD_UNDO].size || resource[RES_SONG_UNDO].size)){
+        resource_release(RES_STEP_UNDO);resource_release(RES_LOAD_UNDO);resource_release(RES_SONG_UNDO);
         p=resource_allocate(id,bytes);
     }
     /* A history snapshot must never prevent a voice/effect from acquiring its
      * working memory. It is disposable, unlike sounding engine state. */
     if(!p && bytes && bytes<=RESOURCE_CAPACITY && id!=RES_RECORD_UNDO &&
-       id!=RES_STEP_UNDO && id!=RES_LOAD_UNDO &&
+       id!=RES_STEP_UNDO && id!=RES_LOAD_UNDO && id!=RES_SONG_UNDO &&
        resource[RES_RECORD_UNDO].size){
         resource_release(RES_RECORD_UNDO);recording_undo_lost=1;
         recording_undo_skip|=recording_undo_active;recording_undo_active=0;

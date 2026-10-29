@@ -25,6 +25,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -257,7 +258,7 @@ def build_app(stub):
     subprocess.run([sys.executable, SRC / "tools/gen_909_tables.py", GEN / "x0x_drum_tables.h"], check=True)
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("MELODEE_FLASH", "MELODEE_OTA", "MELODEE_OTA_DRYRUN", "MELODEE_OTA_RAMONLY", "MELODEE_CDC",
-                 "MELODEE_UART", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
+                 "MELODEE_UART", "MELODEE_BLE", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
                  "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ", "MELODEE_MOD_CACHE", "MELODEE_CONTROL_FAST", "MELODEE_MIX_FAST", "MELODEE_FX_DORMANT", "MELODEE_RECORD_INDEX", "MELODEE_PROPHET_FAST", "MELODEE_PANEL_FAST", "MELODEE_FM6_FAST", "MELODEE_CZ_FAST", "MELODEE_DRUM_FAST", "MELODEE_SID_FAST", "MELODEE_CAPTURE_FAST"):
         v = os.environ.get(flag)    # unset: the default in firmware/src/melodee.c
         if v in ("0", "1"):
@@ -301,6 +302,7 @@ def build_app(stub):
                                ("common/bin/objcopy", "-O", "binary", "-j", ".dsp_tables", elf, OUT / "dsptables.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".ram_text", elf, OUT / "ramtext.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".audio_text", elf, OUT / "audiotext.bin"),
+                               ("common/bin/objcopy", "-O", "binary", "-j", ".mres", elf, OUT / "mres.bin"),
                                ("common/bin/objdump", "-t", elf),
                                ("common/bin/objdump", "-d", "-mcpu=r3", "-mattr=+fprev1", elf),
                                ("common/bin/objdump", "-d", "-mcpu=r3", "-mattr=+fprev1", "-j", ".ram_text", elf))
@@ -309,6 +311,7 @@ def build_app(stub):
     def symv(name):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)
     img = bytearray((OUT / "text.bin").read_bytes())
+    resources(img, symv)
     loads = (("ramtext.bin", "_rt_load"), ("dsptext.bin", "_dsp_load"), ("dsptables.bin", "_dt_load"),
              ("data.bin", "_data_load"), ("audiotext.bin", "_audio_load"))
     assert tuple(sect for sect, _ in loads) == boot_audio.SECTIONS
@@ -339,6 +342,32 @@ def build_app(stub):
     return bytes(img), syms, dis, rt
 
 
+RES_BASE, RES_SECTORS, RES_HEAD = 0xCB000, 21, 32     # firmware/src/res.c
+
+
+def resources(img, symv):
+    """the resource region (res.c): .mres as installed after an update, build/melodee-res.bin = the 32-byte header
+    + the payload; this build's length and CRC-32 patched into res_want"""
+    payload = (OUT / "mres.bin").read_bytes() if (OUT / "mres.bin").exists() else b""
+    crc = zlib.crc32(payload)
+    at = symv("res_want") - APP_XIP
+    if img[at:at + 4] != struct.pack("<I", 0x544E5752):
+        raise SystemExit("res_want: no RWNT marker in the image")
+    img[at + 4:at + 12] = struct.pack("<II", len(payload), crc)
+    head = struct.pack("<7I", 0x3153524D, len(payload), crc, 0, 0, 0, 0)
+    region = head + struct.pack("<I", zlib.crc32(head)) + payload
+    if len(region) > RES_SECTORS * 4096:
+        raise SystemExit(f"resources: {len(region)} B over the {RES_SECTORS * 4096} B region")
+    # the SPL and the update loader act on a sector whose last 256 bytes are an update record (ota.c UPDATA_PARM)
+    for s in range(0, len(region), 4096):
+        tail = region[s + 0xF00:s + 0xF08]
+        if len(tail) == 8 and tail[2:8] == struct.pack("<3H", 0x5A0D, 0x5A01, 0x5441):
+            raise SystemExit(f"resources: sector {RES_BASE + s:#x}'s tail reads as an update record")
+    (OUT / "melodee-res.bin").write_bytes(region)
+    print(f"resources: {len(payload)} B at {RES_BASE + RES_HEAD:#x} ({-(-len(region) // 4096)} of {RES_SECTORS} sectors), "
+          f"crc {crc:08x} -> build/melodee-res.bin")
+
+
 def check(img, syms, dis, rt):
     errors, notes = [], []
     m = re.search(r"^([0-9a-f]+) .*\s_start$", syms, re.M)
@@ -365,6 +394,11 @@ def check(img, syms, dis, rt):
     def sym(name):
         mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)
         return int(mm.group(1), 16) if mm else 0
+    if sym("isr_ble_event") or sym("isr_ble_rx"):
+        if not sym("isr_ble_event") or not sym("isr_ble_rx"):
+            errors.append("both BLE interrupt wrappers must be linked")
+        if not sym("_rt_start") <= sym("fm1_rf_burst_run") < sym("_rt_end"):
+            errors.append("BLE crystal ramp must execute from initialized low SRAM")
     code_end = sym("_audio_end") if sym("_audio_end") > sym("_audio_start") else sym("_dsp_end")
     if sym("_guard_ram_end") != code_end:
         errors.append("hardware PC guard does not cover all executable SRAM sections")

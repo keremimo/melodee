@@ -27,7 +27,8 @@ class StackBudget(unittest.TestCase):
             src = Path(directory)
             (src / 'core.h').write_text('typedef struct { void (*render)(int); } engine_t;')
             (src / 'seq.c').write_text('if (song.playing || cin_left\nif (started) seq_advance(0);')
-            (src / 'usb_host.c').write_text('return depth == 0u ? uh_hub_probe\nuh_probe(1, m)')
+            (src / 'usb_host.c').write_text('#define UH_HUB_LEVELS 2u\nreturn depth < UH_HUB_LEVELS ? uh_hub_probe\n'
+                                            'uh_probe((uint8_t)(level + 1u), m)')
             (src / 'eng_test.c').write_text('.render=renderer,')
             return stack_budget.analyze(ir, dis, src)
 
@@ -40,6 +41,14 @@ class StackBudget(unittest.TestCase):
         self.assertTrue(stack_budget.check(report, 3000, 1000, 4096, 512))
         self.assertTrue(stack_budget.check(report, 3000, 1000, 4096, 4000))
         del report['paths']['isr_timer5']
+        self.assertTrue(stack_budget.check(report, 3000, 1000, 2000))
+
+    def test_ble_interrupt_nesting(self):
+        report = self.analyze({'isr_ble_event': '  ret void', 'isr_ble_rx': '  call void @helper()\n  ret void', 'helper': '  ret void'})
+        # BLE's 240 bytes + audio/timer/fault 3*120 + 128 reserve.
+        self.assertEqual(stack_budget.check(report, 3000, 728, 2000), [])
+        self.assertTrue(stack_budget.check(report, 3000, 727, 2000))
+        del report['paths']['isr_ble_rx']
         self.assertTrue(stack_budget.check(report, 3000, 1000, 2000))
 
     def test_unknown_callback(self):
@@ -59,19 +68,19 @@ class StackBudget(unittest.TestCase):
     def test_bounded_hub_recursion(self):
         report = self.analyze({'fm1_cstart': '  call void @uh_probe()\n  ret void',
                                'uh_probe': '  call void @uh_probe()\n  ret void'})
-        self.assertEqual(report['paths']['fm1_cstart'][0], 360)
+        self.assertEqual(report['paths']['fm1_cstart'][0], 480)
 
     def test_bounded_hub_port_helper(self):
         report = self.analyze({'fm1_cstart': '  call void @uh_probe()\n  ret void',
                                'uh_probe': '  call void @uh_hub_port_probe()\n  ret void',
                                'uh_hub_port_probe': '  call void @uh_probe()\n  ret void'})
-        self.assertEqual(report['paths']['fm1_cstart'][0], 600)
+        self.assertEqual(report['paths']['fm1_cstart'][0], 840)
 
     def test_idle_hub_port_helper(self):
         report = self.analyze({'fm1_cstart': '  call void @uh_hub_port_probe()\n  ret void',
                                'uh_probe': '  call void @uh_hub_port_probe()\n  ret void',
                                'uh_hub_port_probe': '  call void @uh_probe()\n  ret void'})
-        self.assertEqual(report['paths']['fm1_cstart'][0], 480)
+        self.assertEqual(report['paths']['fm1_cstart'][0], 720)
 
     def test_unbounded_port_helper_recursion(self):
         with self.assertRaisesRegex(ValueError, 'recursive stack path'):

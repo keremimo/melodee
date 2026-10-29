@@ -177,7 +177,7 @@ static void sequencing(void)
     seq_advance(600); input_on(t, 64, 83); pop_midi(0x90, 64, 83);
     seq_advance(300); input_off(t, 64); pop_midi(0x80, 64, 0);
     seq_stop(); song.rec = song.rec_latch = 0;
-    assert(recording[0].note == 64 && recording[0].vel == 83 && recording[0].duration);
+    assert(recorded_note(&recording[0]) == 64 && recording[0].vel == 83 && recording[0].duration);
     mo_r = mo_w; seq_start(); seq_advance(0); empty_midi();
     seq_advance(600); pop_midi(0x90, 64, 83);
     seq_advance(300); pop_midi(0x80, 64, 0); seq_stop(); empty_midi();
@@ -243,7 +243,7 @@ static void usb_session_cleanup(void)
 #endif
 }
 /* a bank's steps: one note n at each of its first `count` steps (n 0: empty) */
-static void bank_fill(uint32_t k, uint32_t bank, uint32_t n, uint32_t count, int32_t len)
+static int bank_put(uint32_t k, uint32_t bank, uint32_t n, uint32_t count, int32_t len)
 {
     pattern_t p; pattern_read(k, bank, &p);
     for (uint32_t i = 0; i < NSTEP; i++) {
@@ -251,8 +251,9 @@ static void bank_fill(uint32_t k, uint32_t bank, uint32_t n, uint32_t count, int
         if (n && i < count) { p.step[i].n = 1; p.step[i].note[0] = (uint8_t)(n + i % 12u); p.step[i].time = ST_NOTE; p.step[i].vel = 100; }
     }
     p.timing[0] = (int16_t)len;
-    assert(pattern_write(k, bank, &p));
+    return pattern_write(k, bank, &p);
 }
+static void bank_fill(uint32_t k, uint32_t bank, uint32_t n, uint32_t count, int32_t len) { assert(bank_put(k, bank, n, count, len)); }
 static int bank_is(uint32_t k, uint32_t bank, uint32_t n, uint32_t count, int32_t len)
 {
     pattern_t p; pattern_read(k, bank, &p);
@@ -339,12 +340,12 @@ static void midi_only_tracks(void)
     bank_fill(6, 2, 70, 5, 8); trk[6].p[P_E0] = 11;
     pattern_switch(&trk[6], 2); assert(trk[6].pattern == 2);
     chain_defaults(&chain_config); chain_config.count = 2; chain_patterns[1][4] = 3; chain_patterns[0][6] = 2;
-    recorded_note_t r = {0}; r.note = 61; r.vel = 77; r.duration = 100; recorded_set_owner(&r, 6u * NPAT + 2u);
+    recorded_note_t r = {0}; recorded_set_note(&r,61); r.vel = 77; r.duration = 100; recorded_set_owner(&r, 6u * NPAT + 2u);
     recorded_set_step(&r, 1, 0, 0); recording[RECORD_MAX - 1u] = r; recording_reindex();
     bank_fill(1, 1, 30, 7, 32);                         /* (a part's other bank: sparse in FBKL too) */
     song.sel = 6;
     assert(!project_save_as(0, "EIGHT"));
-    assert(slot_magic(0) == BANKL_MAGIC);
+    assert(slot_magic(0) == BANKP_MAGIC);
     project_new_blank(); assert(trk_n() == NPART && bank_is(4, 0, 0, 0, TP[P_SLEN].def));
     project_load(0);
     assert(trk_n() == NTRK && song.sel == 6);
@@ -354,7 +355,7 @@ static void midi_only_tracks(void)
     {
         uint32_t found = 0;
         for (uint32_t i = 0; i < RECORD_MAX; i++)
-            found += recording[i].vel == 77u && recorded_owner(&recording[i]) == 6u * NPAT + 2u && recording[i].note == 61u;
+            found += recording[i].vel == 77u && recorded_owner(&recording[i]) == 6u * NPAT + 2u && recorded_note(&recording[i]) == 61u;
         assert(found == 1u);
     }
     /* removing track 2: track 5 (MIDI) to place 4, its banks and channel with it; the last place empty */
@@ -362,14 +363,22 @@ static void midi_only_tracks(void)
     assert(trk_n() == NTRK - 1u && trk[3].eng_req == ENGI_MIDI && trk[3].p[P_E0] == 5 && trk[5].p[P_E0] == 11);
     assert(bank_is(3, 0, 48, 16, 16) && bank_is(3, 3, 50, 64, 64) && bank_is(5, 2, 70, 5, 8) && trk[5].pattern == 2);
     assert(chain_patterns[1][3] == 3 && chain_patterns[0][5] == 2);
-    /* four tracks in use: FBKK, as firmware before them reads */
-    project_new_blank(); assert(!project_save_as(1, "FOUR")); assert(slot_magic(1) == BANK_MAGIC);
-    /* every bank of every track full: more than a project slot holds */
+    /* four tracks in use: FBKP too (FBKK only when FBKP cannot hold a dense four-part project) */
+    project_new_blank(); assert(!project_save_as(1, "FOUR")); assert(slot_magic(1) == BANKP_MAGIC);
+    /* every bank of every track full: more than a project holds. The edit past its room is refused (and leaves the
+     * bank as it was), so the project still saves */
     for (uint32_t k = trk_n(); k < NTRK; k++) track_add();
+    uint32_t refused = 0;
+    pattern_full = 0;
     for (uint32_t k = 0; k < NTRK; k++)
-        for (uint32_t b = 0; b < NPAT; b++) bank_fill(k, b, 40, 64, 64);
-    assert(project_save_as(2, "FULL") == 2 && bank_too_full && str_eq(ui.msg, "PROJECT FULL"));
-    puts("MIDI-only tracks 5..8: add, MIDI only, FBKL save/load, removal, FBKK for four, PROJECT FULL passed");
+        for (uint32_t b = 0; b < trk_npat(k); b++) {
+            pattern_t before; pattern_read(k, b, &before);
+            if (bank_put(k, b, 40, 64, 64)) { assert(bank_is(k, b, 40, 64, 64)); continue; }
+            pattern_t after; pattern_read(k, b, &after); assert(!memcmp(&before, &after, sizeof after)); refused++;
+        }
+    assert(refused && pattern_full && pattern_file_cost() <= pattern_room());
+    assert(!project_save_as(2, "FULL") && !bank_too_full && slot_magic(2) == BANKP_MAGIC);
+    puts("MIDI-only tracks 5..8: add, MIDI only, FBKP save/load, removal, edits past a project's room refused passed");
 }
 int main(void)
 {

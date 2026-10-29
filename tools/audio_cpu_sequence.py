@@ -44,8 +44,8 @@ def build_fixture(count, timing, layout, tails, assignment, manifest):
     for path, digest in {**manifest['firmware_sha256'], **source_hashes}.items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
             raise RuntimeError('Fixture source changed during construction')
-    if not 12 <= len(raw) <= 256*1024 or raw[:4] != b'FBKK' or int.from_bytes(raw[4:8], 'little') != len(raw):
-        raise RuntimeError('Fixture builder did not emit a bounded FBKK runtime')
+    if not 12 <= len(raw) <= 256*1024 or raw[:4] not in (b'FBKP', b'FBKK') or int.from_bytes(raw[4:8], 'little') != len(raw):
+        raise RuntimeError('Fixture builder did not emit a bounded FBKP/FBKK runtime')
     return raw, dict(events=count, timing=timing, layout=layout, tails=tails,
         assignment=assignment, bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest(),
         builder_source_sha256=source_hashes, snapshot_on_disk=False,

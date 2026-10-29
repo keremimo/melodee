@@ -36,6 +36,7 @@ UPPER = ["CUTOFF", "RESO", "LEVEL", "DECAY", "RELEASE", "SOUND", "OCOE", "COCO",
          "MELODEE", "PRESETS", "ANALOG", "DIGITAL", "PITCH", "SWING", "AV AW LT TA YO"]
 RULE = ["gfx"]   # "gfx": src/gfx.c cv_text; "rounded": the earlier rule (each glyph at the rounded pen, 1 phase)
 LIMIT = {"LB": 0.51, "TX": 0.51, "VL": 1.01, "HR": 1.01}   # a phase step (VL, HR: one phase, a pixel), plus raster noise
+RES = r"(?: MELODEE_RES)?"   # (tables in the resource region, res.c, carry the section attribute)
 
 
 def parse(path):
@@ -44,11 +45,11 @@ def parse(path):
     faces = {}
     for m in re.finditer(r"static const aafont_t AF_(\w+) = \{([^}]*)\};", t):
         name, f = m.group(1), [x.strip() for x in m.group(2).split(",")]
-        arr = lambda n: [int(v, 0) for v in re.search(r"%s\[\d+\] = \{([^}]*)\}" % (n if n.startswith("AF_") else
-                         "AF_%s_%s" % (name, n)), t).group(1).replace("\n", " ").split(",") if v.strip()]
+        arr = lambda n: [int(v, 0) for v in re.search(r"%s\[\d+\]%s = \{([^}]*)\}" % ((n if n.startswith("AF_") else
+                         "AF_%s_%s" % (name, n)), RES), t).group(1).replace("\n", " ").split(",") if v.strip()]
         g = [tuple(int(v) for v in e.split(",")) for e in
              re.findall(r"\{(-?\d+, -?\d+, -?\d+, -?\d+, -?\d+, -?\d+)\}",
-                        re.search(r"AF_%s_G\[\d+\] = \{(.*?)\n\};" % name, t, re.S).group(1))]
+                        re.search(r"AF_%s_G\[\d+\]%s = \{(.*?)\n\};" % (name, RES), t, re.S).group(1))]
         kern = {}
         codes = list(range(int(f[2]), int(f[3]) + 1)) + arr("EX")[:int(f[4])]
         if f[8] != "0":                      # the (shared) class tables, scaled (ks, Q8), back to pairs keyed a << 8 | b

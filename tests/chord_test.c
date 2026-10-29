@@ -447,7 +447,7 @@ static int strum_storage(void)
         uint32_t tail=8+2+NSTEP*8;
         memmove(old.raw+dst,old.raw+src,tail);dst+=tail;src+=tail;
     }
-    uint32_t motion_at=dst+sizeof(chain_config_t);
+    uint32_t motion_at=dst+sizeof(chain_legacy_t);
     memmove(old.raw+dst,old.raw+src,PROJ_TONE_WIRE-src);
     memset(old.raw+PROJ_TONE_WIRE-(src-dst),0,src-dst);
     /* Rewrite the source-era engine motion ID and count, then authenticate. */

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Shared pool at 16 x 128: retain the old dense step capacity, reject edits
- * atomically, and switch freely even with every payload chunk occupied. */
+/* Pool at 16 x 128: retain the old dense step capacity, refuse edits past the save's room (pattern_room)
+ * atomically, and switch freely with every bank dense. */
 #define NSTEP 128u
 #define NPAT 16u
 #define NMIDI 0u                               /* (the parts only: 16 x 128 x 8 tracks outgrow the 64 take owners) */
@@ -9,6 +9,8 @@
 #include "hostsim.c"
 #undef main
 #include <assert.h>
+static uint32_t room = ~0u;                    /* the save's room for steps (pattern_store.c on the device) */
+static uint32_t pattern_room(void) { return room; }
 static pattern_t model[NPART][NPAT];
 static uint32_t random_state=0x78943b21u;
 static uint32_t draw(void) { random_state=random_state*1664525u+1013904223u;return random_state; }
@@ -38,10 +40,11 @@ static void verify(void)
     }
     for(uint32_t h=pattern_free;h!=PAT_NONE;h=pattern_link[h]){assert(h<PAT_CHUNKS && !seen[h]++);free++;}
     assert(used==pattern_pool_used && used+free==PAT_CHUNKS);
-    assert(pattern_total_cost()<=PAT_DENSE_BUDGET);
+    assert(pattern_file_cost()<=pattern_room());
 }
 static void fresh(void)
 {
+    room=~0u;
     for(uint32_t k=0;k<NPART;k++)memset(trk[k].step,0,sizeof trk[k].step);
     host_tracks_init();
     for(uint32_t k=0;k<NPART;k++)for(uint32_t bank=0;bank<NPAT;bank++)pattern_read(k,bank,&model[k][bank]);
@@ -67,17 +70,19 @@ static void original_capacity(void)
 static void exhaustion(void)
 {
     fresh();
-    /* All capacity cold, all four active patterns empty. No spare chunks to
-     * hide a partial-publication or replacement-order bug. */
+    /* All the room cold, all four active patterns empty: no spare room to hide a partial-publication or
+     * replacement-order bug. The pool keeps every bank dense, so encoding never runs out under it. */
     for(uint32_t k=0;k<NPART;k++)for(uint32_t b=1;b<=8;b++){
         fill(&model[k][b],64,128);assert(pattern_write(k,b,&model[k][b]));
     }
-    assert(pattern_pool_used==PAT_CHUNKS && pattern_free==PAT_NONE);verify();
+    room=pattern_file_cost();
+    assert(room==NPART*8u*pattern_file_bytes(64) && pattern_pool_used==NPART*8u*4u*PAT_BLOCK_CHUNKS && pattern_free!=PAT_NONE);
+    verify();
     pattern_prepare(0,1);pattern_t p=model[0][15];fill(&p,0,16);
     uint16_t used=pattern_pool_used,peak=pattern_pool_peak;
     assert(!pattern_write(0,15,&p) && pattern_full);
     assert(pattern_stage[0].bank==1 && pattern_pool_used==used && pattern_pool_peak==peak);verify();
-    recorded_note_t r={.duration=1000,.vel=100,.note=60};
+    recorded_note_t r={.duration=1000,.vel=100,.note7=60};
     recorded_set_owner(&r,1);recorded_set_step(&r,100,0,0);recording[0]=r;recording_reindex();
     motion.count=1;motion.event[0]=(motion_event_t){0,P_PAN,12};motion_pattern[0]=1;
     uint32_t generation=recording_generation;
@@ -103,8 +108,8 @@ static void exhaustion(void)
     assert(pattern_set_step(&trk[0],0,&new_step));model[0][1].step[0]=new_step;verify();
     for(uint32_t k=0;k<NPART;k++)pattern_switch(&trk[k],15);
     for(uint32_t k=0;k<NPART;k++)pattern_flush(k);
-    assert(pattern_pool_used==PAT_CHUNKS);verify();
-    puts("shared pool: full-store rejection is atomic; relocation, existing edits and all four switches preserve notes");
+    assert(pattern_file_cost()==room && pattern_pool_used==NPART*8u*4u*PAT_BLOCK_CHUNKS);verify();
+    puts("pool: refusal past the save's room is atomic; relocation, existing edits and all four switches preserve notes");
 }
 static void sparse_banks(void)
 {

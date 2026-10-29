@@ -7,7 +7,9 @@ typedef struct {
     uint32_t generation, pattern_gen, signature;
     motion_store_t motion;
     uint8_t valid, redo, track, cursor, len, clear;
+    uint8_t pattern_sound, sound_clear;
     uint8_t slen;                /* LEN to swap in too (a doubled pattern), 0 = LEN stays */
+    uint8_t pitch;               /* a range's pitch turns, still open: the next turn keeps this snapshot */
     uint16_t note_count;
     recorded_note_t notes[RECORD_MAX]; /* variable allocation tail */
 } note_transaction_t;
@@ -48,7 +50,7 @@ static int note_transaction_begin_track(track_t *t)
     memcpy(note_transaction.steps,t->step,sizeof note_transaction.steps);
     note_transaction.track=(uint8_t)trk_index(t);note_transaction.pattern_gen=t->pattern_gen;
     note_transaction.cursor=ui.cursor;note_transaction.len=(uint8_t)step_pattern_len(t);
-    note_transaction.valid=1;note_transaction.redo=note_transaction.clear=note_transaction.slen=0;return 1;
+    note_transaction.valid=1;note_transaction.redo=note_transaction.clear=note_transaction.sound_clear=note_transaction.slen=note_transaction.pitch=0;return 1;
 }
 static int note_transaction_begin(void){return note_transaction_begin_track(TSEL);}
 static void note_transaction_pack(void)
@@ -78,6 +80,9 @@ static int note_tools_history(int redo)
        note_transaction.generation!=recording_generation||note_transaction.signature!=steps_sig(t)||
        (song.playing&&rec_on(t)))return 0;
     fm1_irq_off();
+    if(note_transaction.sound_clear && (chain_busy() || !pattern_sound_reserve(trk_index(t)))) {
+        fm1_irq_on();ui_message(chain_busy()?"STOP TO EDIT":"NO SOUND MEMORY");return 1;
+    }
     note_transaction_t *grown=resource_resize(RES_NOTE_HISTORY,sizeof *grown);
     if(!grown){fm1_irq_on();ui_message("NO EDIT MEMORY");return 1;}
     note_transaction_ptr=grown;note_history_expand(note_transaction.notes,note_transaction.note_count);note_transaction.note_count=RECORD_MAX;
@@ -85,6 +90,11 @@ static int note_tools_history(int redo)
         motion_store_t current;motion_snapshot_track(t,&current);
         if(motion_replace_track(t,&note_transaction.motion)){note_transaction_pack();fm1_irq_on();ui_message("MOTION FULL");return 1;}
         note_transaction.motion=current;
+        if(note_transaction.sound_clear){
+            uint8_t id=pattern_sound[trk_index(t)][t->pattern];
+            pattern_sound[trk_index(t)][t->pattern]=note_transaction.pattern_sound;note_transaction.pattern_sound=id;
+            if(song.playing)pattern_sound_switch(trk_index(t),t->pattern);
+        }
     }
     recording_stop(t);
     note_swap(recording,note_transaction.notes,sizeof recording);
@@ -104,6 +114,7 @@ static int note_clear_pattern(track_t *t)
     fm1_irq_off();recording_stop(t);
     if(!note_transaction_begin_track(t)){fm1_irq_on();return 0;}
     motion_snapshot_track(t,&note_transaction.motion);note_transaction.clear=1;
+    note_transaction.pattern_sound=pattern_sound[trk_index(t)][t->pattern];
     track_defaults_steps(t);note_transaction_end();fm1_irq_on();undo_seal();return 1;
 }
 /* Convert an entire chord together so its original manual notes cannot double
@@ -120,7 +131,7 @@ static int note_convert(uint32_t start)
     step_delete(TSEL,start);memcpy(&TSEL->step[start],&source,sizeof source);TSEL->step[start].flags|=SF_RECORDED;
     for(uint32_t j=0,i=0;j<count;j++){
         while(recording[i].vel)i++;
-        recorded_note_t r={0};r.note=nn[j];r.vel=vv[j];recorded_set_owner(&r,recording_owner(TSEL));recorded_set_step(&r,start,0,0);recorded_set_gate(&r,drum_track(TSEL));
+        recorded_note_t r={0};recorded_set_note(&r,nn[j]);r.vel=vv[j];recorded_set_owner(&r,recording_owner(TSEL));recorded_set_step(&r,start,0,0);recorded_set_gate(&r,drum_track(TSEL));
         note_duration(&r,n*RECORD_UNIT);recording_restore_note(TSEL,i,r);i++;
     }
     cursor_set((int32_t)start);ui.note_pick=0;notes_selected(TSEL);return 1;
@@ -134,22 +145,29 @@ static void note_rebuild_all(void)
     }
     for(uint32_t i=0;i<NSTEP;i++)if(TSEL->step[i].flags&SF_RECORDED)notes_rebuild(TSEL,i);
 }
-/* Manual fractional length: all chord members retain their common duration. */
+/* Manual fractional length: all chord members retain their common duration.
+ * Playback frees the note history every block, so a playing edit has no
+ * snapshot: the conversion preflights itself and later turns edit the event. */
 static void note_manual_length(int32_t delta,uint32_t quantum)
 {
-    if(song.playing||chain_busy()||live_rec_sel()){ui_message("STOP TO EDIT");return;}
+    if(chain_busy()||live_rec_sel()){ui_message("STOP TO EDIT");return;}
     uint32_t at=notes_manual_start(TSEL);if(at>=NSTEP){ui_message("SELECT A NOTE");return;}
-    fm1_irq_off();if(!note_transaction_begin()){fm1_irq_on();return;}
-    if(!note_convert(at)){note_transaction.valid=0;fm1_irq_on();return;}
-    for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])if(recorded_step(&recording[i])==at){
+    uint32_t snapshot=!song.playing;
+    fm1_irq_off();
+    if(!snapshot)recording_prune(TSEL);
+    else if(!note_transaction_begin()){fm1_irq_on();return;}
+    if(!note_convert(at)){if(snapshot)note_transaction.valid=0;fm1_irq_on();return;}
+    for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])if(recording_view(TSEL,&recording[i])==at){/* (the converted notes, not a swung neighbour stored in this interval) */
         uint32_t duration=recording[i].duration*(1u<<(recorded_exponent(&recording[i])));
         note_duration(&recording[i],(uint32_t)clamp(note_snap((int32_t)duration,delta,quantum),(int32_t)quantum,128*RECORD_UNIT));
     }
-    recording_generation++;ui.note_pick=0;notes_selected(TSEL);note_transaction_end();fm1_irq_on();
+    recording_generation++;ui.note_pick=0;notes_selected(TSEL);
+    if(snapshot)note_transaction_end();else{step_history_clear();ui.force=1;}
+    fm1_irq_on();
 }
 /* Fine moves and range transforms snap to quarter-step boundaries. A range's
  * offsets stay intact; copy shifts a duplicate. */
-static int bulk_note_has(uint32_t i) { return bulk.on==2u ? (bulk.notes[i/8u]>>(i%8u))&1u : bulk_has(recorded_step(&recording[i])); }
+static int bulk_note_has(uint32_t i) { return bulk.on==2u ? (bulk.notes[i/8u]>>(i%8u))&1u : bulk_has(recording_grid_step(TSEL,&recording[i])); }
 static void notes_bulk_delete(void)
 {
     if(chain_busy()||live_rec_sel()){ui_message("STOP TO EDIT");return;}
@@ -223,7 +241,7 @@ static void note_transform(int32_t delta,uint32_t quantum,int mode)
     }
     note_rebuild_all();
     for(uint32_t k=0;k<len;k++)if(TSEL->step[k].flags&SF_RECORDED){TSEL->step[k].probability=(uint8_t)metadata[k];TSEL->step[k].flags|=(metadata[k]>>8)&SF_SLIDE;}
-    if(focus<RECORD_MAX){cursor_set(recorded_step(&recording[focus]));ui.note_pick=(uint16_t)(focus+1u);note_assign(&ui.note_identity,&recording[focus]);ui.note_generation=recording_generation;}
+    if(focus<RECORD_MAX){cursor_set(recording_grid_step(TSEL,&recording[focus]));ui.note_pick=(uint16_t)(focus+1u);note_assign(&ui.note_identity,&recording[focus]);ui.note_generation=recording_generation;}
     if(bulk.on){bulk.on=2;memcpy(bulk.notes,moved,sizeof moved);bulk.generation=recording_generation;}note_transaction_end();fm1_irq_on();ui_message(quantize?"NOTES QUANTIZED":copy?"Copying..":"Moving..");
 }
 static void note_move_snapped(int32_t delta,uint32_t quantum,int copy){note_transform(delta,quantum,copy);}
@@ -234,5 +252,69 @@ static void note_quantize(uint32_t quantum)
     note_transform(0,quantum,2);
     if(!selected)bulk.on=0;
 }
-static void note_move_arm(void) { ui.note_move=1;ui.note_copy=0;ui.force=1;ui_message("Moving.."); }
+static void notes_pitch_seal(void);
+static void note_move_arm(void) { notes_pitch_seal();ui.note_move=1;ui.note_copy=0;ui.force=1;ui_message("Moving.."); }
 static void note_copy_arm(void) { note_move_arm();ui.note_copy=1;ui_message("Copying.."); }
+/* PITCH on a range, or on a note being moved / copied: every selected note moves together and the turn stops where
+ * the first one meets its edge, so the intervals survive. Copy armed: the copy is made in place first and takes the
+ * pitch. One snapshot covers the copy and a run of turns (one undo); a new range or move seals it. Playing frees the
+ * note history every block, so a playing shift has no undo (as note_manual_length). Drum events move their pitch.
+ * The preview plays the selection only when it sits on one step: spread notes would sound as a chord. */
+static void notes_pitch_seal(void) { if(resource[RES_NOTE_HISTORY].size&&note_transaction_ptr)note_transaction.pitch=0; }
+static int notes_pitch_run(void)
+{
+    return resource[RES_NOTE_HISTORY].size&&note_transaction_ptr&&note_transaction.valid&&note_transaction.pitch&&!note_transaction.redo&&
+        note_transaction.track==song.sel&&note_transaction.pattern_gen==TSEL->pattern_gen&&note_transaction.len==step_pattern_len(TSEL)&&
+        note_transaction.generation==recording_generation&&note_transaction.signature==steps_sig(TSEL);
+}
+static int notes_bulk_manual(uint32_t s)
+{
+    return bulk.on==1u&&bulk_has(s)&&step_on(&TSEL->step[s])&&!(TSEL->step[s].flags&SF_RECORDED);
+}
+static void notes_range_pitch(int32_t delta)
+{
+    if(ui.note_copy){
+        uint32_t gen=recording_generation;note_move_snapped(0,RECORD_UNIT/4u,1);
+        if(gen==recording_generation)return;
+        ui.note_copy=0;note_transaction.pitch=1;
+    }
+    uint32_t len=step_pattern_len(TSEL),drum=drum_track(TSEL),chosen=notes_selected(TSEL),found=0;
+    int32_t low=-128,high=128;
+    fm1_irq_off();
+    for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])if(note_transform_has(i,chosen)){
+        int32_t v=drum?recording[i].pitch:(int32_t)recorded_note(&recording[i]),lo=(drum?-24:1)-v,hi=(drum?24:127)-v;
+        if(lo>low)low=lo;if(hi<high)high=hi;found=1;
+    }
+    for(uint32_t s=0;s<len;s++)if(notes_bulk_manual(s))for(uint32_t j=0;j<TSEL->step[s].n;j++){
+        int32_t v=TSEL->step[s].note[j];if(1-v>low)low=1-v;if(127-v<high)high=127-v;found=1;
+    }
+    delta=found?clamp(delta,low,high):0;
+    if(!delta){fm1_irq_on();return;}
+    uint32_t snapshot=!song.playing;
+    if(snapshot&&!notes_pitch_run()){if(!note_transaction_begin()){fm1_irq_on();return;}note_transaction.pitch=1;}
+    uint8_t selected[RECORD_MAX/8u];memset(selected,0,sizeof selected);
+    for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])
+        if(note_transform_has(i,chosen))selected[i/8u]|=(uint8_t)(1u<<(i%8u));
+    uint8_t nn[12],vv[12];uint32_t count=0,view=NSTEP,close=1;int32_t pitch=0;
+    uint64_t touched=0;
+    for(uint32_t i=0;i<RECORD_MAX;i++)if(selected[i/8u]&(1u<<(i%8u))){
+        recorded_note_t r=recording_snapshot(i);
+        if(drum)r.pitch=(int8_t)(r.pitch+delta);else recorded_set_note(&r,(uint8_t)((int32_t)recorded_note(&r)+delta));
+        uint32_t at=recording_view(TSEL,&r);touched|=(uint64_t)1u<<at;recording_remove(TSEL,i);recording_restore_note(TSEL,i,r);
+        if(view==NSTEP){view=at;pitch=r.pitch;}
+        if(at!=view||count==12u)close=0;else{nn[count]=recorded_note(&r);vv[count++]=r.vel;}
+    }
+    for(uint32_t s=0;s<NSTEP;s++)if((touched>>s)&1u)notes_rebuild(TSEL,s);
+    for(uint32_t s=0;s<len;s++)if(notes_bulk_manual(s)){
+        step_t *st=&TSEL->step[s];if(view==NSTEP)view=s;
+        for(uint32_t j=0;j<st->n;j++){
+            st->note[j]=(uint8_t)(st->note[j]+delta);
+            if(s!=view||count==12u)close=0;else{nn[count]=st->note[j];vv[count++]=st->vel?st->vel:96;}
+        }
+    }
+    if(bulk.on==2u)bulk.generation=recording_generation;
+    if(chosen<RECORD_MAX&&recording[chosen].vel){note_assign(&ui.note_identity,&recording[chosen]);ui.note_generation=recording_generation;}
+    if(snapshot)note_transaction_end();else{step_history_clear();ui.force=1;}
+    fm1_irq_on();
+    if(close&&count&&notes_preview_on())notes_audition(nn,vv,count,drum?pitch:0,0);
+}

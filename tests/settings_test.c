@@ -58,12 +58,16 @@ int main(void)
         assert(settings_import(&q, sizeof q) && settings_midi_knobs == MK_OFF && settings_midi_knob_mode == MK_ABSOLUTE);
         settings_export(&q);
     }
-    {   /* Retired fidelity bytes remain reserved in PER5 and are cleared on save. */
+    {   /* Retired fidelity bytes are cleared on save; they now hold a tagged CLICK LEVEL (default: untagged). */
         persist_t q={0};q.magic=PERSIST_MAGIC;q.panel=PANEL_DEFAULT;
-        uint8_t *f=q.favorites.factory[FX_PREF_ROW]+FX_PREF_BYTE;
+        uint8_t *f=q.favorites.factory[CLICK_PREF_ROW]+CLICK_PREF_BYTE;
         f[0]='F';f[1]='Q';f[2]=1;f[3]=2;
-        assert(settings_import(&q,sizeof q));settings_export(&q);
+        assert(settings_import(&q,sizeof q) && settings_click_level==CLICK_LEVEL_DEFAULT);settings_export(&q);
         assert(sizeof q==604u && !f[0] && !f[1] && !f[2] && !f[3]);
+        settings_click_level=80;settings_export(&q);
+        assert(f[0]=='C' && f[1]=='K' && f[2]==1u && f[3]==80u);
+        settings_click_level=0;assert(settings_import(&q,sizeof q) && settings_click_level==80u);
+        f[3]=101;assert(settings_import(&q,sizeof q) && settings_click_level==25u);   /* untagged: HIGH, the nearest old level */
     }
 
     {   /* Device workload budget shares tagged high USB bits, never its low flags. */

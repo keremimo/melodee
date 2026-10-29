@@ -208,7 +208,7 @@ static int recording_queue_add(track_t *t, uint32_t i, uint32_t remaining)
     if (!recording_heap_room(tr)) return 0;
     uint32_t view = recording_view(t, &recording[i]);
     recording_run[i].left = recording_clock[tr] + remaining;
-    recording_message[i] = recording[i].note | 128u;
+    recording_message[i] = recorded_note(&recording[i]) | 128u;
     recording_queue_set_view(i, view);
     recording_watch[tr][view]++;
     recording_watch_bits[tr][view >> 5] |= 1u << (view & 31u);
@@ -259,7 +259,7 @@ static uint32_t recording_loop(const track_t *t, uint32_t period)
 }
 static int recording_valid(const recorded_note_t *r)
 {
-    return !r->vel || (r->pitch >= -24 && r->pitch <= 24 && recorded_owner(r) < NTRK * NPAT && recorded_step(r) < NSTEP && r->duration && r->note <= 127u && ((r->step & 128u) || recorded_step(r) + ((r->step & 64u) != 0u) < NSTEP));
+    return !r->vel || (r->pitch >= -24 && r->pitch <= 24 && recorded_owner(r) < NTRK * NPAT && recorded_step(r) < NSTEP && r->duration && recorded_note(r) <= 127u && ((r->step & 128u) || recorded_step(r) + ((r->step & 64u) != 0u) < NSTEP));
 }
 static uint32_t recording_view(const track_t *t, const recorded_note_t *r)
 {
@@ -322,7 +322,7 @@ static void recording_pitch_add(uint32_t i)
     const recorded_note_t *r=&recording[i];uint32_t tr=recorded_owner(r)/NPAT,view=recording_view(&trk[tr],r);
     if(r->vel && view<NSTEP && recorded_step(r)<(uint32_t)trk[tr].p[P_SLEN] &&
        recorded_owner(r)==recording_owner(&trk[tr]) && recording_pitch_key[tr]==recording_pitch_current(&trk[tr]))
-        recording_pitch[tr][view]|=recording_pitch_mask(r->note,recording_pitch_notes[tr][view]);
+        recording_pitch[tr][view]|=recording_pitch_mask(recorded_note(r),recording_pitch_notes[tr][view]);
 }
 static void recording_pitch_prepare(track_t *t)
 {
@@ -338,7 +338,7 @@ static void recording_pitch_prepare(track_t *t)
     for(uint32_t i=recording_head[recording_owner(t)];i<RECORD_MAX;i=recording_next[i]){
         const recorded_note_t *r=&recording[i];uint32_t view=recording_view(t,r);
         if(r->vel && recorded_step(r)<(uint32_t)t->p[P_SLEN] && view<NSTEP && ((dirty[view>>5]>>(view&31u))&1u))
-            recording_pitch[tr][view]|=recording_pitch_mask(r->note,recording_pitch_notes[tr][view]);
+            recording_pitch[tr][view]|=recording_pitch_mask(recorded_note(r),recording_pitch_notes[tr][view]);
     }
     recording_pitch_key[tr]=(uint16_t)key;memset(recording_pitch_dirty[tr],0,sizeof recording_pitch_dirty[tr]);
 }
@@ -368,8 +368,8 @@ static uint32_t recording_step_skip(track_t *t,const step_t *s,uint32_t skip)
 #endif
 scan:
     for(uint32_t r=recording_head[recording_owner(t)];r<RECORD_MAX;r=recording_next[r])if(recording_active(t,r) && recording_view(t,&recording[r])==t->seq_idx){
-        for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recording[r].note)skip|=1u<<k;
-        for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recording[r].note)skip|=1u<<(8u+k);
+        for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recorded_note(&recording[r]))skip|=1u<<k;
+        for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recorded_note(&recording[r]))skip|=1u<<(8u+k);
     }
     return skip;
 }
@@ -389,7 +389,7 @@ static void recording_off(track_t *t, uint32_t note)
 static void recording_end(track_t *t, uint32_t i)
 {
     if (!recording_sounding(i)) return;
-    uint32_t note = recording[i].note;
+    uint32_t note = recorded_note(&recording[i]);
 #if MELODEE_RECORD_QUEUE
     note = recording_message[i] & 127u;
     recording_queue_remove(i);
@@ -446,7 +446,7 @@ static void recording_reindex(void)
         recording_next[i] = recording_head[owner]; recording_head[owner] = (uint16_t)i;
         recording_tracks |= (uint8_t)(1u << (owner / NPAT));
         if (recording_sounding(i) && trk[owner / NPAT].pattern == owner % NPAT) {
-            recording_refs[owner / NPAT][recording[i].note]++;
+            recording_refs[owner / NPAT][recorded_note(&recording[i])]++;
 #if MELODEE_RECORD_QUEUE
             uint32_t tr = owner / NPAT, view = recording_view(&trk[owner / NPAT], &recording[i]);
             recording_queue_set_view(i, view);
@@ -540,6 +540,15 @@ static uint32_t recording_raw_on(const track_t *t, const recorded_note_t *r, uin
     uint32_t loop = recording_loop(t, period);
     uint32_t span = step_samples(t, period, recorded_step(r));
     return (recording_prefix(t, period, recorded_step(r)) + (uint32_t)(((uint64_t)r->on * span + RECORD_UNIT / 2u) / RECORD_UNIT)) % loop;
+}
+/* The step an event belongs to on the grid (NOTES selection, live erase): the unswung step its onset plays in.
+ * SWING stretches each even step over the next one's straight onset, so a note played on the grid for an odd step
+ * is stored in the even interval. Straight, this is its actual interval. */
+static uint32_t recording_grid_step(const track_t *t, const recorded_note_t *r)
+{
+    if (!track_swing(t)) return recorded_step(r);
+    uint32_t period = seq_div_samples((uint32_t)t->p[P_SDIV]);
+    return recording_raw_on(t, r, period) / period % (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP);
 }
 static uint32_t recording_quant_on(const track_t *t, const recorded_note_t *r, uint32_t period, uint32_t q)
 {
@@ -656,7 +665,7 @@ static int recording_note(track_t *t, uint32_t note, uint32_t vel, uint32_t step
         uint32_t view = recording_view(t, r);
         if (view >= NSTEP || t->step[view].time != ST_NOTE || !(t->step[view].flags & SF_RECORDED)) {
             recording_remove(t, i);
-        } else if (r->note == note) {
+        } else if (recorded_note(r) == note) {
             if (recording_flags[i] & 1u) recording_finish(i);
             if (recorded_step(r) == actual && r->on == on && (free == RECORD_MAX || i > free)) free = i;
         }
@@ -679,11 +688,11 @@ static int recording_note(track_t *t, uint32_t note, uint32_t vel, uint32_t step
     if (on > 65535u) on = 65535u;
     for (uint32_t i = 0; i < RECORD_MAX; i++) {
         recorded_note_t *r = &recording[i];
-        if (recorded_owner(r) == owner && (recording_flags[i] & 1u) && r->note == note) recording_finish(i);
+        if (recorded_owner(r) == owner && (recording_flags[i] & 1u) && recorded_note(r) == note) recording_finish(i);
         /* Repeated passes replace the same pitch at the same captured time.
          * Distinct hits in one step remain separate events. */
         uint32_t same_time = r->on == on;
-        if (r->vel && recorded_owner(r) == owner && r->note == note && recorded_step(r) == actual && same_time) free = i;
+        if (r->vel && recorded_owner(r) == owner && recorded_note(r) == note && recorded_step(r) == actual && same_time) free = i;
         else if (free == RECORD_MAX && (!r->vel || (!recording_present(r) && !recording_sounding(i) && !(recording_flags[i] & 1u)))) free = i;
     }
 #endif
@@ -692,7 +701,7 @@ static int recording_note(track_t *t, uint32_t note, uint32_t vel, uint32_t step
     if (recording_sounding(free)) recording_end(&trk[recorded_owner(&recording[free]) / NPAT], free);
     recording_unlink(free);
     recorded_note_t *r = &recording[free];
-    *r = (recorded_note_t){.on=(uint16_t)on, .duration=1, .note=(uint8_t)note, .vel=(uint8_t)vel};
+    *r = (recorded_note_t){.on=(uint16_t)on, .duration=1, .note7=(uint8_t)note, .vel=(uint8_t)vel};
     recorded_set_owner(r, owner); recorded_set_step(r, actual, step != actual, step == 0u && actual);
     recording_insert(t, free);
     memset(&recording_run[free], 0, sizeof recording_run[free]);
@@ -759,11 +768,11 @@ static void recording_drop(track_t *t, uint32_t owner)
         memset(&recording_run[i], 0, sizeof recording_run[i]); recording_flags[i] = 0;
     }
 }
-/* Copy recordings atomically with a bank. Check capacity before mutating
+/* Copy recordings atomically with a bank (from track from's to track t's). Check capacity before mutating
  * either the destination's steps, automation or performance. */
-static int recording_copy(track_t *t, uint32_t source, uint32_t dest, int apply)
+static int recording_copy(const track_t *from, uint32_t source, track_t *t, uint32_t dest, int apply)
 {
-    uint32_t src = trk_index(t) * NPAT + source, dst = trk_index(t) * NPAT + dest, count = 0, free = 0;
+    uint32_t src = trk_index(from) * NPAT + source, dst = trk_index(t) * NPAT + dest, count = 0, free = 0;
     for (uint32_t i = 0; i < RECORD_MAX; i++) {
         if (recording[i].vel && recorded_owner(&recording[i]) == src) count++;
         if (!recording[i].vel || recorded_owner(&recording[i]) == dst) free++;
@@ -813,8 +822,13 @@ static int recording_double(track_t *t, uint32_t bank, uint32_t len, int apply)
 static void recording_release(track_t *t, uint32_t note)
 {
     for (uint32_t i = recording_head[recording_owner(t)]; i < RECORD_MAX; i = recording_next[i])
-        if (recording[i].note == note && (recording_flags[i] & 1u))
+        if (recorded_note(&recording[i]) == note && (recording_flags[i] & 1u))
             recording_finish(i);
+}
+static uint32_t recording_gate(const recorded_note_t *r, uint32_t period)
+{
+    uint32_t gate = (uint32_t)(((uint64_t)r->duration << (recorded_exponent(r))) * period / RECORD_UNIT);
+    return gate ? gate : 1u;
 }
 static void recording_fire(track_t *t, uint32_t i, uint32_t period, uint32_t late)
 {
@@ -824,11 +838,10 @@ static void recording_fire(track_t *t, uint32_t i, uint32_t period, uint32_t lat
     if ((recording_flags[i] & 1u) || ((seq_hush >> trk_index(t)) & 1u)) return;   /* (an edit waiting: seq.c) */
     uint32_t chance = step_chance(&t->step[recording_view(t, r)]);
     if (chance < 100u && rng() % 100u >= chance) return;
-    uint32_t gate = (uint32_t)(((uint64_t)r->duration << (recorded_exponent(r))) * period / RECORD_UNIT);
-    if (!gate) gate = 1;
+    uint32_t gate = recording_gate(r, period);
     drum_event_pitch=r->pitch; drum_event_length=recorded_gate(r)?gate:0;
-    trk_note_on(t, r->note, r->vel);
-    chord_auto_observe(t, r->note);
+    trk_note_on(t, recorded_note(r), r->vel);
+    chord_auto_observe(t, recorded_note(r));
     drum_event_pitch=0; drum_event_length=0;
     uint32_t was = recording_sounding(i), remaining = gate > late ? gate - late : 0u;
 #if MELODEE_RECORD_QUEUE
@@ -837,14 +850,23 @@ static void recording_fire(track_t *t, uint32_t i, uint32_t period, uint32_t lat
 #else
     recording_run[i].left = remaining;
 #endif
-    if (remaining && !was) recording_refs[trk_index(t)][r->note]++;
+    if (remaining && !was) recording_refs[trk_index(t)][recorded_note(r)]++;
     if (!remaining) {
-        if (was && recording_refs[trk_index(t)][r->note]) recording_refs[trk_index(t)][r->note]--;
-        recording_off(t, r->note);
+        if (was && recording_refs[trk_index(t)][recorded_note(r)]) recording_refs[trk_index(t)][recorded_note(r)]--;
+        recording_off(t, recorded_note(r));
     }
     if (remaining) recording_live_add(i);
 }
-static void recording_zero(track_t *t)
+/* seek: playback starts mid-loop (a song cursor). An onset behind the playhead
+ * sounds only while its gate is still open there; the ones already over are
+ * heard for this loop, not fired together as a burst. */
+static int recording_behind(uint32_t i, uint32_t on, uint32_t phase, uint32_t period, uint32_t seek)
+{
+    if (!seek || on >= phase || phase - on < recording_gate(&recording[i], period)) return 0;
+    recording_flags[i] |= 4u;
+    return 1;
+}
+static void recording_zero(track_t *t, uint32_t seek)
 {
     uint32_t period = seq_div_samples((uint32_t)t->p[P_SDIV]);
     uint32_t phase = recording_prefix(t, period, t->seq_idx) + t->seq_pos;
@@ -854,7 +876,8 @@ static void recording_zero(track_t *t)
     uint32_t i = recording_head[recording_owner(t)];
     while (i < RECORD_MAX && recording_due[i] <= phase) {
         uint32_t next = recording_next[i];
-        if (recording_active(t, i)) recording_fire(t, i, period, phase - recording_due[i]);
+        if (recording_active(t, i) && !recording_behind(i, recording_due[i], phase, period, seek))
+            recording_fire(t, i, period, phase - recording_due[i]);
         i = next;
     }
     recording_schedule[trk_index(t)].cursor = (uint16_t)i;
@@ -863,7 +886,7 @@ static void recording_zero(track_t *t)
         recording_flags[i] &= (uint8_t)~4u;
         if (recording_active(t, i)) {
             uint32_t on = recording_play_on(t, i, period);
-            if (on <= phase) recording_fire(t, i, period, phase - on);
+            if (on <= phase && !recording_behind(i, on, phase, period, seek)) recording_fire(t, i, period, phase - on);
         }
     }
 #endif

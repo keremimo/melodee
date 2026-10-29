@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* NOTES uses the original onset interval, not the rounded STEP overview.
+/* NOTES uses the original onset interval (unswung: recording_grid_step), not the rounded STEP overview.
  * Selection is ordered by onset, pitch, then storage index: repeated pitches
  * and independent chord notes are individually reachable. Selection never edits note data. */
 /* One shared copy keeps precise event editing and undo compact. */
@@ -10,13 +10,13 @@ static void note_assign(recorded_note_t *dest,const recorded_note_t *source)
 }
 static int notes_in_step(const track_t *t, uint32_t i)
 {
-    return i < RECORD_MAX && recording_active(t, i) && recorded_step(&recording[i]) == ui.cursor;
+    return i < RECORD_MAX && recording_active(t, i) && recording_grid_step(t, &recording[i]) == ui.cursor;
 }
 static int notes_before(uint32_t a, uint32_t b)
 {
     if (b >= RECORD_MAX) return 1;
     const recorded_note_t *x = &recording[a], *y = &recording[b];
-    return x->on != y->on ? x->on < y->on : x->note != y->note ? x->note < y->note : a < b;
+    return x->on != y->on ? x->on < y->on : recorded_note(x) != recorded_note(y) ? recorded_note(x) < recorded_note(y) : a < b;
 }
 static uint32_t notes_selected(const track_t *t)
 {
@@ -44,7 +44,7 @@ static uint32_t drum_hit_selected(void)
 {
     uint32_t selected=ui.note_pick?ui.note_pick-1u:RECORD_MAX, first=RECORD_MAX;
     for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i]){
-        if(!recording_active(TSEL,i) || recording_view(TSEL,&recording[i])!=ui.cursor || drum_sound_of(TSEL,recording[i].note)!=ui.drum_sound%drum_sound_count(TSEL))continue;
+        if(!recording_active(TSEL,i) || recording_view(TSEL,&recording[i])!=ui.cursor || drum_sound_of(TSEL,recorded_note(&recording[i]))!=ui.drum_sound%drum_sound_count(TSEL))continue;
         if(i==selected)return i;
         if(first==RECORD_MAX || recording[i].on<recording[first].on)first=i;
     }
@@ -80,6 +80,19 @@ static void notes_cycle(int32_t delta)
     ui.note_pick = (uint16_t)(chosen + 1u);
     notes_preview();
 }
+/* A whole-step move under SWING goes by grid steps and keeps the note's distance from its step's swung onset,
+ * inside the target step: a note on the swing stays on it, one played on the straight grid stays there. */
+static void notes_swung_move(const track_t *t, const recorded_note_t *r, int32_t delta, recorded_note_t *out)
+{
+    uint32_t len = step_pattern_len(t), period = seq_div_samples((uint32_t)t->p[P_SDIV]);
+    uint32_t at = recording_raw_on(t, r, period), grid = recording_grid_step(t, r);
+    int32_t off = (int32_t)at - (int32_t)recording_prefix(t, period, grid), target = ((int32_t)grid + delta) % (int32_t)len;
+    if (at / period >= len) off -= (int32_t)recording_loop(t, period);   /* (an odd LEN's last tail: early for step zero) */
+    if (target < 0) target += (int32_t)len;
+    at = (uint32_t)clamp((int32_t)recording_prefix(t, period, (uint32_t)target) + off,
+                         target * (int32_t)period, (target + 1) * (int32_t)period - 1);
+    recording_quant_position(r, at, step_samples(t, period, 0), step_samples(t, period, 1), len, out);
+}
 static uint32_t notes_span(void) { return 16u >> ui.note_zoom; }
 static uint32_t notes_base(void) { return ui.cursor / notes_span() * notes_span(); }
 
@@ -96,14 +109,14 @@ static void notes_rebuild(track_t *t, uint32_t view)
         if (!recording_active(t, i) || recording_view(t, r) != view) continue;
         count++;
         if (r->vel > st->vel) st->vel = r->vel;
-        uint32_t lane = drum_lane(r->note);
-        if (drum_track(t) && r->note == DRUM_LANE_NOTE[lane]) {
+        uint32_t lane = drum_lane(recorded_note(r));
+        if (drum_track(t) && recorded_note(r) == DRUM_LANE_NOTE[lane]) {
             st->hit |= (uint8_t)(1u << lane);
             if (r->vel > 110u) st->acc |= (uint8_t)(1u << lane);
         } else {
             uint32_t j;
-            for (j = 0; j < st->n && st->note[j] != r->note; j++);
-            if (j == st->n && st->n < 4u) st->note[st->n++] = r->note;
+            for (j = 0; j < st->n && st->note[j] != recorded_note(r); j++);
+            if (j == st->n && st->n < 4u) st->note[st->n++] = recorded_note(r);
         }
     }
     if (!count) step_delete(t, view);
@@ -172,14 +185,25 @@ static void notes_step_jog(int32_t delta)
     notes_preview();
 }
 
+static int notes_preview_on(void)
+{
+    const page_t *pg=cur_page();
+    return settings_preview && !song.playing && !seq_counting() && !ui.home && !ui.menu && !ui.layer && !ui.entry_open &&
+        (pg->graph==GR_ROLL || pg->graph==GR_STEPS || pg->graph==GR_DRUMHIT);
+}
+static void notes_audition(const uint8_t *nn,const uint8_t *vv,uint32_t count,int32_t pitch,uint32_t gate)
+{
+    fm1_irq_off(); audition_track=song.sel;audition_count=(uint8_t)count;audition_pitch=pitch;audition_gate=gate;
+    memcpy(audition_notes,nn,count);memcpy(audition_vel,vv,count);audition_request=1;fm1_irq_on();
+}
 static void notes_preview(void)
 {
-    if(!settings_preview || song.playing || seq_counting() || ui.home || ui.menu || ui.layer || ui.entry_open) return;
-    const page_t *pg=cur_page(); if(pg->graph!=GR_ROLL && pg->graph!=GR_STEPS && pg->graph!=GR_DRUMHIT) return;
+    if(!notes_preview_on()) return;
+    const page_t *pg=cur_page();
     uint8_t nn[12],vv[12];uint32_t count=0,chosen=notes_selected(TSEL);
     if(pg->scope==SC_DRUMHIT)chosen=drum_hit_selected();
     int32_t pitch=0;uint32_t gate=0;
-    if(chosen<RECORD_MAX) { const recorded_note_t *r=&recording[chosen];nn[count]=r->note;vv[count++]=r->vel;
+    if(chosen<RECORD_MAX) { const recorded_note_t *r=&recording[chosen];nn[count]=recorded_note(r);vv[count++]=r->vel;
         if(drum_track(TSEL)){pitch=r->pitch;if(recorded_gate(r))gate=(uint32_t)(((uint64_t)r->duration<<(recorded_exponent(r)))*seq_div_samples(TSEL->p[P_SDIV])/RECORD_UNIT);}
     }
     else {
@@ -190,6 +214,5 @@ static void notes_preview(void)
             if(drum_track(TSEL))for(uint32_t i=0;i<NLANE;i++)if(step_lanes(st)&(1u<<i)){nn[count]=DRUM_LANE_NOTE[i];vv[count++]=(step_accents(st)&(1u<<i))?127:96;}
         }
     }
-    fm1_irq_off(); audition_track=song.sel;audition_count=(uint8_t)count;audition_pitch=pitch;audition_gate=gate;
-    memcpy(audition_notes,nn,count);memcpy(audition_vel,vv,count);audition_request=1;fm1_irq_on();
+    notes_audition(nn,vv,count,pitch,gate);
 }

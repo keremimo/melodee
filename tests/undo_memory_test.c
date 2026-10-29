@@ -61,4 +61,4 @@ static void history_without_cache(void)
     for(uint32_t i=0;i<8u;i++)undo_step(1);assert(t->step[63].vel==88u);
     undo_clear();assert(!resource[RES_LOAD_UNDO].size&&undo_lv==undo_sram&&undo_nlv==1u);
 }
-int main(void){assert(NPAT==8u&&NSTEP==64u&&RECORD_MAX==1024u);history_without_cache();history_audio_priority();puts("shared undo RAM: eight levels, cache failure, audio reclamation, stale histories and exhaustion passed");return 0;}
+int main(void){assert(NPAT==16u&&NPAT_MIDI==8u&&NSTEP==64u&&RECORD_MAX==1024u);history_without_cache();history_audio_priority();puts("shared undo RAM: eight levels, cache failure, audio reclamation, stale histories and exhaustion passed");return 0;}

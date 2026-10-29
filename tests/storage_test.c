@@ -13,9 +13,10 @@ static int fail_after = -1;            /* torn-write injection: stop after N pro
 static int fail_bytes = -1;            /* power loss after any programmed byte */
 static int erase_error, write_protected;
 static uint32_t fail_erase_off = 0xFFFFFFFFu;
-static uint32_t io_calls;
+static uint32_t io_calls, program_calls;
+static int read_error;
 
-static int st_read(uint32_t off, void *dst, uint32_t n) { io_calls++; memcpy(dst, nor + off, n); return 0; }
+static int st_read(uint32_t off, void *dst, uint32_t n) { io_calls++; if (read_error) return -7; memcpy(dst, nor + off, n); return 0; }
 static int st_erase(uint32_t off)
 {
     io_calls++;
@@ -27,6 +28,7 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
     const uint8_t *s = src;
     uint32_t i;
+    program_calls++;
     io_calls++;
     if (fail_after == 0)
         return -9;
@@ -46,10 +48,101 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 #include "../firmware/src/storage.c"
 #define T_OBJ OBJ_CZBANK0                        /* (an ordinary one-sector object for the A/B tests) */
 
+/* every committed copy of obj damaged, wherever it lives (fixed pair or pool): its payload (head 0) or header */
+static void corrupt_all(uint32_t obj, int head)
+{
+    for (uint32_t c = 0; c < ST_SMALL_U0 + ST_U_N; c++) {
+        st_hdr_t h;
+        if (st_head(obj, c, &h)) continue;
+        nor[st_sector(obj, c) + (head ? 8u : st_payload_off_header(obj, &h) + 10u)] ^= 0x01;
+    }
+}
 static int check(const char *what, int ok)
 {
     printf("%-46s %s\n", what, ok ? "ok" : "FAIL");
     return ok ? 0 : 1;
+}
+
+/* Independent legacy fixture: original contiguous base and padded extensions. */
+static void legacy_project(uint32_t slot, uint32_t copy, const uint8_t *data, uint32_t len, uint32_t seq)
+{
+    uint32_t base=0xA0000u+slot*10u*4096u+copy*5u*4096u;
+    uint32_t ext=0xEA000u+(slot*2u+copy)*2u*4096u;
+    memset(nor+base,0xFF,5u*4096u);memset(nor+ext,0xFF,2u*4096u);
+    for(uint32_t i=0;i<len;i++) {
+        uint32_t j=i-20224u;
+        uint32_t at=i<20224u?base+256u+i:ext+j/3840u*4096u+j%3840u;
+        nor[at]=data[i];
+    }
+    st_hdr_t h={ST_MAGIC,(uint16_t)(OBJ_BANK0+slot),(uint16_t)copy,seq,len,st_crc32(data,len),{0xFFFFFFFFu,0xFFFFFFFFu},0};
+    h.hcrc=st_crc32(&h,sizeof h-4u);memcpy(nor+base,&h,sizeof h);
+}
+static int project_pool_test(void)
+{
+    int bad=0,ok=1;
+    static uint8_t old[27904],next[ST_PROJECT_MAX],back[ST_PROJECT_MAX],snapshot[sizeof nor];
+    for(uint32_t i=0;i<sizeof old;i++)old[i]=(uint8_t)(i*37u);
+    for(uint32_t i=0;i<sizeof next;i++)next[i]=(uint8_t)(i*113u+7u);
+    memset(nor,0xFF,sizeof nor);
+    for(uint32_t k=0;k<4u;k++){
+        legacy_project(k,0,old,sizeof old,4u);legacy_project(k,1,old,sizeof old,5u);
+        ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof old&&!memcmp(back,old,sizeof old);
+    }
+    memcpy(snapshot,nor,sizeof nor);
+    bad+=check("all four legacy A/B projects remain readable",ok);
+    for(uint32_t cut=0;cut<170u;cut++){
+        memcpy(nor,snapshot,sizeof nor);fail_after=(int)cut;
+        int rc=st_save(OBJ_BANK0,next,sizeof next);fail_after=-1;
+        ok &= st_load(OBJ_BANK0,back,sizeof back)==(rc?sizeof old:sizeof next)&&!memcmp(back,rc?old:next,rc?sizeof old:sizeof next);
+        for(uint32_t k=1;k<4u;k++)ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof old&&!memcmp(back,old,sizeof old);
+        if(!rc)break;
+    }
+    bad+=check("migration survives every page cutoff without changing other slots",ok);
+    memcpy(nor,snapshot,sizeof nor);ok=1;
+    for(uint32_t round=0;round<4u;round++)for(uint32_t k=0;k<4u;k++){
+        next[0]=(uint8_t)(round*4u+k);
+        ok &= !st_save(OBJ_BANK0+k,next,sizeof next);
+        ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof next&&!memcmp(back,next,sizeof next);
+        uint32_t live[ST_UW]={0};
+        for(uint32_t j=0;j<4u;j++){
+            st_hdr_t h;int copy=st_current(OBJ_BANK0+j,&h);
+            if(copy>=2){
+                uint32_t mine[ST_UW]={0};st_project_used(mine,OBJ_BANK0+j,(uint32_t)copy,&h);
+                for(uint32_t w=0;w<ST_UW;w++){ok &= !(live[w]&mine[w]);live[w]|=mine[w];}
+            }
+        }
+    }
+    for(uint32_t k=0;k<4u;k++)ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof next&&back[0]==12u+k;
+    bad+=check("four maximum projects and repeated shared-workspace saves fit",ok);
+    ok=1;
+    uint32_t live[ST_UW]={0};
+    for(uint32_t k=0;k<4u;k++){st_hdr_t h;int c=st_current(OBJ_BANK0+k,&h);st_project_used(live,OBJ_BANK0+k,(uint32_t)c,&h);}
+    for(uint32_t i=0;i<ST_POOL_SECTORS;i++)if((live[i/32u]>>(i%32u))&1u)for(uint32_t j=3840u;j<4096u;j++)ok &= nor[st_sector(OBJ_BANK0,i+2u)+j]==0xFFu;
+    /* The original A0000..C7FFF and EA000..F9FFF regions are the only mutation windows. */
+    for(uint32_t i=0;i<sizeof nor;i++)if(!((i>=0xA0000u&&i<0xC8000u)||(i>=0xEA000u&&i<0xFA000u)))ok &= nor[i]==0xFFu;
+    bad+=check("SPL scan tails and all non-project regions stay erased",ok);
+    uint32_t calls=io_calls;
+    bad+=check("pool overflow rejected before flash access",st_save(OBJ_BANK0,next,sizeof next+1u)<0&&io_calls==calls);
+    ok=!st_save(OBJ_BANK0,0,0)&&!st_exists(OBJ_BANK0);
+    ok &= st_load(OBJ_BANK0+1,back,sizeof back)==sizeof next&&back[0]==13u;
+    bad+=check("deleting one slot retains the other full projects",ok);
+    memcpy(snapshot,nor,sizeof nor);read_error=1;
+    int rc=st_save(OBJ_BANK0,next,sizeof next);read_error=0;
+    bad+=check("read failure refuses allocation without any mutation",rc&&!memcmp(nor,snapshot,sizeof nor));
+    st_stream_generation=0; /* cold boot reconstructs ownership from flash alone */
+    bad+=check("cold boot reconstructs full slot ownership",st_load(OBJ_BANK0+1,back,sizeof back)==sizeof next&&back[0]==13u);
+    /* The sequence may wrap, and the address map is authenticated by the header. */
+    st_hdr_t h;int copy=st_current(OBJ_BANK0+1,&h);h.seq=0xFFFFFFFFu;h.hcrc=st_crc32(&h,sizeof h-4u);
+    memcpy(nor+st_sector(OBJ_BANK0+1,(uint32_t)copy),&h,sizeof h);
+    bad+=check("pool sequence wraps safely",!st_save(OBJ_BANK0+1,next,sizeof next)&&st_load(OBJ_BANK0+1,back,sizeof back)==sizeof next&&!memcmp(back,next,sizeof next));
+    /* A project record's sectors are read by its own tag (a list of pool indices), never as another object's tags */
+    memset(nor,0xFF,sizeof nor);
+    h=(st_hdr_t){ST_MAGIC,OBJ_BANK0,3u,1u,ST_PROJECT_MAX,0u,{0u,0u},0u};
+    st_list_init(&h);for(uint32_t k=0;k<ST_PROJECT_SECTORS;k++)st_list_put(&h,k,1u+k);
+    h.hcrc=st_crc32(&h,sizeof h-4u);memcpy(nor+0xA1000u,&h,sizeof h);
+    bad+=check("project sector lists are read by their own tag",!st_head(OBJ_BANK0,3u,&h)&&st_payload_off_header(OBJ_BANK0,&h)==32u);
+
+    return bad;
 }
 
 int main(void)
@@ -79,8 +172,7 @@ int main(void)
     bad += check("save A again", st_save(T_OBJ, a, sizeof a) == 0);
     n = st_load(T_OBJ, got, sizeof got);
     bad += check("load returns A", n == (int)sizeof a && !memcmp(got, a, sizeof a));
-    nor[st_sector(T_OBJ, 0) + ST_PAYLOAD_OFF + 10] ^= 0x01;   /* bit rot in one copy */
-    nor[st_sector(T_OBJ, 1) + ST_PAYLOAD_OFF + 10] ^= 0x01;
+    corrupt_all(T_OBJ, 0);                            /* bit rot in every copy */
     n = st_load(T_OBJ, got, sizeof got);
     bad += check("both copies corrupt -> nothing", n < 0);
     bad += check("other objects untouched", st_load(T_OBJ + 1, got, sizeof got) < 0);
@@ -100,8 +192,7 @@ int main(void)
     bad += check("save over the rotten copy", st_save(T_OBJ + 2, b, sizeof b) == 0);
     n = st_load(T_OBJ + 2, got, sizeof got);
     bad += check("... loads the new data", n == (int)sizeof b && !memcmp(got, b, sizeof b));
-    nor[st_sector(T_OBJ + 2, 0) + 8] ^= 0x01;    /* both headers broken */
-    nor[st_sector(T_OBJ + 2, 1) + 8] ^= 0x01;
+    corrupt_all(T_OBJ + 2, 1);                        /* every header broken */
     bad += check("both headers broken -> nothing", st_load(T_OBJ + 2, got, sizeof got) < 0);
     bad += check("data stays in the Melodee regions",
                  st_sector(OBJ_SETTINGS, 1) + 4096 <= 0xFF000 && st_sector(T_OBJ + 3, 1) + 4096 <= 0xE0000 &&
@@ -184,61 +275,7 @@ int main(void)
         bad += check("small destination rejects whole object", st_load(T_OBJ, got, sizeof got - 1u) < 0 && got[0] == 'X');
         bad += check("oversized save rejected", st_save(T_OBJ, a, ST_PAYLOAD_MAX + 1u) < 0);
     }
-    {
-        static uint8_t first[27200], second[27200], back[27200], copies[10u * ST_SECTOR];
-        uint32_t base = st_sector(OBJ_BANK0,0), ok=1;
-        memset(first,0x35,sizeof first); memset(second,0x79,sizeof second);
-        ok &= st_sector(OBJ_BANK0+3,1)+5u*ST_SECTOR <= 0xC8000u;
-        ok &= st_save(OBJ_BANK0,first,sizeof first)==0 && st_save(OBJ_BANK0,second,sizeof second)==0;
-        memcpy(copies,nor+base,sizeof copies);
-        for (uint32_t cut=0; cut<=sizeof first/256u; cut++) {
-            memcpy(nor+base,copies,sizeof copies); fail_after=(int)cut;
-            ok &= st_save(OBJ_BANK0,first,sizeof first)!=0; fail_after=-1;
-            ok &= st_load(OBJ_BANK0,back,sizeof back)==sizeof back && !memcmp(back,second,sizeof back);
-        }
-        for (uint32_t cut=0; cut<sizeof(st_hdr_t); cut++) {
-            memcpy(nor+base,copies,sizeof copies); fail_bytes=(int)(sizeof first+cut);
-            ok &= st_save(OBJ_BANK0,first,sizeof first)!=0; fail_bytes=-1;
-            ok &= st_load(OBJ_BANK0,back,sizeof back)==sizeof back && !memcmp(back,second,sizeof back);
-        }
-        bad += check("extended project: every page/header cut keeps all banks in the old copy",ok);
-        memcpy(nor+base,copies,sizeof copies); uint32_t span; nor[st_address(OBJ_BANK0,1,sizeof second-1,&span)]^=1;
-        bad += check("bank project CRC fallback covers its final sector",st_load(OBJ_BANK0,back,sizeof back)==sizeof back && !memcmp(back,first,sizeof back));
-    }
-    {
-        int ok=1; static uint8_t payload[27200], got[27200];
-        for(uint32_t i=0;i<sizeof payload;i++)payload[i]=(uint8_t)(i*37u);
-        for(uint32_t k=0;k<4u;k++)for(uint32_t copy=0;copy<2u;copy++) {
-            ok &= st_save(OBJ_BANK0+k,payload,sizeof payload)==0;
-            ok &= st_load(OBJ_BANK0+k,got,sizeof got)==sizeof got && !memcmp(got,payload,sizeof got);
-            uint32_t ext=st_extension(OBJ_BANK0+k,copy);
-            for(uint32_t sector=0;sector<2u;sector++)for(uint32_t j=ST_PAYLOAD_MAX;j<ST_SECTOR;j++)
-                ok &= nor[ext+sector*ST_SECTOR+j]==0xFFu;
-        }
-        ok &= st_extension(OBJ_BANK0,0)==0xEA000u && st_extension(OBJ_BANK0+3,1)+2u*ST_SECTOR==0xFA000u;
-        bad+=check("all four project extension pairs are disjoint and leave SPL scan tails erased",ok);
-        uint32_t calls=io_calls;
-        bad+=check("extension overflow rejected before any flash access",st_save(OBJ_BANK0,payload,st_capacity(OBJ_BANK0)+1u)<0 && io_calls==calls);
-        /* First upgrade: existing FUN12/FBKF can be read without extension
-         * data. Each interrupted write leaves that old five-sector object. */
-        static uint8_t old[20224], snapshot[10u*ST_SECTOR];memset(old,0x62,sizeof old);
-        memset(nor,0xFF,sizeof nor);st_save(OBJ_BANK0,old,sizeof old);
-        memcpy(snapshot,nor+st_sector(OBJ_BANK0,0),sizeof snapshot);ok=1;
-        for(uint32_t cut=0;cut<=sizeof payload/256u;cut++) {
-            memcpy(nor+st_sector(OBJ_BANK0,0),snapshot,sizeof snapshot);fail_after=(int)cut;
-            ok &= st_save(OBJ_BANK0,payload,sizeof payload)!=0;fail_after=-1;
-            ok &= st_load(OBJ_BANK0,got,sizeof got)==sizeof old && !memcmp(got,old,sizeof old);
-        }
-        bad+=check("interrupted first upgrade preserves the old 152-note project",ok);
-        ok=st_save(OBJ_BANK0,payload,sizeof payload)==0;
-        uint8_t cross[512];
-        ok &= st_read_range(OBJ_BANK0,1,ST_BANK_BASE_MAX-128u,cross,sizeof cross)==0 && !memcmp(cross,payload+ST_BANK_BASE_MAX-128u,sizeof cross);
-        ok &= st_read_range(OBJ_BANK0,1,ST_BANK_BASE_MAX+ST_PAYLOAD_MAX-128u,cross,sizeof cross)==0 && !memcmp(cross,payload+ST_BANK_BASE_MAX+ST_PAYLOAD_MAX-128u,sizeof cross);
-        bad+=check("range reads cross the base and padded extension boundaries exactly",ok);
-        fail_erase_off=st_extension(OBJ_BANK0,0);
-        ok=st_save(OBJ_BANK0,old,sizeof old)!=0;fail_erase_off=0xFFFFFFFFu;
-        bad+=check("extension erase failure preserves the committed expanded copy",ok && st_load(OBJ_BANK0,got,sizeof got)==sizeof payload && !memcmp(got,payload,sizeof got));
-    }
+    bad += project_pool_test();
     printf("%s\n", bad ? "STORAGE TEST FAILED" : "storage test passed");
     bad += check("CZ banks have disjoint A/B sectors outside project and preset data",
         st_sector(OBJ_CZBANK0,0)==0xC8000u && st_sector(OBJ_CZBANK0+7,1)+ST_SECTOR==0xD8000u &&

@@ -82,6 +82,8 @@ jobs:
         cp "build/melodee-$version.fwsc" build/melodee.fwsc
         mkdir -p build/release-assets
         cp "build/release-$version/"*.fwsc "build/release-$version/"*-app.bin build/release-assets/
+        # the resource region the installer writes after the firmware (firmware/src/res.c)
+        cp build/melodee-res.bin "build/release-assets/melodee-$version-res.bin"
       test: |
         set -euo pipefail
         export PARALLEL=2 MELODEE_DUAL_CORE=1 MELODEE_CORE1_FALLBACK=0

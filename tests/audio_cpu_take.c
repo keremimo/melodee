@@ -159,7 +159,7 @@ static uint32_t take_decode(take_record_t *out, const uint8_t *raw)
     for (uint32_t i = 1; i < n; i++) {           /* canonical: track, bank, cell, note, onset */
         take_record_t v = out[i];
         uint32_t j = i;
-        #define TAKE_KEY(x) ((uint64_t)((x).r.owner & 31u) << 40 | (uint64_t)((x).r.step & 63u) << 32 | (uint64_t)(x).r.note << 24 | (uint64_t)(x).r.on << 4 | ((x).r.step >> 6))
+        #define TAKE_KEY(x) ((uint64_t)((x).r.owner & 31u) << 40 | (uint64_t)((x).r.step & 63u) << 32 | (uint64_t)recorded_note(&(x).r) << 24 | (uint64_t)(x).r.on << 4 | ((x).r.step >> 6))
         while (j && TAKE_KEY(out[j - 1u]) > TAKE_KEY(v)) { out[j] = out[j - 1u]; j--; }
         #undef TAKE_KEY
         out[j] = v;
@@ -172,7 +172,7 @@ static void take_print(FILE *f, const char *tag, const uint8_t *raw)
     for (uint32_t i = 0; i < n; i++) {
         const recorded_note_t *r = &take_records[i].r;
         fprintf(f, "%sE %u %u %u %u %u %u %u %u %u %d %u\n", tag, take_records[i].track, (r->owner & 31u) % NPAT,
-                r->step & 63u, r->step >> 6, r->on, r->duration, r->owner >> 5, r->note, r->vel, r->pitch, r->length);
+                r->step & 63u, r->step >> 6, r->on, r->duration, r->owner >> 5, recorded_note(r), r->vel, r->pitch, r->length);
     }
     /* Overview of the active banks; the fractional gate byte is timing. */
     for (uint32_t k = 0; k < NPART; k++) for (uint32_t i = 0; i < NSTEP; i++) {
@@ -231,7 +231,7 @@ static int take_check(const take_spec_t *s, uint32_t jitter)
         uint32_t want = i ? (s->quant ? 0u : RECORD_UNIT / 4u) : 0u, j = 0;
         for (; j < n; j++) {
             const recorded_note_t *r = &take_records[j].r;
-            if (used[j] || take_records[j].track != x->track || r->note != x->note || r->vel != x->vel ||
+            if (used[j] || take_records[j].track != x->track || recorded_note(r) != x->note || r->vel != x->vel ||
                 (r->step & 63u) != x->step || (r->step >> 6) || (r->owner & 31u) % NPAT != trk[x->track].pattern) continue;
             uint32_t d = r->on > want ? r->on - want : want - r->on;
             if (d <= bound && r->duration) break;

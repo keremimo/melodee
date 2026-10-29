@@ -101,7 +101,7 @@ static uint8_t midi_in_source[MQ];                    /* 1 USB, 2 TRS */
  * musical time. Each packet retains its source's count at reception, so a
  * later pulse can recover clocks discarded with an overflowing note burst.
  * uint16 differences wrap safely: the running-clock timeout is only 500 ms. */
-static uint16_t midi_in_pulse[MQ], midi_rx_pulses[2];
+static uint16_t midi_in_pulse[MQ], midi_rx_pulses[3];
 static volatile uint32_t fm1_ms;                    /* also declared by core.h; parser-only host tests */
 static volatile uint32_t mi_w, mi_r, mo_w, mo_r;
 static volatile uint8_t midi_in_overflow;               /* audio ISR discards a broken stream and releases notes */
@@ -120,7 +120,7 @@ static uint8_t midi_render_timed;                  /* audio ISR supplies the blo
 static int midi_enqueue(uint32_t pkt, uint32_t source)
 {
     uint32_t at = mi_w % MQ;
-    uint32_t clock_source = source == 2u;
+    uint32_t clock_source = source >= 1u && source <= 3u ? source - 1u : 0u;
     if (((pkt >> 8) & 0xFFu) == 0xF8u)
         midi_rx_pulses[clock_source]++;
     if (midi_in_overflow)
@@ -141,13 +141,23 @@ static int midi_enqueue(uint32_t pkt, uint32_t source)
 
 static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
 {
-    if (usb_midi_out_ready() && mo_w - mo_r < MQ) {
+#if MELODEE_BLE
+    uint32_t ie = fm1_icfg(); fm1_irq_off();
+    int usb_ready = usb_midi_out_ready(), ble_ready = mel_ble_ready();
+    if ((!usb_ready && !ble_ready) || (usb_ready && mo_w - mo_r >= MQ) ||
+        (ble_ready && !mel_ble_room())) { fm1_icfg_set(ie); return 0; }
+    if (ble_ready) (void)mel_ble_emit(pkt);
+#else
+    if (!usb_midi_out_ready() || mo_w - mo_r >= MQ) return 0;
+#endif
+    if (usb_midi_out_ready()) {
         midi_out_q[mo_w % MQ] = pkt;
-        RING_PUBLISH();
-        mo_w++;
-        return 1;
+        RING_PUBLISH(); mo_w++;
     }
-    return 0;
+#if MELODEE_BLE
+    fm1_icfg_set(ie);
+#endif
+    return 1;
 }
 static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
 

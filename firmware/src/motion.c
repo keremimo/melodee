@@ -9,7 +9,7 @@ static motion_store_t motion;
 /* Main-loop sound design temporarily auditions the base tone. The saved motion
  * enable bits and event pool remain unchanged. */
 static uint8_t motion_design_pause;
-static int recording_copy(track_t *t, uint32_t source, uint32_t dest, int apply);
+static int recording_copy(const track_t *from, uint32_t source, track_t *t, uint32_t dest, int apply);
 static int recording_double(track_t *t, uint32_t bank, uint32_t len, int apply);
 static void recording_drop(track_t *t, uint32_t owner);
 static void recording_reindex(void);
@@ -435,7 +435,7 @@ static int motion_replace_track(track_t *t, const motion_store_t *in)
 
 static int pattern_request(track_t *t, uint32_t bank)
 {
-    if (bank >= NPAT) return 1;
+    if (bank >= trk_npat(trk_index(t))) return 1;      /* (a MIDI-only track: 8) */
     uint32_t f = motion_guard();
     if (chain.running || chain.armed) { motion_unguard(f); return 1; }
     if (song.playing) t->pattern_next = bank == t->pattern ? 0xff : (uint8_t)bank;
@@ -443,40 +443,48 @@ static int pattern_request(track_t *t, uint32_t bank)
     motion_unguard(f);
     return 0;
 }
-/* track t's pattern source copied over dest; live: even over the one playing (the UI does that at its loop end, as it
- * waits there: ui_input.c dq_poll). 1 = refused, 2 = no room */
-static int pattern_copy_at(track_t *t, uint32_t source, uint32_t dest, int live)
+/* track ts's pattern source copied over track td's dest (the same track or another); live: even over the one playing
+ * (the UI does that at its loop end, as it waits there: ui_input.c dq_poll). To another track its motion goes along
+ * only between parts of the same engine (the engine's own parameters mean another thing elsewhere; MIDI-only tracks
+ * have none), its pattern sound never (a whole engine's snapshot: td's pattern plays td's sound). 1 = refused,
+ * 2 = no room, 4 = no room to save */
+static int pattern_copy_to(track_t *ts, uint32_t source, track_t *td, uint32_t dest, int live)
 {
-    uint32_t k = trk_index(t), i, n = 0, f, extra = 0;
-    if (source >= NPAT || dest >= NPAT) return 1;
-    if (source == dest) return 0;
+    uint32_t ks = trk_index(ts), kd = trk_index(td), i, n = 0, f, extra = 0;
+    int own = ks == kd, moves = own || (kd < NPART && ts->eng_req == td->eng_req);
+    if (source >= trk_npat(ks) || dest >= trk_npat(kd)) return 1;
+    if (own && source == dest) return 0;
     f = motion_guard();
-    if (chain.running || chain.armed || (song.playing && dest == t->pattern && !live)) { motion_unguard(f); return 1; }
-    for (i = 0; i < motion.count; i++) if ((motion.event[i].place >> 6) == k) {
-        if (motion_pattern[i] == source) extra++;
-        if (motion_pattern[i] == dest) n++;
+    if (chain.running || chain.armed || (song.playing && dest == td->pattern && !live)) { motion_unguard(f); return 1; }
+    for (i = 0; i < motion.count; i++) {
+        if (moves && (motion.event[i].place >> 6) == ks && motion_pattern[i] == source) extra++;
+        if ((motion.event[i].place >> 6) == kd && motion_pattern[i] == dest) n++;
     }
     if (motion.count - n + extra > MOTION_MAX) { motion_unguard(f); return 2; }
-    if (recording_copy(t, source, dest, 0)) { motion_unguard(f); return 2; }
+    if (recording_copy(ts, source, td, dest, 0)) { motion_unguard(f); return 2; }
     pattern_t copy;
-    pattern_read(k, source, &copy);
-    if (!pattern_can_write(k, dest, &copy)) { motion_unguard(f); return 4; }
-    pattern_commit(t);
-    recording_copy(t, source, dest, 1);
-    pattern_write(k, dest, &copy);
+    pattern_read(ks, source, &copy);
+    if (!pattern_can_write(kd, dest, &copy)) { motion_unguard(f); return 4; }
+    pattern_commit(ts);
+    recording_copy(ts, source, td, dest, 1);
+    pattern_write(kd, dest, &copy);
+    pattern_sound[kd][dest] = own ? pattern_sound[ks][source] : 0;
     n = 0;
-    for (i = 0; i < motion.count; i++) if ((motion.event[i].place >> 6) != k || motion_pattern[i] != dest) {
+    for (i = 0; i < motion.count; i++) if ((motion.event[i].place >> 6) != kd || motion_pattern[i] != dest) {
         motion_pattern[n] = motion_pattern[i]; motion.event[n++] = motion.event[i];
     }
     motion.count = (uint8_t)n;
     motion.rsv[0] = 1;
-    for (i = 0; i < n; i++) if ((motion.event[i].place >> 6) == k && motion_pattern[i] == source) {
-        motion.event[motion.count] = motion.event[i]; motion_pattern[motion.count++] = (uint8_t)dest;
+    for (i = 0; moves && i < n; i++) if ((motion.event[i].place >> 6) == ks && motion_pattern[i] == source) {
+        motion.event[motion.count] = motion.event[i];
+        motion.event[motion.count].place = (uint8_t)(kd << 6 | (motion.event[i].place & 63u));
+        motion_pattern[motion.count++] = (uint8_t)dest;
     }
-    if (dest == t->pattern) pattern_apply(t, dest);
+    if (dest == td->pattern) { pattern_apply(td, dest); if (song.playing) pattern_sound_switch(kd, dest); }
     motion_unguard(f);
     return 0;
 }
+static int pattern_copy_at(track_t *t, uint32_t source, uint32_t dest, int live) { return pattern_copy_to(t, source, t, dest, live); }
 static int pattern_copy(track_t *t, uint32_t source, uint32_t dest) { return pattern_copy_at(t, source, dest, 0); }
 /* track t's motion on pattern bank b gone (the one playing: motion_clear) */
 static void motion_clear_bank(track_t *t, uint32_t b)
@@ -500,6 +508,7 @@ static int pattern_clear(track_t *t, uint32_t bank)
     if (bank >= NPAT || bank == t->pattern) return 1;
     f = motion_guard();
     if (chain.running || chain.armed) { motion_unguard(f); return 1; }
+    pattern_sound[k][bank] = 0;
     recording_drop(t, k * NPAT + bank);
     recording_reindex();
     pattern_read(k, bank, &p);

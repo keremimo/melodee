@@ -61,13 +61,21 @@ static const char *const N_GLMODE[] = {"RATE", "TIME"};
 static const char *const N_PRIO[] = {"LAST", "LOW", "HIGH"};
 static const char *const N_ALLOC[] = {"ROT", "REUSE"};
 static const char *const N_ORDER[] = {"NOTE", "PLAY"};
-static const char *const N_CLOCK[] = {"INT", "USB", "TRS"};
-static const char *const N_MIDI_INPUT[] = {"USB", "TRS"};
+static const char *const N_CLOCK[] = {"INT", "USB", "TRS"
+#if MELODEE_BLE
+    , "BLE"
+#endif
+};
+static const char *const N_MIDI_INPUT[] = {"USB", "TRS"
+#if MELODEE_BLE
+    , "BLE"
+#endif
+};
 static const char *const N_ROUTE[] = {"CH1-4", "SEL", "CH5-8", "CH9-12", "CH13-16"}; /* Keep saved CH1-4/SEL ids; append ranges. */
 static const char *const N_NOTE[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 static const char *const N_DASH[] = {"--"};
 static const char *const N_GO[] = {"--", "GO"};
-static const char *const N_BOOT[] = {"OFF", "A", "B", "C", "D"};
+static const char *const N_BOOT[] = {"OFF", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32"};   /* (PROJ_SLOTS) */
 static const char *const N_DRUMCH[] = {"OFF", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                                        "15", "16"};
 /* GLO > SYSTEM KNOB 2, DRUM: the MIDI channel that plays the first DRUM track within ROUT (none: normal
@@ -75,7 +83,7 @@ static const char *const N_DRUMCH[] = {"OFF", "1", "2", "3", "4", "5", "6", "7",
  * project's: the column shows drumch_cell (seq.c midi_track) */
 static uint8_t settings_drumch = 10;
 static int16_t drumch_cell;
-#define PROJ_TMPL 5                                      /* SLOT 5: the template (project.c tmpl) */
+#define PROJ_TMPL 33                                     /* SLOT 33: the template (project.c tmpl) */
 /* SAVE > PROJECT KNOB 2, BOOT: the project power-on loads (OFF, A..D; OFF or an empty slot: the template, if one is
  * saved). A device setting kept with the settings (ext.boot), not the project's: the column shows boot_cell */
 static uint8_t settings_boot;
@@ -914,4 +922,11 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
         id += 3u * mod_ui_slot;
     *valp = &TSEL->p[id];
     return track_desc(TSEL, id);
+}
+
+/* Sound loads preserve the track mix, sequencing, scale and routing. */
+static int param_kept(uint32_t i)
+{
+    return i == P_LEVEL || i == P_PAN || i == P_MUTE || (i >= P_AMODE && i <= P_SGATE) ||
+           i == P_CHRD || i == P_VOIC || i == P_STRUM || i == P_STROKE || i == P_MPCDEG || i == P_RECQ || param_fx(i) || param_fx_send(i);
 }

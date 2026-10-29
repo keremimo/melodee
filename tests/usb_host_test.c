@@ -15,7 +15,7 @@
 #pragma GCC diagnostic pop
 
 /* ------------------------------------------------------- the devices --- */
-enum { KBD, HUB, STICK, NDEV };
+enum { KBD, HUB, STICK, HUB2, HUB3, NDEV };
 typedef struct {
     uint8_t addr, cfg, alt, present, in_default;
     uint8_t cls, mps0;
@@ -72,12 +72,14 @@ static void devices_init(void)
     dev[KBD] = (dev_t_){.present = 1, .cls = 0, .mps0 = 64, .cfgd = kbd_cfg, .cfglen = kbd_cfg_len};
     dev[HUB] = (dev_t_){.present = 1, .cls = 9, .mps0 = 64, .cfgd = hub_cfg, .cfglen = 25, .ports = 4};
     dev[STICK] = (dev_t_){.present = 1, .cls = 0, .mps0 = 8, .cfgd = stick_cfg, .cfglen = 32};
+    dev[HUB2] = (dev_t_){.present = 1, .cls = 9, .mps0 = 64, .cfgd = hub_cfg, .cfglen = 25, .ports = 4};
+    dev[HUB3] = (dev_t_){.present = 1, .cls = 9, .mps0 = 64, .cfgd = hub_cfg, .cfglen = 25, .ports = 4};
     root = -1;
     dflt = 0;
 }
 
 /* --------------------------------------------------- the SIE and bus --- */
-static uint8_t regs[4][32], common[16], index_reg, rsp[512];
+static uint8_t regs[4][32], common[16], index_reg, rsp[2048];
 static uint32_t rsp_len, rsp_pos, ep_cnt[4];
 static void *ep_radr[4];
 static void *ep_tadr[4];
@@ -85,6 +87,7 @@ static uint32_t USB_CON0, line_state;
 static uint8_t bus_dead;                /* nothing answers (cable pulled) */
 static uint8_t ep0_timeout;             /* SETUP stays busy until the driver's deadline */
 static uint8_t devctl_ls;               /* the device is low speed */
+static uint32_t slow_until;             /* nothing answers before this many bus resets (a hub still starting) */
 static uint32_t ctl_requests, setup_requests, rx_toggle_clears;
 static uint32_t tx_toggle_clears, off_count;
 static uint32_t root_resets, host_attaches, port_resets[8];
@@ -224,7 +227,7 @@ static void mock_write(uint32_t r, uint32_t v)
             memcpy(s, ep_radr[0], 8);
             if (ep0_timeout)
                 regs[0][17] = 2;
-            else if (bus_dead || !d || !answer(d, s))
+            else if (bus_dead || !d || root_resets < slow_until || !answer(d, s))
                 regs[0][17] = 0x10;                     /* no answer */
             else
                 regs[0][17] = 0;
@@ -327,6 +330,7 @@ static void connect(int which)
     devices_init();
     root = which;
     bus_dead = devctl_ls = ep0_timeout = 0;
+    slow_until = 0;
     memset(common, 0, sizeof common);
     memset(regs, 0, sizeof regs);
     dflt = 0;
@@ -598,7 +602,7 @@ static void test_failed_probe(void)
         uh_task(now);
         assert(fm1_ms == now && !uh.run && !uh.msg);
     }
-    assert(root_resets == 1 && host_attaches == 1 && setup_requests == requests);
+    assert(root_resets == UH_ROOT_TRIES && host_attaches == 1 && setup_requests == requests);
     uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
 
     connect(HUB);
@@ -606,7 +610,7 @@ static void test_failed_probe(void)
     host_on(); assert(!enumerate()); uh.msg = 0;
     ep0_timeout = 1;                                  /* configured hub stops answering without line drop */
     for (int k = 0; k < 30; k++) { fm1_ms += 20; uh_task(fm1_ms); }
-    assert(!uh.hub_addr && root_resets == 1);
+    assert(!uh.hub[0].addr && root_resets == 1);
     requests = setup_requests;
     idle_hub(600);
     assert(setup_requests == requests);
@@ -746,6 +750,184 @@ static void test_endpoint_selection(void)
     puts("USB host: output-only synth, input-only controller, alternate boundaries, protocol/packet validation: OK");
 }
 
+/* An audio interface with MIDI: IAD, audio control, two audio streaming interfaces of three formats with eight
+ * rates each, then the MIDI streaming interface, then DFU. *midi_at = where the MIDI interface starts. */
+static uint16_t build_audio_cfg(uint8_t *d, uint32_t *midi_at)
+{
+    static const uint8_t head[] = {9, 2, 0, 0, 5, 1, 0, 0x80, 250, 8, 0x0B, 0, 4, 1, 0, 0, 0};
+    static const uint8_t ac[] = {
+        9, 4, 0, 0, 0, 1, 1, 0, 0,
+        10, 0x24, 1, 0, 1, 71, 0, 2, 1, 2,
+        12, 0x24, 2, 1, 1, 1, 0, 2, 3, 0, 0, 0,         /* USB streaming in, line out */
+        12, 0x24, 2, 4, 1, 2, 0, 2, 3, 0, 0, 0,
+        9, 0x24, 3, 3, 1, 3, 0, 1, 0,
+        9, 0x24, 3, 6, 1, 1, 0, 4, 0,
+        10, 0x24, 6, 2, 1, 1, 1, 0, 0, 0,
+    };
+    static const uint8_t midi[] = {
+        9, 4, 3, 0, 2, 1, 3, 0, 0,
+        7, 0x24, 1, 0, 1, 0x41, 0,
+        6, 0x24, 2, 1, 1, 0,
+        9, 0x24, 3, 1, 3, 1, 2, 1, 0,
+        9, 5, 0x02, 2, 64, 0, 0, 0, 0,
+        5, 0x25, 1, 1, 1,
+        9, 5, 0x81, 2, 64, 0, 0, 0, 0,
+        5, 0x25, 1, 1, 3,
+    };
+    static const uint8_t dfu[] = {9, 4, 4, 0, 0, 0xFE, 1, 1, 0, 9, 0x21, 1, 0xFF, 0, 0, 4, 0x10, 1};
+    uint32_t n = 0, f, k, q;
+    memcpy(d, head, sizeof head);
+    n += sizeof head;
+    memcpy(d + n, ac, sizeof ac);
+    n += sizeof ac;
+    for (f = 1; f <= 2; f++) {
+        uint8_t alt0[9] = {9, 4, (uint8_t)f, 0, 0, 1, 2, 0, 0};
+        memcpy(d + n, alt0, 9);
+        n += 9;
+        for (k = 1; k <= 3; k++) {
+            uint8_t as[9 + 7] = {9, 4, (uint8_t)f, (uint8_t)k, 1, 1, 2, 0, 0, 7, 0x24, 1, (uint8_t)(f == 1 ? 1 : 6), 1, 1, 0};
+            uint8_t ep[9 + 7] = {9, 5, (uint8_t)(f == 1 ? 0x03 : 0x84), 0x09, 0x20, 0x02, 1, 0, 0, 7, 0x25, 1, 1, 0, 0, 0};
+            memcpy(d + n, as, sizeof as);
+            n += sizeof as;
+            d[n++] = 8 + 8 * 3;                         /* format type I: 2/3/4-byte samples, eight rates */
+            d[n++] = 0x24; d[n++] = 2; d[n++] = 1; d[n++] = 2; d[n++] = (uint8_t)(k + 1); d[n++] = (uint8_t)(8 * (k + 1));
+            d[n++] = 8;
+            for (q = 0; q < 8; q++) {
+                uint32_t hz = 8000u * (q + 1u);
+                d[n++] = (uint8_t)hz; d[n++] = (uint8_t)(hz >> 8); d[n++] = (uint8_t)(hz >> 16);
+            }
+            memcpy(d + n, ep, sizeof ep);
+            n += sizeof ep;
+        }
+    }
+    *midi_at = n;
+    memcpy(d + n, midi, sizeof midi);
+    n += sizeof midi;
+    memcpy(d + n, dfu, sizeof dfu);
+    n += sizeof dfu;
+    d[2] = (uint8_t)n;
+    d[3] = (uint8_t)(n >> 8);
+    return (uint16_t)n;
+}
+
+static void test_audio_midi_device(void)
+{
+    static uint8_t cfg[1024];
+    uh_midi_t m;
+    uh_desc_t w;
+    uint32_t midi_at, i;
+    uint16_t n = build_audio_cfg(cfg, &midi_at);
+    assert(n <= sizeof cfg && midi_at > 320u);          /* past the 320 bytes the probe used to keep */
+    assert(uh_parse_midi(cfg, n, &m) && m.cfg == 1 && m.iface == 3 && m.alt == 0 && m.in_ep == 1 &&
+           m.in_mps == 64 && m.out_ep == 2 && m.out_mps == 64);
+    uh_desc_start(&w, &m);                              /* a byte at a time: every descriptor split */
+    for (i = 0; i < n && !uh_desc_feed(&w, cfg + i, 1); i++)
+        ;
+    assert(m.found && m.iface == 3 && m.in_ep == 1 && m.out_ep == 2);
+    assert(i + 1u < n && cfg[i - 8] == 9 && cfg[i - 7] == 4 && cfg[i - 6] == 4);   /* ends at the DFU interface */
+    for (int via_hub = 0; via_hub < 2; via_hub++)
+        for (int small = 0; small < 2; small++) {
+            connect(via_hub ? HUB : KBD);
+            dev[KBD].cfgd = cfg;
+            dev[KBD].cfglen = n;
+            dev[KBD].mps0 = small ? 8 : 64;             /* 8: the descriptor arrives in 8-byte packets */
+            host_on();
+            assert(enumerate() && uh.msg == UH_MSG_MIDI);
+            uh.msg = 0;
+            assert(dev[KBD].cfg == 1 && dev[KBD].addr == uh.dev && uh.in_ep == 1 && uh.out_mps == 64);
+            push_packet(0x643C9009u);
+            poll_n(4);
+            assert(mi_w - mi_r == 1 && midi_in_q[mi_r % MQ] == 0x643C9009u);
+            mi_r = mi_w;
+            uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+        }
+    printf("USB host: audio+MIDI device, %u-byte configuration walked as it arrives: OK\n", n);
+}
+
+/* Two hub chips in one case: the second on the first's last port, the keyboard on the second. */
+static void cascade(void)
+{
+    connect(HUB);                                       /* port 1: the stick */
+    dev[HUB].port_dev[3] = 0;
+    dev[HUB].port_dev[4] = HUB2 + 1;
+    dev[HUB2].port_dev[2] = KBD + 1;
+}
+
+static void test_cascaded_hub(void)
+{
+    cascade();
+    host_on();
+    assert(enumerate() && uh.msg == UH_MSG_MIDI);
+    uh.msg = 0;
+    assert(dev[HUB].addr == 1 && dev[STICK].addr == 2 && dev[HUB2].addr == 5 && dev[KBD].addr == 10);
+    assert(uh.dev == 10 && common[0] == 10 && dev[HUB2].cfg == 1 && dev[KBD].cfg == 1);
+    assert(uh.hub[0].addr == 1 && uh.hub[1].addr == 5 && uh.hub[1].port == 4 && uh.hub[1].ports == 4);
+    push_packet(0x643C9009u);
+    poll_n(4);
+    assert(mi_w - mi_r == 1 && midi_in_q[mi_r % MQ] == 0x643C9009u);
+    mi_r = mi_w;
+
+    /* The keyboard goes from the second hub: lost, the tree is walked again, then the idle poll of the second
+     * hub's ports finds it on replug without another bus reset. */
+    assert(midi_track_emit(0x643c9009u)); usb_poll();
+    dev[HUB2].port_dev[2] = 0;
+    dev[HUB2].port_en[2] = 0;
+    dev[KBD].present = 0;
+    for (uint32_t k = 0; k < UH_MAX_ERRORS; k++) { regs[1][17] = 4; usb_poll(); }
+    assert(uh.fault);
+    uh_task(fm1_ms); assert(uh.msg == UH_MSG_LOST); uh.msg = 0;
+    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI && root_resets == 2);
+    uh.msg = 0;
+    assert(uh.hub[1].addr == 5 && dev[HUB2].addr == 5);
+    for (int k = 0; k < 100; k++) { fm1_ms += 20; uh_task(fm1_ms); assert(!uh.msg); }
+    dev[KBD].present = 1;
+    dev[HUB2].port_dev[2] = KBD + 1;
+    dev[HUB2].port_chg[2] |= 1;
+    assert(enumerate() && uh.msg == UH_MSG_MIDI && root_resets == 2 && dev[KBD].addr == 10);
+    uh.msg = 0;
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+
+    /* The second hub unplugged from the first while idle: its state goes, nothing is probed there. */
+    cascade();
+    dev[HUB2].port_dev[2] = 0;
+    host_on();
+    assert(!enumerate() && uh.hub[1].addr == 5);
+    uh.msg = 0;
+    dev[HUB].port_dev[4] = 0;
+    dev[HUB].port_en[4] = 0;
+    dev[HUB].port_chg[4] |= 1;
+    dev[HUB2].present = 0;
+    for (int k = 0; k < 100; k++) { fm1_ms += 20; uh_task(fm1_ms); }
+    assert(!uh.hub[1].addr && uh.hub[0].addr == 1 && !dev[HUB].port_chg[4] && root_resets == 1 && !uh.msg);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+
+    /* A hub on the second hub is one level too many: passed over, never configured. */
+    cascade();
+    dev[HUB2].port_dev[2] = 0;
+    dev[HUB2].port_dev[1] = HUB3 + 1;
+    dev[HUB3].port_dev[1] = KBD + 1;
+    host_on();
+    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI);
+    assert(dev[HUB3].addr == 9 && !dev[HUB3].cfg && !dev[KBD].seen_probe);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+    puts("USB host: a hub on a hub's port (two chips in one case): addresses, events, replug, unplug, depth limit: OK");
+}
+
+static void test_slow_hub(void)
+{
+    connect(HUB);
+    slow_until = 3;                                     /* answers after the third reset (400 ms recovery) */
+    host_on();
+    assert(enumerate() && uh.msg == UH_MSG_MIDI && root_resets == 3 && dev[KBD].addr == 4);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+    connect(HUB);
+    slow_until = UH_ROOT_TRIES + 1u;                    /* never in time: reported, then quiet until unplug */
+    host_on();
+    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI && root_resets == UH_ROOT_TRIES);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+    puts("USB host: a slow hub gets longer resets, a device that answered is not reset again: OK");
+}
+
 static void test_device_mode_untouched(void)
 {
     /* with the host off, usb_poll is the device driver and uh_task does nothing */
@@ -775,6 +957,9 @@ int main(void)
     test_host_output(0);
     test_host_output(1);
     test_endpoint_selection();
+    test_audio_midi_device();
+    test_cascaded_hub();
+    test_slow_hub();
     puts("USB host: all OK");
     return 0;
 }

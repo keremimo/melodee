@@ -322,7 +322,10 @@ static lr_t spread_run(int32_t sp, int32_t pan, uint32_t mode, const uint8_t *no
     uint32_t k, i;
     fresh(HOST_SYNTH, preset_by_name(HOST_SYNTH, "SYN STRINGS"));
     dry(t);
-    song.master_q12 = 1024;                               /* below the limiter: the levels as mixed */
+    /* Keep the pan-law probe below the limiter at its input. MASTER now
+     * attenuates the finished output and cannot provide that headroom. */
+    song.master_q12 = 2048;
+    t->p[P_LEVEL] = 60;                                  /* quiet enough for a linear pan-law comparison */
     t->p[P_VOICE] = (int16_t)mode;
     t->p[P_SPRD] = (int16_t)sp;
     t->p[P_PAN] = (int16_t)pan;

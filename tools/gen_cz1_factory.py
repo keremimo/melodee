@@ -77,7 +77,8 @@ def main(path):
          f"#define CZ_FACTORY_N {len(ts)}u",
          "static const uint8_t CZ_DICT[144] = {"] + rows(list(d)) + ["};",
          f"static const uint16_t CZ_LZ_AT[{len(at)}] = {{"] + rows(at) + ["};",
-         f"static const uint8_t CZ_LZ[{len(data)}] = {{"] + rows(list(data)) + ["};",
+         "#ifndef MELODEE_RES", "#define MELODEE_RES  /* melodee.c: the resource region (res.c) */", "#endif",
+         f"static const uint8_t CZ_LZ[{len(data)}] MELODEE_RES = {{"] + rows(list(data)) + ["};",
          "/* the PRESETS names that are not the tone's LCD name stripped */",
          f"static const struct {{ uint8_t k; char name[13]; }} CZ_SHORT[{len(short)}] = {{"]
     L += [f'    {{{k}, "{s}"}},' for k, s in short] + ["};"]

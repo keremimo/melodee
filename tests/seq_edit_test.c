@@ -106,7 +106,7 @@ static int test_entry_history(void)
     bad += check("EDIT+OCT+ restores the whole held entry", step_note_length(t, 0) == 4 && ui.cursor == 4 && cur_page()->graph == GR_ROLL);
     history_key(B_OCTDN);
     bad += check("EDIT+OCT- undoes without changing octave", !step_on(&t->step[0]) && !song.octave);
-    turn(EN_K2, 1);
+    press(B_OCTUP);                                     /* (a note placed) */
     history_key(B_OCTUP);
     bad += check("a new edit drops redo", msg_is("NOTHING TO REDO") && step_on(&t->step[0]));
 
@@ -206,6 +206,16 @@ static int test_record_timing(void)
     t = edit_setup(); song.playing = 1; song.rec = 1; t->seq_pos = 0x7FFFFFFFu; t->seq_idx = 15;
     rec_note(t, 60, 100);
     bad += check("Start and note in one block record step zero with retrigger guard", t->step[0].note[0] == 60 && !step_on(&t->step[15]) && t->rskip_n == 1 && t->rskip_idx == 0);
+    t = edit_setup(); song.playing = 1; song.rec = 0; cursor_set(3); frame();
+    key_down(7); frame(); key_up(7); frame();
+    midi_note_event(0, 64, 100); frame(); midi_note_event(0, 64, 0); frame();
+    {
+        uint32_t any = 0;
+        for (uint32_t i = 0; i < NSTEP; i++) any |= step_on(&t->step[i]);
+        bad += check("playing, not armed: NOTES keys and MIDI only play (no entry, cursor stays, no message)",
+                     !any && ui.cursor == 3 && !ui.entry_open && !msg_is("STOP TO EDIT"));
+    }
+    song.playing = 0;
     return bad;
 }
 

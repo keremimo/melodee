@@ -99,6 +99,8 @@ class NightlySite(unittest.TestCase):
         assets.mkdir()
         version = "1.4.0-rc.1"
         candidate = package(assets / f"melodee-{version}.fwsc", "FM-1_91040", 5)
+        (assets / f"melodee-{version}-res.bin").write_bytes(b"candidate resources")
+        (self.root / "next-res.bin").write_bytes(b"nightly resources")
         builds = {candidate.name: {"MELODEE_DUAL_CORE": 1, "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest()}}
         info = {"version": version, "product": "FM-1_91040", "commit": "a" * 40,
                 "builtAt": "2026-10-15T16:40:00Z", "core_builds": builds}
@@ -112,6 +114,9 @@ class NightlySite(unittest.TestCase):
         self.build_site(self.dual, "1.3.2", self.site, installer_only=True)
         self.assertEqual(editor.read_text(), "existing published editor")
         self.assertEqual((self.site / "firmware" / candidate.name).read_bytes(), candidate.read_bytes())
+        # channels re-read from the site keep their resource files (no copy onto themselves)
+        self.assertEqual((self.site / "firmware" / f"melodee-{version}-res.bin").read_bytes(), b"candidate resources")
+        self.assertEqual((self.site / "firmware/melodee-nightly-res.bin").read_bytes(), b"nightly resources")
         rc = json.loads((self.site / "firmware/rc.json").read_text())
         self.assertEqual((rc["version"], rc["product"], rc["commit"]), (version, "FM-1_91040", "a" * 40))
         self.assertEqual(set(rc["pkg"]), {"dual"})

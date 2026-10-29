@@ -171,13 +171,21 @@ static uint32_t get(uint32_t id, uint32_t off, uint32_t count)
 }
 
 /* Runtime archive data now lives in an unpublished flash copy, independent
- * of the drawing canvas. Read through the same bounded source as GET. */
-static int runtime_bytes(uint8_t *out)
-{return st_read_range(ed_bk_stage.obj,ed_bk_stage.head.slot,0,out,BANK_STORE_SIZE);}
+ * of the drawing canvas. Read through the same bounded source as GET: the compact image, its length. */
+static uint32_t runtime_bytes(uint8_t *out)
+{return st_read_range(ed_bk_stage.obj,ed_bk_stage.head.slot,0,out,ed_bk_stage.head.len)?0u:ed_bk_stage.head.len;}
+/* a saved project's current record as the loader reads it (a compact image expanded) */
+static int flash_image(uint32_t obj,uint8_t *dst)
+{
+    st_hdr_t h;int copy=st_current(obj,&h);
+    if(copy<0)return -1;
+    pj.on=!st_read_range(obj,(uint32_t)copy,0,&pj.h,PJ_HEAD)&&pj.h.magic==PJ_MAGIC;
+    return pj_read(obj,(uint32_t)copy,0,dst,BANK_STORE_SIZE)?-1:(int)BANK_STORE_SIZE;
+}
 
 static int full_pattern_archive(void)
 {
-    int bad=0, ok=1; reset(); static uint8_t archive[BANK_STORE_SIZE], saved[BANK_STORE_SIZE];
+    int bad=0, ok=1; reset(); static uint8_t archive[ED_BK_MAX], saved[ED_BK_MAX];
     for (uint32_t k=0; k<NPART; k++) for (uint32_t b=0; b<NPAT; b++) {
         track_t *t=&trk[k]; pattern_request(t,b); t->p[P_SLEN]=(int16_t)(16+b);
         t->step[3]=(step_t){{(uint8_t)(40+k*8+b),60,64,67},4,ST_NOTE,SF_ACCENT,100,0x81,0x80,(uint8_t)(20+b)};
@@ -186,18 +194,18 @@ static int full_pattern_archive(void)
     chain_config.count=1; chain_config.row[0]=(chain_row_t){0,2};
     for (uint32_t k=0; k<NPART; k++) chain_patterns[0][k]=(uint8_t)(k+1);
     project_save_as(0,"CHORD BANKS");
-    uint32_t len,crc; list(0,&len,&crc); runtime_bytes(archive);
-    bad+=check("full bank archive contains all runtime banks with its verified CRC",len==sizeof archive && crc==st_crc32(archive,sizeof archive));
-    for (uint32_t off=0; off<sizeof saved; off+=256u) {
+    uint32_t len,crc; list(0,&len,&crc); uint32_t alen=runtime_bytes(archive);
+    bad+=check("full bank archive contains all runtime banks with its verified CRC",alen && len==alen && crc==st_crc32(archive,alen));
+    for (uint32_t off=0; off<alen; off+=256u) {
         cv_begin(240,124,RGB(off&255u,20,30));cv_blit(0,24);
-        uint32_t n=sizeof saved-off>256u?256u:sizeof saved-off;
+        uint32_t n=alen-off>256u?256u:alen-off;
         ok &= get(2,off,n)==0;
         ok &= ed_unpack7(rep+9u,rep_n-9u,saved+off,n)==n;
     }
     /* GET emits pack7; the XIP payload itself remains byte-identical after other object reads. */
-    ok &= !memcmp(saved,archive,sizeof saved) && (st_load(OBJ_BANK0,saved,sizeof saved)==sizeof saved && !memcmp(saved,archive,sizeof saved)) && get(0,0,64)==0;
+    ok &= !memcmp(saved,archive,alen) && (st_load(OBJ_BANK0,saved,sizeof saved)==(int)alen && !memcmp(saved,archive,alen)) && get(0,0,64)==0;
     bad+=check("saved-bank GET and interleaved screen draws preserve the frozen runtime snapshot",ok);
-    bad+=check("full archive restores a saved slot through the A/B path",put_all(3,archive,sizeof archive,st_crc32(archive,sizeof archive))==0);
+    bad+=check("full archive restores a saved slot through the shared workspace",put_all(3,archive,alen,st_crc32(archive,alen))==0);
     pattern_init(); memset(&motion,0,sizeof motion); memset(proj_meta,0,sizeof proj_meta); memset(proj_slot,0,sizeof proj_slot);
     proj_fetch(1); project_load(1); ok=1;
     for (uint32_t k=0; k<NPART; k++) for (uint32_t b=0; b<NPAT; b++) {
@@ -205,8 +213,8 @@ static int full_pattern_archive(void)
         ok &= t->step[3].n==4 && t->step[3].note[0]==40+k*8+b && t->step[3].note[3]==67 &&
             t->step[4].time==ST_TIE && t->p[P_SLEN]==16+(int16_t)b && step_chance(&t->step[3])==20+b && motion_count(t)==1;
     }
-    bad+=check("cold flash load restores all 32 chords, ties, timing, chance and motion banks",ok && chain_patterns[0][3]==4);
-    bad+=check("full archive restores the runtime with its original active banks",put_all(0,archive,sizeof archive,st_crc32(archive,sizeof archive))==0 && trk[0].pattern==7 && trk[3].pattern==7);
+    bad+=check("cold flash load restores all 64 chords, ties, timing, chance and motion banks",ok && chain_patterns[0][3]==4);
+    bad+=check("full archive restores the runtime with its original active banks",put_all(0,archive,alen,st_crc32(archive,alen))==0 && trk[0].pattern==NPAT-1u && trk[3].pattern==NPAT-1u);
     return bad;
 }
 static int native_archive(void)
@@ -247,19 +255,22 @@ static int expanded_recording_archive(void)
         pattern_request(&trk[k],b);
         trk[k].step[3]=(step_t){{60},1,ST_NOTE,SF_RECORDED,100,0,0,0};
     }
-    for(uint32_t i=0;i<RECORD_MAX;i++)recording[i]=(recorded_note_t){.on=(uint16_t)(i*61u), .duration=1234, .note=60, .vel=100, .owner=(uint8_t)(i%32u), .step=3};
+    for(uint32_t i=0;i<RECORD_MAX;i++){
+        recording[i]=(recorded_note_t){.on=(uint16_t)(i*61u), .duration=1234, .vel=100, .step=3};
+        recorded_set_note(&recording[i],60);recorded_set_owner(&recording[i],i%(NPART*NPAT));
+    }
     recording_reindex();
-    static recorded_note_t saved[RECORD_MAX];uint32_t at=0;for(uint32_t owner=0;owner<32;owner++)for(uint32_t i=0;i<RECORD_MAX;i++)if((recording[i].owner&31u)==owner)saved[at++]=recording[i];
+    static recorded_note_t saved[RECORD_MAX];uint32_t at=0;for(uint32_t owner=0;owner<NPART*NPAT;owner++)for(uint32_t i=0;i<RECORD_MAX;i++)if(recorded_owner(&recording[i])==owner)saved[at++]=recording[i];
     int ok=!project_save_as(0,"FULL TAKE");
     uint32_t len,crc;ok &= !list(0,&len,&crc);
-    static uint8_t archive[BANK_STORE_SIZE], readback[BANK_STORE_SIZE];runtime_bytes(archive);
-    for(uint32_t off=0;off<sizeof readback;off+=256u){uint32_t n=sizeof readback-off>256u?256u:sizeof readback-off;ok &= !get(2,off,n) && ed_unpack7(rep+9u,rep_n-9u,readback+off,n)==n;}
-    ok &= !memcmp(archive,readback,sizeof archive);
-    ok &= !put_all(3,archive,sizeof archive,st_crc32(archive,sizeof archive));
+    static uint8_t archive[ED_BK_MAX], readback[ED_BK_MAX];uint32_t alen=runtime_bytes(archive);ok &= alen && len==alen;
+    for(uint32_t off=0;off<alen;off+=256u){uint32_t n=alen-off>256u?256u:alen-off;ok &= !get(2,off,n) && ed_unpack7(rep+9u,rep_n-9u,readback+off,n)==n;}
+    ok &= !memcmp(archive,readback,alen);
+    ok &= !put_all(3,archive,alen,st_crc32(archive,alen));
     pattern_init();memset(proj_meta,0,sizeof proj_meta);project_load(1);
     ok &= !memcmp(saved,recording,sizeof saved);
-    int bad=check("all 1024 timed notes across 32 banks survive flash, backup GET and saved-slot restore",ok);
-    ok=!put_all(0,archive,sizeof archive,st_crc32(archive,sizeof archive)) && !memcmp(saved,recording,sizeof saved);
+    int bad=check("all 1024 timed notes across 64 banks survive flash, backup GET and saved-slot restore",ok);
+    ok=!put_all(0,archive,alen,st_crc32(archive,alen)) && !memcmp(saved,recording,sizeof saved);
     bad+=check("expanded runtime archive restores every original timed note",ok);
     return bad;
 }
@@ -277,8 +288,8 @@ int main(void)
 
     reset();
     trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0};
-    bad += check("LIST captures runtime and all 29 archive objects with CRC",
-                 list(0, &len, &crc) == 0 && rep[2] == 29u && len == BANK_STORE_SIZE &&
+    bad += check("LIST captures runtime and all 57 archive objects with CRC",
+                 list(0, &len, &crc) == 0 && rep[2] == ED_BK_N && len == ed_bk_stage.head.len &&
                  crc == ed_bk_stage.head.crc && !st_stream_check(&ed_bk_stage));
     bad += check("an empty project slot lists as length 0", list(2, &len, &crc) == 0 && len == 0);
     bad += check("GET of the runtime copy", get(0, 0, 64) == 0);
@@ -364,7 +375,7 @@ int main(void)
 
     /* malformed requests */
     bad += check("an unknown object id is refused", put_begin(8, sizeof ps, 0) == 1u);
-    bad += check("a project of the wrong length is refused", put_begin(2, sizeof(project_store_t) - 4u, 0) == 1u);
+    bad += check("a project longer than any record is refused", put_begin(2, ED_BK_MAX + 1u, 0) == 1u);
     bad += check("settings of the wrong length are refused", put_begin(1, sizeof ps + 4u, 0) == 1u);
     bad += check("a chunk without a begin is refused (5)", (ed_bk_put = 0, put_chunk(1, 0, (const uint8_t *)&ps, 16)) == 5u);
     put_begin(1, sizeof ps, st_crc32(&ps, sizeof ps));
@@ -379,6 +390,13 @@ int main(void)
         bad += check("a chunk past the length is refused", put_chunk(1, step, (const uint8_t *)&ps, 16) == 1u);
     }
     bad += check("commit before all bytes arrived is refused", put_end(1, 2) == 2u && erases == before);
+    {   /* (a compact record has any length: one that is no record fails its commit) */
+        static uint8_t junk[sizeof(project_store_t) - 4u];
+        st_hdr_t h0;
+        memset(junk, 0x55, sizeof junk);
+        bad += check("a project of the wrong length is refused at commit, the slot left empty",
+                     put_all(2, junk, sizeof junk, st_crc32(junk, sizeof junk)) == 2u && st_current(OBJ_BANK0, &h0) < 0);
+    }
     put_begin(1, sizeof ps, st_crc32(&ps, sizeof ps));
     put_chunk(1, 0, (const uint8_t *)&ps, 64);
     usb.resets++;
@@ -402,12 +420,14 @@ int main(void)
     proj_pack(&st, &proj_scratch);
     bad += check("a bare FUN16 record restores into slot 3 (flash and RAM) as a bank",
                  put_all(4, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && project_used(2) &&
-                 !memcmp(&proj_slot[2], &st, sizeof st) && st_load(OBJ_BANK0 + 2, bank_readback, sizeof bank_readback) == BANK_STORE_SIZE);
+                 !memcmp(&proj_slot[2], &st, sizeof st) && flash_image(OBJ_BANK0 + 2, bank_readback) == BANK_STORE_SIZE &&
+                 bank_valid(bank_readback, BANK_STORE_SIZE));
     {   /* a record of an older format: refused before anything is written (archives of before 1.0.0: 1.2) */
         static uint8_t old[3388];
         memset(old, 0, sizeof old);
         ((uint32_t *)old)[0] = 0x46554E36u; ((uint32_t *)old)[1] = sizeof old;
-        bad += check("a FUN6 project archive is refused (1)", put_begin(5, sizeof old, st_crc32(old, sizeof old)) == 1u);
+        bad += check("a FUN6 project archive is refused (2), the slot left empty",
+                     put_all(5, old, sizeof old, st_crc32(old, sizeof old)) == 2u && !st_exists(OBJ_BANK0 + 3u));
     }
     {   /* Native voices now travel inside their shared record object. */
         static up_disk_bank_t got;static uint8_t owned[4240];uint8_t pk[FM6_PACKED];

@@ -48,7 +48,7 @@ static void legacy(void)
         else{
             assert(k%3u?bank_valid(b,n):proj_import(&proj_scratch,b,(int)n));
             assert(proj_scratch.t[0].p[P_E0]==17 && proj_scratch.motion.event[0].param==P_E0);
-            assert(proj_scratch.recording[0].on==55 && proj_scratch.recording[0].duration==217 && proj_scratch.recording[0].owner==11);
+            assert(proj_scratch.recording[0].on==55 && proj_scratch.recording[0].duration==217 && recorded_owner(&proj_scratch.recording[0])==1u*NPAT+3u);   /* (track 2, bank 4: owner 11 in the 8-bank files) */
             assert(!project_restore_runtime(&proj_scratch));if(k%3u)bank_restore(b);
             assert(TSEL->step[0].n==3 && TSEL->step[0].note[2]==67);
             if(k%3u)assert(pattern_at(1,3)->step[7].note[0]==72);
@@ -69,7 +69,7 @@ static void frozen_three_slots(void)
         if(k==2){assert(tmpl_take(b,n));template_load();}else {assert(k?bank_valid(b,n):proj_import(&proj_scratch,b,n));assert(!project_restore_runtime(&proj_scratch));}
         if(k==0){ /* Old engine ID 112 shifts, a tagged native 112 must not. */
             motion_store_t m={.count=2,.on=1,.event={{0,112,10},{0,112,(MO_TAG_FM6<<8)|80}}};
-            uint32_t off=68u+NPART*(116u+2u+NSTEP*8u)+sizeof(chain_config_t);memcpy(b+off,&m,sizeof m);uint32_t h=proj_hash(b,n-4u);memcpy(b+n-4u,&h,4);
+            uint32_t off=68u+NPART*(116u+2u+NSTEP*8u)+sizeof(chain_legacy_t);memcpy(b+off,&m,sizeof m);uint32_t h=proj_hash(b,n-4u);memcpy(b+n-4u,&h,4);
             assert(proj_import(&proj_scratch,b,n));assert(proj_scratch.motion.event[0].param==P_E4 && proj_scratch.motion.event[1].param==112 && proj_scratch.motion.event[1].value==((MO_TAG_FM6<<8)|80));
         }
         assert(!memcmp(trk[0].p+P_FXTYPE,chain,sizeof chain));assert(!trk[0].p[P_FXSEND]);

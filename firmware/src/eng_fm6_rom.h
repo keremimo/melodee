@@ -21,7 +21,10 @@
 #define LFO(spd, dly, pmd, amd, sync, wave, pms) spd, dly, pmd, amd, sync, wave, pms
 #define NO_LFO LFO(35, 0, 0, 0, 1, 0, 0)
 
-static const fm6_rom_t FM6_ROM[] = {
+#ifndef MELODEE_RES
+#define MELODEE_RES  /* melodee.c: the resource region (res.c) */
+#endif
+static const fm6_rom_t FM6_ROM[] MELODEE_RES = {
     /* tine electric piano: three pairs; OP4 (x14) is the bell of the tine, gone in 0.2 s */
     VOICE(OP(96, 35, 25, 60, 99, 0, 0, 0, 39, 0, 0, 0, 0, 3, 0, 2, 98, 1, 0, 1),
           OP(95, 45, 25, 66, 99, 0, 0, 0, 39, 0, 0, 0, 0, 3, 0, 6, 70, 1, 0, -1),

@@ -54,7 +54,7 @@ class TakeTest(unittest.TestCase):
 
     def test_plan_is_bounded_in_memory_and_note_started(self):
         plan = self.single
-        self.assertEqual(plan['base'][:4], b'FBKK')
+        self.assertEqual(plan['base'][:4], b'FBKP')           # (16 patterns a part: the FBKP record)
         self.assertLess(len(plan['base']), 256*1024)
         self.assertFalse(plan['info']['snapshot_on_disk'])
         self.assertEqual(len(plan['notes']), 16)

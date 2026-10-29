@@ -180,8 +180,8 @@ def raster_icon(spec, px, codepoint, gamma=1.0):
     return pack([alpha4(v, gamma) for v in img.tobytes()]), img.getbbox() is not None
 
 
-def c_array(name, ctype, values, per_line=16, fmt="{}"):
-    lines = [f"static const {ctype} {name}[{len(values)}] = {{"]
+def c_array(name, ctype, values, per_line=16, fmt="{}", attr=""):
+    lines = [f"static const {ctype} {name}[{len(values)}]{' ' + attr if attr else ''} = {{"]
     for i in range(0, len(values), per_line):
         lines.append("    " + ", ".join(fmt.format(v) for v in values[i:i + per_line]) + ",")
     lines.append("};")

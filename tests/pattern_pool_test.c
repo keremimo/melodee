@@ -25,7 +25,7 @@ static void dense(pattern_t *p)
 static void check_pool(void)
 {
     uint8_t seen[PAT_CHUNKS]={0};uint32_t used=0,free=0;
-    for(uint32_t k=0;k<NTRK;k++)for(uint32_t bank=0;bank<NPAT;bank++){
+    for(uint32_t k=0;k<NTRK;k++)for(uint32_t bank=0;bank<trk_npat(k);bank++){
         pattern_t actual;pattern_read(k,bank,&actual);assert(!memcmp(&actual,&model[k][bank],sizeof actual));
         for(uint32_t i=0;i<NSTEP;i++){
             step_t s=pattern_step(k,bank,i);assert(!memcmp(&s,&actual.step[i],sizeof s));
@@ -44,13 +44,14 @@ static void check_pool(void)
 static void fresh(void)
 {
     ui_power_on();
-    for(uint32_t k=0;k<NTRK;k++)for(uint32_t b=0;b<NPAT;b++)pattern_read(k,b,&model[k][b]);
+    pattern_loading=1;          /* (the pool on its own: what a save has room for is pattern_capacity_test's) */
+    for(uint32_t k=0;k<NTRK;k++)for(uint32_t b=0;b<trk_npat(k);b++)pattern_read(k,b,&model[k][b]);
     assert(!pattern_pool_used);check_pool();
 }
 static void dense_capacity(void)
 {
     fresh();
-    for(uint32_t k=0;k<NTRK;k++)for(uint32_t b=0;b<NPAT;b++){dense(&model[k][b]);pattern_write(k,b,&model[k][b]);}
+    for(uint32_t k=0;k<NTRK;k++)for(uint32_t b=0;b<trk_npat(k);b++){dense(&model[k][b]);assert(pattern_write(k,b,&model[k][b]));}
     assert(pattern_pool_used==PAT_CHUNKS);check_pool();
     /* A full store can prepare all four incoming patterns without allocating.
      * A last-moment edit belongs to the outgoing bank, including hidden steps. */
@@ -62,7 +63,7 @@ static void dense_capacity(void)
     assert(pattern_fallbacks==fallbacks);check_pool();
     pattern_poll();assert(pattern_pool_used==PAT_CHUNKS);check_pool();
     for(uint32_t round=0;round<64;round++){
-        for(uint32_t k=0;k<NTRK;k++)pattern_switch(&trk[k],(trk[k].pattern+1u)%NPAT);
+        for(uint32_t k=0;k<NTRK;k++)pattern_switch(&trk[k],(trk[k].pattern+1u)%trk_npat(k));
         check_pool();
     }
     assert(pattern_fallbacks>fallbacks);pattern_poll();check_pool();
@@ -77,7 +78,7 @@ static void codecs_and_mutations(void)
     for(uint32_t b=0;b<PAT_BLOCKS;b++)assert(pattern_blocks[0][1][b].head&PAT_REPEAT);
     check_pool();
     for(uint32_t op=0;op<600;op++){
-        uint32_t k=random_word()%NTRK,bank=(random_word()>>8)%NPAT,action=(random_word()>>16)%5u;
+        uint32_t k=random_word()%NTRK,bank=(random_word()>>8)%trk_npat(k),action=(random_word()>>16)%5u;
         if(action<2){
             if(action)pattern_prepare(k,bank);
             pattern_switch(&trk[k],bank);
@@ -92,7 +93,7 @@ static void codecs_and_mutations(void)
                 if(!s->hit && s->time==ST_REST)s->acc=0;
             }
             pattern_prepare(k,bank); /* publication must invalidate a prepared destination */
-            model[k][bank]=p;pattern_write(k,bank,&p);
+            model[k][bank]=p;assert(pattern_write(k,bank,&p));
         }
         if(op%7u==0)pattern_poll();
         check_pool();

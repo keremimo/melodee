@@ -1,0 +1,262 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Melodee in the browser (web/emu): the firmware's UI and sound as WebAssembly, on a drawn FM-1.
+     web/emu/build.sh fills in the version. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melodee in the browser</title>
+<style>
+  :root { --bg: #fff; --fg: #000; --dim: #777; --body: #3a3d42; --tray: #26282c; --knob: #1f2124; --btn: #2e3135;
+          --label: #e8e8ea; --key-w: #d9dadc; --key-b: #c9cacd; --lit: #ffb347; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #000; --fg: #fff; --dim: #888; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; }
+  p { margin: 0 0 16px; }
+  a { color: inherit; }
+  .small { color: var(--dim); font-size: 13px; }
+  button, select { font: inherit; font-size: 14px; }
+  .device { position: relative; width: 100%; aspect-ratio: 1000 / 640; background: var(--body); border-radius: 4.4% / 6.9%;
+            user-select: none; -webkit-user-select: none; touch-action: manipulation; container-type: inline-size; margin: 16px 0; }
+  .device > * { position: absolute; }
+  .tray { background: var(--tray); border-radius: 14px; }
+  .bezel { background: #111214; border-radius: 11%; }
+  canvas { image-rendering: pixelated; background: #000; }
+  .label { color: var(--label); font-size: 1.7cqw; font-weight: 600; letter-spacing: .05em; text-align: center; pointer-events: none; white-space: nowrap; }
+  .knob { border-radius: 50%; background: var(--knob); box-shadow: 0 0 0 .5cqw var(--tray), inset 0 0 0 .2cqw #44474c;
+          cursor: ns-resize; touch-action: none; transform: rotate(var(--angle, 0deg)); }
+  .knob::after { content: ""; position: absolute; left: 50%; top: 8%; width: .3cqw; height: 22%; margin-left: -.15cqw; background: var(--label); border-radius: 2px; }
+  .btn { background: var(--btn); border-radius: 9px; box-shadow: inset 0 0 0 1.5px #4a4d52; color: var(--label); font-size: 1.4cqw;
+         font-weight: 600; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: none; }
+  .btn.held { filter: brightness(1.5); }
+  .btn.lit { color: #1a1206; background: var(--lit); box-shadow: 0 0 1.4cqw var(--lit); }
+  .key { border-radius: 999px; background: var(--key-w); cursor: pointer; touch-action: none; display: flex; align-items: flex-end;
+         justify-content: center; padding-bottom: .8cqw; color: #55575c; font-size: 1.3cqw; font-weight: 600; box-sizing: border-box; }
+  .key.black { background: var(--key-b); }
+  .key.held { filter: brightness(.8); }
+  .key.lit { background: var(--lit); box-shadow: 0 0 1.4cqw var(--lit); }
+  .poweron { inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .45); border-radius: inherit; z-index: 2; }
+  .poweron[hidden] { display: none; }
+  .poweron button { background: var(--lit); border: 0; padding: 10px 24px; font-weight: 600; cursor: pointer; }
+  .bar { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Melodee in the browser</h1>
+  <p>Melodee @VERSION@'s UI and sound, as WebAssembly, on a drawn FM-1: the same code the FM-1 runs. Mouse, touch,
+    or the computer keyboard (the letters on the keys). Nothing is saved; there is no USB.
+    <a href="../webapp/installer/">Install it on your FM-1</a>.</p>
+  <div class="device" id="device">
+    <div class="poweron" id="poweron"><button id="power">Switch on</button></div>
+  </div>
+  <div class="bar">
+    <label class="small">MIDI in <select id="midiin"><option value="">none</option></select></label>
+    <span class="small" id="status"></span>
+  </div>
+  <p class="small">Melodee is GPL-3.0, no warranty. <a href="https://github.com/keremimo/melodee">Source</a>.
+    M-VAVE and FM-1 are trademarks of their respective owners.</p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const device = $("device");
+const BTN = { "OCT-": 0, "OCT+": 1, FX: 2, SCL: 3, ENV: 4, LFO: 5, EDIT: 6, GLO: 7, HOME: 8, SAVE: 9, ARP: 10, SEQ: 11, PLAY: 12, REC: 13 };
+const ENC = { SELECT: 0, ALGORITHM: 1, KNOB1: 2, KNOB2: 3, KNOB3: 4, KNOB4: 5, PRESETS: 6 };   /* matrix ids, as PANEL_DEFAULT */
+const WHITE_K = [0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26];
+const BLACK_K = [1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25];
+const BLACK_AFTER = [0, 1, 2, 4, 5, 7, 8, 9, 11, 12, 14];
+
+/* ---- the panel, in a 1000 x 640 space */
+function add(cls, x, y, w, h, text = "", tag = "div") {
+  const el = document.createElement(tag);
+  el.className = cls;
+  el.textContent = text;
+  Object.assign(el.style, { left: `${x / 10}%`, top: `${y / 6.4}%`, width: `${w / 10}%`, height: `${h / 6.4}%` });
+  device.insertBefore(el, $("poweron"));
+  return el;
+}
+add("tray", 58, 258, 210, 58);
+add("tray", 568, 160, 400, 140);
+add("bezel", 300, 44, 236, 236);
+add("tray", 36, 340, 928, 270);
+const screen = add("", 306, 50, 224, 224, "", "canvas");
+screen.width = screen.height = 240;
+
+let master = 700;
+const knobs = [];
+function knob(x, y, r, label, id) {
+  add("label", x - 60, y - r - 34, 120, 22, label);
+  const el = add("knob", x - r, y - r, 2 * r, 2 * r);
+  el.tabIndex = 0;
+  el.setAttribute("role", "slider");
+  el.setAttribute("aria-label", label);
+  const k = { el, id, angle: id === "master" ? -135 + 270 * master / 1023 : 0 };
+  el.style.setProperty("--angle", `${k.angle}deg`);
+  knobs.push(k);
+}
+knob(105, 100, 24, "MASTER", "master");
+knob(215, 100, 24, "SELECT", ENC.SELECT);
+knob(105, 205, 24, "PRESETS", ENC.PRESETS);
+knob(215, 205, 24, "ALGORITHM", ENC.ALGORITHM);
+for (let i = 0; i < 4; i++) knob(610 + i * 104, 100, 22, `KNOB ${i + 1}`, ENC[`KNOB${i + 1}`]);
+
+const buttons = [];
+function button(x, y, w, h, label) {
+  const el = add("btn", x, y, w, h, label);
+  el.setAttribute("role", "button");
+  buttons[BTN[label]] = el;
+}
+button(72, 268, 82, 38, "OCT-");
+button(170, 268, 82, 38, "OCT+");
+["FX", "SCL", "ENV", "LFO", "EDIT", "GLO"].forEach((b, i) => button(582 + i * 63, 174, 54, 48, b));
+["HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC"].forEach((b, i) => button(582 + i * 63, 236, 54, 48, b));
+
+const keys = [];
+const pitch = (928 - 24) / 16, kw = pitch * 0.78;
+for (let i = 0; i < 16; i++) keys[WHITE_K[i]] = add("key white", 48 + i * pitch + (pitch - kw) / 2, 340 + 270 * 0.43, kw, 270 * 0.52);
+BLACK_AFTER.forEach((a, k) => { keys[BLACK_K[k]] = add("key black", 48 + (a + 1) * pitch - kw / 2, 340 + 270 * 0.06, kw, 270 * 0.33); });
+
+/* the computer keyboard, as a tracker: Z.. the first octave (F3..), Q.. the next; the row above each its black keys */
+const TRACKER = { KeyZ: 0, KeyS: 1, KeyX: 2, KeyD: 3, KeyC: 4, KeyF: 5, KeyV: 6, KeyB: 7, KeyH: 8, KeyN: 9, KeyJ: 10, KeyM: 11,
+                  Comma: 12, KeyL: 13, Period: 14, Semicolon: 15, Slash: 16, KeyQ: 12, Digit2: 13, KeyW: 14, Digit3: 15,
+                  KeyE: 16, Digit4: 17, KeyR: 18, KeyT: 19, Digit6: 20, KeyY: 21, Digit7: 22, KeyU: 23, KeyI: 24, Digit9: 25, KeyO: 26 };
+const CAP = { Comma: ",", Period: ".", Semicolon: ";", Slash: "/" };
+for (const [code, k] of Object.entries(TRACKER)) keys[k].textContent += (keys[k].textContent ? " " : "") + (CAP[code] || code.slice(-1));
+
+/* ---- input */
+let node = null;
+const send = (m) => node && node.port.postMessage(m);
+const heldKeys = new Map(), heldBtns = new Map();
+let keyMask = 0, btnMask = 0;
+function sync() {
+  let k = 0, b = 0;
+  for (const v of heldKeys.values()) k |= 1 << v;
+  for (const v of heldBtns.values()) b |= 1 << v;
+  keys.forEach((el, i) => el.classList.toggle("held", !!(k & (1 << i))));
+  buttons.forEach((el, i) => el.classList.toggle("held", !!(b & (1 << i))));
+  if (k !== keyMask) send({ type: "keys", mask: (keyMask = k) });
+  if (b !== btnMask) send({ type: "buttons", mask: (btnMask = b) });
+}
+function hold(el, map, v) {
+  el.addEventListener("contextmenu", (e) => e.preventDefault());
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    map.set("p" + e.pointerId, v);
+    sync();
+  });
+}
+keys.forEach((el, i) => hold(el, heldKeys, i));
+buttons.forEach((el, i) => hold(el, heldBtns, i));
+for (const ev of ["pointerup", "pointercancel", "lostpointercapture"])
+  device.addEventListener(ev, (e) => { if (heldKeys.delete("p" + e.pointerId) | heldBtns.delete("p" + e.pointerId)) sync(); }, true);
+
+function turn(k, n) {
+  if (!n) return;
+  if (k.id === "master") {
+    master = Math.max(0, Math.min(1023, master + n * 16));
+    k.angle = -135 + 270 * master / 1023;
+    send({ type: "master", value: master });
+  } else {
+    k.angle = (k.angle + n * 18) % 360;
+    send({ type: "encoder", id: k.id, n });
+  }
+  k.el.style.setProperty("--angle", `${k.angle}deg`);
+}
+for (const k of knobs) {
+  let drag = null, wheel = 0;
+  k.el.addEventListener("pointerdown", (e) => { e.preventDefault(); k.el.setPointerCapture(e.pointerId); drag = { y: e.clientY, acc: 0 }; });
+  k.el.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    drag.acc += drag.y - e.clientY;
+    drag.y = e.clientY;
+    const n = Math.trunc(drag.acc / 6);
+    if (n) { drag.acc -= n * 6; turn(k, n); }
+  });
+  for (const ev of ["pointerup", "pointercancel"]) k.el.addEventListener(ev, () => { drag = null; });
+  k.el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    if (Math.abs(dy) >= 50) return turn(k, dy < 0 ? 1 : -1);   // a mouse wheel notch: one detent
+    wheel -= dy;                                                // a trackpad: by distance
+    const n = Math.trunc(wheel / 25);
+    if (n) { wheel -= n * 25; turn(k, n); }
+  }, { passive: false });
+  k.el.addEventListener("keydown", (e) => {
+    const n = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (n) { e.preventDefault(); e.stopPropagation(); turn(k, n); }
+  });
+}
+function onKey(e, down) {
+  const k = TRACKER[e.code];
+  if (k === undefined || e.metaKey || e.ctrlKey || e.altKey || e.target.closest("select, [role=slider]")) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  if (down) heldKeys.set(e.code, k); else heldKeys.delete(e.code);
+  sync();
+}
+addEventListener("keydown", (e) => onKey(e, true));
+addEventListener("keyup", (e) => onKey(e, false));
+addEventListener("blur", () => { heldKeys.clear(); heldBtns.clear(); sync(); });
+
+/* ---- the device */
+const ctx = screen.getContext("2d"), img = ctx.createImageData(240, 240);
+function draw(fb) {
+  const d = img.data;
+  for (let i = 0; i < 240 * 240; i++) {
+    const c = ((fb[i] & 0xff) << 8) | (fb[i] >> 8);           // the panel's byte order
+    d[4 * i] = (c >> 11) * 255 / 31;
+    d[4 * i + 1] = ((c >> 5) & 63) * 255 / 63;
+    d[4 * i + 2] = (c & 31) * 255 / 31;
+    d[4 * i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+$("power").addEventListener("click", async () => {
+  $("power").disabled = true;
+  try {
+    const wasm = await (await fetch("melodee.wasm")).arrayBuffer();
+    const ac = new AudioContext({ sampleRate: 44100, latencyHint: "interactive" });
+    await ac.audioWorklet.addModule("worklet.js");
+    node = new AudioWorkletNode(ac, "melodee", { numberOfInputs: 0, outputChannelCount: [2] });
+    node.connect(ac.destination);
+    node.port.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "crash") { $("status").textContent = "Stopped: " + m.message; return; }
+      if (m.fb) draw(m.fb);
+      keys.forEach((el, i) => el.classList.toggle("lit", !!(m.keys & (1 << i))));
+      buttons.forEach((el, i) => el.classList.toggle("lit", !!(m.buttons & (1 << i))));
+    };
+    node.port.postMessage({ type: "load", wasm, master }, [wasm]);
+    await ac.resume();
+    $("poweron").hidden = true;
+  } catch (err) {
+    $("status").textContent = "Could not start: " + err.message;
+    $("power").disabled = false;
+  }
+});
+
+/* MIDI in from a controller (no SysEx asked for) */
+let midi = null, midiIn = null;
+$("midiin").addEventListener("pointerdown", async () => {
+  if (midi || !navigator.requestMIDIAccess) return;
+  try { midi = await navigator.requestMIDIAccess(); } catch (_) { return; }
+  const fill = () => {
+    const v = $("midiin").value;
+    $("midiin").length = 1;
+    for (const p of midi.inputs.values()) $("midiin").add(new Option(p.name, p.id));
+    $("midiin").value = v;
+  };
+  midi.onstatechange = fill;
+  fill();
+}, { once: true });
+$("midiin").addEventListener("change", () => {
+  if (midiIn) midiIn.onmidimessage = null;
+  midiIn = midi && midi.inputs.get($("midiin").value);
+  if (midiIn) midiIn.onmidimessage = (e) => e.data[0] < 0xf0 && send({ type: "midi", data: Array.from(e.data) });
+});
+</script>
+</body>
+</html>

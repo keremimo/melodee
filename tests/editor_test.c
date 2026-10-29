@@ -90,6 +90,10 @@ static void reset(void)
         track_defaults(&trk[t]); set_engine_of(&trk[t], 3); apply_preset_to(&trk[t], 0);   /* (SID: values on p[]) */
         trk[t].engine = trk[t].eng_req; track_defaults_steps(&trk[t]);
     }
+    for (t = NPART; t < NTRK; t++) {                    /* the MIDI-only tracks, as melodee_init (FBKP carries them) */
+        for (i = 0; i < P_E0; i++) trk[t].p[i] = TP[i].def;
+        for (i = 0; i < NSTEP; i++) trk[t].step[i].time = ST_REST;
+    }
 }
 static uint32_t request(uint32_t cmd, const uint8_t *a, uint32_t n)
 {
@@ -117,7 +121,7 @@ static int preferences(void)
     uint8_t a[4] = {0, 2, 0, 0};
     reset();
     uint32_t n = request(ED_INFO, a, 0);
-    const uint8_t caps[]={0,0x55,1,57,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,1,NPAT,CHAIN_ROWS,0x46,1,FM6_NFAC,0,0x43,1,16,1,0,0,0x35,1,19,16,17,18,20,0,1,0x4e,1,64,0,0,1,0x55,1,0,3};
+    const uint8_t caps[]={0,0x55,1,121,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,4,NPAT,CHAIN_ROWS,0x46,1,FM6_NFAC,0,0x43,1,16,1,0,0,0x35,1,19,16,17,18,20,0,1,0x4e,1,64,0,0,1,0x55,1,0,3};
     bad+=check("INFO preserves existing IDs and advertises the shared 384-slot library",ED_SONG==33&&ED_FAV_SET==38&&n>sizeof caps&&!memcmp(host_wire+n-sizeof caps-1,caps,sizeof caps));
     request(ED_UI_SET, a, 2);
     bad += check("UI_SET updates the actual palette and reports RAM-only saving",
@@ -126,8 +130,13 @@ static int preferences(void)
     bad += check("out-of-range palette leaves the display unchanged", host_wire[5] == 1 && settings.palette == 2);
     a[0] = 1; a[1] = 1; request(ED_UI_SET, a, 2);
     bad += check("the retired font weight is not supported (rc 2), UI_STATE says 127",
-        host_wire[5] == 2 && host_wire[8] == 57 && host_wire[10] == 127);
-    a[0] = 9; request(ED_UI_SET, a, 2);
+        host_wire[5] == 2 && host_wire[8] == 121 && host_wire[10] == 127);
+    a[0] = 5; a[1] = 100; request(ED_UI_SET, a, 2);
+    bad += check("UI_SET click level takes a percentage up to 100", host_wire[5] == 3 && settings_click_level == 100u);
+    a[1] = 101; request(ED_UI_SET, a, 2);
+    bad += check("click level above 100 % is refused", host_wire[5] == 1 && settings_click_level == 100u);
+    settings_click_level = CLICK_LEVEL_DEFAULT;
+    a[0] = 9; a[1] = 1; request(ED_UI_SET, a, 2);
     bad += check("retired FX latch cannot be enabled", host_wire[5] == 2);
     a[0] = 2; request(ED_UI_SET, a, 2);
     bad += check("unsupported preference is reported without applying it", host_wire[5] == 2);
@@ -278,7 +287,8 @@ static int song_protocol(void)
     bad += check("SONG cannot replace a chain while its start is pending",
                  request(ED_SONG, a, sizeof a) == 14u && host_wire[6] == 2 && !memcmp(&before, &chain_config, sizeof before));
     chain.armed = 0; a[0] = 2;
-    bad += check("SONG PLAY refuses extra argument bytes", !request(ED_SONG, a, 2) && !transport_req);
+    bad += check("SONG PLAY rejects a start row beyond the arrangement", request(ED_SONG, a, 2) == 14u && host_wire[6] == 1 && !transport_req);
+    bad += check("SONG PLAY refuses malformed extra argument bytes", !request(ED_SONG, a, 3) && !transport_req);
     return bad;
 }
 
@@ -395,12 +405,29 @@ static int bank_protocol(void)
 {
     int bad=0; reset(); uint8_t a[12] = {2,1,7};
     bad += check("PATTERN selects a track's bank without changing track selection", request(ED_PATTERN,a,3)==12 && !host_wire[7] && trk[2].pattern==7 && !song.sel);
-    a[2]=8;
+    a[2]=NPAT;
     bad += check("PATTERN rejects out-of-range bank IDs", request(ED_PATTERN,a,3)==12 && host_wire[7] && trk[2].pattern==7);
+    a[2]=NPAT-1u;
+    bad += check("PATTERN selects a part's bank 16 and reports its 16 banks", request(ED_PATTERN,a,3)==12 && !host_wire[7] && trk[2].pattern==NPAT-1u && host_wire[10]==NPAT);
+    uint8_t m[3] = {NPART,1,NPAT_MIDI};
+    bad += check("PATTERN rejects a MIDI-only track's bank 9 and reports its 8 banks", request(ED_PATTERN,m,3)==12 && host_wire[7] && !trk[NPART].pattern && host_wire[10]==NPAT_MIDI);
+    a[2]=7; request(ED_PATTERN,a,3);
     uint8_t row[] = {1,1,0,2,4,7,3};
-    bad += check("bank SONG independently assigns four track banks", request(ED_BANK_SONG,row,sizeof row)==17 && !host_wire[6] && chain_patterns[0][3]==7 && chain_config.row[0].repeat==3);
-    row[4]=8;
-    bad += check("malformed bank SONG leaves the arrangement unchanged", request(ED_BANK_SONG,row,sizeof row)==17 && host_wire[6]==1 && chain_patterns[0][2]==4);
+    bad += check("bank SONG independently assigns four track banks", request(ED_BANK_SONG,row,sizeof row)==18 && !host_wire[6] && chain_patterns[0][3]==7 && chain_config.row[0].repeat==3);
+    row[4]=CHAIN_HOLD+1u;
+    bad += check("malformed bank SONG leaves the arrangement unchanged", request(ED_BANK_SONG,row,sizeof row)==18 && host_wire[6]==1 && chain_patterns[0][2]==4);
+    uint8_t long_song[2u + CHAIN_ROWS * 5u] = {1, CHAIN_ROWS};
+    for (uint32_t r = 0; r < CHAIN_ROWS; r++) {
+        long_song[2u + r * 5u] = 0; long_song[3u + r * 5u] = CHAIN_REST;
+        long_song[4u + r * 5u] = 2; long_song[5u + r * 5u] = 7; long_song[6u + r * 5u] = 16;
+    }
+    bad += check("bank SONG transfers 64 sections with explicit resting tracks", request(ED_BANK_SONG,long_song,sizeof long_song) == 13u + 5u * CHAIN_ROWS && !host_wire[6] && chain_config.count == CHAIN_ROWS && chain_patterns[63][1] == CHAIN_REST);
+    const uint8_t start[] = {2, 63};
+    bad += check("bank SONG starts from an optional selected section", request(ED_BANK_SONG,start,sizeof start) == 13u + 5u * CHAIN_ROWS && !host_wire[6] && chain.armed && chain.start == 63);
+    transport_req = 2; events_block(1);
+    const uint8_t loop_on[]={4,1},loop_bad[]={4,2};
+    bad+=check("bank SONG exposes the saved loop option",request(ED_BANK_SONG,loop_on,sizeof loop_on)==13u+5u*CHAIN_ROWS&&!host_wire[6]&&host_wire[host_wire_n-2u]==1&&chain_config.rsv[CHAIN_LOOP]);
+    bad+=check("bank SONG rejects invalid loop values",request(ED_BANK_SONG,loop_bad,sizeof loop_bad)==13u+5u*CHAIN_ROWS&&host_wire[6]==1&&chain_config.rsv[CHAIN_LOOP]);
     a[0]=0; uint32_t writes=host_writes;
     bad += check("sample upload and erase commands cannot write into pattern storage", request(ED_SMP_BEGIN,a,1)==0 && request(ED_SMP_ERASE,a,1)==0 && host_writes==writes && !host_erases);
     request(ED_SMP_INFO,a,0);
@@ -463,7 +490,8 @@ static int cz_dedicated_banks(void)
         bad+=check("shared host bank commits through bounded archive staging",!ed_bk_commit());
     }
     for(uint32_t k=0;k<8u;k++)bad+=check("shared CZ records preserve complete voices across bank evictions",native_used(ENGI_CZ,(8u+k)*18u+17u)&&native_raw(ENGI_CZ,(8u+k)*18u+17u)[128]=='a'+k);
-    bad+=check("full backups include all 22 shared preset objects",ED_BK_N==29u);
+    uint32_t shared=0;for(uint32_t i=0;i<ED_BK_N;i++)shared+=ed_bk_preset_bank(ED_BK_IDS[i])<UP_BANKS;
+    bad+=check("full backups include all 22 shared preset objects and the 32 projects",ED_BK_N==57u && shared==22u);
     return bad;
 }
 static int native_protocol(void)

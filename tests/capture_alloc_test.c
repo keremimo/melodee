@@ -36,19 +36,20 @@ static __attribute__((noinline)) int capture_reference(track_t *t, uint32_t note
     if (on > 65535u) on = 65535u;
     for (uint32_t i = 0; i < RECORD_MAX; i++) {
         recorded_note_t *r = &recording[i];
-        if ((r->owner & 31u) == owner && (recording_flags[i] & 1u) && r->note == note) recording_finish(i);
+        if (recorded_owner(r) == owner && (recording_flags[i] & 1u) && recorded_note(r) == note) recording_finish(i);
         /* Repeated passes replace the same pitch at the same captured time.
          * Distinct hits in one step remain separate events. */
         uint32_t same_time = r->on == on;
-        if (r->vel && (r->owner & 31u) == owner && r->note == note && (r->step & 63u) == actual && same_time) free = i;
+        if (r->vel && recorded_owner(r) == owner && recorded_note(r) == note && recorded_step(r) == actual && same_time) free = i;
         else if (free == RECORD_MAX && (!r->vel || (!recording_present(r) && !recording_sounding(i) && !(recording_flags[i] & 1u)))) free = i;
     }
     if (free == RECORD_MAX) { recording_full = 1; return 0; }
     recording_undo_capture(t);
-    if (recording_sounding(free)) recording_end(&trk[(recording[free].owner & 31u) / NPAT], free);
+    if (recording_sounding(free)) recording_end(&trk[recorded_owner(&recording[free]) / NPAT], free);
     recording_unlink(free);
     recorded_note_t *r = &recording[free];
-    *r = (recorded_note_t){.on=(uint16_t)on, .duration=1, .note=(uint8_t)note, .vel=(uint8_t)vel, .owner=(uint8_t)owner, .step=(uint8_t)(actual | (step != actual ? 64u : 0u) | (step == 0u && actual ? 128u : 0u))};
+    *r = (recorded_note_t){.on=(uint16_t)on, .duration=1, .note7=(uint8_t)note, .vel=(uint8_t)vel};
+    recorded_set_owner(r, owner); recorded_set_step(r, actual, step != actual, step == 0u && actual);   /* (7-bit owners) */
     recording_insert(t, free);
     memset(&recording_run[free], 0, sizeof recording_run[free]);
     recording_flags[free] = 13;
@@ -126,17 +127,17 @@ static void classify(const track_t *t, uint32_t note)
     if (on > 65535u) on = 65535u;
     for (uint32_t i = 0; i < RECORD_MAX; i++) {
         const recorded_note_t *r = &recording[i];
-        uint32_t mine = r->vel && (r->owner & 31u) == owner, present = r->vel && recording_present(r);
-        if (mine && present && r->note == note) {
+        uint32_t mine = r->vel && recorded_owner(r) == owner, present = r->vel && recording_present(r);
+        if (mine && present && recorded_note(r) == note) {
             seal |= recording_flags[i] & 1u;
-            match |= (r->step & 63u) == actual && r->on == on;
+            match |= recorded_step(r) == actual && r->on == on;
         }
         if (first == RECORD_MAX && (!r->vel || (mine && !present) ||
             (!present && !recording_sounding(i) && !(recording_flags[i] & 1u)))) first = i;
     }
     if (match) coverage[0]++;
     else if (first == RECORD_MAX) coverage[3]++;
-    else if (recording[first].vel) coverage[(recording[first].owner & 31u) == owner ? 2 : 1]++;
+    else if (recording[first].vel) coverage[recorded_owner(&recording[first]) == owner ? 2 : 1]++;
     coverage[4] += seal;
 }
 #define OPS 160u
@@ -158,8 +159,8 @@ static void scenario(uint32_t seed, int impl, uint64_t *out)
     /* Move some events to other banks of their track, present or retired. */
     for (uint32_t i = 0; i < RECORD_MAX; i++) if (recording[i].vel && rnd(4) == 0) {
         recorded_note_t *r = &recording[i];
-        uint32_t k = (r->owner & 31u) / NPAT, bank = 1u + rnd(NPAT - 1u);
-        r->owner = (uint8_t)((r->owner & 224u) | (k * NPAT + bank));
+        uint32_t k = recorded_owner(r) / NPAT, bank = 1u + rnd(NPAT - 1u);
+        recorded_set_owner(r, k * NPAT + bank);
         if (fresh || rnd(3)) {
             uint32_t v=recording_view(&trk[k],r); step_t s=pattern_step(k,bank,v);
             s.time=ST_NOTE; s.flags|=SF_RECORDED; set_cell(k,bank,v,s);

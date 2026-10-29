@@ -15,6 +15,8 @@
 MEMORY
 {
     XIP    (rx)  : ORIGIN = 0x02001000, LENGTH = 0x8C000   /* body ends before commit-marker sector 0x91000 */
+    RES    (r)   : ORIGIN = 0x020C7020, LENGTH = 0x14FE0   /* flash 0xCB020..0xDFFFF: the resource region (res.c),
+                                                         * installed after an update, not part of the image */
     RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x7F00
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
     POOL   (rwx) : ORIGIN = 0x01C20000, LENGTH = 0x57600
@@ -24,6 +26,7 @@ MEMORY
 SECTIONS
 {
     .text : { KEEP(*(.text.crt0)) *(.text*) *(.rodata*) . = ALIGN(4); _etext = .; } > XIP
+    .mres : { _mres_start = .; *(.mres*) . = ALIGN(4); _mres_end = .; } > RES
     /* Every section copied to SRAM at boot has an explicit LMA after .text, outside the XIP region: the packager
      * stores them boot-compressed from _rt_load on (tools/boot_audio.py), so their compressed size, not the ELF's raw
      * sections, determines the flash available. The packager enforces the image limit. */

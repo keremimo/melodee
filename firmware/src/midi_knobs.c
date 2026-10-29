@@ -9,6 +9,12 @@ static uint32_t midi_knob_q[MIDI_KNOB_Q] __attribute__((section(".pool")));
 static volatile uint32_t midi_knob_w, midi_knob_r;
 static volatile uint8_t midi_knob_overflow;
 static volatile uint8_t midi_knob_usb_epoch;
+#if MELODEE_BLE
+#define MIDI_KNOB_SOURCES 3u
+static volatile uint8_t midi_knob_ble_epoch;
+#else
+#define MIDI_KNOB_SOURCES 2u
+#endif
 static uint32_t midi_knob_config(void)
 { return settings_midi_knobs | (uint32_t)settings_midi_knob_mode << 2; }
 
@@ -23,9 +29,12 @@ static int midi_knob_receive(uint32_t ch, uint32_t cc, uint32_t value)
         midi_knob_overflow = 1;                 /* discard this gesture; rebase absolute navigation */
         return 1;
     }
+    uint32_t src = midi_event_source == 2u ? 1u : 0u, epoch = midi_knob_usb_epoch;
+#if MELODEE_BLE
+    if (midi_event_source == 3u) { src = 2u; epoch = midi_knob_ble_epoch; }
+#endif
     midi_knob_q[w % MIDI_KNOB_Q] = value | k << 7 | ch << 10 |
-        (midi_event_source == 2u) << 14 | midi_knob_config() << 16 |
-        (midi_event_source == 2u ? 0u : (uint32_t)midi_knob_usb_epoch << 20);
+        src << 14 | midi_knob_config() << 16 | (src == 1u ? 0u : epoch << 20);
     RING_PUBLISH();
     midi_knob_w = w + 1u;
     return 1;

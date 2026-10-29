@@ -17,7 +17,7 @@
 #pragma pack(push,1)
 typedef struct {
     uint16_t on, duration;
-    uint8_t note;
+    uint8_t note7;               /* the note (0..127); bit 7: the owner's bit 6 (16 patterns a part) */
     uint8_t vel:7, length:1;
     uint8_t owner, step;
     int8_t pitch:6;
@@ -26,7 +26,9 @@ typedef struct {
 #pragma pack(pop)
 _Static_assert(sizeof(recorded_note_t) == 9u, "packed timed note layout");
 static uint32_t recorded_owner(const recorded_note_t *r)
-{ return (r->owner & 31u) | ((uint32_t)(r->extended & 1u) << 5); }
+{ return (r->owner & 31u) | ((uint32_t)(r->extended & 1u) << 5) | ((uint32_t)(r->note7 >> 7) << 6); }
+static uint32_t recorded_note(const recorded_note_t *r) { return r->note7 & 127u; }
+static void recorded_set_note(recorded_note_t *r, uint32_t note) { r->note7 = (uint8_t)((r->note7 & 128u) | (note & 127u)); }
 static uint32_t recorded_step(const recorded_note_t *r)
 { return (r->step & 63u) | ((uint32_t)(r->extended & 2u) << 5); }
 static uint32_t recorded_exponent(const recorded_note_t *r) { return r->owner >> 5; }
@@ -37,6 +39,7 @@ static void recorded_set_owner(recorded_note_t *r, uint32_t owner)
 {
     r->owner = (uint8_t)((r->owner & 224u) | (owner & 31u));
     r->extended = (uint8_t)((r->extended & 2u) | ((owner >> 5) & 1u));
+    r->note7 = (uint8_t)((r->note7 & 127u) | ((owner >> 6) & 1u) << 7);
 }
 static void recorded_set_exponent(recorded_note_t *r, uint32_t exponent)
 { r->owner = (uint8_t)((r->owner & 31u) | (exponent << 5)); }

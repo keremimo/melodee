@@ -164,7 +164,7 @@ static void original_recording(void)
     input_on(TSEL, 60, 73); seq_advance(1200); input_off(TSEL, 60);
     advance(FS / 4u); assert(sounding(0, 60));
     seq_stop();
-    assert(recording[0].note == 60 && recording[0].vel == 73 && recording[0].duration && !recording[1].vel);
+    assert(recorded_note(&recording[0]) == 60 && recording[0].vel == 73 && recording[0].duration && !recording[1].vel);
     puts("MIDI inserts: recording retains source pitch, velocity and duration without capturing echoes");
 }
 static void ui_storage(void)

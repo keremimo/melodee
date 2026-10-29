@@ -59,7 +59,7 @@ static int state_matches(track_t *t)
          * oracle below. Countdown/reference mode still retains both fields. */
         if(((!MELODEE_RECORD_QUEUE || (expected[i].flags&1u)) && recording_run[i].held!=expected[i].held) || recording_left(i)!=expected[i].left ||
            (recording_flags[i]&~2u)!=expected[i].flags)return 0;
-        if(expected[i].left && recording_active(t,i))refs[recording[i].note]++;
+        if(expected[i].left && recording_active(t,i))refs[recorded_note(&recording[i])]++;
     }
     if(recording_fraction[trk_index(t)]!=expected_fraction || memcmp(refs,recording_refs[trk_index(t)],sizeof refs))return 0;
 #if MELODEE_RECORD_CURSOR
@@ -81,11 +81,11 @@ static int oracle_scenario(uint32_t count,uint32_t div,int long_gates)
     for(uint32_t i=0;i<count;i++){
         recorded_note_t r={0};r.on=(uint16_t)next_random();r.duration=(uint16_t)(1u+next_random()%65535u);
         r.owner=(uint8_t)(long_gates?(i%8u)<<5:0u);
-        r.step=(uint8_t)(next_random()%16u);r.note=(uint8_t)(48u+next_random()%12u);r.vel=(uint8_t)(60u+next_random()%68u);
+        r.step=(uint8_t)(next_random()%16u);recorded_set_note(&r,(uint8_t)(48u+next_random()%12u));r.vel=(uint8_t)(60u+next_random()%68u);
         recording_restore_note(t,i,r);recording_flags[i]=(uint8_t)(i%13u==0u?1u:i%3u==0u?8u:0u);
         expected[i].flags=recording_flags[i];
     }
-    recording_reindex();expected_zero(t);recording_zero(t);
+    recording_reindex();expected_zero(t);recording_zero(t,0);
     int ok=state_matches(t);
     for(uint32_t tick=0;tick<2048 && ok;tick++){
         if(tick==311 && long_gates){song.g[G_BPM]=173;t->p[P_SDIV]=3;}
@@ -99,10 +99,10 @@ static int oracle_scenario(uint32_t count,uint32_t div,int long_gates)
         if(tick==1401)recording_reindex();
         uint32_t period=seq_div_samples(t->p[P_SDIV]),span=step_samples(t,period,t->seq_idx);
         uint32_t n=(tick%19u==0u?70000u:1u+next_random()%127u);
-        if(t->seq_pos>=span){t->seq_pos=0;t->seq_idx=(uint16_t)((t->seq_idx+1u)%16u);if(!t->seq_idx){expected_zero(t);recording_zero(t);}}
+        if(t->seq_pos>=span){t->seq_pos=0;t->seq_idx=(uint16_t)((t->seq_idx+1u)%16u);if(!t->seq_idx){expected_zero(t);recording_zero(t,0);}}
         span=step_samples(t,period,t->seq_idx);if(n>span-t->seq_pos)n=span-t->seq_pos;
         expected_tick(t,n);recording_tick(t,n);t->seq_pos+=n;
-        if(t->seq_pos==span){t->seq_pos=0;t->seq_idx=(uint16_t)((t->seq_idx+1u)%16u);if(!t->seq_idx){expected_zero(t);recording_zero(t);}}
+        if(t->seq_pos==span){t->seq_pos=0;t->seq_idx=(uint16_t)((t->seq_idx+1u)%16u);if(!t->seq_idx){expected_zero(t);recording_zero(t,0);}}
         ok=state_matches(t);
         if(!ok)fprintf(stderr,"scheduler oracle mismatch: count=%u div=%u tick=%u\n",count,div,tick);
     }
@@ -112,10 +112,10 @@ static int oracle_scenario(uint32_t count,uint32_t div,int long_gates)
 static int cursor_slot_reuse(void)
 {
     raw_begin();track_t *t=TSEL;seq_stop();song.rec=0;
-    recorded_note_t r={0};r.on=30000;r.duration=1000;r.note=60;r.vel=90;
+    recorded_note_t r={0};r.on=30000;r.duration=1000;recorded_set_note(&r,60);r.vel=90;
     recording_restore_note(t,0,r);t->step[0].time=ST_NOTE;t->step[0].flags=SF_RECORDED;
     seq_start();seq_advance(0);recording_remove(t,0);
-    r.owner=NPAT;r.note=67;recording_restore_note(&trk[1],0,r);
+    r.owner=NPAT;recorded_set_note(&r,67);recording_restore_note(&trk[1],0,r);
     trk[1].step[0].time=ST_NOTE;trk[1].step[0].flags=SF_RECORDED;
     seq_advance(3000);
     int bad=check("reusing a pending slot on another track cannot redirect the old cursor",!gate_note(t,67) && !recording_refs[0][67]);

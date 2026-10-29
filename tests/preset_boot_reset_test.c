@@ -29,7 +29,7 @@ static int test_reset(void)
     int bad = 0; fixture();
     uint8_t old[80], got[80]; memset(old, 0x5A, sizeof old);
     st_save(OBJ_BANK0, old, sizeof old);           /* unrelated unreadable project stays protected */
-    st_save(OBJ_UPRESET0, old, sizeof old);
+    st_pair_save(OBJ_UPRESET0, old, sizeof old);
     st_save(OBJ_NATIVEFM0, old, sizeof old);
     st_save(OBJ_CZBANK0, old, sizeof old);
     mixed_bank();
@@ -74,7 +74,7 @@ static int test_partial_legacy(void)
     memcpy(legacy, &magic, 4); memcpy(legacy+4, &size, 2); memcpy(legacy+6, &count, 2);
     up_rec_t good = good_record(), future = {0}; future.used = UP_USED; future.ver = 99;
     memcpy(legacy+8, &good, sizeof good); memcpy(legacy+8+sizeof good, &future, sizeof future);
-    st_save(OBJ_UPRESET0, legacy, sizeof legacy); up_cache_reset(); up_boot();
+    st_pair_save(OBJ_UPRESET0, legacy, sizeof legacy); up_cache_reset(); up_boot();
     bad += check("partially readable legacy bank keeps compatible presets during reset", !up_migration_error && up_used(0) && !up_old(1) && !up_used(1) && !memcmp(up_rec(0), &good, sizeof good));
     fixture();
     good.engine = ENGI_FM6;
@@ -82,7 +82,7 @@ static int test_partial_legacy(void)
     native_fm_t fm = {0}; fm.magic = NATIVE_FM_MAGIC; fm.ver = 1; fm.slots = 16; fm.used = 5;
     memcpy(fm.tone[0], FM6_INIT, FM6_PACKED); memcpy(fm.tone[2], FM6_INIT, FM6_PACKED);
     fm.tone[0][118] = 'A'; fm.tone[2][118] = 'B';
-    st_save(OBJ_UPRESET0, legacy, sizeof legacy); st_save(OBJ_NATIVEFM0, &fm, sizeof fm);
+    st_pair_save(OBJ_UPRESET0, legacy, sizeof legacy); st_save(OBJ_NATIVEFM0, &fm, sizeof fm);
     up_cache_reset(); native_cache_reset(); up_boot();
     bad += check("repair embeds multiple good legacy FM6 sidecars before cache reuse", !up_migration_error && native_used(ENGI_FM6,0) && native_used(ENGI_FM6,2) && !memcmp(native_raw(ENGI_FM6,0),fm.tone[0],FM6_PACKED) && !memcmp(native_raw(ENGI_FM6,2),fm.tone[2],FM6_PACKED) && !up_used(1));
     return bad;

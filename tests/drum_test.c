@@ -236,7 +236,7 @@ static void kit_808(void)
         trk_note_on(&trk[0], 36, 110);
         k = drum_kit_part(0)[DV_KICK].r.ins == DR_BD && blocks_peak(4) > 200;
         printf("drum_test: retired custom kit plays 808: %s\n", k ? "ok" : "FAIL");
-        fails += !k || ENG_DRUM.npresets != 4 || ENG_DRUM.edit[0].min != DK_808;
+        fails += !k || ENG_DRUM.npresets != 6 || ENG_DRUM.edit[0].min != DK_808;
     }
     {   /* the corners: TUNE TONE DECY SNAP at 0 / 127, ACC 127, velocity 127, the whole kit at once: no clipping */
         int32_t pk = 0, q;

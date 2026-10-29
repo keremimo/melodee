@@ -27,7 +27,7 @@ static void blank(project_t *a)
         memcpy(a->fm6[k], FM6_INIT, FM6_PACKED);
     }
     a->magic = PROJ_MAGIC; a->size = sizeof *a; a->parts = NPART; a->phys = PROJ_PHYS;
-    chain_defaults(&a->chain);
+    chain_legacy_defaults(&a->chain);
     a->sum = proj_sum(a);
 }
 
@@ -42,11 +42,11 @@ int main(void)
 
     {   /* Reconstruct the prior raw layout independently of RAM bitfields. */
         static uint8_t old[sizeof(project_t)+RECORD_MAX];blank(&q);
-        q.recording[0]=(recorded_note_t){.on=65535, .duration=49321, .note=127, .vel=91, .owner=255, .step=255, .pitch=-24, .length=1};
+        q.recording[0]=(recorded_note_t){.on=65535, .duration=49321, .note7=127, .vel=91, .owner=255, .step=255, .pitch=-24, .length=1};
         uint32_t at=__builtin_offsetof(project_t,recording),tail=__builtin_offsetof(project_t,pattern);
         memcpy(old,&q,at);
         for(uint32_t i=0;i<RECORD_MAX;i++){
-            const recorded_note_t *r=&q.recording[i];uint8_t v[10]={r->on,r->on>>8,r->duration,r->duration>>8,r->note,r->vel,r->owner,r->step,(uint8_t)r->pitch,recorded_legacy_length(r)};
+            const recorded_note_t *r=&q.recording[i];uint8_t v[10]={r->on,r->on>>8,r->duration,r->duration>>8,recorded_note(r),r->vel,r->owner,r->step,(uint8_t)r->pitch,recorded_legacy_length(r)};
             memcpy(old+at+i*10u,v,10);
         }
         memcpy(old+at+RECORD_MAX*10u,(uint8_t *)&q+tail,sizeof q-tail);
@@ -93,7 +93,7 @@ int main(void)
         uint32_t i, zero = 1;
         bad += check("FUN16: the name at the end of the record, the FM6 patches before the tones, after the data",
                      PROJ_NAME_OFF == PROJ_STORE_SIZE - 16u && PROJ_FM6_OFF == 3104u && 68u + NPART * (P_COUNT + 2u + NSTEP * 8u) +
-                     sizeof(chain_config_t) + sizeof(motion_store_t) + 188u == PROJ_FM6_OFF);
+                     sizeof(chain_legacy_t) + sizeof(motion_store_t) + 188u == PROJ_FM6_OFF);
         blank(&a);
         a.t[1].p[P_LEVEL] = 99;
         a.sum = proj_sum(&a);

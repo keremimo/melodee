@@ -194,7 +194,7 @@ static void drum_pads(void)
         {36, 38, 39, 37, 42, 46, 56, 49, 41, 45, 50, 70, 64, 61, 60, 75},
         {36, 38, 39, 37, 42, 46, 51, 49, 41, 45, 50, 51, 36, 38, 42, 46},
     };
-    for (uint32_t kit = DK_808; kit <= DK_SID; kit++) {
+    for (uint32_t kit = DK_808; kit <= DK_FM; kit++) {
         setup_mpc();
         for (uint32_t k = 0; k < NPART; k++) {
             track_t *t = &trk[k];
@@ -220,7 +220,7 @@ static void drum_pads(void)
         }
     }
     for (uint32_t source = 1; source <= 2u; source++)
-        for (uint32_t kit = DK_808; kit <= DK_SID; kit++) {
+        for (uint32_t kit = DK_808; kit <= DK_FM; kit++) {
             setup_mpc(); song.g[G_MIDI] = (int16_t)(source - 1u); ui.msg_t = 0;
             for (uint32_t k = 0; k < NPART; k++) {
                 track_t *t = &trk[k]; set_engine_of(t, ENGI_DRUM); t->p[P_E0] = (int16_t)kit;

@@ -58,7 +58,7 @@ static uint32_t midi_event_source; /* 0: internal/test dispatch, 1 USB, 2 TRS */
 static int midi_track_accept(const track_t *t)
 {
     return !midi_track_only(t) || !midi_event_source ||
-           midi_event_source == (song.g[G_MIDI] ? 2u : 1u) || (midi_event_source == 2u && t->p[P_E1]);
+           midi_event_source == (uint32_t)song.g[G_MIDI] + 1u || (midi_event_source == 2u && t->p[P_E1]);
 }
 
 static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
@@ -246,6 +246,12 @@ static void recording_undo_clear(void);
 static void seq_release(track_t *t);
 
 #include "motion.c"
+/* A section-local sound starts a new automation base without seeking the
+ * continued note block. Restore the lane values held at its current step. */
+static void song_sound_motion_chase(track_t *t)
+{
+    for (uint32_t step = 0; step <= t->seq_idx && step < (uint32_t)t->p[P_SLEN]; step++) motion_step(t, step, &motion);
+}
 
 static void arp_off(track_t *t)                  /* the sounding arp note ends (a recorded one too) */
 {
@@ -266,7 +272,8 @@ static uint32_t punch_clock_samples(void)
 /* destructive edits wait for a track's loop end while it plays (ui_input.c dq_poll): its loop ends so far; the banks one
  * waits to destroy; the tracks kept silent from a loop end until it is done (a UI frame that missed the last step) */
 static volatile uint16_t seq_loops[NTRK];
-static volatile uint8_t seq_pend[NTRK], seq_hush;
+static volatile uint16_t seq_pend[NTRK];          /* a bit a bank (NPAT) */
+static volatile uint8_t seq_hush;
 static const step_t SEQ_HUSH_STEP = {.time = ST_REST};
 static void arp_step(track_t *t, uint32_t n, uint32_t gate_n)
 {
@@ -934,8 +941,11 @@ static void seq_start(void)
     seq_erase_request = 0;
     seq_erase_transport++;
     memset(seq_erase_seen, 0, sizeof seq_erase_seen);
+    if (!chain.armed && !song.playing) pattern_sound_begin();
     motion_begin();
     chain_start();
+    chain.seek_chase = 0;
+    memset(chain.seek_phase, 0, sizeof chain.seek_phase);
     song.rec_wait = 0;
     song.rec_pass = song.rec;
     for (i = 0; i < NTRK; i++) {                   /* every track from its step 0, together */
@@ -943,6 +953,17 @@ static void seq_start(void)
         if (t->p[P_LTRIG] && t->p[P_LSYNC]) t->lfo_ph = (uint32_t)t->p[P_LPHASE] << 25;
         t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
         t->seq_pos = 0x7FFFFFFF;                   /* step 0 fires on the first block */
+        if (chain.running && chain.seek_samples[i]) {
+            uint32_t period = seq_div_samples((uint32_t)t->p[P_SDIV]), loop = recording_loop(t, period);
+            uint32_t phase = 0, idx = 0;
+            if (loop) chain_div_samples(chain.seek_samples[i], loop, &phase);
+            if (chain.seek_samples[i] >= loop) chain.seek_chase |= (uint8_t)(1u << i);
+            while (idx + 1u < (uint32_t)t->p[P_SLEN] && phase >= step_samples(t, period, idx)) {
+                phase -= step_samples(t, period, idx); idx++;
+            }
+            t->seq_idx = (uint16_t)((idx + t->p[P_SLEN] - 1u) % t->p[P_SLEN]);
+            chain.seek_phase[i] = phase;
+        }
         t->rskip_n = 0;
         t->rh_n = 0;
         cap_step[i] = 0xFFFFu;                     /* (capture: step 0 is the first) */
@@ -1160,6 +1181,9 @@ static void seq_grid_tick(track_t *t, uint32_t n)
         uint32_t starting = t->seq_pos >= 0x7FFFFFFFu;
         uint32_t punch_in = 0;
         t->seq_pos = starting ? (chain.running ? chain.carry : 0u) : t->seq_pos - cur_len;
+        if (starting && chain.running) {
+            t->seq_pos += chain.seek_phase[trk_index(t)]; chain.seek_phase[trk_index(t)] = 0;
+        }
         t->seq_idx = (uint16_t)((t->seq_idx + 1u) % (len ? len : 1u));
         if (!t->seq_idx && !starting && !chain.running) {
             uint8_t bit = (uint8_t)(1u << trk_index(t));
@@ -1186,7 +1210,12 @@ static void seq_grid_tick(track_t *t, uint32_t n)
         cap_step[trk_index(t)]++;
         if (!t->seq_idx && t == &trk[0] && !chain.running)
             jam_loop();
-        motion_step(t, t->seq_idx, &motion);
+        if (starting && chain.running && chain.seek_samples[trk_index(t)] && !chain_rest(t)) {
+            if (chain.seek_chase & (1u << trk_index(t)))
+                for (uint32_t j = 0; j < len; j++) motion_step(t, j, &motion);
+            for (uint32_t j = 0; j < t->seq_idx; j++) motion_step(t, j, &motion);
+        }
+        if (!chain_rest(t)) motion_step(t, t->seq_idx, &motion);
         if (punch_in) rec_begin_held(t);
         seq_erase_pass(t, t->seq_idx, 1);
         if (!seq_erase_active(t)) rec_hold(t, t->seq_idx, len ? len : 1u);
@@ -1204,9 +1233,15 @@ static void seq_grid_tick(track_t *t, uint32_t n)
                 }
                 t->rskip_n = 0;
             }
-            if ((seq_hush >> trk_index(t)) & 1u)
+            if (chain_rest(t) || ((seq_hush >> trk_index(t)) & 1u))
                 s = &SEQ_HUSH_STEP;
+            if (starting && chain.running && chain.seek_samples[trk_index(t)] && s->time == ST_TIE) {
+                uint32_t j = t->seq_idx;
+                for (uint32_t count = 0; count < len && seq_steps(t)[j].time == ST_TIE; count++) j = (j + len - 1u) % len;
+                if (seq_steps(t)[j].time == ST_NOTE) seq_step(t, &seq_steps(t)[j], period, skip);
+            }
             seq_step(t, s, step_gate(s) ? step_samples(t, period, t->seq_idx) : period, skip);
+            if (starting && chain.running) chain.seek_samples[trk_index(t)] = 0;
         }
     }
 }
@@ -1215,12 +1250,14 @@ static void seq_grid_tick(track_t *t, uint32_t n)
  * loop zero once. MIDI batches may cross several boundaries in one call. */
 static void seq_tick(track_t *t, uint32_t n)
 {
+    if (chain_rest(t)) { seq_grid_tick(t, n); return; }
     seq_erase_pass(t, t->seq_idx, 0);
     if (!((recording_tracks | song.rec) & (1u << trk_index(t)))) { seq_grid_tick(t, n); return; }
     if (!song.playing) { seq_grid_tick(t, n); return; }
     if (t->seq_pos >= 0x7FFFFFFFu) {
+        uint32_t seek = chain.running && chain.seek_samples[trk_index(t)];   /* (the first step clears it) */
         seq_grid_tick(t, n);
-        recording_zero(t);
+        recording_zero(t, seek);
         return;
     }
     while (n) {
@@ -1231,7 +1268,7 @@ static void seq_tick(track_t *t, uint32_t n)
         uint32_t before = t->seq_idx;
         if (recording_tracks & (1u << trk_index(t))) recording_tick(t, chunk);
         seq_grid_tick(t, chunk);
-        if (!t->seq_idx && (before || t->p[P_SLEN] == 1) && t->seq_pos < chunk) recording_zero(t);
+        if (!t->seq_idx && (before || t->p[P_SLEN] == 1) && t->seq_pos < chunk) recording_zero(t, 0);
         n -= chunk;
     }
 }
@@ -1289,6 +1326,7 @@ static void seq_advance_part(uint32_t n)
     chain_tick(n);
     for (i = 0; i < nt; i++)
         seq_tick(&trk[i], n);
+    chain_fx_tick();
     for (i = 0; i < nt; i++)
         /* Held keys play at the local tempo while the selected master is
          * stopped. A released HOLD chord still waits for external transport. */
@@ -1358,12 +1396,27 @@ static void events_block(uint32_t n)
         /* A controller cannot send the missing releases after unplug. Keep local keys and TRS owners. */
         for (uint32_t ch = 0; ch < 16u; ch++)
             for (uint32_t note = 0; note < 128u; note++)
-                if (mn_get(ch, note) && !(midi_owner_trs[ch][note >> 5] & (1u << (note & 31u)))) {
+                if (mn_get(ch, note) && midi_note_source(ch, note) == 1u) {
                     midi_ch[ch].pedal = 0;
                     midi_release(ch, note);
                 }
         for (uint32_t tr = 0; tr < NTRK; tr++) midi_track_all_off(&trk[tr]);
     }
+#if MELODEE_BLE
+    static uint32_t ble_discard_until;
+    static uint8_t ble_discard;
+    if (midi_ble_lost) {
+        midi_knob_ble_epoch++;
+        midi_ble_lost = 0; ble_discard_until = mi_w; ble_discard = 1;
+        for (uint32_t ch = 0; ch < 16u; ch++)
+            for (uint32_t note = 0; note < 128u; note++)
+                if (mn_get(ch, note) && midi_note_source(ch, note) == 3u) {
+                    midi_ch[ch].pedal = 0; midi_release(ch, note);
+                }
+        if (midi_clock.mode == 3u) { seq_stop(); midi_clock_mode(0); }
+        for (uint32_t tr = 0; tr < NTRK; tr++) midi_track_all_off(&trk[tr]);
+    }
+#endif
     if (midi_in_overflow) {                            /* a lost note-off must never leave a held note */
         midi_knob_overflow = 1;
         mi_r = mi_w;
@@ -1421,6 +1474,9 @@ static void events_block(uint32_t n)
         uint32_t time = midi_in_time[at];
         uint16_t pulse_count = midi_in_pulse[at];
         uint32_t stale_usb = usb_discard && source == 1u && (int32_t)(mi_r - usb_discard_until) < 0;
+#if MELODEE_BLE
+        stale_usb |= ble_discard && source == 3u && (int32_t)(mi_r - ble_discard_until) < 0;
+#endif
         if (stale_usb) { mi_r++; midi_dispatch_left--; continue; }
         if (midi_render_timed && (int32_t)(time - midi_render_time) > 0)
             break;
@@ -1455,6 +1511,9 @@ static void events_block(uint32_t n)
         }
     }
     if (usb_discard && (int32_t)(mi_r - usb_discard_until) >= 0) usb_discard = 0;
+#if MELODEE_BLE
+    if (ble_discard && (int32_t)(mi_r - ble_discard_until) >= 0) ble_discard = 0;
+#endif
     if(song.playing)resource_release(RES_NOTE_HISTORY);
     if (clock_mode) {
         if (song.playing) {

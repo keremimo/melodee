@@ -7,7 +7,7 @@ static void undo_fixture(uint32_t source,uint32_t q)
 {
     pass_begin(source,4,q);seq_stop();song.rec=0;
     track_t *t=TSEL;
-    recorded_note_t r={0};r.note=60;r.vel=71;r.duration=12345;r.owner=(uint8_t)recording_owner(t);
+    recorded_note_t r={0};recorded_set_note(&r,60);r.vel=71;r.duration=12345;r.owner=(uint8_t)recording_owner(t);
     t->step[0].time=ST_NOTE;t->step[0].flags=SF_RECORDED;t->step[0].n=1;t->step[0].note[0]=60;t->step[0].vel=71;
     recording_restore_note(t,0,r);
     t->step[1].time=ST_NOTE;t->step[1].n=2;t->step[1].note[0]=64;t->step[1].note[1]=67;t->step[1].vel=90;
@@ -115,7 +115,7 @@ static int other_banks_and_memory(void)
     int bad=0;undo_fixture(0,0);undo_take_start();input_on(TSEL,60,110);seq_advance(100);input_off(TSEL,60);
     recording_remove(TSEL,0);seq_erase_clear(&TSEL->step[0]);rec_set(TSEL,0);
     /* The take's original slot was legitimately reused by an unrelated bank. */
-    recorded_note_t other={0};other.owner=NPAT;other.note=79;other.vel=100;other.duration=200;
+    recorded_note_t other={0};other.owner=NPAT;recorded_set_note(&other,79);other.vel=100;other.duration=200;
     recording_restore_note(&trk[1],0,other);trk[1].step[0].time=ST_NOTE;trk[1].step[0].flags=SF_RECORDED;
     bad+=check("undo relocates saved events without overwriting another bank's reused slot",recording_history(0)&&!memcmp(&other,&recording[0],sizeof other)&&recording[1].vel==71);
     bad+=check("redo also preserves unrelated events after relocation",recording_history(1)&&!memcmp(&other,&recording[0],sizeof other)&&!recording[1].vel);
@@ -176,7 +176,7 @@ static int note_capacity(void)
     recorded_note_t finished[2];memcpy(finished,recording,sizeof finished);
     bad+=check("undo removes all new events before a shared-pool capacity check",recording_history(0)&&recording[0].vel==71&&!recording[1].vel);
     for(uint32_t i=1;i<RECORD_MAX;i++){
-        recorded_note_t r={0};r.owner=NPAT;r.note=(uint8_t)(i%128u);r.vel=90;r.duration=100;r.on=(uint16_t)i;
+        recorded_note_t r={0};r.owner=NPAT;recorded_set_note(&r,(uint8_t)(i%128u));r.vel=90;r.duration=100;r.on=(uint16_t)i;
         recording_restore_note(&trk[1],i,r);
     }
     recorded_note_t before[RECORD_MAX];memcpy(before,recording,sizeof before);
@@ -186,7 +186,7 @@ static int note_capacity(void)
     seq_stop();
     undo_fixture(0,0);
     for(uint32_t i=1;i<RECORD_MAX;i++){
-        recorded_note_t r={0};r.note=(uint8_t)(i%128u);r.vel=90;r.duration=100;r.on=(uint16_t)(i*60u);
+        recorded_note_t r={0};recorded_set_note(&r,(uint8_t)(i%128u));r.vel=90;r.duration=100;r.on=(uint16_t)(i*60u);
         recording_restore_note(TSEL,i,r);
     }
     memcpy(before,recording,sizeof before);undo_take_start();input_on(TSEL,60,120);seq_advance(100);input_off(TSEL,60);rec_set(TSEL,0);
@@ -227,7 +227,7 @@ static int sparse_storage(void)
         memcpy(packed,source,sizeof packed);uint32_t count=note_history_pack(packed);
         note_history_expand(packed,count);
         if(memcmp(packed,source,sizeof source)){bad+=check("all sparse/dense counts preserve every slot byte",0);break;}
-        if(n<RECORD_MAX){uint32_t at=n*37u%RECORD_MAX;source[at]=(recorded_note_t){.on=(uint16_t)n, .duration=65535u, .note=127, .vel=127, .owner=255, .step=255, .pitch=-24, .length=1, .extended=3};}
+        if(n<RECORD_MAX){uint32_t at=n*37u%RECORD_MAX;source[at]=(recorded_note_t){.on=(uint16_t)n, .duration=65535u, .note7=127, .vel=127, .owner=255, .step=255, .pitch=-24, .length=1, .extended=3};}
     }
     bad+=check("dense fallback and every sparse count round trip",!memcmp(packed,source,sizeof source));
     undo_fixture(0,0);undo_take_start();input_on(TSEL,60,110);seq_advance(100);input_off(TSEL,60);seq_stop();

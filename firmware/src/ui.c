@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* MELODEE user interface.
- * Flat: SURF cards and panels on the palette's background, no rules, one type family (Rubik, three sizes), tracks
+ * Flat: SURF cards and panels on the palette's background, no rules, one type family (Rubik or Melodee Pixel, four roles), tracks
  * named by circled numerals. Four columns <-> KNOB 1..4. Rendering is lazy:
  * every element remembers what it last drew and is redrawn only on change. */
 static int live_rec_sel(void);
@@ -20,6 +20,7 @@ static int template_used(void);                 /* SLOT TMPL (PROJ_TMPL): projec
 static void template_save(void);
 static void template_load(void);
 static uint32_t chain_prepare(void);
+static uint32_t chain_prepare_from(uint32_t start);
 static int up_used(uint32_t k);              /* user presets: upreset.c */
 static int up_load(uint32_t k);
 static int up_favorite(uint32_t k);
@@ -57,6 +58,14 @@ static void preset_old_allow(uint32_t allow);
 static void slot_save_sheet(void);              /* ui_slots.c */
 static int project_save_as(uint32_t slot, const char *name);
 static int project_name(uint32_t slot, char *b);
+/* pattern p's number, 1..16, into b (3 bytes); its length */
+static uint32_t pat_num(char *b, uint32_t p)
+{
+    p = p % NPAT + 1u;
+    if (p > 9u) { b[0] = (char)('0' + p / 10u); b[1] = (char)('0' + p % 10u); b[2] = 0; return 2; }
+    b[0] = (char)('0' + p); b[1] = 0; return 1;
+}
+static int project_free_pct(void);                 /* project.c: the shared pool's room left in KB (-1 unknown) */
 static int project_rename(uint32_t slot, const char *name);
 static int project_erase(uint32_t slot);
 static void project_cur_name(char *b);
@@ -66,6 +75,10 @@ static uint32_t user_of(const track_t *t)    /* user preset slot its sound came 
 }
 static uint32_t up_gen;                      /* bumped on every user bank change (redraws) */
 static uint8_t browse_loads, browse_mark;    /* sound loads so far; at the browser's opening (ui_browser.c: back) */
+static struct { uint8_t active, row, track, return_page, pattern; uint16_t epoch; } song_picker;
+static void song_preset_cancel(void);
+static void song_preset_finish(int keep);
+static void sound_name(const track_t *t, char *b);
 #include "favorites.c"
 /* MENU settings in favorites.factory[15][30]: bit 0 retired, bit 1 KNOB ACCEL OFF, bits 2..4 retired (OVERCLOCK until
  * 1.3.4 / 1.4: left as saved, never read), bit 5 PICKER OFF, bit 6 FONT PIXEL, bit 7 retired
@@ -75,11 +88,21 @@ static uint8_t browse_loads, browse_mark;    /* sound loads so far; at the brows
 #define PREF_PICK_OFF 32u
 #define PREF_PIXEL 64u                         /* Settings > FONT: PIXEL (else RUBIK) */
 #define TY_PIXEL ty_pixel()
-static uint32_t ty_pixel(void) { return (PREF_BITS & PREF_PIXEL) != 0u; }   /* (gfx.c TY_*: the type's roles) */
+static uint32_t ty_pixel(void) { return (PREF_BITS & PREF_PIXEL) != 0u || !RES_OK(); }   /* (gfx.c TY_*; Rubik: res.c) */
 /* HOME SELECT (the menu): what SELECT turns on HOME, kept in favorites.factory[15][25] (0, any other: BPM) */
-enum { HS_BPM, HS_MOD, HS_LEVEL, HS_SWING, HS_TRANS, HS_CHORD, HS_ARATE, HS_PATTERN, HS_OFF, HS_N };
+enum { HS_BPM, HS_MOD, HS_LEVEL, HS_SWING, HS_TRANS, HS_CHORD, HS_ARATE, HS_PATTERN, HS_OFF, HS_OCT, HS_N };
 static const char *const HS_NAME[HS_N] = {"BPM", "MOD WHEEL", "LEVEL", "SWING", "TRANSPOSE", "CHORD", "ARP RATE", "PATTERN",
-                                          "OFF"};
+                                          "OFF", "OCTAVE"};
+/* the menu's order: OCTAVE beside TRANSPOSE, OFF last (the saved numbers stay: OCTAVE came after OFF) */
+static const uint8_t HS_ORDER[HS_N] = {HS_BPM, HS_MOD, HS_LEVEL, HS_SWING, HS_TRANS, HS_OCT, HS_CHORD, HS_ARATE,
+                                       HS_PATTERN, HS_OFF};
+static uint32_t hs_step(uint32_t v, int32_t s)  /* KNOB 1 steps, 0 (OCT+): steps and wraps */
+{
+    uint32_t i = 0;
+    while (i + 1u < HS_N && HS_ORDER[i] != v) i++;
+    i = s > 0 ? (i + 1u < HS_N ? i + 1u : i) : s < 0 ? (i ? i - 1u : 0u) : (i + 1u) % HS_N;
+    return HS_ORDER[i];
+}
 #define HOME_SELECT (favorites.factory[15][25])
 static uint32_t home_select(void) { return HOME_SELECT < HS_N ? HOME_SELECT : HS_BPM; }
 /* GLO SELECT (the menu): what SELECT turns with GLO held, on any page (the same choices), kept in bits 1..4 of
@@ -133,9 +156,10 @@ static struct {
     uint8_t pat_tap, pat_dlg, pat_did;             /* .. the key last tapped (+1), the one held to its dialog, its
                                                     * length changed there (Cancel: Done) */
     uint32_t pat_ms, pat_tap_ms;                   /* .. when it went down, when the tapped one was let go */
-    uint8_t ptc_on, ptc_trk, ptc_src, ptc_dst;     /* PATTERNS' Copy to: track ptc_trk's pattern src to dst
-                                                    * (ui_patterns.c) */
+    uint8_t ptc_on, ptc_trk, ptc_src, ptc_dst, ptc_to;   /* PATTERNS' Copy to: track ptc_trk's pattern src to
+                                                          * track ptc_to's dst (ui_patterns.c) */
     uint8_t preset_audition;     /* Patterns' temporary preset picker; navigation cancels it */
+    uint8_t pt_page;             /* PATTERNS' page of eight (a part's 16: two; 0xFF: the selected track's, ui_patterns.c) */
     uint8_t cursor;              /* SEQ: step being edited (STEP page KNOB 1 moves it) */
     uint16_t note_pick;          /* NOTES: event index + 1; zero chooses the first hit */
     uint8_t erase_gesture, erase_owner; /* an EDIT press captures one track/bank until released */
@@ -219,7 +243,7 @@ static void (*designer_quit)(int discard);   /* designer_close while it is open 
 enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER,
        CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_TAKE_JAM, CF_NEW_SONG, CF_ERASE_PROJ,
        CF_DEL_PAT, CF_PASTE_PAT, CF_DISCARD_DESIGN, CF_IMPORT, CF_BULK_ERASE, CF_OLD_SETTINGS, CF_OLD_TEMPLATE,
-       CF_DEL_TRACK, CF_PAT_KEY, CF_CLEAR_SHARED };   /* ui.confirm: REC held on SEQ / ARP, on TRACKS; SAVE over a used slot; a
+       CF_DEL_TRACK, CF_PAT_KEY, CF_CLEAR_SHARED, CF_BLE_FORGET };   /* ui.confirm: REC held on SEQ / ARP, on TRACKS; SAVE over a used slot; a
                                       * pattern over the user's steps; USER ERASE; PATTERNS: Delete pattern, Copy to
                                       * over a pattern in use; SEQ + a white key held: its pattern (ui_input.c) */
 
@@ -344,9 +368,12 @@ static int transport_busy(void)
 }
 static void chain_play_ui(void)
 {
-    uint32_t rc = chain_prepare();
+    uint32_t row = ui.song_row < chain_config.count ? ui.song_row : 0u;
+    uint32_t rc = chain_prepare_from(row);
     if (!rc) {
         ui.force = 1;
+    } else if (rc == 67u) {
+        ui_message("NO SOUND MEMORY");
     } else if (rc >= 3u) {
         char b[8] = "A EMPTY";
         b[0] = (char)('A' + rc - 3u);
@@ -370,6 +397,7 @@ static void seq_midi_reset(void)                    /* a new page/track ends MID
 static void undo_seal(void);
 static void page_entered(void)
 {
+    if (song_picker.active && cur_page()->graph != GR_BROWSE) song_preset_cancel();
     ui.preset_audition = 0;
     const page_t *pg = cur_page();
     if (pg->graph == GR_SCALE_PICKER && !ui.scale_picker_seen) {
@@ -386,6 +414,7 @@ static void page_entered(void)
     ui.act = 0;
     ui.proj_new = 0;
     ui.ptc_on = 0;
+    ui.pt_page = 0xFF;
     if (pg->graph == GR_BROWSE) {                /* (OCT- goes back to the sound from before: its loads, a level */
         browse_mark = browse_loads;              /* of their own) */
         undo_seal();
@@ -612,6 +641,7 @@ static void open_global(void)
 
 static void go_home(void)
 {
+    if (song_picker.active) song_preset_cancel();
     ui.home = 1;
     ui.entry_open = 0;
     ui.hot_t = 0;
@@ -638,13 +668,13 @@ static int seq_is_empty(const track_t *t)
  * so the undo goes back past the whole browse. Eight levels use ordinary SRAM or validated cache RAM.
  * The resident/cache profile keeps one SRAM fallback level if cache startup fails.
  * Not snapshotted: power-on, projects (a project load drops them all) */
-enum { UNDO_SOUND = 1, UNDO_PAT = 2 };
+enum { UNDO_SOUND = 1, UNDO_PAT = 2, UNDO_PATTERN_SOUND = 4 };
 #include "step_snapshot.h"
 typedef struct {
     uint8_t trk;                 /* track + 1, 0 = nothing to undo */
     uint8_t keep;                /* the track is as the last load left it (after): a next load keeps the copy */
     uint8_t what;                /* UNDO_SOUND | UNDO_PAT: what the loads since the copy changed (undo_step) */
-    uint8_t eng, preset, user_native, patn;
+    uint8_t eng, preset, user_native, patn, pattern_sound;
     uint16_t user;
     uint8_t fm6[FP_SIZE + 1u];   /* the track's complete patch */
     cz_patch_t cz;
@@ -761,12 +791,13 @@ static void load_begin_guarded(track_t *t, uint32_t what)
     if (undo_depth++)
         return;
     browse_loads++;
+    if (song_picker.active) return;
     motion_restore(t);
     undo_levels();
     u = undo_last();
     if (undo_top && u->keep && u->pattern_gen == t->pattern_gen && u->trk == i + 1u && track_sig(t) == u->after) {
         u->what |= (uint8_t)what;                 /* browsing on: the copy from before the first load stays */
-        if(!designer_on())motion_reset(t);
+        if(!designer_on() && (what & (UNDO_SOUND | UNDO_PAT)))motion_reset(t);
         return;
     }
     u->keep = 0;
@@ -794,8 +825,9 @@ static void load_begin_guarded(track_t *t, uint32_t what)
     u->drum=(*drum_patch_of(i));
     u->pat = pat_sig[i];
     u->patn = pat_last[i];
+    u->pattern_sound = pattern_sound[i][t->pattern];
     motion_snapshot_track(t, &u->motion_backup);
-    if(!designer_on())motion_reset(t);
+    if(!designer_on() && (what & (UNDO_SOUND | UNDO_PAT)))motion_reset(t);
 }
 static void load_begin(track_t *t, uint32_t what)
 {
@@ -808,6 +840,7 @@ static void load_end_guarded(track_t *t)
     undo_refresh();
     if (--undo_depth || !undo_top)
         return;
+    if (song_picker.active) return;
     motion_rebase(t);
     undo.after = track_sig(t);
     undo.keep = 1;
@@ -869,13 +902,16 @@ static void undo_step_guarded(int redo)
     t = &trk[(u->trk - 1u) % NTRK];
     if (u->pattern_gen != t->pattern_gen) { undo_clear(); ui_message(redo ? "NOTHING TO REDO" : "NOTHING TO UNDO"); return; }
     motion_restore(t);
-    motion_store_t current_motion;
-    motion_snapshot_track(t, &current_motion);
-    if (motion_replace_track(t, &u->motion_backup) != 0) {
-        ui_message("MOTION FULL");
-        return;
+    if (u->what & UNDO_PATTERN_SOUND) {
+        if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
+        if (!pattern_sound_reserve(trk_index(t))) { ui_message("NO SOUND MEMORY"); return; }
     }
-    u->motion_backup = current_motion;
+    if (u->what & (UNDO_SOUND | UNDO_PAT)) {
+        motion_store_t current_motion;
+        motion_snapshot_track(t, &current_motion);
+        if (motion_replace_track(t, &u->motion_backup) != 0) { ui_message("MOTION FULL"); return; }
+        u->motion_backup = current_motion;
+    }
     /* Already guarded: audio cannot see half a sound. */
     if (u->what & UNDO_SOUND) {
         uint8_t e = t->eng_req, pr = t->preset, un=t->user_native;
@@ -895,6 +931,11 @@ static void undo_step_guarded(int redo)
                 t->p[i] = u->p[i];
                 u->p[i] = v;
             }
+    }
+    if (u->what & UNDO_PATTERN_SOUND) {
+        uint32_t k = trk_index(t); uint8_t id = pattern_sound[k][t->pattern];
+        pattern_sound[k][t->pattern] = u->pattern_sound; u->pattern_sound = id;
+        if (song.playing) pattern_sound_switch(k, t->pattern);
     }
     if (u->what & UNDO_PAT) {
         uint32_t ps = pat_sig[trk_index(t)];
@@ -960,11 +1001,6 @@ static void track_defaults_steps(track_t *t)
  * TOOLS INIT) leaves alone. The mix (LEVEL, PAN, MUTE: the TRACKS faders), the arpeggiator (ARP, ARP 2),
  * the scale and key map (SCL), the pattern parameters (LEN, DIV, SWING, GATE),
  * which chops whatever the track plays in time with its sequencer */
-static int param_kept(uint32_t i)
-{
-    return i == P_LEVEL || i == P_PAN || i == P_MUTE || (i >= P_AMODE && i <= P_SGATE) ||
-           i == P_CHRD || i == P_VOIC || i == P_STRUM || i == P_STROKE || i == P_MPCDEG || i == P_RECQ || param_fx(i) || param_fx_send(i);
-}
 
 /* ROOT, SCL, scale QNT, recording QNT and the MPC degree are the project's: kept the same in each track's own slots
  * for compatibility with the project format and editor protocol. TRN stays the track's. */
@@ -1154,6 +1190,7 @@ static void track_select(uint32_t i)
 {
     if (i >= trk_n() || i == song.sel)
         return;
+    if (song_picker.active) song_preset_cancel();
     ui.preset_audition = 0;
     browse_commit();                             /* (a sound still pending loads into the track it was meant for) */
     momentary_restore();
@@ -1175,7 +1212,7 @@ static int slice_page_ok(void) { return 0; }
 static int slice_page_on(void) { return 0; }
 
 /* ---------------------------------------------------- action pages --- */
-/* Pages whose purpose is an action (SONG, EDIT > SLICES, CZ TOOLS): the knobs pick, OCT+ does it, OCT- cancels
+/* Pages whose purpose is an action (EDIT > SLICES, CZ TOOLS): the knobs pick, OCT+ does it, OCT- cancels
  * the picked action or goes HOME (ui_input.c). The slot pages (PROJECT, USER, the STOREs: ui_slots.c) do their
  * actions from a slot's sheet, through act_do too */
 static uint32_t act_cols(void)                   /* the columns that are actions, a bit each; 0 = not such a page */
@@ -1183,8 +1220,6 @@ static uint32_t act_cols(void)                   /* the columns that are actions
     const page_t *pg = cur_page();
     if (ui.home)
         return 0;
-    if (pg->graph == GR_SONG)
-        return 1u;                               /* PLAY / STOP (also the PLAY button; TAKE JAM: REC held) */
     if (pg->graph == GR_SLICES)
         return slice_page_ok() ? 12u : 0u;       /* SPLIT JOIN (a SLICE track only) */
     if (pg->graph == GR_CZTOOLS)
@@ -1195,14 +1230,11 @@ static uint32_t act_cols(void)                   /* the columns that are actions
 /* the action OCT+ does: its column + 1, 0 = none picked yet */
 static uint32_t act_col(void)
 {
-    if (!ui.home && cur_page()->graph == GR_SONG) return 1u;
     return ui.act;
 }
 
 static const char *act_name(uint32_t c)          /* column c's action (the footer hint) */
 {
-    if (cur_page()->graph == GR_SONG)
-        return song.playing || chain_busy() ? "STOP" : "PLAY";
     if (cur_page()->graph == GR_SLICES)
         return c == 3u ? "JOIN" : "SPLIT";
     return CZ_ACTIONS[c & 3u].label;             /* (CZ TOOLS) */
@@ -1214,8 +1246,6 @@ static int act_ready(void)
     uint32_t c = act_col();
     if (!c--)
         return 0;
-    if (cur_page()->graph == GR_SONG)
-        return song.playing || chain_busy() || chain_config.count;
 #if MELODEE_SLICE
     if (cur_page()->graph == GR_SLICES)
         return slice_act_ready(c);
@@ -1239,6 +1269,8 @@ static void confirm_open(uint32_t kind, uint32_t trk)
 #include "sysex_library.c"                       /* staged imports and USB library exports */
 
 #include "note_tools.c"
+#include "ui_song.c"
+#include "ui_song_sound.c"
 
 #define TL_MAX 4u
 /* s wrapped into at most m lines of w px in face f (at spaces, always at a '\n'; a word wider than the line: at the

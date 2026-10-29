@@ -18,7 +18,7 @@ typedef struct {
                                                          * SR_RED: no question, red (a destructive act) */
 } sheet_row_t;
 #define SR_RED 0xFFu
-enum { POP_NONE, POP_SHEET, POP_PICK, POP_LIST, POP_PRESET };
+enum { POP_NONE, POP_SHEET, POP_PICK, POP_LIST, POP_PRESET, POP_SONG_PUNCH };
 #define PAT_AUDITION_MS 2000u
 #define POP_X BOX_X                                     /* a sheet (large type): 236 wide, its title row 34, its rows
                                                          * 32 px, 34 apart (ui_list.c row_draw), five at most shown */
@@ -33,9 +33,12 @@ static struct {
     const sheet_row_t *rows;
     uint32_t t, sig;
 } pop;
+static int song_punch_on(void) { return pop.on == POP_SONG_PUNCH; }
+static uint16_t song_punch_epoch;
 
 static void confirm_open(uint32_t kind, uint32_t trk);  /* ui_input.c */
 static void edit_param(uint32_t slot, int32_t steps);
+static void notes_place(void);                 /* ui_input.c */
 static void jam_take(void);
 static int name_on(void);
 static int new_on(void);
@@ -139,28 +142,23 @@ static int ps_song_free(void)
 }
 static void ps_row_insert(int dup)                     /* a section at the row picked: its copy, or the patterns now */
 {
-    uint32_t r = ui.song_row < chain_config.count ? ui.song_row : chain_config.count, i, k;
-    if (!ps_song_free())
-        return;
-    if (chain_config.count >= CHAIN_ROWS) {
-        ui_message("SONG FULL");
-        return;
-    }
-    for (i = chain_config.count; i > r; i--) {
-        chain_config.row[i] = chain_config.row[i - 1u];
-        memcpy(chain_patterns[i], chain_patterns[i - 1u], NTRK);
-    }
-    if (!dup || r >= chain_config.count) {
-        for (k = 0; k < NTRK; k++)
-            chain_patterns[r][k] = trk[k].pattern;
-        chain_config.row[r].repeat = 1;
-        chain_config.row[r].slot = chain_patterns[r][0];
-    }
-    chain_config.count++;
-    ui_message(dup ? "SECTION DUPLICATED" : "SECTION INSERTED");
+    song_insert((uint32_t)dup);
 }
 static void ps_insert(void) { ps_row_insert(0); }
 static void ps_dup(void) { ps_row_insert(1); }
+static void ps_song_loop_v(char *b) { str_cpy(b, chain_config.rsv[CHAIN_LOOP] ? "On" : "Off", 4); }
+static void ps_song_loop_turn(int32_t s) { song_loop_set(s > 0); }
+static void ps_song_loop(void) { song_loop_set(!chain_config.rsv[CHAIN_LOOP]); }
+static void song_punch_open(void)
+{
+    if (ui.song_row >= chain_config.count) { ui_message("ADD A SONG ROW"); return; }
+    song_punch.row = ui.song_row; song_punch.event = 0;
+    song_punch_epoch = pattern_epoch;
+    pop.on = POP_SONG_PUNCH;
+    song.grid = 2;                                  /* keys choose effects immediately, without musical notes */
+    se.pending = se.range = 0;
+    ui.force = 1;
+}
 static void ps_jam_v(char *b)
 {
     fmt_int(b, jam.n);
@@ -178,8 +176,36 @@ static void ps_jam(void)
         jam_take();
 }
 static const sheet_row_t SHEET_SONG[] = {
-    {"Insert section", 0, 0, ps_insert, 0}, {"Duplicate section", 0, 0, ps_dup, 0}, {"Delete section", 0, 0, 0, CF_DEL_ROW},
+    {"Insert empty section", 0, 0, ps_insert, 0}, {"Duplicate section", 0, 0, ps_dup, 0}, {"Move section", 0, 0, song_sections_move, 0}, {"Copy sections", 0, 0, song_sections_copy, 0}, {"Delete section", 0, 0, 0, CF_DEL_ROW},
+    {"Loop song", ps_song_loop_v, ps_song_loop_turn, ps_song_loop, 0},
+    {"Punch FX", 0, 0, song_punch_open, 0},
     {"Take jam", ps_jam_v, 0, ps_jam, 0}, {"Clear song", 0, 0, 0, CF_CLEAR_SONG}};
+
+static const sheet_row_t SHEET_SONG_CELL[] = {
+    {"Set preset", 0, 0, song_preset_open, 0}, {"Remove preset", 0, 0, song_preset_remove, 0},
+    {"Set rest", 0, 0, song_cell_rest, 0}, {"Copy to\x85", 0, 0, song_cell_copy, 0},
+    {"Move to\x85", 0, 0, song_cell_move, 0}, {"Add empty section", 0, 0, ps_insert, 0},
+    {"Loop song", ps_song_loop_v, ps_song_loop_turn, ps_song_loop, 0},
+    {"Punch FX", 0, 0, song_punch_open, 0}};
+static const sheet_row_t SHEET_SONG_RANGE[] = {
+    {"Copy sections", 0, 0, song_sections_copy, 0}, {"Move sections", 0, 0, song_sections_move, 0},
+    {"Duplicate sections", 0, 0, ps_dup, 0}, {"Delete sections", 0, 0, song_sections_delete, SR_RED},
+    {"Clear selection", 0, 0, song_edit_cancel, 0}};
+static void song_cell_sheet_open(void)
+{
+    if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
+    if (ui.song_row >= chain_config.count) { song_insert(0); return; }
+    char b[20] = "T1 / Section "; b[1] = (char)('1' + song.sel);
+    fmt_int(b + str_len(b), ui.song_row + 1u);
+    const song_sound_t *sound = song_sound_get(chain_sound_id(ui.song_row, song.sel));
+    sheet_open(sound ? sound->name : "Song cell", b, SHEET_SONG_CELL, NELEM(SHEET_SONG_CELL));
+}
+static void song_range_sheet_open(void)
+{
+    char b[20]; fmt_int(b, song_range_last() - song_range_first() + 1u);
+    str_cpy(b + str_len(b), " sections", 10);
+    sheet_open("Selected sections", b, SHEET_SONG_RANGE, NELEM(SHEET_SONG_RANGE));
+}
 
 /* the pattern's (NOTES, the drum grid, PATTERN: OCT+ held; TOOLS' Clear pattern lives here) */
 static void nt_quantize_v(char *b){str_cpy(b,ui.note_grid==2u?"0.25 step":ui.note_grid==1u?"0.5 step":"1 step",16);}
@@ -193,7 +219,7 @@ static void sh_route(void) { sh_route_turn(!song.g[G_FXMODE]); }
 static const sheet_row_t SHEET_SHARED[] = {{"Routing", sh_route_v, sh_route_turn, sh_route, 0},
                                            {"Clear shared FX", 0, 0, 0, CF_CLEAR_SHARED}};
 /* PATTERNS' (OCT+): the selected track's pattern; Copy to: its place picked on the grid (ui_patterns.c) */
-static const sheet_row_t SHEET_PATTERNS[] = {{"Copy to\x85", 0, 0, ptc_start, 0}, {"Delete pattern", 0, 0, 0, CF_DEL_PAT}};
+static const sheet_row_t SHEET_PATTERNS[] = {{"Set preset", 0, 0, pattern_preset_open, 0}, {"Remove preset", 0, 0, pattern_preset_remove, 0}, {"Copy to\x85", 0, 0, ptc_start, 0}, {"Delete pattern", 0, 0, 0, CF_DEL_PAT}};
 
 /* the step's: NOTES' note at the cursor (KNOB 1 its length, velocity, chance), the drum grid's hit of the lane there */
 static void st_cap(uint32_t c, char *b)                 /* NOTES' column c as its chip shows it (draw_columns) */
@@ -288,7 +314,7 @@ static int step_enter(void)
     chosen = notes_selected(TSEL);
     start = notes_manual_start(TSEL);
     if (chosen >= RECORD_MAX && !(start < NSTEP && TSEL->step[start].n)) {
-        edit_param(1u, 0);                              /* (NOTES' PITCH on an empty step: the last note there) */
+        notes_place();                                  /* (the last note played) */
         return 1;
     }
     str_cpy(t, "Note ", sizeof t);
@@ -341,10 +367,12 @@ static void page_sheet_open(void)
         sheet_open("Pattern", nm, SHEET_PATTERN, NELEM(SHEET_PATTERN));
         break;
     case 4: {                                           /* "Pattern 3", "T2" */
-        char t[12] = "Pattern 1";
-        t[8] = (char)('1' + TSEL->pattern % NPAT);
+        char t[12] = "Pattern ";
+        pat_num(t + 8, TSEL->pattern);
         str_cpy(nm, "T1", sizeof nm);
         nm[1] = (char)('1' + song.sel % NTRK);
+        const song_sound_t *sound = song_sound_get(pattern_sound_id(song.sel, TSEL->pattern));
+        if (sound) str_cpy(nm, sound->name, sizeof nm);
         sheet_open(t, nm, SHEET_PATTERNS, NELEM(SHEET_PATTERNS));
         break;
     }

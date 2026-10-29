@@ -15,6 +15,8 @@ import { SteadyUpdater } from "./transfer.js";
 import { hold, busyElsewhere } from "./keepalive.js";
 import { describeDevice, planFor, progressModel, remaining, afterFailure } from "./progress.js";
 import { MELODEE_LOADER, STOCK_LOADER } from "../fm1ota.js";
+import { BackupConnection } from "../fm1backup.js";
+import { installResources, resHeader, resStatus, RES_COMMAND } from "../fm1res.js";
 import { setupLeaving } from "./leave.js";
 
 const IS_OTA = (id) => /^ota-/i.test(id.model);
@@ -59,6 +61,8 @@ const TEXT = {
     devDev: "FM-1 development firmware (FM-1_900)", devStock: "M-VAVE firmware {v}", devOpen: "M-VAVE Open firmware",
     devOther: "Another firmware ({id})", devModel: "Not an FM-1 ({id})",
     chipReady: "Ready", chipResume: "Update mode", chipCurrent: "Up to date", chipBlocked: "Can't install",
+    chipSetup: "Setup unfinished", goSetup: "Finish setup",
+    planSetup: "Melodee {v} is on this FM-1, but its fonts and factory sounds aren't. Finish setup writes only them and keeps your sounds.",
     nomidi: "This browser can't reach USB MIDI devices. Open this page in Chrome or Edge on a computer.",
     denied: "MIDI access was not allowed. Allow MIDI devices in the site settings (the icon in the address bar), then press Find FM-1 again.",
     notfound: "No FM-1 answered. Check that it is on and connected with a data cable (not a charging-only one), close other apps and tabs that use MIDI, then look again.",
@@ -75,11 +79,12 @@ const TEXT = {
     pfok: "I've backed up my sounds, or have nothing to keep.", cancel: "Cancel", start: "Start installation",
     runwarn: "Keep this tab open and in front. Don't unplug the FM-1.",
     runInstall: "Installing Melodee {v}", runResume: "Finishing the installation", runBoot: "Installing m-bootloader",
-    runStock: "Installing M-VAVE's firmware",
-    phPrepare: "Prepare", phWrite: "Write", phRestart: "Restart", phBoot: "m-bootloader",
+    runStock: "Installing M-VAVE's firmware", runSetup: "Finishing setup",
+    phPrepare: "Prepare", phWrite: "Write", phRestart: "Restart", phSetup: "Setup", phBoot: "m-bootloader",
     stStart: "Starting", stVerify: "Checking the package", stLoader: "Switching the FM-1 to update mode",
     stWrite: "Writing the firmware", stReboot: "Restarting the FM-1", stBootWait: "Waiting for Melodee to start",
     stBoot: "Writing m-bootloader. The FM-1 restarts by itself", stFind: "Finding the FM-1 in update mode",
+    stRes: "Writing the fonts and factory sounds",
     etaMin: "About {n} min left", etaSec: "Less than a minute left",
     stall: "Waiting for the FM-1… keep the cable connected.",
     backKept: "You left this tab for {s}. The installation kept going, but please stay here until it's done.",
@@ -90,6 +95,11 @@ const TEXT = {
     endDone: "The FM-1 has restarted with Melodee {v}. You can unplug it now.",
     endBootH: "m-bootloader is installed", endBoot: "The FM-1 has restarted with Melodee {v}.",
     endStockH: "M-VAVE's firmware is back", endStock: "The FM-1 has restarted with its original firmware.",
+    endSetupDoneH: "Setup is finished", endSetupDone: "The fonts and factory sounds are on the FM-1. You can unplug it now.",
+    endSetupH: "Setup isn't finished",
+    endSetup: "Melodee {v} runs, but its fonts and factory sounds weren't written. Until they are, the FM-1 uses a plain font and INIT sounds.",
+    tipResOk: "The fonts and factory sounds are installed.",
+    tipResRestart: "Switch the FM-1 off and on once, so every sound list shows the factory sounds.",
     tipEditor: "Open the editor to browse sounds and make backups.",
     tipBoot: "To check m-bootloader: switch the FM-1 off, hold PLAY and switch it on. Its recovery menu appears.",
     endPausedH: "Installation paused",
@@ -104,7 +114,16 @@ const TEXT = {
     endPartialH: "Melodee is installed, m-bootloader isn't",
     endPartial: "Melodee {v} is installed. m-bootloader could not be written and nothing else was changed. You can try again later from this page.",
     btnEditor: "Open the editor", btnManual: "Read the manual", btnClose: "Close", btnResume: "Resume installation",
-    btnRetry: "Try again",
+    btnRetry: "Try again", btnSetup: "Finish setup",
+    e_resfetch: "They could not be downloaded: {d}", e_resfile: "The downloaded file is damaged. Reload the page, then press Finish setup.",
+    e_resnoanswer: "The FM-1 didn't answer after restarting. Check the cable, then press Finish setup.",
+    e_reslost: "The FM-1 stopped answering. Keep the cable connected and press Finish setup.",
+    e_resnocmd: "The firmware on the FM-1 can't take them. Install this version first.",
+    e_resbuild: "The FM-1 runs another build than the one selected here. Install this version first.",
+    e_resbusy: "The FM-1 is playing, or its Bluetooth is on. Stop playback and switch Bluetooth off, then press Finish setup.",
+    e_resroom: "The FM-1 couldn't make room for them. If its storage is full, delete a project you don't need, then press Finish setup.",
+    e_reswrite: "Writing stopped part way. Keep the cable connected and press Finish setup.",
+    e_rescheck: "What was written didn't check out. Press Finish setup to write it again.",
     e_notfound: "The FM-1 stopped answering before anything was written.",
     e_model: "The connected device is not an FM-1.",
     e_lost: "The USB connection was lost.", e_stopped: "The FM-1 stopped asking for data.",
@@ -165,6 +184,8 @@ const TEXT = {
     devDev: "FM-1 開発版（FM-1_900）", devStock: "M-VAVE ファームウェア {v}", devOpen: "M-VAVE Open ファームウェア",
     devOther: "別のファームウェア（{id}）", devModel: "FM-1 ではありません（{id}）",
     chipReady: "準備完了", chipResume: "アップデートモード", chipCurrent: "最新", chipBlocked: "インストール不可",
+    chipSetup: "セットアップ未完了", goSetup: "セットアップを完了",
+    planSetup: "この FM-1 には Melodee {v} が入っていますが、フォントとファクトリーサウンドがまだです。「セットアップを完了」はそれだけを書き込み、サウンドは残ります。",
     nomidi: "このブラウザは USB MIDI デバイスを使えません。パソコンの Chrome か Edge で開いてください。",
     denied: "MIDI の使用が許可されませんでした。アドレスバーのアイコンからサイトの設定で MIDI デバイスを許可し、もう一度「FM-1 を探す」を押してください。",
     notfound: "FM-1 が応答しません。電源が入っていて、データ通信用のケーブル（充電専用ではないもの）でつながっているか確かめ、MIDI を使うほかのアプリやタブを閉じてから、もう一度探してください。",
@@ -181,11 +202,12 @@ const TEXT = {
     pfok: "サウンドをバックアップした（または残したいものはない）", cancel: "キャンセル", start: "インストールを開始",
     runwarn: "このタブを開いたまま前面に。FM-1 のケーブルを抜かないでください。",
     runInstall: "Melodee {v} をインストール中", runResume: "インストールを完了しています", runBoot: "m-bootloader をインストール中",
-    runStock: "M-VAVE のファームウェアをインストール中",
-    phPrepare: "準備", phWrite: "書き込み", phRestart: "再起動", phBoot: "m-bootloader",
+    runStock: "M-VAVE のファームウェアをインストール中", runSetup: "セットアップを完了しています",
+    phPrepare: "準備", phWrite: "書き込み", phRestart: "再起動", phSetup: "セットアップ", phBoot: "m-bootloader",
     stStart: "開始しています", stVerify: "ファイルを確認しています", stLoader: "FM-1 をアップデートモードに切り替えています",
     stWrite: "ファームウェアを書き込んでいます", stReboot: "FM-1 を再起動しています", stBootWait: "Melodee の起動を待っています",
     stBoot: "m-bootloader を書き込んでいます。FM-1 は自動で再起動します", stFind: "アップデートモードの FM-1 を探しています",
+    stRes: "フォントとファクトリーサウンドを書き込んでいます",
     etaMin: "残り約 {n} 分", etaSec: "残り 1 分未満",
     stall: "FM-1 を待っています… ケーブルは接続したままにしてください。",
     backKept: "このタブを {s} 離れていました。インストールは続いていましたが、完了までこのタブにいてください。",
@@ -196,6 +218,11 @@ const TEXT = {
     endDone: "FM-1 は Melodee {v} で再起動しました。ケーブルを抜いて構いません。",
     endBootH: "m-bootloader をインストールしました", endBoot: "FM-1 は Melodee {v} で再起動しました。",
     endStockH: "M-VAVE のファームウェアに戻しました", endStock: "FM-1 は純正ファームウェアで再起動しました。",
+    endSetupDoneH: "セットアップが完了しました", endSetupDone: "フォントとファクトリーサウンドを FM-1 に書き込みました。ケーブルを抜いて構いません。",
+    endSetupH: "セットアップが完了していません",
+    endSetup: "Melodee {v} は動いていますが、フォントとファクトリーサウンドを書き込めませんでした。書き込むまでは、FM-1 はシンプルなフォントと INIT サウンドを使います。",
+    tipResOk: "フォントとファクトリーサウンドをインストールしました。",
+    tipResRestart: "FM-1 の電源を一度切って入れ直すと、すべてのサウンドリストにファクトリーサウンドが表示されます。",
     tipEditor: "エディターでサウンドの閲覧やバックアップができます。",
     tipBoot: "m-bootloader の確認：FM-1 の電源を切り、PLAY を押しながら電源を入れると、リカバリーメニューが表示されます。",
     endPausedH: "インストールが中断しました",
@@ -210,7 +237,16 @@ const TEXT = {
     endPartialH: "Melodee はインストールされ、m-bootloader はされていません",
     endPartial: "Melodee {v} はインストールされました。m-bootloader は書き込めず、ほかには何も変更されていません。あとでこのページからもう一度試せます。",
     btnEditor: "エディターを開く", btnManual: "マニュアルを読む", btnClose: "閉じる", btnResume: "インストールを再開",
-    btnRetry: "もう一度",
+    btnRetry: "もう一度", btnSetup: "セットアップを完了",
+    e_resfetch: "ダウンロードできませんでした：{d}", e_resfile: "ダウンロードしたファイルが壊れています。ページを再読み込みしてから「セットアップを完了」を押してください。",
+    e_resnoanswer: "再起動のあと、FM-1 が応答しませんでした。ケーブルを確かめてから「セットアップを完了」を押してください。",
+    e_reslost: "FM-1 が応答しなくなりました。ケーブルを接続したまま「セットアップを完了」を押してください。",
+    e_resnocmd: "FM-1 のファームウェアは書き込みに対応していません。先にこのバージョンをインストールしてください。",
+    e_resbuild: "FM-1 はここで選んだものとは別のビルドで動いています。先にこのバージョンをインストールしてください。",
+    e_resbusy: "FM-1 が再生中か、Bluetooth がオンです。再生を止めて Bluetooth をオフにしてから「セットアップを完了」を押してください。",
+    e_resroom: "FM-1 に書き込む場所を確保できませんでした。保存領域がいっぱいなら、不要なプロジェクトを削除してから「セットアップを完了」を押してください。",
+    e_reswrite: "書き込みが途中で止まりました。ケーブルを接続したまま「セットアップを完了」を押してください。",
+    e_rescheck: "書き込んだ内容を確認できませんでした。「セットアップを完了」を押して書き込み直してください。",
     e_notfound: "何も書き込まれる前に FM-1 が応答しなくなりました。",
     e_model: "接続されている機器は FM-1 ではありません。",
     e_lost: "USB の接続が切れました。", e_stopped: "FM-1 がデータを要求しなくなりました。",
@@ -290,6 +326,27 @@ const selection = () => {
 };
 let buildEpoch = 0;
 const images = new Map();
+/* the build's resource region (fm1res.js), <package>-res.bin beside its package, fetched as the package is (the
+   commit keeps a nightly's copy from a stale cache): null when the build has none (before 1.6). A failed fetch is
+   forgotten, so Finish setup fetches again. */
+const regions = new Map();
+async function fetchRegion(chosen) {
+  const url = chosen.pkg.dual.replace(/(\.fwsc)?$/, "-res.bin") + (chosen.commit ? "?commit=" + chosen.commit : "");
+  const r = await fetch(url, { cache: "no-cache" });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+function resRegion() {
+  if (DEMO) return Promise.resolve(st.demoRes);
+  const key = buildKey();
+  if (!regions.has(key)) {
+    const region = fetchRegion(st.meta);
+    regions.set(key, region);
+    region.catch(() => { if (regions.get(key) === region) regions.delete(key); });
+  }
+  return regions.get(key);
+}
 function releaseOptions() {
   const selected = $("release").value || meta.version;
   $("release").replaceChildren(...(meta.releases || [meta]).map(r => Object.assign(document.createElement("option"), {
@@ -316,7 +373,8 @@ async function loadRelease() {
     }
     if (epoch !== buildEpoch) return;
     st.image = images.get(key);
-    if (st.dev) st.dev = {id:st.dev.id,...describeDevice(st.dev.id,st.meta.product)};
+    resRegion().catch(() => { /* Install writes the firmware anyway; its end screen offers Finish setup */ });
+    if (st.dev) { st.dev = {id:st.dev.id,res:st.dev.res,...describeDevice(st.dev.id,st.meta.product)};offerSetup(); }
     if (meta.boot) {
       try {
         const raw = await fetchBytes(meta.boot.pkg);
@@ -338,6 +396,9 @@ function demoRelease(meta) {
   st.meta = { name: "Melodee", version, product, boot: { version: meta?.boot?.version || "1.2" } };
   st.image = demoImage(0x30000, 1);
   st.boot = { image: demoImage(0x4800, 2), version: st.meta.boot.version };
+  st.demoRes = demoImage(32 + 0x3000, 3);           /* a resource region: MRS1, length, a CRC the device reports */
+  new DataView(st.demoRes.buffer).setUint32(0, 0x3153524d, true);
+  new DataView(st.demoRes.buffer).setUint32(4, 0x3000, true);
   $("demo").hidden = false;
 }
 async function demoAccess() {
@@ -346,11 +407,12 @@ async function demoAccess() {
     // fakeAccess is bundled for the exact same Saadet demo.
     const p = st.meta.product;
     const opts = {
-      stock: { identity: "FM-1_016" }, melodee: { identity: "FM-1_9000900" }, current: { identity: p },
-      update: { identity: "FM-1_016", state: "loader" }, interrupt: { identity: "FM-1_016", interruptAt: 0.45 },
-      open: { identity: "FM1_OFFICIAL_OPEN" },
+      stock: { identity: "FM-1_016" }, melodee: { identity: "FM-1_9000900" }, current: { identity: p, resInstalled: true },
+      setup: { identity: p }, update: { identity: "FM-1_016", state: "loader" },
+      interrupt: { identity: "FM-1_016", interruptAt: 0.45 }, open: { identity: "FM1_OFFICIAL_OPEN" },
     }[DEMO] || { identity: "FM-1_016" };
-    st.demo = fakeAccess({ images: { firmware: st.image, boot: st.boot.image }, after: p, loader:MELODEE_LOADER, ...opts });
+    st.demo = fakeAccess({ images: { firmware: st.image, boot: st.boot.image, res: st.demoRes }, after: p,
+                           loader:MELODEE_LOADER, ...opts });
   }
   return st.demo.access;
 }
@@ -384,20 +446,46 @@ async function connect() {
   try {
     const release = await hold();
     if (!release) throw fail("busy", "busy");
-    let dev;
-    try { st.access = await midi();dev = await new SteadyUpdater(st.access).find(); }
+    let dev, res = null;
+    try {
+      st.access = await midi();dev = await new SteadyUpdater(st.access).find();
+      if (dev) {
+        dev.link.close();
+        if (["this", "dev"].includes(describeDevice(dev.id, st.meta.product).kind) && await resRegion().catch(() => null))
+          res = await probeRes(dev);
+      }
+    }
     finally { release(); }
     if (!dev) { st.dev = null; throw fail("notfound", "not found"); }
-    dev.link.close();
-    st.dev = { id: dev.id, ...describeDevice(dev.id, st.meta.product) };
+    st.dev = { id: dev.id, res, ...describeDevice(dev.id, st.meta.product) };
   } catch (e) {
     st.dev = null;st.connErr = ["nomidi", "denied", "notfound", "busy", "pending"].includes(e.code) ? e.code : "notfound";
   }
   finding = false;
   render();
+  offerSetup();
+}
+/* a running Melodee's resource region (editor command 82): { installed, length, crc } or null (no answer) */
+async function probeRes(dev) {
+  const link = new BackupConnection(dev.link.input, dev.link.output);
+  try { return resStatus(await link.request([RES_COMMAND, [0]], { timeout: 1500 })); }
+  catch (_) { return null; }
+  finally { link.close(); }
+}
+/* Finish setup, offered when the FM-1 runs the selected build (or a development one) without its region and that
+   build has one: the same length and CRC-32 as the device wants */
+async function offerSetup() {
+  const dev = st.dev, s = dev?.res;
+  let ok = false;
+  if (s && !s.installed && ["this", "dev"].includes(dev.kind)) {
+    try { const h = resHeader(await resRegion()); ok = h.length === s.length && h.crc === s.crc; }
+    catch (_) { /* nothing to offer */ }
+  }
+  if (dev && st.dev === dev && !!dev.setup !== ok) { dev.setup = ok; render(); }
 }
 $("find").addEventListener("click", connect);
 $("mboot").addEventListener("change", render);
+$("finish").addEventListener("click", () => finishSetup());
 
 /* ---- the page's state, drawn ---- */
 function render() {
@@ -417,8 +505,8 @@ function render() {
     const words = { loader: "devLoader", this: "devThis", melodee: "devMelodee", dev: "devDev", stock: "devStock",
                     open: "devOpen", other: "devOther", model: "devModel" }[dev.kind];
     $("devwhat").textContent = t(words, { v: dev.version, id: dev.text || dev.id.text });
-    const chip = dev.kind === "loader" ? ["chipResume", "warn"] : dev.kind === "this" ? ["chipCurrent", "ok"]
-      : plan ? ["chipReady", "ok"] : ["chipBlocked", "bad"];
+    const chip = dev.kind === "loader" ? ["chipResume", "warn"] : dev.setup ? ["chipSetup", "warn"]
+      : dev.kind === "this" ? ["chipCurrent", "ok"] : plan ? ["chipReady", "ok"] : ["chipBlocked", "bad"];
     $("devchip").textContent = t(chip[0]);
     $("devchip").className = "chip " + chip[1];
   }
@@ -437,10 +525,14 @@ function render() {
     go.textContent = t(label, { v: ver() });
     go.disabled = st.running || finding || !st.image;
     $("gohint").hidden = true;
-    const words = plan.resume ? "planResume" : !plan.firmware ? "planBoot" : dev.kind === "this" ? "planThis"
-      : ["melodee", "dev"].includes(dev.kind) ? "planUpdate" : "planInstall";
+    const words = dev.setup ? "planSetup" : plan.resume ? "planResume" : !plan.firmware ? "planBoot"
+      : dev.kind === "this" ? "planThis" : ["melodee", "dev"].includes(dev.kind) ? "planUpdate" : "planInstall";
     $("plantext").textContent = t(words, { v: ver() });
   }
+  /* Finish setup: the region alone, the install button second */
+  $("finish").hidden = !dev?.setup;
+  $("finish").disabled = st.running || finding;
+  go.classList.toggle("primary", !dev?.setup);
   $("st-connect").dataset.state = dev ? "done" : "active";
   $("st-options").dataset.state = dev && plan ? "active" : "todo";
   $("st-install").dataset.state = dev && plan ? "active" : "todo";
@@ -489,7 +581,7 @@ function preflight(plan) {
 $("pfok").addEventListener("change", () => { $("pfgo").disabled = !$("pfok").checked; });
 
 /* ---- the install's screen ---- */
-const ICON = { done: "#i-check", paused: "#i-pause", safe: "#i-info", restart: "#i-alert", partial: "#i-alert" };
+const ICON = { done: "#i-check", paused: "#i-pause", safe: "#i-info", restart: "#i-alert", partial: "#i-alert", setup: "#i-alert" };
 const FAVICON = (c) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='${c}'/></svg>`)}`;
 const baseTitle = document.title;
 
@@ -500,7 +592,8 @@ function log(line) {
 }
 
 function phasesFor(plan) {
-  return [plan.firmware && !plan.resume && "prepare", plan.firmware && "write", plan.firmware && "restart", plan.boot && "boot"].filter(Boolean);
+  return [plan.firmware && !plan.resume && "prepare", plan.firmware && "write", plan.firmware && "restart", plan.res && "setup",
+          plan.boot && "boot"].filter(Boolean);
 }
 
 function openRun(plan, isStock) {
@@ -513,10 +606,11 @@ function openRun(plan, isStock) {
   $("log").textContent = "";
   $("backnote").hidden = $("stall").hidden = true;
   $("eta").textContent = "";
-  $("runtitle").textContent = t(isStock ? "runStock" : plan.resume ? "runResume" : plan.firmware ? "runInstall" : "runBoot", { v: ver() });
+  $("runtitle").textContent = t(isStock ? "runStock" : plan.resume ? "runResume" : plan.firmware ? "runInstall"
+    : plan.boot ? "runBoot" : "runSetup", { v: ver() });
   document.querySelectorAll("#phases li").forEach((li) => { li.hidden = !r.list.includes(li.dataset.ph); li.className = ""; });
   setPct(0);
-  setStep(plan.resume ? "stFind" : "stStart", r.list[0]);
+  setStep(plan.resume ? "stFind" : plan.firmware || plan.boot ? "stStart" : "stRes", r.list[0]);
   $("favicon").href = FAVICON("#d08a00");
   if (!d.open) d.showModal();
 }
@@ -549,7 +643,7 @@ function setStep(key, phase) {
 function stepper(pm) {
   const r = st.run, share = r.plan.boot ? (r.plan.firmware ? 0.94 : 0) : 1;
   return (k, a, b) => {
-    log(`${k} ${a ?? ""}${b != null ? " " + b : ""}`);
+    if (k !== "res" || a === b || a % 8192 < 256) log(`${k} ${a ?? ""}${b != null ? " " + b : ""}`);
     r.lastAt = Date.now();
     $("stall").hidden = true;
     if (k === "start") setStep("stStart", "prepare");
@@ -562,6 +656,8 @@ function stepper(pm) {
       const s = remaining(b, pm.write, Date.now() - r.writeAt);
       $("eta").textContent = s == null ? "" : s >= 60 ? t("etaMin", { n: Math.ceil(s / 60) }) : t("etaSec");
     } else if (k === "reboot") { $("eta").textContent = ""; setStep("stReboot", "restart"); setPct(99 * share); }
+    else if (k === "res") { setStep("stRes", "setup"); if (!r.plan.firmware) setPct((a / b) * 100); }
+    else if (k === "done" && r.plan.res) setStep("stRes", "setup");
     else if (k === "done" && r.plan.boot) setStep("stBootWait", "boot");
     else if (k === "bootstart") { setStep("stBoot", "boot"); setPct(share ? 96 : 30); }
     else if (k === "bootwrite") { setStep("stBoot", "boot"); setPct(share ? 98 : 70); }
@@ -618,14 +714,20 @@ function endRun(state, err) {
     a.style.textDecoration = "none";
     acts.push(a);
   };
-  const reason = err ? (err.code && TEXT.en["e_" + err.code] ? t("e_" + err.code, { d: err.detail }) : t("e_other", { m: err.message })) : "";
+  const why = (e) => e ? (e.code && TEXT.en["e_" + e.code] ? t("e_" + e.code, { d: e.detail }) : t("e_other", { m: e.message })) : "";
+  const reason = why(err);
+  /* the resource region's write (pushResources): null when none ran, { ok } or { ok: false, error } */
+  const resFailed = r.res && !r.res.ok;
+  const setupAgain = (primary) => button("btnSetup", primary, () => { closeRun(); finishSetup(); });
   let title, text;
   if (state === "done") {
     if (r.isStock) { title = t("endStockH"); text = t("endStock"); }
+    else if (!plan.firmware && plan.res) { title = t("endSetupDoneH"); text = t("endSetupDone"); tips.push(t("tipResRestart")); }
     else if (!plan.firmware) { title = t("endBootH"); text = t("endBoot", v); tips.push(t("tipBoot")); }
     else {
       title = t(plan.boot ? "endDoneBootH" : "endDoneH", v);
       text = t("endDone", v);
+      if (r.res?.ok) tips.push(t("tipResOk"));
       tips.push(t("tipEditor"));
       if (plan.boot) tips.push(t("tipBoot"));
     }
@@ -648,7 +750,14 @@ function endRun(state, err) {
   } else if (state === "partial") {
     title = t("endPartialH"); text = t("endPartial", v);
     if (reason) tips.push(reason);
-    button("btnClose", true, closeRun);
+    if (resFailed) { tips.push(t("endSetup", v), why(r.res.error)); setupAgain(true); }
+    button("btnClose", !resFailed, closeRun);
+  } else if (state === "setup") {
+    title = t("endSetupH"); text = t("endSetup", v);
+    tips.push(why(r.res?.error));
+    if (plan.boot) tips.push(t("tipBoot"));
+    setupAgain(true);
+    button("btnClose", false, closeRun);
   } else {
     title = t("endSafeH"); text = t("endSafe");
     if (reason) tips.unshift(reason);
@@ -678,6 +787,62 @@ async function resumeWrite(up, image, product, step) {
   if (ota.id.text !== MELODEE_LOADER) throw fail("wrongloader",`This package requires ${MELODEE_LOADER}; found ${ota.id.text}`,ota.id.text);
   if (!await up.resume(image,step,product,MELODEE_LOADER)) throw fail("stopped","The update did not finish");
 }
+/* the resource region (firmware/src/res.c) after the firmware, or alone (Finish setup): the build's region through
+ * editor command 82. Never fails the install: without it the FM-1 runs Melodee Pixel and INIT sounds, and the end
+ * screen says so and offers Finish setup. -> null (the build has none), { ok: true, how } or { ok: false, error } */
+async function pushResources(up, step) {
+  let region;
+  try { region = await resRegion(); }
+  catch (e) { log(`resources: ${e.message}`); return { ok: false, error: fail("resfetch", e.message, e.message) }; }
+  if (!region) return null;
+  for (let tries = 0; tries < 20; tries++) {
+    const dev = await up.find(id => id.model === "FM-1");
+    if (dev) {
+      const input = dev.link.input, output = dev.link.output; dev.link.close();
+      const link = new BackupConnection(input, output);
+      try {
+        const how = await installResources((r, o) => link.request(r, o), region, (done, total) => step("res", done, total));
+        log(`resources: ${how}`);
+        return { ok: true, how };
+      } catch (e) {
+        log(`resources: ${e.message}`);
+        return { ok: false, error: e.code ? e : fail("reslost", e.message) };   /* (no code: the request timed out) */
+      } finally { link.close(); }
+    }
+    await sleep(500);
+  }
+  log("resources: the FM-1 did not answer");
+  return { ok: false, error: fail("resnoanswer", "no answer") };
+}
+
+/* Finish setup: the resource region alone, for an FM-1 that runs the build without it (the end screen's retry, or
+ * offered on Find). No preflight: the firmware is not touched, and an interrupted write only leaves the fallbacks. */
+async function finishSetup() {
+  if (st.running || finding) return;
+  st.running = true;
+  render();
+  const release = await hold({ leaveText: t("leave"), onHidden, onVisible });
+  if (!release) {
+    st.running = false;
+    if (release === null) st.connErr = "busy";
+    render();
+    return;
+  }
+  openRun({ firmware: false, resume: false, boot: false, res: true }, false);
+  let res;
+  try {
+    if (!st.access) st.access = await midi();
+    res = await pushResources(new SteadyUpdater(st.access, log), stepper(null));
+  } catch (e) { log(String(e?.stack || e)); res = { ok: false, error: e }; }
+  st.run.res = res || { ok: false, error: fail("resbuild", "The selected build has no resources") };
+  st.running = false;
+  release();
+  const dev = st.dev;
+  if (dev?.res && st.run.res.ok) { dev.res = { ...dev.res, installed: true }; dev.setup = false; }
+  endRun(st.run.res.ok ? "done" : "setup", null);
+  render();
+}
+
 async function start(isStock = false) {
   if (st.running || finding) return;
   const plan = isStock ? { firmware: true, resume: st.dev?.kind === "loader", boot: false } : currentPlan();
@@ -700,6 +865,8 @@ async function start(isStock = false) {
     return;
   }
   render();
+  /* Setup follows the firmware when the build has a resource region (a failed fetch shows there, with its retry) */
+  if (plan.firmware && !isStock) plan.res = (await resRegion().catch(() => undefined)) !== null;
   openRun(plan, isStock);
   const image = isStock ? st.stock.image : st.image;
   const product = isStock ? st.stock.product : st.meta.product;
@@ -717,6 +884,10 @@ async function start(isStock = false) {
       }
       phase = "done";
       mark(false);
+      if (plan.res) {
+        st.run.res = await pushResources(up, step);
+        if (plan.boot) setStep("stBootWait", "boot");
+      }
     }
     if (plan.boot) { phase = "boot"; await up.installBoot(st.boot.image, product, step); }
   } catch (e) {
@@ -729,7 +900,8 @@ async function start(isStock = false) {
   }
   st.running = false;
   release();
-  if (state === "done") st.dev = null;               /* what it runs now is shown on the next Find */
+  if (state === "done" && st.run.res && !st.run.res.ok) state = "setup";   /* the firmware runs; its region doesn't */
+  if (state === "done" || state === "setup") st.dev = null;   /* what it runs now is shown on the next Find */
   endRun(state, error);
   render();
 }

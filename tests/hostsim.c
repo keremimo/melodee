@@ -64,7 +64,23 @@ static void fm1_delay_ms(uint32_t ms) { (void)ms; }
 #if MELODEE_USB_HOST
 static void fm1_wdt_feed(void);                       /* (usb_host.c's waits; the including test defines it) */
 #endif
+#if MELODEE_BLE
+#include "ble_fake/fm1_ble.h"
+#define BLE_HW_PLATFORM_INCLUDED 1
+static uint32_t fm1_icfg(void) { return 0x200u; }
+static void fm1_icfg_set(uint32_t v) { (void)v; }
+static void fm1_irq_off(void) {}
+static void fm1_irq_on(void) {}
+static void fm1_ble_crumb_boot(void) {}
+#include "../firmware/src/midi_ble.h"
+#endif
 #include "../firmware/src/usb.c"
+#if MELODEE_BLE
+#include "../firmware/src/midi_ble.c"
+static int mel_ble_flash_read(void *ctx, uint32_t off, uint8_t *dst, uint32_t n)
+{ (void)ctx; (void)off; memset(dst, 0xFF, n); return 0; }
+static void mel_ble_radio_start(const struct ble_rf_trims *t) { ble_hw_wl82_start(t); }
+#endif
 #include "../firmware/src/midi_uart.c"                /* TRS MIDI IN: its parser (um_byte) feeds midi_in_q */
 #include "../firmware/src/song_chain.c"
 #include "../firmware/src/seq.c"

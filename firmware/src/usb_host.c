@@ -4,13 +4,15 @@
 /* USB MIDI host on USB0 (MELODEE_USB_HOST), included by usb.c after the SIE helpers and ep1_take.
  *
  * The port is either the computer-facing device (usb.c) or, when the menu's USB HOST is on, the host of a class
- * compliant USB-MIDI controller, alone or behind a hub. The choice is never saved: every boot is a device, so
+ * compliant USB-MIDI controller, alone, behind a hub, or behind a hub on a hub's port (many hubs are two hub chips
+ * in one case: the first chip's last port is the second chip). The choice is never saved: every boot is a device, so
  * the update paths always work. Switching is the main loop's (uh_task); usb.up is 0 while the port is a host.
  *
  *   main loop (uh_task)   waits for a device, resets the bus, and enumerates it with blocking EP0 transfers
  *                         (hub: powers the ports, resets those with something on them, and tries each device
- *                         until one has a USB-MIDI streaming interface). Failed direct probes wait for unplug;
- *                         idle hubs are polled for downstream connection changes. The ISR does nothing until uh.run.
+ *                         until one has a USB-MIDI streaming interface; a hub found there is walked the same way,
+ *                         one level only). Failed direct probes wait for unplug; idle hubs are polled for
+ *                         downstream connection changes. The ISR does nothing until uh.run.
  *   TIMER5 (uh_poll)      once uh.run is 1 the SIE is the ISR's alone: optional IN and OUT endpoints share host
  *                         EP1 in separate directions. IN is asked for a packet (ReqPkt), read when RxPktRdy, and its channel / clock events
  *                         go to the same ring as USB and TRS MIDI (source 1). A stall or a run of errors sets
@@ -29,16 +31,25 @@ enum { S_DEVCTL = 15, S_TXTYPE = 24, S_TXINTERVAL = 25, S_RXTYPE = 26, S_RXINTER
 enum { UH_MSG_NONE, UH_MSG_ON, UH_MSG_OFF, UH_MSG_MIDI, UH_MSG_NOMIDI, UH_MSG_LOW, UH_MSG_LOST };
 #define UH_FIRST_ADDR 1u
 #define UH_MAX_ERRORS 16u
+#define UH_HUB_LEVELS 2u                                /* the hub on the port, and one hub on its ports */
+#define UH_HUB_PORTS 7u                                 /* ports used per hub */
+#define UH_ROOT_TRIES 5u                                /* resets of a device that does not answer at all */
 
 static uint8_t uh_rx[64 + 4] __attribute__((aligned(4)));
-static uint8_t uh_cfg[320];                                  /* a configuration, cut short if longer */
+typedef struct {
+    uint8_t addr, mps, ports;                           /* addr 0: no hub at this level */
+    uint8_t port;                                       /* level 1: the level-0 port it is on */
+} uh_hub_t;
+
 static struct {
     uint8_t want;                                       /* the menu (main loop) */
     uint8_t on;                                         /* the port is a host */
     volatile uint8_t run;                               /* TIMER5 owns the active MIDI endpoints */
     volatile uint8_t fault;                             /* TIMER5 -> main loop: reset the bus and look again */
     uint8_t seen, next_addr, dev, tried;
-    uint8_t hub_addr, hub_mps, hub_ports, hub_poll_port;
+    uint8_t answered;                                   /* the device on the port answered its first request */
+    uh_hub_t hub[UH_HUB_LEVELS];
+    uint8_t hub_poll_level, hub_poll_port;
     uint8_t in_ep, out_mps, tx_count, tx_errors, line_idle;
     uint8_t msg;                                        /* one UH_MSG_* for main.c to show */
     volatile uint8_t errors;
@@ -78,11 +89,12 @@ static int uh_csr0(uint32_t want_set, uint32_t want_clr)
 }
 
 /* One control transfer to `addr`: SETUP, the IN data stage if any, the status stage. Bytes read, or < 0.
- * Only requests without an OUT data stage (every one used here). */
-static int uh_ctl(uint8_t addr, uint8_t rt, uint8_t rq, uint16_t val, uint16_t idx, uint16_t len, uint8_t *out,
-                  uint8_t mps)
+ * Only requests without an OUT data stage (every one used here). The data goes to `out`, or with `walk` to the
+ * descriptor walk, which may end the data stage early once it has found what it needs. */
+static int uh_xfer(uint8_t addr, uint8_t rt, uint8_t rq, uint16_t val, uint16_t idx, uint16_t len, uint8_t *out,
+                   uh_desc_t *walk, uint8_t mps)
 {
-    uint32_t got = 0, n, i;
+    uint32_t got = 0, n, k, i, stop = 0;
     int r;
     sie_wr(S_FADDR, addr);
     sie_wr(S_INDEX, 0);
@@ -109,11 +121,15 @@ static int uh_ctl(uint8_t addr, uint8_t rt, uint8_t rq, uint16_t val, uint16_t i
             if (n > 64u)
                 n = 64u;
             fm1_usb_rx_sync();
-            for (i = 0; i < n && got + i < len; i++)
-                out[got + i] = ep0buf[i];
+            k = got + n > len ? len - got : n;
+            if (walk)
+                stop = (uint32_t)uh_desc_feed(walk, ep0buf, k);
+            else
+                for (i = 0; i < k; i++)
+                    out[got + i] = ep0buf[i];
             sie_wr(S_CSR0, 0);                          /* RxPktRdy done */
             got += n;
-            if (n < mps)
+            if (n < mps || stop)
                 break;
         }
         if (got > len)
@@ -129,39 +145,47 @@ static int uh_ctl(uint8_t addr, uint8_t rt, uint8_t rq, uint16_t val, uint16_t i
     return r < 0 ? r : (int)got;
 }
 
+static int uh_ctl(uint8_t addr, uint8_t rt, uint8_t rq, uint16_t val, uint16_t idx, uint16_t len, uint8_t *out,
+                  uint8_t mps)
+{
+    return uh_xfer(addr, rt, rq, val, idx, len, out, 0, mps);
+}
+
 /* ---------------------------------------------------- enumeration --- */
-static int uh_hub_probe(uint8_t addr, uint8_t mps, uint8_t cfgval, uh_midi_t *m);
+static int uh_hub_probe(uint8_t level, uint8_t addr, uint8_t mps, uint8_t cfgval, uh_midi_t *m);
+
+/* A device on port p (1..7) of the hub at `level` gets its own address: 2..8 below the first hub, 9..15 below the
+ * second, so a hub's devices never take an address the other hub's tree uses. */
+static uint8_t uh_port_addr(uint8_t level, uint8_t p) { return (uint8_t)(UH_FIRST_ADDR + level * UH_HUB_PORTS + p); }
 
 /* The device at address 0 (just reset): give it an address, read its configuration, and if it has a USB-MIDI
- * streaming interface select it. 1 = found, 0 = no (including a hub below depth 0 and a device that fails). */
+ * streaming interface select it. 1 = found, 0 = no (including a hub two levels down and a device that fails). */
 static int uh_probe(uint8_t depth, uh_midi_t *m)
 {
-    uint8_t d8[8], mps, cls, addr = uh.next_addr++;
+    uint8_t d8[8], c9[9], mps, cls, addr = uh.next_addr++;
     uint32_t total;
+    uh_desc_t walk;
     int r;
     r = uh_ctl(0, 0x80, 6, 0x0100, 0, 8, d8, 8);        /* GET_DESCRIPTOR(device), first 8 bytes */
     if (r < 8)
         return 0;
+    if (!depth)
+        uh.answered = 1;
     mps = d8[7] == 16u || d8[7] == 32u || d8[7] == 64u ? d8[7] : 8u;
     cls = d8[4];
     if (uh_ctl(0, 0x00, 5, addr, 0, 0, 0, mps) < 0)     /* SET_ADDRESS */
         return 0;
     uh_wait(10);                                        /* the device settles to its new address */
-    r = uh_ctl(addr, 0x80, 6, 0x0200, 0, 9, uh_cfg, mps);
+    r = uh_ctl(addr, 0x80, 6, 0x0200, 0, 9, c9, mps);
     if (r < 9)
         return 0;
-    total = (uint32_t)(uh_cfg[2] | uh_cfg[3] << 8);
-    if (total > sizeof uh_cfg)
-        total = sizeof uh_cfg;
-    if (total > 9u) {
-        r = uh_ctl(addr, 0x80, 6, 0x0200, 0, (uint16_t)total, uh_cfg, mps);
-        if (r < 9)
-            return 0;
-        total = (uint32_t)r;
-    }
+    total = (uint32_t)(c9[2] | c9[3] << 8);             /* the whole configuration, walked as it arrives */
+    uh_desc_start(&walk, m);
+    if (total > 9u && uh_xfer(addr, 0x80, 6, 0x0200, 0, (uint16_t)total, 0, &walk, mps) < 9)
+        return 0;
     if (cls == 9u)                                      /* a hub */
-        return depth == 0u ? uh_hub_probe(addr, mps, uh_cfg[5], m) : 0;
-    if (!uh_parse_midi(uh_cfg, total, m))
+        return depth < UH_HUB_LEVELS ? uh_hub_probe(depth, addr, mps, c9[5], m) : 0;
+    if (!m->found)
         return 0;
     if (uh_ctl(addr, 0x00, 9, m->cfg, 0, 0, 0, mps) < 0)   /* SET_CONFIGURATION */
         return 0;
@@ -171,14 +195,17 @@ static int uh_probe(uint8_t depth, uh_midi_t *m)
     return 1;
 }
 
-/* Probe only this downstream port; keep the hub and the other devices configured. Each port reuses its
- * address on reconnect, so repeated hot-plugs cannot exhaust the USB address space. */
-static int uh_hub_port_probe(uint8_t p, uint32_t st, uh_midi_t *m)
+/* Probe only this downstream port of the hub at `level`; keep the hubs and the other devices configured. Each
+ * port reuses its address on reconnect, so repeated hot-plugs cannot exhaust the USB address space. */
+static int uh_hub_port_probe(uint8_t level, uint8_t p, uint32_t st, uh_midi_t *m)
 {
-    uint8_t b[4], addr = uh.hub_addr, mps = uh.hub_mps;
+    uint8_t b[4], addr = uh.hub[level].addr, mps = uh.hub[level].mps;
     uint32_t t;
+    int r;
     if (!(st & 0x0001u) || (st & 0x0200u))              /* nothing there, or low speed */
         return 0;
+    if (!level && uh.hub[1].addr && uh.hub[1].port == p)
+        uh.hub[1].addr = 0;                             /* the reset takes the second hub's address and its tree */
     if (uh_ctl(addr, 0x23, 3, 4, p, 0, 0, mps) < 0)    /* SET_FEATURE(PORT_RESET) */
         return 0;
     t = fm1_ms;
@@ -193,48 +220,72 @@ static int uh_hub_port_probe(uint8_t p, uint32_t st, uh_midi_t *m)
     if (uh_ctl(addr, 0xA3, 0, 0, p, 4, b, mps) < 4 || !(b[0] & 0x02u))   /* enabled? */
         return 0;
     uh_wait(20);                                        /* reset recovery */
-    uh.next_addr = (uint8_t)(UH_FIRST_ADDR + p);
-    return uh_probe(1, m);
+    uh.next_addr = uh_port_addr(level, p);
+    r = uh_probe((uint8_t)(level + 1u), m);
+    if (!level && uh.hub[1].addr == uh_port_addr(0, p))
+        uh.hub[1].port = p;                             /* a second hub was found here, configured even if idle */
+    return r;
 }
 
 /* Read and acknowledge connection changes, including disconnects and unsupported devices. An unresponsive
- * hub is left alone until root unplug/replug, rather than repeating a blocking control timeout forever. */
-static int uh_hub_status(uint8_t p, uint8_t *b)
+ * hub is left alone until root unplug/replug (the first hub) or a change on its port (the second), rather than
+ * repeating a blocking control timeout forever. */
+static int uh_hub_status(uint8_t level, uint8_t p, uint8_t *b)
 {
-    if (uh_ctl(uh.hub_addr, 0xA3, 0, 0, p, 4, b, uh.hub_mps) < 4 ||
-        ((b[2] & 1u) && uh_ctl(uh.hub_addr, 0x23, 1, 16, p, 0, 0, uh.hub_mps) < 0)) {
-        uh.hub_addr = 0;
+    uh_hub_t *h = &uh.hub[level];
+    if (uh_ctl(h->addr, 0xA3, 0, 0, p, 4, b, h->mps) < 4 ||
+        ((b[2] & 1u) && uh_ctl(h->addr, 0x23, 1, 16, p, 0, 0, h->mps) < 0)) {
+        h->addr = 0;
+        uh.hub[1].addr = 0;                             /* (the second hub is below the first) */
         return 0;
     }
     return 1;
 }
 
-/* Configure and power the root hub once. After the initial scan, idle polling uses connection-change bits. */
-static int uh_hub_probe(uint8_t addr, uint8_t mps, uint8_t cfgval, uh_midi_t *m)
+/* Configure and power a hub once (level 0: the one on the port, 1: one on its ports). After the initial scan,
+ * idle polling uses connection-change bits. */
+static int uh_hub_probe(uint8_t level, uint8_t addr, uint8_t mps, uint8_t cfgval, uh_midi_t *m)
 {
     uint8_t b[16], ports, p;                            /* (the hub descriptor is 9 bytes with <= 7 ports) */
     uint32_t good;
+    uh_hub_t *h = &uh.hub[level];
     if (uh_ctl(addr, 0x00, 9, cfgval, 0, 0, 0, mps) < 0)
         return 0;
     if (uh_ctl(addr, 0xA0, 6, 0x2900, 0, 9, b, mps) < 7)   /* hub descriptor */
         return 0;
-    ports = b[2] > 7u ? 7u : b[2];
+    ports = b[2] > UH_HUB_PORTS ? UH_HUB_PORTS : b[2];
     good = (uint32_t)b[5] * 2u;                         /* bPwrOn2PwrGood, in 2 ms */
     for (p = 1; p <= ports; p++)
         uh_ctl(addr, 0x23, 3, 8, p, 0, 0, mps);         /* SET_FEATURE(PORT_POWER) */
     uh_wait((good < 100u ? 100u : good) + 100u);        /* power good, then the devices announce themselves */
-    uh.hub_addr = addr;
-    uh.hub_mps = mps;
-    uh.hub_ports = ports;
-    uh.hub_poll_port = 1;
+    h->addr = addr;
+    h->mps = mps;
+    h->ports = ports;
+    if (!level) {
+        uh.hub[1].addr = 0;
+        uh.hub_poll_level = 0;
+        uh.hub_poll_port = 1;
+    }
     uh.hub_poll_ms = fm1_ms;
     for (p = 1; p <= ports; p++) {
-        if (!uh_hub_status(p, b))
+        if (!uh_hub_status(level, p, b))
             return 0;
-        if (uh_hub_port_probe(p, (uint32_t)(b[0] | b[1] << 8), m))
+        if (uh_hub_port_probe(level, p, (uint32_t)(b[0] | b[1] << 8), m))
             return 1;
     }
     return 0;
+}
+
+/* the next hub port the idle poll reads: every port of the first hub, then of the second if there is one */
+static void uh_hub_poll_next(void)
+{
+    uint8_t l = uh.hub_poll_level;
+    if (uh.hub_poll_port < uh.hub[l].ports && uh.hub[l].addr) {
+        uh.hub_poll_port++;
+        return;
+    }
+    uh.hub_poll_level = !l && uh.hub[1].addr && uh.hub[1].ports ? 1u : 0u;
+    uh.hub_poll_port = 1;
 }
 
 /* Host EP1 has independent RX/TX DMA slots. Both target endpoints belong to this device and alternate setting. */
@@ -300,25 +351,34 @@ static void uh_host_up(void)
     sie_wr(S_DEVCTL, 0x03u);                            /* session + host request */
     uh.seen = 0;
     uh.line_idle = 0;
-    uh.hub_addr = 0;
+    uh.hub[0].addr = uh.hub[1].addr = 0;
 }
 
 /* a device is on the line: reset the bus and find the MIDI endpoint */
 static void uh_connect(void)
 {
     uh_midi_t m;
+    uint32_t t;
+    int ok;
     if (sie_rd(S_DEVCTL) & 0x20u) {                     /* low speed (FSDev is bit 6, LSDev bit 5) */
         if (!uh.tried)
             uh.msg = UH_MSG_LOW;                        /* said once per attach, as NO MIDI is */
         uh.tried = 1;
         return;
     }
-    sie_wr(S_POWER, 0x08u);                             /* bus reset */
-    uh_wait(30);
-    sie_wr(S_POWER, 0);
-    uh_wait(30);
-    uh.next_addr = UH_FIRST_ADDR;
-    if (uh_probe(0, &m)) {
+    /* A root port reset lasts >= 50 ms (USB 2.0 TDRSTR). Some hubs answer only after 400 ms of recovery, so a
+     * device that does not answer at all is reset again with a longer wait; one that answered is not. */
+    for (t = 0;; t++) {
+        sie_wr(S_POWER, 0x08u);                         /* bus reset */
+        uh_wait(50);
+        sie_wr(S_POWER, 0);
+        uh_wait(100u << t);                             /* 100, 200, 400, 800, 1600 ms */
+        uh.next_addr = UH_FIRST_ADDR;
+        uh.answered = 0;
+        if ((ok = uh_probe(0, &m)) || uh.answered || t + 1u == UH_ROOT_TRIES)
+            break;
+    }
+    if (ok) {
         uh_start_ep(&m);
         uh.msg = UH_MSG_MIDI;
         uh.tried = 0;
@@ -378,20 +438,26 @@ static void uh_task(uint32_t now)
         if (uh.line_idle < 5u) uh.line_idle++;
         if (uh.line_idle >= 5u) {                       /* debounce root disconnect while idle too */
             uh.tried = 0;
-            uh.hub_addr = 0;
+            uh.hub[0].addr = uh.hub[1].addr = 0;
         }
         return;
     }
     uh.line_idle = 0;
     if (uh.tried) {
-        if (uh.hub_addr && uh.hub_ports && (uint32_t)(now - uh.hub_poll_ms) >= 100u) {
-            uint8_t b[4], p = uh.hub_poll_port;
+        if (uh.hub[0].addr && uh.hub[0].ports && (uint32_t)(now - uh.hub_poll_ms) >= 100u) {
+            uint8_t b[4], l = uh.hub_poll_level, p = uh.hub_poll_port;
             uh_midi_t m;
             uh.hub_poll_ms = now;
-            uh.hub_poll_port = p == uh.hub_ports ? 1u : (uint8_t)(p + 1u);
-            if (uh_hub_status(p, b) && (b[2] & 1u) && (b[0] & 1u) && !(b[1] & 2u)) {
+            uh_hub_poll_next();
+            if (!uh.hub[l].addr)                       /* the second hub went since this port was chosen */
+                return;
+            if (!uh_hub_status(l, p, b) || !(b[2] & 1u))
+                return;
+            if (!l && uh.hub[1].addr && uh.hub[1].port == p)
+                uh.hub[1].addr = 0;                    /* the second hub's port changed: it and its tree are gone */
+            if ((b[0] & 1u) && !(b[1] & 2u)) {
                 uh_wait(100);                          /* newly attached device settles before port reset */
-                if (uh_hub_status(p, b) && uh_hub_port_probe(p, (uint32_t)(b[0] | b[1] << 8), &m)) {
+                if (uh_hub_status(l, p, b) && uh_hub_port_probe(l, p, (uint32_t)(b[0] | b[1] << 8), &m)) {
                     uh_start_ep(&m);
                     uh.msg = UH_MSG_MIDI;
                     uh.tried = 0;

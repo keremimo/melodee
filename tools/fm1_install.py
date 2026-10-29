@@ -31,6 +31,7 @@ import queue
 import re
 import sys
 import time
+from pathlib import Path
 
 HS_QUERY = bytes([0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7])
 UPGRADE = bytes([0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7])
@@ -467,7 +468,32 @@ def run(a, backend, out, ask):
         up.install(dev, image, product, prog, loader)
     finally:
         prog.end()
+    pkg = Path(a.package)
+    res = Path(a.resources) if a.resources else next(
+        (p for p in (pkg.with_name(pkg.stem + "-res.bin"), pkg.with_name("melodee-res.bin")) if p.exists()), None)
+    if not a.no_resources and res and res.exists():
+        install_resources(up, res, out)
     return 0
+
+
+def install_resources(up, res, out):
+    """the resource region (firmware/src/res.c) after the firmware; never fails the install: without it the
+    FM-1 runs Melodee Pixel and INIT sounds and asks to finish the update"""
+    import fm1_resources
+    from prophet_device import Device
+    dev = up.find()
+    if not dev:
+        print("resources: the FM-1 did not answer after the update; run tools/fm1_resources.py", file=out)
+        return
+    name = dev.name
+    dev.link.close()
+    device = Device(name)
+    try:
+        print(f"resources: {fm1_resources.push(device, res.read_bytes(), lambda *s, **k: print(*s, file=out, **k))}", file=out)
+    except (RuntimeError, TimeoutError) as e:
+        print(f"resources: {e}; run tools/fm1_resources.py {res}", file=out)
+    finally:
+        device.close()
 
 
 def ask_tty(prompt):
@@ -484,6 +510,9 @@ def main(argv=None, backend=None, out=sys.stdout, ask=ask_tty):
     ap.add_argument("--port", metavar="NAME", help="MIDI port to use (part of its name)")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
     ap.add_argument("--force", action="store_true", help="install a package without the Melodee loader marker")
+    ap.add_argument("--resources", metavar="FILE", help="resource region to write after the update (default: "
+                    "melodee-res.bin beside the package)")
+    ap.add_argument("--no-resources", action="store_true", help="do not write the resource region")
     a = ap.parse_args(argv)
     if bool(a.info) == bool(a.package):
         ap.error("give a PACKAGE.fwsc or --info")

@@ -330,11 +330,10 @@ static uint32_t layer_leds(void)
 {
     uint32_t k, m = 0, blink = ((fm1_ms / 250u) & 1u) == 0u, l = ui.layer;
     uint32_t mask = scale_mask(TSEL), root = (uint32_t)TSEL->p[P_ROOT] % 12u;
+    if (l == LAYER_FX) return punch_selector_leds(punch.req);
     for (k = 0; k < 27u; k++) {
         uint32_t p = key_place(k), b = (uint32_t)key_black(k), on = 0, e;
-        if (l == LAYER_FX) {
-            on = punch.req == punch_fx_of_key(k) || blink;
-        } else if (l == LAYER_GLO) {
+        if (l == LAYER_GLO) {
             uint32_t t = trk_group() + p;
             on = b ? t < trk_n() && glo_sounding(t) :
                  p < NPART ? t < trk_n() && (((lys.solo >> k) & 1u) | blink) : p == 4u ? blink :
@@ -475,6 +474,7 @@ static uint16_t punch_fam_col(uint32_t f)               /* (as the effects' fami
     return f == PF_DIRT ? p->knob[0][2] : f == PF_SPACE ? p->knob[3][2] : f == PF_MIX ? T_MID :
            p->trk[f == PF_REPEAT ? 0 : f == PF_TAPE ? 1 : f == PF_FILTER ? 2 : 3];
 }
+static uint16_t punch_color(uint32_t fx) { return punch_fam_col(PUNCH_FAM[fx]); }
 static int32_t pk_sin(int32_t turns) { return sine_i((uint32_t)turns << 16); }   /* turns Q16 */
 static int32_t pk_pow(int32_t u, uint32_t n) { int32_t v = 65536; while (n--) v = (int32_t)((int64_t)v * u >> 16); return v; }
 /* fx's picture in the box x0, y0, w, h: c its colour, gh the dim one (what it was) */
@@ -634,15 +634,15 @@ static void punch_pic(int32_t fx, int32_t x0, int32_t y0, int32_t w, int32_t h, 
         }
     }
 }
-static void punch_key_draw(uint32_t key, int32_t y, uint32_t nomem)
+static void punch_key_draw(uint32_t key, int32_t y, uint32_t nomem, int32_t selected, int32_t held)
 {
     int32_t fx = punch_fx_of_key(key), black = key_black(key), x, w = black ? 10 : 14, hk = black ? 37 : 62;
     uint16_t c = punch_fam_col(PUNCH_FAM[fx]), f, o = 0;
     int dry = nomem && punch_needs_ring(fx);
     x = black ? (int32_t)(key_place(key - 1u) + 1u) * 15 - 5 : (int32_t)key_place(key) * 15;
-    if (fx == punch.req) f = dry ? T_LIFT : T_ACCENT, o = dry ? T_TEXT : 0;
+    if (fx == held) f = dry ? T_LIFT : T_ACCENT, o = dry ? T_TEXT : 0;
     else if (dry) f = ux_mix(T_BG, T_DIM, black ? 42 : 26);
-    else if (punch.req < 0 && fx == (int32_t)ui.punch_view) f = c;
+    else if (held < 0 && fx == selected) f = c;
     else f = ux_mix(T_BG, c, black ? 58 : 30);
     if (black)
         cv_rect(x - 2, y - 2, w + 4, hk + 4, T_BG);
@@ -653,27 +653,34 @@ static void punch_key_draw(uint32_t key, int32_t y, uint32_t nomem)
         cv_rrect(x, y, w, hk, black ? 2 : 3, f, T_BG);
     }
 }
+/* The live layer and SONG use the same keyboard, effect name and illustration.
+ * A shorter viewport reserves space for SONG's placement controls. */
+static void punch_selector_draw(int32_t fx, int32_t held, uint32_t nomem, uint32_t height)
+{
+    uint32_t f = PUNCH_FAM[fx], k, dry = nomem && punch_needs_ring(fx) && held >= 0;
+    uint16_t c = dry ? T_DIM : punch_fam_col(f);
+    int compact = height < 240u - H_HEAD;
+    for (uint32_t band = 0; band < height; band += CV_MAX / 240u) {
+        cv_begin_band(240, height, T_BG, band);
+        for (k = 0; k < 27u; k++)                       /* the white keys, then the black ones over them */
+            if (!key_black(k)) punch_key_draw(k, 4, nomem, fx, held);
+        for (k = 0; k < 27u; k++)
+            if (key_black(k)) punch_key_draw(k, 4, nomem, fx, held);
+        cv_text_on(12, ty_y(compact ? 76 : 83, TY_LB), TY_LB, PUNCH_FAM_NAME[f], c, T_BG);
+        cv_text_on(12, ty_y(compact ? 98 : 110, TY_VL), TY_VL, PUNCH_NAME[fx], held >= 0 ? c : T_TEXT, T_BG);
+        punch_pic(fx, 12, compact ? 116 : fx <= PX_STUT || fx == PX_LOOP8T ? 134 : 132, 216,
+                  compact ? (int32_t)height - 120 : fx <= PX_STUT || fx == PX_LOOP8T ? 54 : 66,
+                  held >= 0 ? c : ux_mix(T_BG, c, 55), ux_mix(T_BG, c, held >= 0 ? 38 : 25));
+        cv_blit_band(0, H_HEAD);
+    }
+}
 static void draw_punch_layer(void)
 {
     int32_t held = punch.req, fx = held >= 0 ? held : (int32_t)ui.punch_view % (int32_t)PUNCH_NFX;
     uint32_t nomem = punch_memory_failed, sig = (uint32_t)fx * 131u + (uint32_t)(held + 1) * 7919u + nomem * 40503u + ux.gen;
-    uint32_t f = PUNCH_FAM[fx], k, dry = nomem && punch_needs_ring(fx) && held >= 0;
-    uint16_t c = dry ? T_DIM : punch_fam_col(f);
-    if (!ui.force && ui.layer_sig == sig)
-        return;
+    if (!ui.force && ui.layer_sig == sig) return;
     ui.layer_sig = sig;
-    for (uint32_t band = 0; band < 240u - H_HEAD; band += CV_MAX / 240u) {
-        cv_begin_band(240, 240 - H_HEAD, T_BG, band);
-        for (k = 0; k < 27u; k++)                       /* the white keys, then the black ones over them */
-            if (!key_black(k)) punch_key_draw(k, 4, nomem);
-        for (k = 0; k < 27u; k++)
-            if (key_black(k)) punch_key_draw(k, 4, nomem);
-        cv_text_on(12, ty_y(83, TY_LB), TY_LB, PUNCH_FAM_NAME[f], c, T_BG);
-        cv_text_on(12, ty_y(110, TY_VL), TY_VL, PUNCH_NAME[fx], held >= 0 ? c : T_TEXT, T_BG);
-        punch_pic(fx, 12, fx <= PX_STUT || fx == PX_LOOP8T ? 134 : 132, 216, fx <= PX_STUT || fx == PX_LOOP8T ? 54 : 66,
-                  held >= 0 ? c : ux_mix(T_BG, c, 55), ux_mix(T_BG, c, held >= 0 ? 38 : 25));
-        cv_blit_band(0, H_HEAD);
-    }
+    punch_selector_draw(fx, held, nomem, 240u - H_HEAD);
 }
 static void draw_layer(void)
 {

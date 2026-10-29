@@ -168,7 +168,8 @@
   .end-icon { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; margin: 0 0 22px; }
   .end-icon svg.i { width: 32px; height: 32px; stroke-width: 2; }
   #run[data-state="done"] .end-icon { background: var(--ok-bg); color: var(--ok); }
-  #run[data-state="paused"] .end-icon, #run[data-state="restart"] .end-icon, #run[data-state="partial"] .end-icon { background: var(--warn-bg); color: var(--warn); }
+  #run[data-state="paused"] .end-icon, #run[data-state="restart"] .end-icon, #run[data-state="partial"] .end-icon,
+  #run[data-state="setup"] .end-icon { background: var(--warn-bg); color: var(--warn); }
   #run[data-state="safe"] .end-icon { background: var(--chip); color: var(--dim); }
   .end h2 { margin: 0 0 10px; font-size: clamp(28px, 6vw, 36px); line-height: 1.1; letter-spacing: -.02em; }
   .end > p { margin: 0 0 14px; color: var(--dim); font-size: 17px; }

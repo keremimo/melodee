@@ -66,6 +66,7 @@ Melodee's additions and modifications are credited separately in the source file
 | Sequential Prophet-5/10 factory programs v1.03 (Sequential, 2025; <https://sequential.com/support/download/prophet-5-10-sounds/>): the 200 programs of `P5_Factory_Programs_USER_v1.03.syx`, unchanged native data, as PROPHET's factory presets and its default native user collection. Included as sound data for Prophet-5 compatibility; the rights stay with Sequential. See `assets/prophet5-factory/README.md` | Sequential's (no licence granted) | `assets/prophet5-factory/prophet5-v1.03.syx`, `tools/gen_prophet_factory.py` |
 | klattsch by Tony Gies (<https://github.com/tgies/klattsch>): design reference for the VOICE engine; no code copied. Formant data from Klatt (1980) / Hillenbrand et al. (1995) | MIT (klattsch) | credit only |
 | JieLi AC79 SDK by JieLi Technology: three external files go into every `.fwsc` package; the optional RAM recovery helper is in `assets/recovery/` | Apache-2.0 | `LICENSES/Apache-2.0.txt` |
+| JieLi AC79 SDK's radio calibration (`wl_rf_common.a`, Copyright (c) 2024-2026 Zhuhai Jieli Technology Co., Ltd.), rewritten in C by Charles Vestal for felucca-bsp: the VCO bank scan and the RX filter, TX LO and RX DC trims run when no stored calibration exists; the file's header states the changes (Apache-2.0 section 4(b)) | Apache-2.0 | `firmware/hal/fm1_rf_cal.h`, `LICENSES/Apache-2.0.txt` |
 
 On the device, HOME held > ABOUT opens the information screen; turning PRESETS scrolls on into
 CREDITS, a short list of these authors, licences and source URLs.
@@ -128,4 +129,8 @@ by those owners, nor by Hügelton Instruments.
 
 ## Radio
 
-Melodee never enables the Bluetooth / Wi-Fi radio of the hardware.
+Bluetooth MIDI uses the pinned Optimist sources and retained notices described
+in `docs/BLE_MIDI.md`. When no stored radio calibration exists, the firmware runs
+JieLi's AC79 SDK calibration rewritten in C (`firmware/hal/fm1_rf_cal.h`,
+Apache-2.0, credited above). The application does not link the SDK RF library.
+The SDK-specific proprietary binary from FM1 Open is not included.

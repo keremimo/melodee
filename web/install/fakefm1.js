@@ -9,8 +9,13 @@
 // m-bootloader's installer instead, step 1 restarts into the same firmware. The device tells the two packages
 // apart by their first bytes, as the real one reads their headers. Nothing is written anywhere.
 //
-//   fakeAccess({ images, identity, after, state, interruptAt, stride, timers }) -> { access, device }
-//     images       { firmware, boot }: the logical images the page serves (boot optional)
+// Once it runs the package's firmware it also answers the editor's resource command (82, firmware/src/editor_res.c).
+//
+//   fakeAccess({ images, identity, after, state, interruptAt, stride, timers, resInstalled, resRefuse }) -> { access, device }
+//     images       { firmware, boot, res }: the logical images the page serves (boot optional), and the resource
+//                  region file the firmware wants (res optional: without it command 82 goes unanswered)
+//     resInstalled the region is already in place
+//     resRefuse    begin's rc (4 busy, 3 no room), once
 //     identity     what the running firmware reports ("FM-1_016": M-VAVE's own)
 //     after        what it reports after a write (the package's identity)
 //     state        "app" (default) or "loader" (an install was interrupted: the device waits in update mode)
@@ -19,6 +24,7 @@
 //     timers       { set, clear }: the device's own clock (the tests throttle the page's, not the device's)
 
 import { pack7, unpack7 } from "../fm1ota.js";
+import { bkUnpack } from "../fm1backup.js";
 
 const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
 const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
@@ -83,6 +89,7 @@ class Device {
     this.log = [];                            // what the device did, in words
     this.reply = null;                        // the pending read's resolver
     this.busy = false;
+    this.res = this.images.res ? { region: this.images.res, installed: !!o.resInstalled, refuse: o.resRefuse || 0, got: null } : null;
     this.input = new Port(this, "Saadet FM-1", "input");
     this.output = new Port(this, "Saadet FM-1", "output");
   }
@@ -98,6 +105,7 @@ class Device {
     if (!this.online) return;
     if (same(bytes, HS_QUERY)) { this.emit(identityFrame(this.text)); return; }
     if (same(bytes, UPGRADE)) { if (!this.busy) this.session(); return; }
+    if (bytes[1] === 0x7D && bytes[2] === 0x46 && bytes[3] === 0x4C) { this.editor(bytes[4], bytes.slice(5, -1)); return; }
     if (this.reply && bytes[0] === 0xF0) {
       const r = parseReply(bytes);
       if (r) { const f = this.reply; this.reply = null; f(r); }
@@ -186,6 +194,31 @@ class Device {
     const ok = await this.read(addr, 8);
     if (!ok) this.log.push("no success answer");
     return !!ok;
+  }
+
+  // the resource command, as editor_res.c: [0] status, [1] begin, [2 off x3, packed bytes] write, [3] commit, each
+  // answered with rc, installed, the wanted length and CRC-32 (5 x 7 bits each). Commit compares what arrived with
+  // the region's payload (the real one checks the CRC-32 it reads back).
+  editor(cmd, a) {
+    const r = this.res;
+    if (cmd !== 82 || !r || this.state !== "app" || this.identity !== this.after) return;
+    const head = new DataView(r.region.buffer, r.region.byteOffset, 32), len = head.getUint32(4, true), crc = head.getUint32(8, true);
+    let rc = 1;
+    if (a.length === 1 && a[0] === 0) rc = 0;
+    else if (a.length === 1 && a[0] === 1) {
+      rc = r.refuse; r.refuse = 0;
+      if (!rc) { r.installed = false; r.got = new Uint8Array(len).fill(0xFF); }
+    } else if (a.length > 4 && a[0] === 2 && r.got) {
+      const off = a[1] | a[2] << 7 | a[3] << 14, n = a.length - 4, data = bkUnpack(a.slice(4), n - Math.ceil(n / 8));
+      if (off + data.length <= len) { r.got.set(data, off); rc = 0; }
+    } else if (a.length === 1 && a[0] === 3 && r.got) {
+      r.installed = r.got.every((b, i) => b === r.region[32 + i]);
+      r.got = null;
+      rc = r.installed ? 0 : 7;
+      this.log.push(r.installed ? "resources installed" : "resources check failed");
+    }
+    const x7 = (v) => [0, 7, 14, 21, 28].map((s) => (v >>> s) & 127);
+    this.emit([0xF0, 0x7D, 0x46, 0x4C, 82, rc, r.installed ? 1 : 0, ...x7(len), ...x7(crc), 0xF7]);
   }
 }
 

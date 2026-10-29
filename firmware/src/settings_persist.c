@@ -29,16 +29,20 @@ _Static_assert(sizeof(persist_t) == 604u, "the record's layout: new settings tak
 static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KEPT (glo_restore, glo_poll) */
 #define RECORD_PREF_TAG 0x52500000u /* RP, high half of the old zoom word */
 #define A4_TAG 0x41340000u                          /* "A4": old spare contents are not tuning */
+#ifndef PROJ_SLOTS
+#define PROJ_SLOTS 32u                              /* (core.h) */
+#endif
 #define AUTOSAVE_OFF_TAG 0xA1u                     /* CZ row byte 28: only this tag disables autosave */
 #define WORK_BUDGET_TAG 0x57420000u /* WB: high bits of usb_off; low two bits retain USB mode */
 /* GLO > WEIGHTS in favorites.c row 8 bytes 8..15: 'W', version 1, the five points (0 AUTO, 1..15), bit 0 of the
  * last byte SAFETY OFF. Untagged bytes default to OFF; explicit ON is tagged too. Defaults store zeros. */
 #define VOICE_PREF_ROW 8u
 #define VOICE_PREF_BYTE 8u
-/* Retired DIGITAL row bytes 24..27: FQ, version 1, quality 1..2.
- * Untagged/unknown records keep Classic; no settings/project layout change. */
-#define FX_PREF_ROW 1u
-#define FX_PREF_BYTE 24u
+/* Retired DIGITAL row bytes 24..27 (FX RATE's FQ tag until 1.2): 'C', 'K', version 1, CLICK LEVEL 0..100 %.
+ * Untagged records take the old LOW/MID/HIGH bits of the zoom word (6/12/25 %, as heard at the default MASTER), which stay written
+ * (nearest) for older builds. No settings/project layout change. */
+#define CLICK_PREF_ROW 1u
+#define CLICK_PREF_BYTE 24u
 /* Retired DIGITAL row bytes 20..23: 'M', 'K', profile, encoder mode.
  * Untagged/unknown records keep panel MIDI OFF and the PER5 layout unchanged. */
 #define MIDI_KNOB_PREF_BYTE 20u
@@ -59,7 +63,7 @@ static int settings_legacy_valid(const persist_t *p)
         p->panel.magic == PANEL_MAGIC && p->lowcut <= 2u && (p->zoom & 0xFFu) <= 1u &&
         (p->zoom <= 0xFFu || (p->zoom & 0xFFFF0000u) == RECORD_PREF_TAG) &&
         hold_stored_ok(p->bold) && p->favorites.filter <= 1u && usb_ok &&
-        p->ext.boot <= 4u && p->ext.drumch <= 17u && p->ext.lights <= LIGHTS_N;
+        p->ext.boot <= PROJ_SLOTS && p->ext.drumch <= 17u && p->ext.lights <= LIGHTS_N;
 }
 
 /* Normalize in place; 1 = read, 0 = invalid. */
@@ -70,7 +74,7 @@ static int settings_import(persist_t *p, int n)
     settings_budget=(int16_t)(((work&0xffff0000u)==WORK_BUDGET_TAG && points>=8u && points<=32u)?points:VOICE_BUDGET_DEFAULT);
     uint32_t mode = work <= 3u || (work & 0xFFFF00FCu) == WORK_BUDGET_TAG ? work & 3u : 0u;
     p->ext.usb_off=mode|(settings_budget!=VOICE_BUDGET_DEFAULT?WORK_BUDGET_TAG|((uint32_t)settings_budget<<8):0u);
-    if (p->ext.boot > 4u)
+    if (p->ext.boot > PROJ_SLOTS)
         p->ext.boot = 0;
     settings_boot = (uint8_t)p->ext.boot;
     if (p->ext.drumch > 17u)
@@ -104,8 +108,12 @@ static int settings_import(persist_t *p, int n)
     settings.zoom = (p->zoom & 0xFFu) == 1u;
     uint32_t rp = (p->zoom & 0xFFFF0000u) == RECORD_PREF_TAG ? (p->zoom >> 8) & 0xFFu : 0u;
     settings_click = (uint8_t)((rp & 3u) < 3u ? rp & 3u : 0u);
-    uint32_t level = (rp >> 2) & 3u;
-    settings_click_level = (uint8_t)(level == 1u ? 0u : level == 2u ? 2u : 1u);
+    {
+        const uint8_t *q = p->favorites.factory[CLICK_PREF_ROW] + CLICK_PREF_BYTE;
+        uint32_t level = (rp >> 2) & 3u;
+        settings_click_level = q[0] == 'C' && q[1] == 'K' && q[2] == 1u && q[3] <= 100u ? q[3] :
+                               (uint8_t)(level == 1u ? 6u : level == 2u ? 25u : CLICK_LEVEL_DEFAULT);
+    }
     settings_countin = (uint8_t)(((rp >> 4) & 3u) < 3u ? (rp >> 4) & 3u : 0u);
     settings_preview = (uint8_t)((rp >> 6) & 1u);
     settings_chord_add = (uint8_t)((rp >> 7) & 1u);
@@ -133,7 +141,7 @@ static void settings_export(persist_t *p)
     p->magic = PERSIST_MAGIC;
     p->palette = palette_to_stored(settings.palette);
     p->lowcut = 0;
-    uint32_t rp = settings_click % 3u | (settings_click_level == 0u ? 1u : settings_click_level == 2u ? 2u : 0u) << 2 |
+    uint32_t rp = settings_click % 3u | (settings_click_level < 9u ? 1u : settings_click_level >= 19u ? 2u : 0u) << 2 |
                   (settings_countin % 3u) << 4 | (settings_preview != 0u) << 6 | (settings_chord_add != 0u) << 7;
     p->zoom = (settings.zoom & 0xFFu) | (rp ? RECORD_PREF_TAG | rp << 8 : 0u);
     p->panel = panel;
@@ -151,8 +159,11 @@ static void settings_export(persist_t *p)
         }
     }
     {
-        uint8_t *q = p->favorites.factory[FX_PREF_ROW] + FX_PREF_BYTE;
+        uint8_t *q = p->favorites.factory[CLICK_PREF_ROW] + CLICK_PREF_BYTE;
         memset(q, 0, 4);
+        if (settings_click_level != CLICK_LEVEL_DEFAULT) {
+            q[0] = 'C'; q[1] = 'K'; q[2] = 1u; q[3] = settings_click_level > 100u ? 100u : settings_click_level;
+        }
     }
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;

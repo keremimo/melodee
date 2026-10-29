@@ -427,6 +427,32 @@ choices. Copy retains four-note chords, ties, drum data, chance, timing and moti
 bank requires STOP; SONG blocks bank changes/copies. All pattern IDs on the wire are zero-based.
 
 BANK_SONG switches all four tracks at track 1's loop boundary, preserves the current sounds and mix,
+
+Bank capability tag `50 02 08 40` advertises 64 sections and REST bank id 8. Version 1 remains 16 sections,
+bank ids 0..7. BANK_SONG op 1 accepts up to 64 rows on version 2; its reply has the same five bytes per row.
+Op 2 optionally accepts a zero-based start row (`02 row`); omitted means row 0. Invalid start rows are rejected.
+Playback starts at step zero with that section's complete repeat count and continues to the final section.
+A resting track suppresses grid notes, recorded notes and motion; track 1 rests and continuations use a four-beat bar per repeat.
+Existing FUN and FBKK/FBKL codecs retain their fixed 16-row layout. Songs requiring longer arrangements or rests
+use FBKM, a new sparse bank container of the same extent: FBKL fixed fields, then count + three zero bytes,
+64 × (repeat, eight bank ids), then sparse patterns. Active FUN metadata retains the first 16 sections, with rests
+mapped to bank zero in that compatibility prefix. FBKM validators check both representations before publication.
+Capability tag `50 03 08 40` additionally supports continuation id 9. It extends the preceding pattern block
+without restarting sequence phase, held notes, recorded playback or motion at the section boundary. A continuation
+cannot start a track or follow REST. FBKM stores it in the same assignment byte; its legacy prefix maps it to zero.
+Older firmware does not read FBKM. Sparse saves retain the existing PROJECT FULL capacity check and never truncate
+patterns to make a song fit. Normal songs continue to save as FBKK/FBKL.
+
+Songs with timed master punch FX use **FBKN** (`0x4e4b4246`), with the same record extent and FBKM
+arrangement prefix. Immediately after that prefix, before the sparse steps, are 64 sections × 4 punches ×
+3 bytes: effect (0 = disabled, 1–27 = SLOOP effect ID + 1), zero-based start step, and duration in conductor
+steps. A disabled event has three zero bytes. Enabled events require start < 64 and duration 1–(64 − start);
+events past the section count must be disabled. The FX are section-local and repeat with the section.
+All event fields are validated before restoring a project. Older firmware rejects FBKN; saves without punches
+continue to use FBKK/FBKL/FBKM as appropriate. Backup transfers preserve FBKN unchanged. Timed punch editing
+is currently available on the device through SONG > OCT+ > Punch FX; the song protocol operations still
+describe note-pattern assignments, and replacing the arrangement clears its punch lane.
+
 pauses recording and sequence edits, and restores the original bank selections on STOP or the song's end.
 Each bank has LEN/DIV/SWING/GATE. Automation has a project-wide limit of 64 events; events belong to a
 track and bank, while the ON switch remains track-wide. WATCH sends RELOAD when a bank changes.
@@ -663,8 +689,8 @@ from an experimental firmware is not a SONG or preference capability.
 Command 33 remains SONG. Older editors can ignore the additional INFO bytes.
 
 `uiCaps`: bit 0 palette, bit 1 font weight (retired: firmware since the 1.0 UI has one
-weight and no longer sets it), bit 2 reserved for a MIDI monitor, bit 3 favorites, bit 4 recording preferences, bit 5 layer/screen preferences. This build
-advertises 57. Layer preference 9 is retired; screen preference 10 remains.
+weight and no longer sets it), bit 2 reserved for a MIDI monitor, bit 3 favorites, bit 4 recording preferences, bit 5 layer/screen preferences, bit 6 click level in percent. This build
+advertises 121. Layer preference 9 is retired; screen preference 10 remains.
 
 | cmd | Request args | Reply args |
 | --- | --- | --- |
@@ -677,8 +703,8 @@ advertises 57. Layer preference 9 is retired; screen preference 10 remains.
 UI_SET ids: 0 palette (0..count-1, the order of UI_PALETTES: MONO GREEN AMBER ICE VIOLET ROSE PAPER
 HI-CON), 1 font (retired: rc 2), 2 reserved, 3 preset filter (0 all, 1 favorites). Unsupported state
 fields are 127. With capability bit 4, UI_STATE appends five bytes after its
-13-byte prefix. UI_SET ids 4 click (0 OFF, 1 REC, 2 ON), 5 click level (0 LOW,
-1 MID, 2 HIGH), 6 count-in (0 OFF, 1 BAR, 2 BARS), 7 note preview (0/1), and
+13-byte prefix. UI_SET ids 4 click (0 OFF, 1 REC, 2 ON), 5 click level (with bit 6:
+0..100 %; without it: 0 LOW, 1 MID, 2 HIGH), 6 count-in (0 OFF, 1 BAR, 2 BARS), 7 note preview (0/1), and
 8 chord entry (0 HOLD, 1 ADD) all share capability bit 4. Older clients may
 ignore the suffix; newer clients require both the bit and the full suffix.
 Both u28 signatures are four least-significant-first 7-bit bytes; compare them
@@ -1292,3 +1318,55 @@ The division is the complete first-to-last sweep, with an immediate first tone
 and evenly spaced remaining tones. Input release and STOP cancel pending tones;
 MIDI sustain follows existing ownership. ARP bypasses strumming. Live recording
 captures the staggered onsets; STEP entry continues to write a complete chord.
+
+
+Bank capability `50 04 08 40` adds song looping. BANK_SONG op 4 takes `[4, loop]` with loop 0 or 1;
+it is refused while armed/running. Version 4 replies append the loop byte after all rows (older replies omit it).
+Op 1 preserves the existing loop choice. FBKM byte 1 of its arrangement extension stores the loop flag;
+bytes 2 and 3 remain zero. A loop returns to section 1, preserves fractional boundary time, and PLAY still stops.
+
+Songs with local preset copies use **FBKO** (`0x4f4b4246`). The FBKM song and FBKN
+punch tails are both present, followed by a sound extension: count (1–64), parameter
+count, little-endian sound-record size, then 64 × 8 one-byte sound IDs (0 means the
+normal track sound), then `count` immutable `song_sound_t` records. IDs are compacted
+when saved. Records hold biased parameters, engine/preset/origin, FM6 operator mask,
+a terminated 16-byte name and a 156-byte native-patch union. The full extension and
+its references validate before restore; insufficient memory refuses the load before
+replacing the current project. Sparse pattern bytes follow the extension. The bank
+extent and checksum stay unchanged. Earlier containers load without overrides, and
+saves without overrides retain their earlier container. Backup transfers preserve
+FBKO unchanged. Preset assignment editing currently uses the device's SONG browser.
+
+SONG preset selection applies one snapshot to the entire selected block, from
+its start through all HOLD continuations. Set/remove and block resizing update
+all covered sound IDs atomically. Earlier FBKO copies that only named the block's
+first section inherit that sound through empty HOLD cells. Other occurrences of
+the same pattern retain independent assignments. The FBKO byte layout is unchanged.
+
+
+Projects with Pattern preset overrides use **FBKQ** (`0x514b4246`). This extends
+FBKP's 16-pattern layout: the song and punch extensions are mandatory, song byte
+2 is 1, and the existing compacted sound extension is followed by `NTRK × NPAT`
+one-byte Pattern sound IDs, in track-major order, before the sparse step banks.
+Zero inherits the default track sound. MIDI-only tracks' banks 8–15 must be zero;
+nonzero assignments on MIDI-only tracks must reference MIDI sounds. At least one
+Pattern assignment is required. Song and Pattern IDs share the same immutable
+sound pool (64 snapshots maximum); saves include only referenced snapshots and
+validate all IDs, engine constraints, snapshots and bounds before restore.
+Projects without Pattern overrides still save as FBKP (or the existing dense
+legacy fallback). Earlier formats load with no Pattern overrides. Firmware that
+predates FBKQ cannot load projects saved with Pattern overrides.
+
+Playback resolves **Song override > Pattern override > Default track sound**.
+HOLD sections inherit the originating block's Pattern assignment when no Song
+sound is assigned; rests have no Pattern fallback. Manual pattern playback uses
+the same Pattern/default resolution, including queued loop-boundary switches.
+STOP restores the default sound. The stopped foreground reserves the baseline
+buffer before publishing/editing/importing assignments; playback starts and
+boundaries copy bounded RAM without allocating or reading the preset library.
+PATTERNS → Set preset/Remove preset edits the selected audio track's active bank.
+Browser acceptance stores an independent snapshot, cancellation restores the
+track, and assignment edits preserve notes and automation. Copy carries the
+assignment; Delete removes it with the pattern and supports the existing undo.
+The assignment map participates in project hashes, compact storage, backups and
+track removal. No new editor wire command is introduced.

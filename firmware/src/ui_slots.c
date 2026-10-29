@@ -47,8 +47,8 @@ static int slot_row(uint32_t k, uint32_t r, char *tag, char *nm)
             str_cpy(nm, "New song", 16);
             return 2;
         }
-        tag[0] = (char)(r + 1u == (uint32_t)PROJ_TMPL ? 'T' : 'A' + r);
-        tag[1] = 0;
+        if (r + 1u == (uint32_t)PROJ_TMPL) { tag[0] = 'T'; tag[1] = 0; }
+        else { tag[0] = (char)('0' + (r + 1u) / 10u); tag[1] = (char)('0' + (r + 1u) % 10u); tag[2] = 0; }
         used = r + 1u == (uint32_t)PROJ_TMPL ? template_used() || template_old() : graph_project_used(r);
         str_cpy(nm, r + 1u == (uint32_t)PROJ_TMPL ? (template_old() ? "OLD FORMAT" : "Template") : used && graph_project_name(r)[0] ? graph_project_name(r)
                     : used ? "Saved" : "--", 16);
@@ -64,9 +64,24 @@ static int slot_row(uint32_t k, uint32_t r, char *tag, char *nm)
 }
 static void slot_detail(uint32_t k, uint32_t r, int used, char *b)   /* the card's second line */
 {
-    if (k == SK_PROJECT)
+    if (k == SK_PROJECT) {
+        int pct = project_free_pct();
         str_cpy(b, used == 2 ? "Starts empty" : r + 1u == (uint32_t)PROJ_TMPL ? (used ? "Saved" : "Empty")
                    : used ? "Saved" : "Empty", 24);
+        if (used != 2 && r + 1u != (uint32_t)PROJ_TMPL && pct >= 0) {   /* the shared pool's room left, in KB */
+            uint32_t n = str_len(b);
+            char *e = b + n;
+            if (!pct) str_cpy(e, ", full", 24 - n);
+            else {
+                *e++ = ','; *e++ = ' ';
+                if (pct > 999) pct = 999;
+                if (pct > 99) *e++ = (char)('0' + pct / 100);
+                if (pct > 9) *e++ = (char)('0' + pct / 10 % 10);
+                *e++ = (char)('0' + pct % 10);
+                str_cpy(e, " KB free", 9);
+            }
+        }
+    }
     else if (!used)
         str_cpy(b, "Empty", 24);
     else
@@ -126,7 +141,7 @@ static void slot_enter(void)
     if(k==SK_USER && sx_import.count){sysex_import_name(nm);sheet_open("Import SysEx",nm,SHEET_IMPORT,NELEM(SHEET_IMPORT));return;}
     if(k!=SK_PROJECT && bulk.on){sheet_open("Selected presets","USB SysEx / erase",SHEET_BULK,NELEM(SHEET_BULK));return;}
     used = slot_row(k, r, tag, nm);
-    if (k == SK_PROJECT && r < 4u) {                    /* (the name as stored now, not the list's cached one) */
+    if (k == SK_PROJECT && r < PROJ_SLOTS) {            /* (the name as stored now, not the list's cached one) */
         used = project_name(r, nm);
         if (used && !nm[0])
             str_cpy(nm, "Saved", 16);
@@ -163,7 +178,7 @@ static void slot_draw(void)
     uint32_t k = slot_kind(), n = slot_count(k), cur = slot_cur(k), boot = k == SK_PROJECT ? slot_boot() : 0u;
     uint32_t vis = 1u + (uint32_t)((PV_SOUND_Y - 2 - SL_Y0 - SL_CARD) / SL_ROW), r, sig;
     const aafont_t *tf = TY_TX, *lf = TY_LB;
-    int32_t y, nx = 12 + text_w(tf, k == SK_PROJECT ? "W" : "F000") + 10;   /* the names after the widest tag */
+    int32_t y, nx = 12 + text_w(tf, k == SK_PROJECT ? "88" : "F000") + 10;   /* the names after the widest tag */
     char tag[6], nm[16];
     if (ui.force) {
         lcd_fill(0, H_HEAD, 240, PV_SOUND_Y - H_HEAD, T_BG);

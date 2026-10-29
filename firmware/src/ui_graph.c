@@ -209,7 +209,7 @@ static void notes_follow(const track_t *t)
         if (!recording_active(t, i)) continue;
         uint32_t at = recording_raw_on(t, &recording[i], period);
         if (at < a || at >= b) continue;
-        int32_t note = recording[i].note;
+        int32_t note = recorded_note(&recording[i]);
         if (note < lo) lo = note;
         if (note > hi) hi = note;
     }
@@ -227,7 +227,7 @@ static void notes_follow(const track_t *t)
     int32_t center = hi < 0 ? last_note : (lo + hi + 1) / 2;
     if (hi - lo >= PR_ROWS) {
         uint32_t at = notes_manual_start(t);
-        if (chosen < RECORD_MAX) center = recording[chosen].note;
+        if (chosen < RECORD_MAX) center = recorded_note(&recording[chosen]);
         else if (at < NSTEP && t->step[at].n) center = t->step[at].note[notes_manual_slot(&t->step[at])];
     }
     int32_t target = clamp(center - PR_ROWS / 2, 0, 128 - PR_ROWS);
@@ -243,12 +243,12 @@ static void notes_bar(const track_t *t, uint32_t i, uint32_t period, uint32_t a,
     recorded_note_t snapshot = recording_snapshot(i);
     const recorded_note_t *r = &snapshot;
     if (c == T_THEME)
-        c = PR_OCT_C(r->note);
+        c = PR_OCT_C(recorded_note(r));
     uint32_t loop = recording_loop(t, period), at = recording_raw_on(t, r, period);
     uint64_t gate = (uint64_t)r->duration * (1u << (recorded_exponent(r))) * period / RECORD_UNIT;
     if (!gate) gate = 1;
     if (gate > loop) gate = loop;
-    int32_t y = pr_row_y(r->note), bottom = PR_Y0 + PR_ROWS * PR_RH;
+    int32_t y = pr_row_y(recorded_note(r)), bottom = PR_Y0 + PR_ROWS * PR_RH;
     for (int32_t wrap = -1; wrap <= 0; wrap++) {
         int64_t start = (int64_t)at + (int64_t)wrap * loop, end = start + gate;
         if (end <= a || start >= b) continue;
@@ -727,25 +727,31 @@ static void graph_fm6(const track_t *t, uint16_t c)
     FM6_CHART_HOOK(FMH_END, alg, 0);
 }
 
-/* Save-bank validity is expensive (CRC/import). Refresh it once per redraw or
- * twice per second, rather than parsing four projects on every UI frame. */
-static char graph_pname[4][13];                       /* .. and the slots' names ("" none) */
-static uint32_t graph_pname_sig;
+/* The slots' names live in project.c's metadata (RAM, filled at boot and on each save); the redraw signature over
+ * all of them refreshes twice a second */
+static uint32_t graph_pname_sig, graph_pmask;
 static int graph_project_used(uint32_t slot)
 {
     static uint32_t ms, frame;
-    static uint8_t mask, ready;
+    static uint8_t ready;
     if (!ready || fm1_ms - ms >= 500u || (ui.force && frame != ui.frame)) {
-        uint32_t i; mask = 0;
-        for (i = 0; i < 4u; i++) mask |= (uint8_t)((project_name(i, graph_pname[i]) != 0) << i);
-        graph_pname_sig = fnv(2166136261u, graph_pname, sizeof graph_pname);
+        char b[13];
+        uint32_t h = 2166136261u;
+        graph_pmask = 0;
+        for (uint32_t i = 0; i < PROJ_SLOTS; i++) {
+            if (project_name(i, b)) graph_pmask |= 1u << i;
+            h = fnv(h, b, str_len(b) + 1u);
+        }
+        graph_pname_sig = h;
         ready = 1; ms = fm1_ms; frame = ui.frame;
     }
-    return (mask >> (slot & 3u)) & 1u;
+    return (int)((graph_pmask >> (slot % PROJ_SLOTS)) & 1u);
 }
 static const char *graph_project_name(uint32_t slot)  /* (after graph_project_used) */
 {
-    return graph_pname[slot & 3u];
+    static char b[13];
+    if (!project_name(slot % PROJ_SLOTS, b)) b[0] = 0;
+    return b;
 }
 
 /* play 0: without the playhead of NOTES and the drum grid (ui_pages.c sends it alone) */

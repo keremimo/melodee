@@ -152,7 +152,7 @@ Build options (environment; most use `0` or `1`; defaults in `firmware/src/build
 | `MELODEE_USB_AUDIO` | 1 | One duplex "Melodee" device: stereo playback and stereo master recording or optional four-track mono recording (16 / 24 bit, 44.1 kHz) |
 | `MELODEE_CDC` | 0 (1 without USB audio) | USB serial console; it shares EP2 / EP3 with USB audio, so `MELODEE_USB_AUDIO=0` |
 | `MELODEE_UART` | 1 | TRS MIDI IN |
-| `MELODEE_USB_HOST` | 1 | USB MIDI host: the menu's USB HOST makes the USB-C port the host of a class compliant controller, directly or behind a powered hub (`firmware/src/usb_host.c`). Not saved: every boot is a device |
+| `MELODEE_USB_HOST` | 1 | USB MIDI host: the menu's USB HOST makes the USB-C port the host of a class compliant controller, directly or behind a powered hub, two hub levels deep (`firmware/src/usb_host.c`). Not saved: every boot is a device |
 | `MELODEE_DUAL_CORE` | 1 | paired FM6/Prophet rendering on CPU1; target builds require `1` |
 | `MELODEE_CORE1_FALLBACK` | 1 | automatic recovery on one core; `0` halts for watchdog reset on CPU1 failure |
 | `MELODEE_SLICE` | 1 | the SLICE engine |
@@ -177,10 +177,12 @@ Switch it OFF to give the port back to the computer; the FM-1 never boots as a h
   the controller. Whether the FM-1's USB-C connector (its CC resistors) lets a USB-C hub treat it as a host is a
   property of the board, not of the firmware: an USB-C to USB-A OTG adapter or a hub with a USB-A downstream
   port is the safer first test.
-- **Supported:** full-speed devices with a MIDI 1.0 streaming interface (bulk or interrupt IN and/or OUT), alone or behind
-  one hub (the hub's ports are powered and each device is tried until one has MIDI). Channel messages and
+- **Supported:** full-speed devices with a MIDI 1.0 streaming interface (bulk or interrupt IN and/or OUT), alone, behind
+  a hub, or behind a hub on that hub's port (many hubs are two hub chips in one case, the second on the first's
+  last port). The hubs' ports are powered and each device is tried until one has MIDI. Channel messages and
   clock / start / continue / stop are passed on; SysEx from the controller is ignored by design.
-- **Idle detection:** an unsupported or unresponsive direct device is probed once per attachment; unplug/replug
+- **Idle detection:** a device that does not answer at all is reset up to five times (50 ms resets, 100 to 1600 ms
+  recovery: some hubs need 400 ms); then an unsupported or unresponsive direct device waits; unplug/replug
   or toggle HOST to try again. An idle hub stays configured and checks one port's connection-change status
   every 100 ms, probing only changed connections. Empty hubs and non-MIDI devices do not cause periodic bus
   resets or power-good waits. An unresponsive hub waits for root unplug/replug or a HOST toggle.
@@ -191,7 +193,7 @@ Switch it OFF to give the port back to the computer; the FM-1 never boots as a h
   new notes after reconnection. Connection loss releases USB input owners while retaining local keys and TRS
   owners. USB AUDIO/USB INPUT setting changes wait until HOST is off.
 - **Not supported:** SysEx/editor traffic to attached devices, device-specific LED protocols, USB MIDI 2.0,
-  low-speed devices, hubs behind hubs, hot-plugging a
+  low-speed devices, a third hub level, more than one hub on the first hub's ports at a time, hot-plugging a
   second controller while one runs (unplug and replug; a lost controller is found again by itself).
 - **Messages** (toast): USB MIDI READY, USB NO MIDI DEVICE, USB LOW SPEED, USB CONTROLLER LOST. On / off is the
   header's `HOST` tag (and the menu row), not a toast.
@@ -754,3 +756,13 @@ The row/stride/control layout follows the locally installed AC79 V1.2.1 SDK's
 `eq.c` and `asm/eq.h`, also described by
 [JieLi's EQ documentation](https://doc.zh-jieli.com/AC79/zh-cn/master/module_example/audio/EQ.html).
 Host register-model tests cannot establish physical audio quality or CPU savings.
+
+## Bluetooth MIDI
+
+The default build includes Optimist's bidirectional BLE MIDI stack, with
+peripheral and central roles. The radio starts OFF each boot. Settings >
+Bluetooth controls discovery, connection and pairings. `MELODEE_BLE=0 ./build.sh`
+builds a comparison without BLE. See [Bluetooth MIDI](docs/BLE_MIDI.md) for
+pairing, factory-calibration requirements, persistence, provenance and the
+hardware checks still required. The full host suite includes sanitizer BLE
+fixtures and rendered UI checks.

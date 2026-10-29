@@ -20,6 +20,9 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #if MELODEE_USB_HOST
        MI_USB_HOST,
 #endif
+#if MELODEE_BLE
+       MI_BLE,
+#endif
        MI_MIDI_KNOBS, MI_MIDI_MODE,
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
@@ -29,6 +32,9 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #endif
 #if MELODEE_USB_HOST
                                               "USB HOST",
+#endif
+#if MELODEE_BLE
+                                              "BLUETOOTH",
 #endif
                                               "MIDI KNOBS", "MIDI MODE",
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
@@ -67,6 +73,12 @@ static void draw_about_qr(int32_t x, int32_t y)
 enum { MC_TEXT, MC_TITLE, MC_URL };
 typedef struct { const char *text; uint8_t kind; } menu_credit_t;
 static const menu_credit_t MENU_CREDITS[] = {
+#if MELODEE_BLE
+    {"OPTIMIST / BLE MIDI", MC_TITLE},
+    {"w0ts/optimist contributors / GPL-3.0-only", MC_TEXT},
+    {"https://github.com/w0ts/optimist", MC_URL},
+    {"", MC_TEXT},
+#endif
     {"FELUCCA / UPSTREAM", MC_TITLE},                  /* Melodee is a modified Felucca */
     {"H\xFCgelton Instruments, Leo Kuroshita / GPL-3.0", MC_TEXT},
     {"https://github.com/hugelton/Felucca", MC_URL},
@@ -190,9 +202,17 @@ static int32_t menu_scroll_max(void)
 }
 
 /* the menu's header (0..24): its title, the REC mark, the way back */
+static void enc_drop(void);
+#if MELODEE_BLE
+#include "ui_ble.c"
+#endif
 static void menu_head(void)
 {
-    if (head_waiting()) { draw_head(); return; }
+    if (head_shared_status()
+#if MELODEE_BLE
+        || mb.on || ui.menu == 3
+#endif
+        ) { draw_head(); return; }
     cv_begin(240, MENU_HEAD, T_BG);
     cv_text(8, ty_y(MENU_HEAD / 2, TY_TX), TY_TX, ui.menu == 2 ? "About" : "Settings", T_THEME);
     if (ui.menu >= 2) {                               /* the way back at the right, the REC mark before it (then */
@@ -236,6 +256,9 @@ static void menu_words(char *d, const char *s, uint32_t n)
 }
 static void draw_menu(void)
 {
+#if MELODEE_BLE
+    if (ui.menu == 3) { draw_ble_page(); return; }
+#endif
     uint32_t i, pass, sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
                             settings_hold * 3511u + settings_lights * 6151u + settings_autosave * 15485863u +
                             settings_midi_knobs * 997u + settings_midi_knob_mode * 10007u +
@@ -245,7 +268,7 @@ static void draw_menu(void)
                             song.rec * 65537u + song.sel * 13u +
                             (ui.menu == 2 ? ui.menu_scroll * 48611u : 0u);
     if (!ui.force && sig == ui.menu_sig) {
-        if (head_waiting()) draw_head();
+        if (head_shared_status()) draw_head();
         return;
     }
     ui.menu_sig = sig;
@@ -285,7 +308,7 @@ static void draw_menu(void)
                 menu_words(w, MI_NAME[i], sizeof w);
                 if (i >= MI_CLICK && i <= MI_ADD)
                     value = i==MI_CLICK?(const char *const[]){"OFF","REC","ON"}[settings_click%3u]:
-                      i==MI_CLICK_LEVEL?(const char *const[]){"LOW","MID","HIGH"}[settings_click_level%3u]:
+                      i==MI_CLICK_LEVEL?(fmt_int(b,settings_click_level),str_cpy(b+str_len(b),"%",4),b):
                       i==MI_COUNTIN?(const char *const[]){"OFF","1 BAR","2 BARS"}[settings_countin%3u]:
                       i==MI_PREVIEW?(settings_preview?"ON":"OFF"):(settings_chord_add?"ADD":"HOLD");
                 if (i == MI_ACCEL) value = PREF_BITS & PREF_ACCEL_OFF ? "OFF" : "ON";
@@ -347,6 +370,9 @@ static void enc_drop(void)                             /* knob turns nobody take
 
 static void menu_close(void)
 {
+#if MELODEE_BLE
+    mel_ble_scan(0);
+#endif
     settings_save();                                   /* palette / panel table, if changed */
     ui.menu = 0;
     ui.force = 1;
@@ -356,6 +382,9 @@ static void menu_close(void)
 /* menu: PRESETS moves, OCT+ confirms, OCT- cancels (ABOUT -> list -> close) */
 static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_taps */
 {
+#if MELODEE_BLE
+    if (ui.menu == 3) { ble_page_input(oct); return; }
+#endif
     int32_t s;
     uint32_t ok = (oct >> 1) & 1u, back = oct & 1u;
     if (back) {
@@ -421,11 +450,16 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         settings_hold = (uint8_t)(s > 0 ? (v < 3u ? v + 1u : 3u) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % 4u);
         ok = 0;
     }
-    if((s || ok) && ui.menu==1 && ui.menu_sel>=MI_CLICK && ui.menu_sel<=MI_ADD){
+    if((s || ok) && ui.menu==1 && ui.menu_sel==MI_CLICK_LEVEL){   /* KNOB 1 steps 5 %, OCT+ steps and wraps */
+        int32_t v=(int32_t)settings_click_level;
+        settings_click_level=(uint8_t)(s?clamp(v+s*5,0,100):v+5>100?0:v+5);
+        ok=0;ui.force=1;
+    }
+    if((s || ok) && ui.menu==1 && ui.menu_sel>=MI_CLICK && ui.menu_sel<=MI_ADD && ui.menu_sel!=MI_CLICK_LEVEL){
         uint32_t id=ui.menu_sel-MI_CLICK,top=id<3?2:1;
-        uint32_t value=id==0?settings_click:id==1?settings_click_level:id==2?settings_countin:id==3?settings_preview:settings_chord_add;
+        uint32_t value=id==0?settings_click:id==2?settings_countin:id==3?settings_preview:settings_chord_add;
         value=s>0?(value<top?value+1:value):s<0?(value?value-1:0):(value+1)%(top+1);
-        if(id==0)settings_click=value;else if(id==1)settings_click_level=value;else if(id==2)settings_countin=value;else if(id==3)settings_preview=value;else settings_chord_add=value;
+        if(id==0)settings_click=value;else if(id==2)settings_countin=value;else if(id==3)settings_preview=value;else settings_chord_add=value;
         ok=0;ui.force=1;
     }
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_AUTOSAVE) {
@@ -449,8 +483,7 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         ui.force=1; ok=0;
     }
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_HOME_SEL) {   /* KNOB 1 steps, OCT+ steps and wraps */
-        uint32_t v = home_select();
-        HOME_SELECT = (uint8_t)(s > 0 ? (v + 1u < HS_N ? v + 1u : v) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % HS_N);
+        HOME_SELECT = (uint8_t)hs_step(home_select(), s);
         ui.force = 1; ok = 0;
     }
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_TRACKS) {     /* KNOB 1 right HIDE, left SHOW; OCT+ toggles */
@@ -459,8 +492,7 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         ui.force = 1; ok = 0;
     }
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_GLO_SEL) {    /* .. GLO SELECT the same */
-        uint32_t v = glo_select();
-        glo_select_set(s > 0 ? (v + 1u < HS_N ? v + 1u : v) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % HS_N);
+        glo_select_set(hs_step(glo_select(), s));
         ui.force = 1; ok = 0;
     }
     if ((s || ok) && ui.menu==1 && ui.menu_sel==MI_SCREEN) {
@@ -476,6 +508,9 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
             palette_set(settings.palette);
             ui.force = 1;
             break;
+#if MELODEE_BLE
+        case MI_BLE: ble_page_open(); break;
+#endif
         case MI_PANEL:
             panel_setup();
             ui.force = 1;

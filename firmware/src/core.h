@@ -48,10 +48,19 @@
 #ifndef NSTEP
 #define NSTEP 64
 #endif
+/* Patterns: 16 on each part (tracks 1..4), 8 on each MIDI-only track; arrays are NPAT wide. Records written before
+ * 16 kept 8 a track (NPAT_V1: pattern_store.c reads them with that layout). */
 #ifndef NPAT
-#define NPAT 8u
+#define NPAT 16u
 #endif
-_Static_assert(NSTEP <= 128u && NTRK * NPAT <= 64u, "recorded-note identifiers");
+#define NPAT_MIDI 8u
+#define PROJ_SLOTS 32u                   /* projects: 1..32, an empty one owns no flash (storage.c) */
+#ifndef RES_OK
+#define RES_OK() 1                               /* melodee.c: the resource region (res.c) is installed */
+#endif
+#define NPAT_V1 8u
+#define trk_npat(k) ((uint32_t)(k) < NPART ? NPAT : NPAT_MIDI)   /* the patterns track k has */
+_Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers (seven bits)");
 #define HALF_FRAMES 128          /* I2S half buffer: 2.9 ms at 44.1 kHz (a key waits 0..1 half, then plays 1 half later) */
 /* SLICE retired. Keep its stored engine number reserved. */
 #ifdef MELODEE_SLICE
@@ -433,12 +442,29 @@ static int step_acc_valid(const step_t *s) { return s->hit ? !(s->acc & ~s->hit)
 typedef struct { uint8_t place, param; int16_t value; } motion_event_t;
 typedef struct { uint8_t count, on, rsv[2]; motion_event_t event[MOTION_MAX]; } motion_store_t;
 _Static_assert(sizeof(motion_store_t) == 260u, "motion disk layout");
-#define CHAIN_ROWS 16u
+#define CHAIN_ROWS 64u
+#define CHAIN_LEGACY_ROWS 16u
+#define CHAIN_REST NPAT
+#define CHAIN_HOLD (NPAT + 1u)
+#define CHAIN_LOOP 0u /* chain_config_t.rsv index; persisted by FBKM */
+#define CHAIN_FX_EVENTS 4u
+#define CHAIN_SOUNDS 64u
+/* fx: zero is dry; 1..27 are the stable SLOOP key-effect IDs plus one.
+ * Timing is in conductor steps, repeated with each section repeat. */
+typedef struct { uint8_t fx, start, length; } chain_fx_t;
 typedef struct { uint8_t slot, repeat; } chain_row_t;
 typedef struct {
     uint8_t count, rsv[3];
     chain_row_t row[CHAIN_ROWS];
+    chain_fx_t fx[CHAIN_ROWS][CHAIN_FX_EVENTS];
+    uint8_t sound[CHAIN_ROWS][NTRK]; /* 0: normal track sound; otherwise immutable song snapshot + 1 */
 } chain_config_t;
+/* FUN records and raw snapshots retain their original arrangement extent. */
+typedef struct {
+    uint8_t count, rsv[3];
+    chain_row_t row[CHAIN_LEGACY_ROWS];
+} chain_legacy_t;
+_Static_assert(sizeof(chain_legacy_t) == 36u, "legacy song disk layout");
 
 typedef struct track {
     int16_t p[P_COUNT];

@@ -28,7 +28,7 @@ static void queues_and_positions(void)
     fixture();
     for(uint32_t i=0;i<RECORD_MAX;i++){
         uint32_t k=i%NPART,step=i/NPART%NSTEP;
-        recorded_note_t r={.on=60000,.duration=(uint16_t)(1000+i),.note=(uint8_t)(i%128u),.vel=100};
+        recorded_note_t r={.on=60000,.duration=(uint16_t)(1000+i),.note7=(uint8_t)(i%128u),.vel=100};
         recorded_set_owner(&r,k*NPAT+15u);recorded_set_step(&r,step,1,step==127u);
         recording_restore_note(&trk[k],i,r);
         assert(recording_valid(&recording[i]));
@@ -66,7 +66,7 @@ static void queues_and_positions(void)
 static void edits_and_cache(void)
 {
     fixture();
-    recorded_note_t r={.on=100,.duration=25000,.note=60,.vel=100};
+    recorded_note_t r={.on=100,.duration=25000,.note7=60,.vel=100};
     recorded_set_owner(&r,63);recorded_set_step(&r,127,0,0);recorded_set_exponent(&r,7);
     const uint32_t places[4]={127,64,95,96};
     for(uint32_t i=0;i<4;i++){
@@ -77,10 +77,10 @@ static void edits_and_cache(void)
         trk[3].seq_idx=(uint16_t)places[i];
         assert(recording_step_skip(&trk[3],&trk[3].step[places[i]],0)&1u);
     }
-    r=recording[2];r.note=61;recording_unlink(2);recording_restore_note(&trk[3],2,r);
+    r=recording[2];recorded_set_note(&r,61);recording_unlink(2);recording_restore_note(&trk[3],2,r);
     trk[3].seq_idx=95;
     assert(!(recording_step_skip(&trk[3],&trk[3].step[95],0)&1u));
-    assert(!recording_copy(&trk[3],15,0,1));recording_reindex();
+    assert(!recording_copy(&trk[3],15,&trk[3],0,1));recording_reindex();
     int found=0;
     for(uint32_t i=0;i<RECORD_MAX;i++)if(recording[i].vel && recorded_owner(&recording[i])==48u){
         assert(recorded_step(&recording[i])>=64 && recorded_exponent(&recording[i])==7);
@@ -110,7 +110,7 @@ static void capture_and_double(void)
     assert(recorded_owner(&recording[i])==63 && recorded_exponent(&recording[i])>0);
     assert(recorded_step(&recording[i])==127 && !recorded_gate(&recording[i]));
     recording_reset();
-    recorded_note_t r={.duration=1000,.vel=100,.note=60};
+    recorded_note_t r={.duration=1000,.vel=100,.note7=60};
     recorded_set_owner(&r,63);recorded_set_step(&r,63,1,1);
     recording_restore_note(t,0,r);recording_reindex();
     assert(!recording_double(t,15,64,0) && !recording_double(t,15,64,1));

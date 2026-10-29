@@ -29,8 +29,8 @@ static __attribute__((noinline)) uint32_t scanner(track_t *t,const step_t *s,uin
         if(!r->vel || (r->owner&31u)!=(uint32_t)(t-trk)*NPAT+t->pattern ||
            (r->step&63u)>=(uint32_t)t->p[P_SLEN] || view!=t->seq_idx ||
            t->step[view].time!=ST_NOTE || !(t->step[view].flags&SF_RECORDED))continue;
-        for(uint32_t k=0;k<s->n;k++)if(s->note[k]==r->note)skip|=1u<<k;
-        for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==r->note)skip|=1u<<(8u+k);
+        for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recorded_note(r))skip|=1u<<k;
+        for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recorded_note(r))skip|=1u<<(8u+k);
     }
     return skip;
 }
@@ -39,8 +39,8 @@ static __attribute__((noinline)) uint32_t reference(track_t *t,const step_t *s,u
 {
     if(s->flags&SF_RECORDED)
         for(uint32_t r=recording_head[recording_owner(t)];r<RECORD_MAX;r=recording_next[r])if(recording_active(t,r) && recording_view(t,&recording[r])==t->seq_idx){
-            for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recording[r].note)skip|=1u<<k;
-            for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recording[r].note)skip|=1u<<(8u+k);
+            for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recorded_note(&recording[r]))skip|=1u<<k;
+            for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recorded_note(&recording[r]))skip|=1u<<(8u+k);
         }
     return skip;
 }
@@ -52,7 +52,7 @@ static recorded_note_t event(uint32_t owner)
 {
     recorded_note_t r={0};uint32_t actual=rand_u()%NSTEP,rounded=rand_u()>>31;
     r.step=(uint8_t)(actual|(rounded?64u:0u)|(rounded && actual==63u?128u:0u));
-    r.note=(uint8_t)(rand_u()%128u);r.vel=100;r.duration=1000;r.owner=(uint8_t)owner;
+    recorded_set_note(&r,(uint8_t)(rand_u()%128u));r.vel=100;r.duration=1000;r.owner=(uint8_t)owner;
     return r;
 }
 static void fixture(uint32_t count,uint32_t dense)
@@ -68,7 +68,7 @@ static void fixture(uint32_t count,uint32_t dense)
     for(uint32_t i=0;i<count;i++){
         recorded_note_t r=event(dense?0u:i%32u);
         /* Repeated pitches in different/same original cells. */
-        if(dense){r.note=(uint8_t)(i%128u);r.step=(uint8_t)(i%64u);}
+        if(dense){recorded_set_note(&r,(uint8_t)(i%128u));r.step=(uint8_t)(i%64u);}
         recording[i]=r;
     }
     recording_reindex();
@@ -128,7 +128,7 @@ static void parity(void)
     fixture(RECORD_MAX,1);track_t *t=&trk[0];t->seq_idx=0;
     /* 1024 duplicate same-cell/same-pitch owners: deleting one must preserve
      * the bit until the last one ends, including a single coalesced rebuild. */
-    for(uint32_t i=0;i<RECORD_MAX;i++){recording[i].step=0;recording[i].note=60;}
+    for(uint32_t i=0;i<RECORD_MAX;i++){recording[i].step=0;recorded_set_note(&recording[i],60);}
     recording_reindex();counts_match();assert(candidate(t,&t->step[0],0)&2u);
     for(uint32_t i=0;i<RECORD_MAX;i++){
         recording_remove(t,i);
@@ -137,7 +137,7 @@ static void parity(void)
     }
     /* Wrapped cells retain original-onset eligibility when LEN shrinks. */
     fixture(8,1);t=&trk[0];t->seq_idx=0;t->p[P_SLEN]=16;
-    for(uint32_t i=0;i<8;i++){recording[i].note=60;recording[i].step=(uint8_t)((i<4?15u:31u)|192u);}
+    for(uint32_t i=0;i<8;i++){recorded_set_note(&recording[i],60);recording[i].step=(uint8_t)((i<4?15u:31u)|192u);}
     recording_reindex();assert(candidate(t,&t->step[0],0)&2u);
     for(uint32_t i=0;i<4;i++)recording_remove(t,i);
     assert(!(candidate(t,&t->step[0],0)&2u));t->p[P_SLEN]=32;assert(candidate(t,&t->step[0],0)&2u);

@@ -143,7 +143,7 @@ int main(void)
     up_cache_bank(1)->nslot = UP_PER_BANK;
     *up_rec(17) = r;
     bad += check("legacy wire bank fits one object", sizeof(up_bank_t) <= ST_PAYLOAD_MAX);
-    bad += check("bank save", st_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))) == 0);
+    bad += check("bank save", st_pair_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))) == 0);
     up_cache_reset();
     len = st_load(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
     up_bank_check(1, len);
@@ -202,7 +202,7 @@ int main(void)
         }
         up_parse(g, m, &got, &slot);
         *up_rec(20) = got;
-        st_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
+        st_pair_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
         up_cache_reset();
         up_bank_check(1, st_load(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))));
         bad += check("a grid record: bank round trip", up_used(20) && !memcmp(up_rec(20), &got, sizeof got));

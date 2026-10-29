@@ -764,7 +764,7 @@ static void engine_render(track_t *t,voice_t *v,const engine_t *e,int32_t *out,u
         engine_batch_t j;j.track=t;j.voice=v;j.engine=e;j.modulation=*m;j.n=n;
         for(uint32_t k=0;k<8u;k++)j.engine_params[k]=t->p[P_E0+k];
         for(uint32_t k=0;k<DV_NLANE;k++)j.lane_params[k]=t->p[P_LN0+k];
-        audio_batch_push(engine_batch_kernel,&j,sizeof j,out,n,e==&ENG_CZ?AP_CZ:e==&ENG_SID||drum_issid(t)?AP_SID:drum_is909(t)?AP_909:AP_808);return;
+        audio_batch_push(engine_batch_kernel,&j,sizeof j,out,n,e==&ENG_CZ?AP_CZ:e==&ENG_SID||drum_issid(t)?AP_SID:drum_is909(t)?AP_909:drum_isfm(t)?AP_FM6:AP_808);return;
     }
     e->render(t,v,out,n,m);
 }
