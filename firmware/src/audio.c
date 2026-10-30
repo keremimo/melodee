@@ -32,6 +32,7 @@ static uint32_t audio_cpu_rem;                         /* keep the fractional II
 #define SCOPE_N 512u
 static int16_t scope_buf[SCOPE_N];
 static uint32_t scope_w;
+extern bool settings_speaker_enable;
 
 static void audio_block(int32_t *out, uint32_t n)       /* mix (mix.c), then Q15 -> 24 bit */
 {
@@ -58,6 +59,9 @@ static void audio_block(int32_t *out, uint32_t n)       /* mix (mix.c), then Q15
          * scope and USB capture still run; never use track mutes for timing. */
         out[2u * i] = out[2u * i + 1u] = 0;
 #endif
+	if(!settings_speaker_enable) {
+           out[2u * i] = out[2u * i + 1u] = 0;
+	}
     }
     AP_END(AP_OUTPUT,output_start);
 }

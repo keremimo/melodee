@@ -54,6 +54,7 @@
 
 /* ------------------------------------------------------------- HAL --- */
 #include <stdint.h>
+#include <stdbool.h>
 static uint8_t res_ok;                  /* res.c: installed and this build's; else the readers fall back */
 #include "fm1_time.h"
 #include "fm1_sys.h"

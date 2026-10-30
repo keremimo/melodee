@@ -13,7 +13,7 @@
  * PRESETS scrolls from ABOUT through all credits. ui.menu: 1 list, 2 information. */
 /* ------------------------------------------------------------ menu --- */
 #define MENU_HEAD H_HEAD                 /* the menu's own title strip */
-enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
+enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS, MI_SPEAKER,
 #if MELODEE_USB_AUDIO
        MI_USB, MI_USB_INPUT,
 #endif
@@ -25,8 +25,8 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #endif
        MI_MIDI_KNOBS, MI_MIDI_MODE,
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
-       MI_COUNT };
-static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
+       MI_COUNT};
+static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS", "SPEAKER",
 #if MELODEE_USB_AUDIO
                                               "USB AUDIO", "USB INPUT",
 #endif
@@ -45,6 +45,7 @@ static const char *const MI_USB_NAME[4] = {"IN+OUT", "IN", "OUT", "OFF"};
 #endif
 static const char *const MI_MIDI_KNOB_NAME[MK_PROFILES] = {"OFF", "GENERAL", "MINILAB"};
 static const char *const MI_MIDI_MODE_NAME[MK_MODES] = {"ABSOLUTE", "REL 1", "REL 2", "REL 3"};
+bool settings_speaker_enable = true;
 
 /* https://keremimo.github.io/melodee, QR version 3, correction M (segno; checked with a decoder).
  * One row per word, leftmost module in bit 0; the constant matrix needs no encoder or RAM. */
@@ -322,6 +323,7 @@ static void draw_menu(void)
                 if (i == MI_TRACKS) value = GLO_SELECT & TRACKS_HIDE ? "HIDE" : "SHOW";
                 if (i == MI_SCREEN) value = (const char *const[]){"NEVER", "5 MIN", "15 MIN", "30 MIN", "60 MIN"}[scr_get()];
                 if (i == MI_LIGHTS) value = LIGHTS_NAME[settings_lights % LIGHTS_N];
+                if (i == MI_SPEAKER) value = settings_speaker_enable ? "ON" : "OFF";
 #if MELODEE_USB_AUDIO
                 if (i == MI_USB_INPUT) value = ua_tracks_want ? "4 TRACKS" : "STEREO";
                 if (i == MI_USB) value = (const char *const[]){"In + Out", "In", "Out", "Off"}[ua_off_want & 3u];
@@ -443,6 +445,11 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         uint32_t v = settings_lights % LIGHTS_N;
         settings_lights = (uint8_t)(s > 0 ? (v + 1u < LIGHTS_N ? v + 1u : v) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % LIGHTS_N);
         ok = 0;
+    }
+    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_SPEAKER) {
+        /* KNOB 1 right ON, left OFF, OCT+ toggles. Not saved: the next boot is a device again (usb_host.c) */
+        settings_speaker_enable = (bool)(s > 0 ? 1u : s < 0 ? 0u : !settings_speaker_enable);
+        ui.force = 1; ok = 0;                           /* (the row is not part of the menu's signature) */
     }
     if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_HOLD) {
         /* KNOB 1 steps 0.3 .. 0.6 s, OCT+ steps and wraps */
