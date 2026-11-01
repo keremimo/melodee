@@ -90,12 +90,13 @@ static void sound_name(const track_t *t, char *b);
 #define TY_PIXEL ty_pixel()
 static uint32_t ty_pixel(void) { return (PREF_BITS & PREF_PIXEL) != 0u || !RES_OK(); }   /* (gfx.c TY_*; Rubik: res.c) */
 /* HOME SELECT (the menu): what SELECT turns on HOME, kept in favorites.factory[15][25] (0, any other: BPM) */
-enum { HS_BPM, HS_MOD, HS_LEVEL, HS_SWING, HS_TRANS, HS_CHORD, HS_ARATE, HS_PATTERN, HS_OFF, HS_OCT, HS_N };
+enum { HS_BPM, HS_MOD, HS_LEVEL, HS_SWING, HS_TRANS, HS_CHORD, HS_ARATE, HS_PATTERN, HS_OFF, HS_OCT, HS_ENGINE, HS_N };
 static const char *const HS_NAME[HS_N] = {"BPM", "MOD WHEEL", "LEVEL", "SWING", "TRANSPOSE", "CHORD", "ARP RATE", "PATTERN",
-                                          "OFF", "OCTAVE"};
-/* the menu's order: OCTAVE beside TRANSPOSE, OFF last (the saved numbers stay: OCTAVE came after OFF) */
+                                          "OFF", "OCTAVE", "ENGINE"};
+/* the menu's order: OCTAVE beside TRANSPOSE, ENGINE beside PATTERN, OFF last (the saved numbers stay: new choices are
+ * appended, never inserted) */
 static const uint8_t HS_ORDER[HS_N] = {HS_BPM, HS_MOD, HS_LEVEL, HS_SWING, HS_TRANS, HS_OCT, HS_CHORD, HS_ARATE,
-                                       HS_PATTERN, HS_OFF};
+                                       HS_PATTERN, HS_ENGINE, HS_OFF};
 static uint32_t hs_step(uint32_t v, int32_t s)  /* KNOB 1 steps, 0 (OCT+): steps and wraps */
 {
     uint32_t i = 0;
