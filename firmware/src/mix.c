@@ -96,7 +96,7 @@ static uint32_t seq_div_samples(uint32_t div)
 static void events_block(uint32_t n);
 #if MELODEE_USB_AUDIO
 static int ua_capture_active(void);
-static uint8_t track_capture_on;
+static uint8_t track_capture_on, master_capture_on;   /* track_capture holds the stems, or the stereo mix at unity */
 static int32_t track_capture[CTL * NPART];
 #endif
 
@@ -321,6 +321,9 @@ static __attribute__((noinline,section(".dsp_text"))) void master_samples(int32_
     /* Attenuate the finished output: punch history, freeze and the DC blocker
      * keep running at unity, so even an already sounding tail follows MASTER. */
     for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);
+#if MELODEE_USB_AUDIO
+        if(master_capture_on){track_capture[2u*i]=l;track_capture[2u*i+1u]=r;}   /* (USB stereo capture: before MASTER, #103) */
+#endif
         if(master==4096){out[2u*i]=l;out[2u*i+1u]=r;continue;}   /* (full MASTER: nothing to cut) */
         out[2u*i]=dith_cut(l*master,12,i+5u);out[2u*i+1u]=dith_cut(r*master,12,i+5u);}   /* (one dither: mono stays L = R) */
     fx_bus_mix=gain;
@@ -331,7 +334,7 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
     fx_profile_poll();
 #endif
 #if MELODEE_USB_AUDIO
-    track_capture_on=(uint8_t)ua_capture_active();
+    {int cap=ua_capture_active();track_capture_on=(uint8_t)(cap==4);master_capture_on=(uint8_t)(cap==2);}
     if(track_capture_on)memset(track_capture,0,n*NPART*sizeof *track_capture);
 #endif
     memset(mix_l,0,n*sizeof *mix_l);memset(mix_r,0,n*sizeof *mix_r);

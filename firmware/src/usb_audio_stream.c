@@ -202,9 +202,11 @@ static uint32_t ua_transmit(uint8_t *p)
     return n * width * ua_cap_channels;
 }
 
-/* Stereo Q15 post-FX/master/limiter mix, or four pre-master mono stems.
- * Stereo copies the finished synth output; playback follows MASTER and the
- * host's standard volume/mute controls, with a short gain ramp.
+/* Stereo Q15 post-FX/limiter mix, or four mono stems, both before MASTER: the
+ * volume pot never sets the recording's level (#103). Stereo reads the mixer's
+ * unity copy (tracks: L, R per frame), or the output for a block collected while
+ * capture was off; playback follows MASTER and the host's standard volume/mute
+ * controls, with a short gain ramp.
  * Call in blocks of CTL (32), with USB service excluded during this copy.
  * In track mode a null stem pointer skips capture for a block collected while
  * capture was disabled. Stereo requires no stems or additional DSP pass. */
@@ -235,8 +237,8 @@ static void ua_audio(int32_t *out, const int32_t *tracks, uint32_t n, uint32_t m
         int32_t l = out[2u * i], r = out[2u * i + 1u];
         if (capture) {
             if (ua_cap_channels == 2u) {
-                ua.cap[ci] = (int16_t)l;
-                ua.cap[ci + 1u] = (int16_t)r;
+                ua.cap[ci] = (int16_t)(tracks ? ua_clip(tracks[2u * i]) : l);
+                ua.cap[ci + 1u] = (int16_t)(tracks ? ua_clip(tracks[2u * i + 1u]) : r);
             } else {
                 ua.cap[ci]=(int16_t)ua_clip(tracks[i*4u]);
                 ua.cap[ci+1u]=(int16_t)ua_clip(tracks[i*4u+1u]);

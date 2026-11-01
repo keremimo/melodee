@@ -393,8 +393,8 @@ static void e0_send(const uint8_t *p, uint16_t len, uint16_t wlen)
 #include "usb_audio.c"
 static int ua_capture_active(void)
 {
-    /* Only track mode needs the mixer to collect a second set of samples. */
-    return usb.up && usb.config && !usb.suspended && ua.cap_alt && ua_cap_channels == 4u;
+    /* The mixer collects what capture sends: 4 the track stems, 2 the stereo mix before MASTER, 0 nothing */
+    return usb.up && usb.config && !usb.suspended && ua.cap_alt ? (int)ua_cap_channels : 0;
 }
 #endif
 
