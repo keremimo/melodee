@@ -1894,11 +1894,14 @@ static void page_knob_edit(uint32_t k, int32_t s)
     }
 }
 
+static void mlearn_take(uint32_t k);
 static void page_knob(uint32_t k, int32_t s)
 {
-    midi_edit_value = midi_panel_mask & (1u << (EN_K1 + k)) ? midi_panel_absolute[EN_K1 + k] : -1;
+    uint32_t midi = midi_panel_mask & (1u << (EN_K1 + k));
+    midi_edit_value = midi ? midi_panel_absolute[EN_K1 + k] : -1;
     page_knob_edit(k, s);
     midi_edit_value = -1;
+    if (mlearn_on && !midi) mlearn_take(k);              /* MIDI LEARN: this knob waits for a CC */
 }
 
 static int bulk_context(void)
@@ -2074,10 +2077,104 @@ static void ui_confirm_accept(void)
     }
 }
 
+/* MIDI LEARN (midi_knobs.c, #105): the knob turned while learning (a parameter of a page, as LFO held's momentary
+ * edit takes them) waits for a CC; a learned CC turns that knob of that track's page as a MIDI knob would, with its
+ * absolute value, whatever page and track are shown */
+static const char *mlearn_label;
+static void mlearn_name(char *b, uint32_t n, uint32_t track)
+{
+    str_cpy(b, "T1 ", n);
+    b[1] = (char)('1' + track % NTRK);
+    str_cpy(b + 3, mlearn_label ? mlearn_label : "", n - 3u);
+}
+static void mlearn_take(uint32_t k)
+{
+    const page_t *pg = ui.home ? stage_page() : cur_page();
+    const param_desc_t *d;
+    int16_t *vp;
+    char b[24];
+    if ((page_over && !ui.home) || ui.menu || ui.layer || pop.on || list_on() || slot_kind() || motion_page() ||
+        ((act_cols() >> k) & 1u) || pg->graph == GR_FMSTORE || pg->graph == GR_CZTOOLS || pg->graph == GR_BROWSE ||
+        pg->graph == GR_SONG || pg->graph == GR_PATGRID || pg->graph == GR_SCALE_PICKER || pg->graph == GR_SLICES ||
+        pg->graph == GR_USER || pg->graph == GR_SLOTS || ((pg->graph == GR_MOD || pg->graph == GR_FXRACK) && k == 1u) ||
+        (scale_settings_page(pg) && k == 1u))
+        return;
+    d = page_desc(pg, k, &vp);
+    if (!d || !vp || d->max == d->min)
+        return;
+    if (pg->scope != SC_FM6 && pg->scope != SC_FMOP && pg->scope != SC_CZ1 && pg->scope != SC_P5 && pg->scope != SC_TRACK &&
+        pg->scope != SC_ENGINE && !(pg->scope == SC_GLOBAL && pg->id[k] <= G_SWING))
+        return;
+    mlearn_want = (mlearn_t){1u, (uint8_t)song.sel, (uint8_t)(ui.home ? 0xFFu : ui.page), (uint8_t)k, (uint8_t)TSEL->eng_req,
+                             pg->id[k]};
+    mlearn_label = d->label;
+    mlearn_name(b, sizeof b, song.sel);
+    ui_say(b, ": SEND A CC");
+}
+static void mlearn_bind(uint32_t cc)
+{
+    uint32_t k;
+    char b[32], c[8];
+    for (k = 0; k < MLEARN_N; k++)                      /* the CC leaves its old knob, the knob its old CC */
+        if (mlearn[k].cc == cc || (mlearn[k].cc && mlearn[k].track == mlearn_want.track && mlearn[k].page == mlearn_want.page &&
+                                   mlearn[k].slot == mlearn_want.slot)) {
+            fm1_irq_off(); mlearn[k].cc = 0; mlearn_dirty &= (uint16_t)~(1u << k); fm1_irq_on();
+        }
+    for (k = 0; k < MLEARN_N && mlearn[k].cc; k++) ;
+    if (k == MLEARN_N) { ui_message("MIDI LEARN FULL"); return; }
+    fm1_irq_off();
+    mlearn[k] = mlearn_want;
+    mlearn[k].cc = (uint8_t)cc;                         /* (the ISR matches it from here) */
+    fm1_irq_on();
+    mlearn_want.cc = 0;
+    str_cpy(b, "CC ", sizeof b);
+    fmt_int(c, cc);
+    str_cpy(b + 3, c, sizeof b - 3u);
+    str_cpy(b + str_len(b), " = ", sizeof b - str_len(b));
+    mlearn_name(b + str_len(b), sizeof b - str_len(b), mlearn_want.track);
+    ui_say(b, "");
+}
+static void mlearn_apply(const mlearn_t *b, uint32_t value)
+{
+    if (b->track >= trk_n() || trk[b->track].eng_req != b->eng || (b->page != 0xFFu && b->page >= NPAGES))
+        return;
+    __typeof__(song.sel) sel = song.sel;                /* (the bound track for edit_param's TSEL, then back) */
+    const page_t *over = page_over;
+    song.sel = b->track;
+    page_over = b->page == 0xFFu ? stage_page() : &PAGES[b->page];
+    if (page_over->id[b->slot] == b->id) {
+        midi_edit_value = (int32_t)value;
+        edit_param(b->slot, 0);
+        midi_edit_value = -1;
+    }
+    page_over = over;
+    song.sel = sel;
+    if (b->track == song.sel) ui.force = 1;
+}
+static void mlearn_poll(void)
+{
+    int32_t cc = mlearn_seen;
+    uint8_t v[MLEARN_N];
+    uint32_t dirty;
+    if (cc >= 0) {
+        mlearn_seen = -1;
+        if (mlearn_on && mlearn_want.cc) mlearn_bind((uint32_t)cc);
+    }
+    if (!mlearn_dirty) return;
+    fm1_irq_off();
+    dirty = mlearn_dirty;
+    mlearn_dirty = 0;
+    memcpy(v, (const void *)mlearn_val, sizeof v);
+    fm1_irq_on();
+    for (uint32_t k = 0; k < MLEARN_N; k++)
+        if (((dirty >> k) & 1u) && mlearn[k].cc) mlearn_apply(&mlearn[k], v[k]);
+}
+
 #include "ui_designer_input.c"
 static void ui_input(void)
 {
     midi_knobs_poll();
+    mlearn_poll();
     pattern_poll();
     uint32_t pressed = fm1_input_edges(0), notes = fm1_input_note_edges(), now = fm1_ticks(), id, b, k;
     dq_poll();                                          /* (destructive edits waiting for their loop end) */
