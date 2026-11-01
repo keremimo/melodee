@@ -59,17 +59,18 @@ build provenance; hardware validation is a separate check.
 
 ## 1.6 release candidate
 
-**[Melodee 1.6.0-rc.7](https://github.com/keremimo/melodee/releases/tag/v1.6.0-rc.7)** fixes
-two bugs: a song started from a later row no longer plays a burst of earlier
-recorded notes, and the dim key lights no longer shimmer. It keeps rc.6's CR-78
-and FM drum kits, a preset for each pattern, note lengths editable while
-playing, range and copy PITCH edits, pattern copy to another track,
-nearest-degree SNAP for microtonal scales, OCTAVE on SELECT, MASTER on the final
-output and USB HOST for audio+MIDI devices and two-chip hubs, with the 16
-patterns, shared project storage, section presets, timed punch FX and Bluetooth
-MIDI from earlier candidates.
+**[Melodee 1.6.0-rc.8](https://github.com/keremimo/melodee/releases/tag/v1.6.0-rc.8)** puts
+the factory sounds into the firmware package, so updates through Firmware Hub
+get their presets too, and the FM-1 asks for another install when they are
+missing. It keeps rc.7's song-playback and key-light fixes, rc.6's CR-78 and FM
+drum kits, a preset for each pattern, note lengths editable while playing, range
+and copy PITCH edits, pattern copy to another track, nearest-degree SNAP for
+microtonal scales, OCTAVE on SELECT, MASTER on the final output and USB HOST for
+audio+MIDI devices and two-chip hubs, with the 16 patterns, shared project
+storage, section presets, timed punch FX and Bluetooth MIDI from earlier
+candidates.
 Stable remains 1.5.1; choose the candidate channel to try the RC. Read the
-[candidate release notes](docs/RELEASE_1.6.0-rc.7.md) for project-format
+[candidate release notes](docs/RELEASE_1.6.0-rc.8.md) for project-format
 compatibility and hardware-validation limits.
 
 ## What's new in 1.5.1
