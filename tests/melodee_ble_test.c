@@ -77,6 +77,46 @@ int main(void)
     mb.closing=0;
     puts("BLE adapter: passkey lifecycle, missing calibration and forget isolation passed");
 
+    /* Mode: VISIBLE advertises and never scans; CONNECT OUT is quiet until the page scans. Both saved. */
+    reset_ble(); mb.cal = 1; ble_enable(1); assert(bll.state == LL_ADV);   /* (the stack's default before a mode applies) */
+    ble_ll_advertise(0); assert(bll.state == LL_OFF);
+    mel_ble_scan(1); assert(mb.scanning && bll.state == LL_SCAN);
+    mel_ble_visible(1); assert(mb_saved.flags == MB_VISIBLE && !mb.scanning && bll.state == LL_ADV);
+    mel_ble_scan(1); assert(!mb.scanning && bll.state == LL_ADV);
+    assert(!strcmp(mel_ble_status(), "VISIBLE 0201"));
+    ble_head_text(text); assert(!strcmp(text, "VISIBLE 0201"));
+    mel_ble_scan(0); mel_ble_visible(0); assert(!mb_saved.flags && bll.state == LL_OFF);
+    assert(!strcmp(mel_ble_status(), "BLE AVAILABLE"));
+    puts("BLE adapter: Mode VISIBLE advertises, CONNECT OUT stays quiet passed");
+
+    /* Power-on: the radio as last set. Radio OFF before the quiet moment wins. */
+    reset_ble(); mb.cal = 1; mb.on = 0;
+    assert(mel_ble_set(1) && mb_saved.flags == MB_RADIO);
+    assert(mel_ble_set(0) && !mb_saved.flags && !mb.on);
+    mb_saved.flags = MB_RADIO; mb.boot = 1; ble_boot_poll(); assert(mb.on && !mb.boot);
+    mb.boot = 1; assert(mel_ble_set(0) && !mb.boot); ble_boot_poll(); assert(!mb.on);
+    puts("BLE adapter: radio state kept across power-on passed");
+
+    /* Relink: rounds of a 10 s scan every 30 s until the last device is seen, then connect; a drop or a miss
+     * keeps looking, Disconnect ends it and its scan. */
+    reset_ble(); mb.cal = 1; ble_enable(1); ble_ll_advertise(0);
+    const uint8_t widi[6] = {0x10,0x20,0x30,0x40,0x50,0x60};
+    ble_store_set_last(&mb.store, widi, 0, "WIDI", BLE_KIND_MIDI);
+    mel_ble_set(1); assert(mb.relink);
+    mel_ble_poll(); assert(mb.relink_scan && bll.state == LL_SCAN && !strcmp(mel_ble_status(), "RECONNECTING"));
+    fm1_ms += MB_RELINK_SCAN_MS; mel_ble_poll(); assert(!mb.relink_scan && bll.state == LL_OFF);
+    fm1_ms += MB_RELINK_MS - MB_RELINK_SCAN_MS; mel_ble_poll(); assert(mb.relink_scan && bll.state == LL_SCAN);
+    struct ble_found *e = &mb.found.e[0]; memset(e, 0, sizeof *e);
+    e->used = e->midi = 1; e->kind = BLE_KIND_MIDI; memcpy(e->addr, widi, 6); e->seen_ms = fm1_ms;
+    mel_ble_poll(); assert(mb.attempt && !mb.relink_scan && bll.state == LL_INIT && !bll.scan_want);
+    assert(!strcmp(mel_ble_status(), "RECONNECTING"));
+    fm1_ms += 10001u; mel_ble_poll(); assert(!mb.attempt && mb.relink && !mb.failure[0] && bll.state == LL_OFF);
+    fm1_ms += MB_RELINK_MS; e->used = 1; e->seen_ms = fm1_ms; mel_ble_poll(); assert(mb.attempt);   /* (heard again) */
+    mel_ble_disconnect(); assert(!mb.relink); mel_ble_poll(); assert(bll.state == LL_OFF && !bll.scan_want);
+    fm1_ms += MB_RELINK_MS; mel_ble_poll(); assert(!mb.attempt && bll.state == LL_OFF);
+    mel_ble_visible(1); mel_ble_set(1); assert(!mb.relink && bll.state == LL_ADV);
+    puts("BLE adapter: power-on relink to the last device passed");
+
     reset_ble(); settings_midi_knobs = MK_GENERAL;
     midi_event_source=1; assert(midi_knob_receive(0,17,20));
     midi_event_source=3; assert(midi_knob_receive(0,17,100));
@@ -90,12 +130,13 @@ int main(void)
 
     /* Real BLE page drawing: both fonts, 0..8 discoveries, all selections. */
     reset_ble();
-    for (uint32_t font=0; font<2; font++) {
-        if (font) PREF_BITS |= PREF_PIXEL; else PREF_BITS &= ~PREF_PIXEL;
+    for (uint32_t font=0; font<4; font++) {
+        if (font & 1u) PREF_BITS |= PREF_PIXEL; else PREF_BITS &= ~PREF_PIXEL;
+        mb_saved.flags = font >= 2u ? MB_VISIBLE : 0;
         for (uint32_t n=0; n<=BLE_SCAN_N; n++) {
             mb.count=(uint8_t)n;
             for(uint32_t i=0;i<n;i++) {mb.idx[i]=(uint8_t)i;str_cpy(mb.found.e[i].name,"Keyboard",BLE_NAME_MAX+1);}
-            for(uint32_t row=0;row<n+4;row++) {ble_row=(uint8_t)row;ui.menu=3;ui.force=1;draw_ble_page();}
+            for(uint32_t row=0;row<ble_found_n()+5;row++) {ble_row=(uint8_t)row;ui.menu=3;ui.force=1;draw_ble_page();}
         }
     }
     puts("Melodee BLE integration: all passed");

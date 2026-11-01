@@ -27,6 +27,7 @@ static int mel_ble_set(int on);
 static void mel_ble_disconnect(void);
 static void mel_ble_forget(void);
 static void mel_ble_scan(int on);
+static void mel_ble_visible(int on);
 static int mel_ble_connect(uint32_t row);
 static int mel_ble_last(void);
 static const char *mel_ble_status(void);
@@ -38,11 +39,13 @@ static void mel_ble_radio_start(const struct ble_rf_trims *);
 /* A tagged trailer after PER5 and its optional template; their offsets stay fixed.
  * Both settings copies and their existing CRC/commit protect keys and calibration. */
 typedef struct {
-    uint8_t addr[6], valid, reserved;
+    uint8_t addr[6], valid, flags;          /* flags: MB_VISIBLE, MB_RADIO (0 in older saves: CONNECT OUT, off) */
     uint8_t bond[28], rf[BLE_RF_COPY_SIZE], dev[BLE_DEV_STORE_SIZE];
     uint32_t magic;
 } mel_ble_saved_t;
 #define MEL_BLE_MAGIC 0x31454C42u /* BLE1 */
+#define MB_VISIBLE 1u   /* Mode VISIBLE: advertise for a computer or phone, never scan */
+#define MB_RADIO 2u     /* the radio as last set: started again at power-on */
 static mel_ble_saved_t mb_saved __attribute__((section(".pool")));
 static volatile uint32_t mb_revision;
 static uint32_t mb_committed;

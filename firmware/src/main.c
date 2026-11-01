@@ -401,6 +401,7 @@ static void fm1_main(void)
         ui_input();
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
 #if MELODEE_BLE
+        ble_boot_poll();
         mel_ble_poll();
         if (mb_revision != mb_committed) persist_pending = 1;
 #endif
