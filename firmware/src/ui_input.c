@@ -980,6 +980,12 @@ static void step_edit(uint32_t slot, int32_t steps)
         notes_range_pitch(steps);                       /* a range, or a note being moved / copied */
         return;
     }
+    if (bulk.on && !grid_on() && (slot == 2u || (slot == 3u && !(ui.step_mods & (1u << panel.btn[B_ENV]))))) {
+        uint32_t fine = slot == 2u ? ui.step_mods & (1u << panel.btn[B_ENV]) : 0u;
+        ui.step_used |= (uint16_t)fine;
+        notes_range_edit(slot, steps, fine ? RECORD_UNIT / 16u : RECORD_UNIT / 4u);   /* LENGTH / VELOCITY: the range */
+        return;
+    }
     if (notes_selected(TSEL) < RECORD_MAX) {
         uint32_t fine = slot == 2u ? ui.step_mods & (1u << panel.btn[B_ENV]) : 0u;
         ui.step_used |= (uint16_t)fine;
