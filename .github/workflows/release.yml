@@ -107,7 +107,7 @@ jobs:
         include:
           - runner: windows-2022
             target: windows-x64
-          - runner: macos-14
+          - runner: macos-15
             target: macos-arm64
           - runner: macos-15-intel
             target: macos-x64
