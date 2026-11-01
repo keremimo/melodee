@@ -127,10 +127,11 @@ static void trace(int audio_only)
             if(block==1100u)fx_clear_all();
         }
     }
-    /* Frozen shared-only PCM/allocation bytes captured from 753adbf before insert removal.
+    /* Frozen shared-only PCM/allocation bytes captured from 753adbf before insert removal,
+     * re-captured for the full-precision wet return and dithered MASTER (#100).
      * State layout is intentionally omitted; all routed audio and delay
      * contents still participate, including stereo-to-mono transitions. */
-    if(audio_only)assert(hash==0x986ce309ec9fbf0cull);
+    if(audio_only)assert(hash==0x258752742f68f88bull);
     printf("%016llx\n",(unsigned long long)hash);
 }
 static volatile uint32_t checksum;

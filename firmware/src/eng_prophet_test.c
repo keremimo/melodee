@@ -399,7 +399,7 @@ static __attribute__((section(".dsp_text"))) void p5_samples(p5_voice_t *restric
         sum*=1.0f/P5_OVERSAMPLE;
         float gain=ae*c->amp_velocity*(1.0f+(float)s->amp_drift/32768.0f);
         float amp=((float)m->amp0+(float)(m->amp1-m->amp0)*time)*(1.0f/32768.0f);
-        last=(int32_t)(sum*gain*amp*(2.0f*VOICE_FS));out[i]+=last;
+        last=dith_cutf(sum*gain*amp*(2.0f*VOICE_FS),i+(uint32_t)m->amp1);out[i]+=last;
     }
     s->last_pcm=last;
 }

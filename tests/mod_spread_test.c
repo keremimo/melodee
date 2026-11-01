@@ -73,6 +73,7 @@ static void fresh(uint32_t e, uint32_t pi)        /* the boot state (no FX tails
     vage = 0;                                             /* the seeds: every run the same (noise by voice age) */
     rng_state = 0x1234567u;
     mod_seed = 0x2545F491u;
+    dith_r = DITH_SEED;                     /* (the dither starts over too: dsp.c) */
     memset(trk, 0, sizeof trk);trk_voices_bind();
     memset(&mod, 0, sizeof mod);
     host_tracks_init();

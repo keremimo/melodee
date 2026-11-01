@@ -916,8 +916,9 @@ static inline __attribute__((always_inline)) float fm6_output_clip(float x)
 static __attribute__((noinline,section(".dsp_text"))) void fm6_output(const float *sum, int32_t *out, uint32_t n, const vmod_t *m, int32_t gain, int add)
 {
     float scale = (float)gain * (1.0f / 131072.0f);
+    const float *d = dith_row((uint32_t)m->amp1);
     for (uint32_t i = 0; i < n; i++) {
-        int32_t y = (int32_t)(fm6_output_clip(sum[i]) * (float)amp_at(m, i) * scale);
+        int32_t y = dith_cutf_d(fm6_output_clip(sum[i]) * (float)amp_at(m, i) * scale, d[i]);
         if (add) out[i] += y; else out[i] = y;
     }
 }

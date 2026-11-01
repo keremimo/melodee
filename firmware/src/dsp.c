@@ -32,6 +32,39 @@ static inline int32_t mulq16(int32_t a, uint32_t k)
 {
     return (int32_t)(((a >> 16) * (int32_t)k) + (int32_t)(((uint32_t)(a & 0xFFFF) * k) >> 16));
 }
+/* TPDF dither (#100): the cuts to whole samples (a voice's level, the float engines' output, the track level,
+ * MASTER) rounded down or towards zero, so a fading note's error followed the note and its harmonics stood
+ * still while it decayed. +-1 LSB of triangular noise before each cut turns that error into a steady floor.
+ * One table a block (mix_block), each cut reading it at its own offset; a zero sample stays exact 0 */
+#define DITH_N 32u
+#define DITH_SEED 0x2545F491u
+static int16_t dith[DITH_N];                     /* -32767..32767 in 1/32768 of the cut's LSB */
+static float dith_f[2u * DITH_N];                /* the same in LSBs, twice: a voice's row (dith_row) never wraps */
+static uint32_t dith_r = DITH_SEED;
+static __attribute__((noinline)) void dither_block(void)
+{
+    uint32_t r = dith_r;
+    for (uint32_t k = 0; k < DITH_N; k++) {      /* two uniforms from one LCG step: u1 - u2 is triangular */
+        r = r * 1664525u + 1013904223u;
+        dith[k] = (int16_t)((int32_t)(r >> 17) - (int32_t)((r >> 2) & 32767u));
+        dith_f[k] = dith_f[k + DITH_N] = (float)dith[k] * (1.0f / 32768.0f);
+    }
+    dith_r = r;
+}
+/* (p + 1/2 LSB + dither) >> sh, 1 <= sh <= 15; p = 0 stays 0 */
+static inline __attribute__((always_inline)) int32_t dith_cut(int32_t p, uint32_t sh, uint32_t k)
+{
+    int32_t d = ((int32_t)dith[k & (DITH_N - 1u)] >> (15u - sh)) + (1 << (sh - 1u));
+    return (p + (d & -(int32_t)(p != 0))) >> sh;
+}
+/* x to the nearest whole sample with dither d (the add of 1.5 * 2^23 rounds); 0.0f stays 0. dith_row(k)[i], i < CTL:
+ * a voice's dither for its block, read without a wrap (k: its offset, once a block) */
+static inline __attribute__((always_inline)) const float *dith_row(uint32_t k) { return dith_f + (k & (DITH_N - 1u)); }
+static inline __attribute__((always_inline)) int32_t dith_cutf_d(float x, float d)
+{
+    return x != 0.0f ? (int32_t)(x + d + 12582912.0f) - 12582912 : 0;
+}
+static inline __attribute__((always_inline)) int32_t dith_cutf(float x, uint32_t k) { return dith_cutf_d(x, dith_row(k)[0]); }
 /* Shared sample helpers must inline so SRAM kernels never call into XIP. */
 static inline __attribute__((always_inline)) int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -146,10 +179,11 @@ static inline __attribute__((always_inline)) int32_t amp_at(const vmod_t *m, uin
 }
 
 /* a voice's sample s (Q15) at the amplitude ramp's sample i, scaled to the voice level (VOICE_FS);
- * engines whose signal peaks near half scale add it << 1 */
+ * engines whose signal peaks near half scale add it << 1. One dithered cut (the ramp's end picks the voice's
+ * place in the table) */
 static inline int32_t voice_amp(int32_t s, const vmod_t *m, uint32_t i)
 {
-    return mulq15(mulq15(s, amp_at(m, i)), VOICE_FS);
+    return dith_cut(s * mulq15(amp_at(m, i), VOICE_FS), 15, i + (uint32_t)m->amp1);
 }
 
 /* linear up to k, then a soft knee: only the peaks above k saturate (|y| - k must stay < 2^30) */

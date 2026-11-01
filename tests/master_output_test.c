@@ -29,12 +29,12 @@ static __attribute__((noinline)) void reference(int32_t *out,uint32_t n)
         if(gain!=target)gain+=clamp(target-gain,-128,128);
         int32_t l=mix_l[i],r=mix_r[i];
         if(fx_bus_result){uint32_t ret=(uint32_t)gain*2u;
-            l+=(fx_scale(fx_left[i],ret)>>2)*4;
-            r+=(fx_scale(fx_right[i],ret)>>2)*4;}
+            l+=fx_scale(fx_left[i],ret);
+            r+=fx_scale(fx_right[i],ret);}
         mix_l[i]=l;mix_r[i]=r;
     }
     punch_process(mix_l,mix_r,n);
-    for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);out[2u*i]=(l*(int32_t)song.master_q12)>>12;out[2u*i+1u]=(r*(int32_t)song.master_q12)>>12;}
+    for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);if(song.master_q12==4096){out[2u*i]=l;out[2u*i+1u]=r;continue;}out[2u*i]=dith_cut(l*(int32_t)song.master_q12,12,i+5u);out[2u*i+1u]=dith_cut(r*(int32_t)song.master_q12,12,i+5u);}
     fx_bus_mix=gain;
 }
 
@@ -134,8 +134,10 @@ static void volume(void)
         }
         for(uint32_t g=0;g<NELEM(levels);g++){
             volume_render(fx,levels[g],out);
-            for(uint32_t i=0;i<NELEM(unity);i++)
-                assert(out[i]==(unity[i]*(int32_t)levels[g])>>12);
+            for(uint32_t i=0;i<NELEM(unity);i++){       /* (MASTER's cut is dithered, #100: +-1 LSB, silence exact) */
+                int32_t want=(unity[i]*(int32_t)levels[g]+2048)>>12;
+                assert(unity[i]&&levels[g]?out[i]>=want-1&&out[i]<=want+1:!out[i]);
+            }
         }
     }
     punch_reset();punch_panel_lock=0;
