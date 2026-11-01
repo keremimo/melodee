@@ -128,10 +128,11 @@ static void trace(int audio_only)
         }
     }
     /* Frozen shared-only PCM/allocation bytes captured from 753adbf before insert removal,
-     * re-captured for the full-precision wet return and dithered MASTER (#100).
+     * re-captured for the full-precision wet return and dithered MASTER (#100)
+     * and the limiter at -2 dBFS (#108).
      * State layout is intentionally omitted; all routed audio and delay
      * contents still participate, including stereo-to-mono transitions. */
-    if(audio_only)assert(hash==0x258752742f68f88bull);
+    if(audio_only)assert(hash==0x0f9186b24ee44d73ull);
     printf("%016llx\n",(unsigned long long)hash);
 }
 static volatile uint32_t checksum;

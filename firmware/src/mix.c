@@ -24,7 +24,7 @@ static inline __attribute__((always_inline)) void mix_add(int32_t l,int32_t r,ui
 }
 static volatile uint32_t kb_mask, kb_layer;
 static volatile uint8_t kb_lock;
-#define LIM_T 18000
+#define LIM_T 26000                              /* -2 dBFS: only overs, a chord does not duck a held note (#108) */
 static int32_t lim_env = LIM_T;
 static int32_t dc_l, dc_r, dce_l, dce_r;
 
