@@ -15,7 +15,7 @@
 #define MENU_HEAD H_HEAD                 /* the menu's own title strip */
 enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #if MELODEE_USB_AUDIO
-       MI_USB, MI_USB_INPUT,
+       MI_USB, MI_USB_INPUT, MI_USB_VOLUME,
 #endif
 #if MELODEE_USB_HOST
        MI_USB_HOST,
@@ -28,7 +28,7 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
        MI_COUNT };
 static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #if MELODEE_USB_AUDIO
-                                              "USB AUDIO", "USB INPUT",
+                                              "USB AUDIO", "USB INPUT", "USB VOLUME",
 #endif
 #if MELODEE_USB_HOST
                                               "USB HOST",
@@ -331,6 +331,7 @@ static void draw_menu(void)
                 if (i == MI_LIGHTS) value = LIGHTS_NAME[settings_lights % LIGHTS_N];
 #if MELODEE_USB_AUDIO
                 if (i == MI_USB_INPUT) value = ua_tracks_want ? "4 TRACKS" : "STEREO";
+                if (i == MI_USB_VOLUME) { fmt_int(b, settings_usb_volume); str_cpy(b + str_len(b), "%", 4); value = b; }
                 if (i == MI_USB) value = (const char *const[]){"In + Out", "In", "Out", "Off"}[ua_off_want & 3u];
 #endif
 #if MELODEE_USB_HOST
@@ -443,6 +444,12 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
     if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_USB_INPUT) {
         ua_tracks_set(s > 0 ? 1 : s < 0 ? 0 : !ua_tracks_want, fm1_ms);
         ok = 0;
+    }
+    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_USB_VOLUME) {   /* the computer's audio: KNOB 1 steps 5 %, OCT+
+                                                                        * steps and wraps (apart from MASTER) */
+        int32_t v = (int32_t)settings_usb_volume;
+        settings_usb_volume = (uint8_t)(s ? clamp(v + s * 5, 0, 100) : v + 5 > 100 ? 0 : v + 5);
+        ok = 0; ui.force = 1;
     }
     if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_USB) {
         /* KNOB 1 steps IN+OUT IN OUT OFF, OCT+ steps and wraps; the host gets it once it rests (main.c) */
