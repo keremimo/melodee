@@ -5,7 +5,8 @@
  * an update record, with interrupts off: USB is polled from the main loop.
  * It is a USB-MIDI device "Melodee Update" (1209:0002) that answers the
  * M-UPGRADE update protocol as "ota-FM-1_900" (hosts look for "ota-"), and
- * writes the app area only (ldr_core.c). The UBOOT soft key works here too.
+ * writes the app area and the resource region (ldr_core.c). The UBOOT soft
+ * key works here too.
  * Single compilation unit. */
 #include <stdint.h>
 #define MELODEE_LOADER 1
@@ -17,7 +18,7 @@
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 #include "fm1_time.h"
 #include "fm1_sys.h"
-/* the loader writes the app area and erases update records; never the head */
+/* the loader writes the app area and the resource region, and erases update records; never the head */
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, 0x4000u, 0x93000u) || FL_IN(off, n, 0x93000u, 0xFC000u))
 #include "fm1_flash.h"
 #include "../src/libc.c"
@@ -66,7 +67,7 @@ static int ldr_erase(uint32_t off)
 static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     uint32_t took;
-    if (!FL_IN(off, n, 0x4000u, 0x93000u))
+    if (!FL_IN(off, n, 0x4000u, 0x93000u) && !FL_IN(off, n, 0xCB000u, 0xE0000u))   /* (LDR_RES_LO..HI) */
         return -1;
     return fl_prog_ram(off, p, n, &took);
 }

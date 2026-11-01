@@ -12,10 +12,12 @@
  *   2. checks that the package's app area decrypts with THIS chip's key
  *      (taken from isd_config.ini in the device's own flash head), so a
  *      package for another key is refused before anything is erased;
- *   3. writes ONLY the app area [0x4000, 0x93000), sector by sector, skipping
+ *   3. writes the app area [0x4000, 0x93000), sector by sector, skipping
  *      sectors that are already equal, and verifies each one; the flash head
  *      (SPL, isd_config) is never written;
- *   4. asks 0xF0000000 ("success"), then invalidates the update record (RAM
+ *   4. writes the resource region from the package's res.bin (ldr_res), the
+ *      app being committed: nothing there decides whether the unit boots;
+ *   5. asks 0xF0000000 ("success"), then invalidates the update record (RAM
  *      and flash) so the SPL boots the new app, and resets.
  *
  * The order of 3 for a package with ChoralRoot's boot stub and commit marker
@@ -45,6 +47,11 @@
 #define LDR_STUB_SEC 0x4000u                    /* the directory and the boot stub */
 #define LDR_MARK_SEC 0x91000u                   /* stub_core.h STUB_MARK_SEC, STUB_MARK_OFF */
 #define LDR_MARK_OFF 0x91FE0u
+#define LDR_RES_TYPE 101u                       /* the package's res.bin (tools/fm1pkg_make.py RES_TYPE) */
+#define LDR_RES_LO 0xCB000u                     /* the resource region (firmware/src/res.c RES_BASE ...) */
+#define LDR_RES_HI 0xE0000u                     /* ... to the staged loader */
+#define LDR_RES_MAGIC 0x3153524Du               /* res.c RES_MAGIC "MRS1": its commit record */
+#define LDR_ST_MAGIC 0x554C4546u                /* storage.c ST_MAGIC "FELU": a storage commit record */
 
 static int ldr_fread(uint32_t off, void *p, uint32_t n);
 static int ldr_erase(uint32_t off);
@@ -96,17 +103,19 @@ static int ldr_chip_key(uint32_t *key)
     return -3;
 }
 
-/* CRC-32 (zlib's), bit by bit: the marker's own 16 bytes only */
-static uint32_t ldr_crc32(const uint8_t *p, uint32_t n)
+/* CRC-32 (zlib's), bit by bit: the marker's own 16 bytes, the commit records, the installed resource region.
+ * Running: start 0xFFFFFFFF, the CRC is the complement of the end */
+static uint32_t ldr_crc32_run(uint32_t c, const uint8_t *p, uint32_t n)
 {
-    uint32_t c = 0xFFFFFFFFu, i;
+    uint32_t i;
     while (n--) {
         c ^= *p++;
         for (i = 0; i < 8u; i++)
             c = c & 1u ? (c >> 1) ^ 0xEDB88320u : c >> 1;
     }
-    return ~c;
+    return c;
 }
+static uint32_t ldr_crc32(const uint8_t *p, uint32_t n) { return ~ldr_crc32_run(0xFFFFFFFFu, p, n); }
 
 /* does the package carry the stub's commit marker? (the 512 bytes that hold it, decrypted in place) */
 static int ldr_pkg_marker(uint32_t fl_off, uint8_t *b, uint32_t key, uint32_t stub)
@@ -174,16 +183,83 @@ static int ldr_sector(uint32_t fl_off, uint32_t s, uint8_t *sec, uint8_t *cur, u
     return -11;                                          /* verify failed twice */
 }
 
+/* a 32-byte commit record of res.c or storage.c: its magic, the CRC-32 of the rest last */
+static int ldr_record(const uint8_t *h, uint32_t magic)
+{
+    return ota_rd32(h) == magic && ota_rd32(h + 28) == ldr_crc32(h, 28);
+}
+static int ldr_blank(const uint8_t *p, uint32_t n)
+{
+    while (n--)
+        if (*p++ != 0xFFu)
+            return 0;
+    return 1;
+}
+
+/* 4. the resource region (res.c) from the package's res.bin: its commit record, the payload, padded to sectors
+ * (off/size: the entry, 0 when the package has none). Left as it is when it holds this build's region whole (a
+ * code-only update reads nothing more), or when it holds no region and a sector there holds a storage record: an
+ * older layout's preset banks, which the app moves into the pool and then clears (res.c res_boot), so the next
+ * install writes it. Otherwise the commit record's sector goes blank first and its first page is written last:
+ * a valid record only ever stands over a whole region. Sectors past the package's are left blank, as res.c's
+ * begin leaves them. A failure here costs no boot: the app falls back (res_ok 0) and asks for another install */
+static void ldr_res(uint32_t off, uint32_t size, uint8_t *sec, uint8_t *cur)
+{
+    uint32_t s, k, c, len, open = 1;
+    if (!off || !size || (size & 0xFFFu) || size > LDR_RES_HI - LDR_RES_LO || ota_read(off, sec, 512) ||
+        !ldr_record(sec, LDR_RES_MAGIC) || (len = ota_rd32(sec + 4)) > size - 32u || ldr_fread(LDR_RES_LO, cur, 32))
+        return;
+    if (ldr_record(cur, LDR_RES_MAGIC)) {
+        if (ota_memeq(sec, cur, 32)) {
+            for (s = 0, c = 0xFFFFFFFFu; s < len; s += k) {
+                k = len - s > 0x1000u ? 0x1000u : len - s;
+                if (ldr_fread(LDR_RES_LO + 32u + s, cur, k))
+                    return;
+                c = ldr_crc32_run(c, cur, k);
+            }
+            if (~c == ota_rd32(sec + 8))
+                return;                                  /* this build's, whole */
+        }
+    } else {
+        for (s = LDR_RES_LO; s < LDR_RES_HI; s += 0x1000u)
+            if (ldr_fread(s, cur, 32) || ldr_record(cur, LDR_ST_MAGIC))
+                return;                                  /* preset banks the app has not moved yet */
+    }
+    if (ldr_erase(LDR_RES_LO))
+        return;
+    for (s = LDR_RES_LO + 0x1000u; s < LDR_RES_HI; s += 0x1000u) {
+        if (s < LDR_RES_LO + size) {
+            if (ldr_sector(off - LDR_RES_LO, s, sec, cur, 0u, &open))
+                return;
+        } else if (ldr_fread(s, cur, 0x1000u) || (!ldr_blank(cur, 0x1000u) && ldr_erase(s))) {
+            return;
+        }
+        ldr_progress(LDR_APP_HI - LDR_APP_LO, LDR_APP_HI - LDR_APP_LO);
+    }
+    for (k = 0; k < 0x1000u; k += 512u)
+        if (ota_read(off + k, sec + k, 512))
+            return;
+    for (k = 0x100u; k < 0x1000u; k += 0x100u)
+        if (ldr_prog(LDR_RES_LO + k, sec + k, 256))
+            return;
+    (void)ldr_prog(LDR_RES_LO, sec, 256);                /* the commit record */
+}
+
 static int ldr_session(void)
 {
     static uint8_t hdr[0x400], sec[0x1000], cur[0x1000];
-    uint32_t i, fl_off, fl_size, ota_off, ota_len, key, s, done = 0, open = 0, stub;
+    uint32_t i, fl_off, fl_size, ota_off, ota_len, key, s, done = 0, open = 0, stub, res_off = 0, res_size = 0;
     int rc, mark;
-    /* 1. UFW header + entry list (ota.c) */
+    /* 1. UFW header + entry list (ota.c), which leaves the entries decrypted */
     if ((rc = ota_ufw(hdr, &fl_off, &fl_size, &ota_off, &ota_len)) != 0)
         return rc;
     if (!fl_off || fl_size != LDR_APP_HI)
         return -3;
+    for (i = 0; i < ota_rd16(hdr + 8); i++)
+        if (ota_rd16(hdr + 0x40 + i * 0x50u) == LDR_RES_TYPE) {
+            res_off = ota_rd32(hdr + 0x40 + i * 0x50u + 8);
+            res_size = ota_rd32(hdr + 0x40 + i * 0x50u + 12);
+        }
     /* 2. the package's app area must decrypt with this chip's key */
     if ((rc = ldr_chip_key(&key)) != 0)
         return -40 + rc;
@@ -209,7 +285,8 @@ static int ldr_session(void)
             return rc;
         ldr_progress(LDR_APP_HI - LDR_APP_LO, LDR_APP_HI - LDR_APP_LO);
     }
-    /* 4. finish: the host confirms, the record goes, the SPL boots the app */
+    ldr_res(res_off, res_size, sec, cur);
+    /* 5. finish: the host confirms, the record goes, the SPL boots the app */
     for (i = 0; i < 4u; i++)
         if (!ota_read(0xF0000000u, sec, 8))
             break;

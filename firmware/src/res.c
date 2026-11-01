@@ -3,10 +3,12 @@
 /* The resource region: read-only data the app does not need to start (Rubik, the factory sounds, the BLE radio
  * program), linked at its flash address (app.ld .mres, MELODEE_RES) and read in place through the plain XIP window.
  * 0xCB000..0xDFFFF: where CZ, native FM and user preset banks had fixed pairs (storage.c moved them into the preset
- * pool; st_small_migrate copies what is still here). The installer writes it
- * after an update (editor command 82: web install, tools/fm1_install.py); build.py patches res_want with the length
- * and CRC-32 this build's payload has, so a code-only update keeps the region. Missing, torn or another build's:
- * res_ok 0 and the readers fall back (Melodee Pixel, INIT sounds, the radio refused).
+ * pool; st_small_migrate copies what is still here). The update loader writes it from the package's res.bin
+ * (firmware/loader/ldr_core.c ldr_res: any host that serves the package), and editor command 82 after an update
+ * (web install, tools/fm1_install.py) when the loader could not; build.py patches res_want with the length and
+ * CRC-32 this build's payload has, so a code-only update keeps the region. Missing, torn or another build's:
+ * res_ok 0, the readers fall back (Melodee Pixel, INIT sounds, the radio refused) and the start asks for another
+ * install (ui_boot.c).
  *   0xCB000  header: magic, length, CRC-32 of the payload, header CRC (written last: the commit record)
  *   0xCB020  payload: .mres as linked; the sector tails hold data too (build.py: none parses as an update record) */
 #define RES_BASE 0xCB000u
@@ -34,6 +36,20 @@ static int res_valid(void)
     return st_crc32(_mres_start, len) == h.crc;      /* the payload as the app reads it */
 }
 static void res_check(void) { res_ok = (uint8_t)res_valid(); }
+/* boot, after st_small_migrate (moved: every preset bank's current record is in the pool). Not installed: the old
+ * copies of banks still here go, as begin erases them, since the update loader leaves a region that holds storage
+ * records alone (ldr_res); the next install, from any host, writes it */
+static void res_boot(int moved)
+{
+    res_check();
+    if (res_ok || !moved) return;
+    for (uint32_t s = 0; s < RES_SECTORS; s++) {
+        st_hdr_t h;
+        uint32_t at = RES_BASE + s * ST_SECTOR;
+        if (!st_read(at, &h, sizeof h) && h.magic == ST_MAGIC && h.hcrc == st_crc32(&h, sizeof h - 4u))
+            (void)st_erase(at);
+    }
+}
 
 /* begin: refuse while anything could read the region or the flash is in use, invalidate it, move preset banks still
  * in their old pairs here into the preset pool, erase it */

@@ -15,6 +15,9 @@ material in it:
              cfg_tool.bin and eq_cfg_hw.bin, the region descriptors, SFC-encrypted
              with the chip key
   ota.bin    Melodee's own update loader (firmware/loader)
+  res.bin    the resource region (firmware/src/res.c), padded to whole sectors: the
+             loader writes it after the app, so every host that serves the package
+             (web, CLI, Firmware Hub) installs it
 
 The layout values (offsets, flags, descriptor addresses, header fields) are
 facts of the FM-1 flash layout and the SDK file formats.
@@ -23,7 +26,7 @@ The three SDK files (uboot.boot, cfg_tool.bin, eq_cfg_hw.bin) are Apache-2.0, no
 ship LICENSES/Apache-2.0.txt with every package (LICENSING.md; make_site.py and
 build.py --release do).
 
-  fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--key 0x980F]
+  fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--product FM-1_9XY] [--key 0x980F] [--res RES.bin]
 """
 import argparse
 import os
@@ -35,6 +38,7 @@ from pathlib import Path
 APP_SLOT = 0x8DFBC                                     # the app area [0x4000, 0x93000), as the official V15's;
 FLASH_SIZE = 0x93000                                   # current Prophet banks start above it (storage.c)
 KEY = 0x980F
+RES_TYPE = 101                                         # res.bin (firmware/loader/ldr_core.c LDR_RES_TYPE)
 # the boot stub's layout (firmware/stub/stub_core.h), as app.bin offsets (app.bin offset 0 = flash 0x4120)
 STUB_LEN = 0xEE0                    # the stub; the body (the app proper) follows: flash 0x5000, XIP 0x02001000
 STUB_SIG = b"CRSTUB"                # at app.bin + 8 (crt0_stub.S), then the stub's version (u16)
@@ -243,8 +247,10 @@ def flash_image(app, key, marker_of=marker):
     return bytes(f)
 
 
-def ufw(flash, ota, product):
+def ufw(flash, ota, product, res=None):
     files = [(0, "flash.bin", flash), (100, "ota.bin", ota)]
+    if res:                                             # the loader reads it a sector at a time
+        files.append((RES_TYPE, "res.bin", res + b"\xFF" * (-len(res) % 0x1000)))
     off, ents, data = 0x400, [], bytearray()
     for i, (typ, name, d) in enumerate(files):
         off = (off + 0xFF) & ~0xFF
@@ -291,10 +297,12 @@ def main():
     ap.add_argument("--product", default="FM-1_900")
     ap.add_argument("--key", type=lambda s: int(s, 0), default=KEY)
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--res", type=Path, help="the build's resource region (build/melodee-res.bin)")
     a = ap.parse_args()
     global SDK
     SDK = a.sdk
-    pkg = ufw(flash_image(a.app.read_bytes(), a.key), a.ota.read_bytes(), a.product)
+    pkg = ufw(flash_image(a.app.read_bytes(), a.key), a.ota.read_bytes(), a.product,
+              a.res.read_bytes() if a.res else None)
     a.out.write_bytes(pkg)
     print(f"package {a.out}: {len(pkg)} B, identity {a.product}, chip key {a.key:#06x}")
 

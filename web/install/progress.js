@@ -23,15 +23,15 @@ function ufwEntries(image) {
 
 // the bytes the device reads, for the bar. Step 1 (the running firmware): the UFW header, the loader's head twice,
 // its body. Step 2 (the loader): the header, the chip-key check, the whole flash.bin (checked before anything is
-// erased), then the app area again as it writes it. A resume has step 2 only. Without a readable flash.bin entry
-// the whole image stands for it.
+// erased), then the app area again as it writes it, then res.bin (the resource region; none when the FM-1 has this
+// build's already). A resume has step 2 only. Without a readable flash.bin entry the whole image stands for it.
 export function progressModel(image, resume = false) {
   let ent = {};
   try { ent = ufwEntries(image); } catch (_) { /* not a UFW image */ }
-  const fl = ent[0], ldr = ent[100];
+  const fl = ent[0], ldr = ent[100], res = ent[101];
   const flen = fl && fl.len > 0x4000 && fl.len <= 0x100000 ? fl.len : image.length;
   const check = resume ? 0 : 0x400 + 0x400 + (ldr && ldr.len > 0x20 && ldr.len < image.length ? ldr.len - 0x20 : 0);
-  const write = 0x400 + 0x20 + flen + Math.max(0, flen - 0x4000);
+  const write = 0x400 + 0x20 + flen + Math.max(0, flen - 0x4000) + (res && res.len <= 0x15000 ? res.len + 0x200 : 0);
   const total = check + write;
   return {
     check, write, total,

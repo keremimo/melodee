@@ -614,7 +614,8 @@ def main():
         print("  FAIL ", e)
     if errors:
         raise SystemExit("build: checks failed")
-    pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT)
+    pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT,
+                          (OUT / "melodee-res.bin").read_bytes())
     (OUT / name).write_bytes(pkg)
     (OUT / "ATTRIBUTION.txt").unlink(missing_ok=True)
     print(f"app      {OUT / 'melodee.bin'}  {len(img)} B")

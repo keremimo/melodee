@@ -3,7 +3,8 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Host test of the Melodee update loader (firmware/loader/ldr_core.c): a fake
  * host serves a package over the SysEx protocol, the "device" flash starts as
- * another package's flash.bin (as if that firmware were installed).
+ * another package's flash.bin (as if that firmware were installed). NEW's res.bin, when it has one, goes to the
+ * resource region after the app (ldr_res).
  *   ldr_test OLD.fwsc NEW.fwsc */
 #include <stdint.h>
 #include <stdio.h>
@@ -90,13 +91,16 @@ static int ldr_erase(uint32_t off)
     return 0;
 }
 static uint32_t prog_fail_after;                    /* a write that fails (the power gone): after this many */
+static int res_prog_fail;                           /* writes into the resource region past its first sector fail */
 static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     const uint8_t *s = p;
     uint32_t i;
     if (prog_fail_after && !--prog_fail_after) return -1;
-    /* Programming is restricted to the application. */
-    if (off < 0x4000u || off + n > 0x93000u || ((off & 0xFFu) + n) > 256u) bad_range++;
+    if (res_prog_fail && off >= 0xCC000u && off < 0xE0000u) return -1;
+    /* Programming is restricted to the application and the resource region. */
+    if (off < 0x4000u || (off + n > 0x93000u && (off < 0xCB000u || off + n > 0xE0000u)) || ((off & 0xFFu) + n) > 256u)
+        bad_range++;
     for (i = 0; i < n; i++) nor[off + i] &= s[i];
     return 0;
 }
@@ -120,7 +124,7 @@ static uint8_t *load_logical(const char *path, size_t *len)
     return lg;
 }
 
-static uint32_t flash_off(const uint8_t *lg)        /* flash.bin offset in the logical image */
+static uint32_t entry_off(const uint8_t *lg, uint32_t type, uint32_t *size)   /* an entry's offset, 0 if none */
 {
     uint8_t h[0x400];
     uint32_t i, n;
@@ -130,9 +134,26 @@ static uint32_t flash_off(const uint8_t *lg)        /* flash.bin offset in the l
     for (i = 0; i < n; i++) {
         uint8_t *e = h + 0x40 + i * 0x50u;
         ota_jl_enc(e, 0x50);
-        if (ota_rd16(e) == 0) return ota_rd32(e + 8);
+        if (ota_rd16(e) == type) { if (size) *size = ota_rd32(e + 12); return ota_rd32(e + 8); }
     }
     return 0;
+}
+static uint32_t flash_off(const uint8_t *lg) { return entry_off(lg, 0, 0); }   /* flash.bin */
+
+static uint32_t res_off, res_size;                  /* NEW's res.bin in the logical image */
+static int res_installed(void)                      /* the region == res.bin, the rest of it blank */
+{
+    uint32_t i;
+    if (memcmp(nor + LDR_RES_LO, logical + res_off, res_size)) return 0;
+    for (i = LDR_RES_LO + res_size; i < LDR_RES_HI; i++)
+        if (nor[i] != 0xFFu) return 0;
+    return 1;
+}
+static void st_record(uint32_t at, uint32_t magic)   /* a valid 32-byte commit record (storage.c / res.c) */
+{
+    memset(nor + at, 0x11, 32);
+    ota_wr32(nor + at, magic);
+    ota_wr32(nor + at + 28, ldr_crc32(nor + at, 28));
 }
 
 static int check(const char *what, int ok) { printf("%-56s %s\n", what, ok ? "ok" : "FAIL"); return ok ? 0 : 1; }
@@ -203,10 +224,47 @@ int main(int argc, char **argv)
     bad += check("finish asked (0xF0000000)", f0_asked >= 1);
     bad += check("update record cleared (RAM + flash)", record_cleared && nor[0xE4F06] == 0xFF);
     bad += check("no write outside the allowed windows", bad_range == 0);
+    res_off = entry_off(logical, LDR_RES_TYPE, &res_size);
+    bad += check("the package carries res.bin, whole sectors", res_off && res_size && !(res_size & 0xFFFu));
+    bad += check("resource region == res.bin, the rest of it blank", res_off && res_installed());
     /* same package again: nothing to erase */
     erases = 0; requests = 0;
     rc = ldr_session();
     bad += check("re-run with the same package erases nothing", rc == 0 && erases == 0);
+    if (res_off) {
+        uint32_t quiet = requests;
+        nor[LDR_RES_LO + 0x2345u] ^= 0x40u;          /* a damaged payload under this build's record */
+        erases = 0; requests = 0;
+        rc = ldr_session();
+        bad += check("damaged resource payload: written again", rc == 0 && erases && res_installed());
+        bad += check(".. a whole region read no res.bin (a code-only update)", requests >= quiet + (res_size >> 9));
+        memset(nor + LDR_RES_LO, 0xFF, LDR_RES_HI - LDR_RES_LO);   /* the old layout: preset banks still here */
+        st_record(LDR_RES_LO + 0x5000u, LDR_ST_MAGIC);
+        st_record(LDR_RES_LO + 0xD000u, LDR_ST_MAGIC);
+        static uint8_t banks[LDR_RES_HI - LDR_RES_LO];
+        memcpy(banks, nor + LDR_RES_LO, sizeof banks);
+        erases = 0;
+        rc = ldr_session();
+        bad += check("storage records in the region: left alone, the app installed", rc == 0 && !erases &&
+                     !memcmp(banks, nor + LDR_RES_LO, sizeof banks));
+        memset(nor + LDR_RES_LO, 0x5A, LDR_RES_HI - LDR_RES_LO);   /* another build's region over foreign data */
+        st_record(LDR_RES_LO, LDR_RES_MAGIC);
+        st_record(LDR_RES_LO + 0x5000u, LDR_ST_MAGIC);
+        rc = ldr_session();
+        bad += check("another build's region: replaced, the rest blank", rc == 0 && res_installed());
+        memset(nor + LDR_RES_LO, 0xA5, LDR_RES_HI - LDR_RES_LO);   /* no record, no storage: the official's VM */
+        rc = ldr_session();
+        bad += check("foreign data without records: replaced", rc == 0 && res_installed());
+        res_prog_fail = 1;
+        memset(nor + LDR_RES_LO, 0xFF, LDR_RES_HI - LDR_RES_LO);
+        rc = ldr_session();
+        res_prog_fail = 0;
+        bad += check("resource write fails: the install still completes, no commit record",
+                     rc == 0 && !ldr_record(nor + LDR_RES_LO, LDR_RES_MAGIC) &&
+                     !memcmp(nor + 0x4000, logical + nfo + 0x4000, LDR_APP_HI - 0x4000));
+        rc = ldr_session();
+        bad += check(".. the next install writes it", rc == 0 && res_installed());
+    }
     /* a package for another chip key is refused before any erase */
     {
         uint8_t save = logical[nfo + 0x4000 + 5];

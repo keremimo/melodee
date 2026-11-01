@@ -414,6 +414,7 @@ if core && [ $TABLES = 1 ]; then
     t "persistence: deferred settings, retry and failed-save rollback" persistence_test $FW
     t "first boot: foreign settings, safe defaults, ownership and interrupted cleanup" settings_origin_test $FW
     t "first boot: reset unsupported preset banks, preserve good entries and retry cuts" preset_boot_reset_test $FW
+    t "first boot: moved preset banks leave the resource region to the update loader" res_boot_test $FW
     t "storage safety: protect unreadable records until confirmed replacement" storage_safety_test $FW
     t "full backup: CRC before writes, stale runtime, USB reset / timeout, malformed objects, older projects" backup_test $FW
     t "CPU laboratory: persistence guard and RAM-only preference restoration" backup_lab:backup_test -DMELODEE_AUDIO_PROFILE=1 $FW
