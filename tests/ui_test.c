@@ -3651,6 +3651,8 @@ static int test_home_select_engine(void)
     turn(EN_SELECT, 1);
     ok &= TSEL->eng_req == ENGI_DRUM;
     turn(EN_SELECT, 1);
+    ok &= TSEL->eng_req == ENGI_MIDI;
+    turn(EN_SELECT, 1);
     ok &= TSEL->eng_req == ENGI_WT;
     turn(EN_SELECT, 1);
     ok &= TSEL->eng_req == ENGI_PROPHET;
@@ -3660,6 +3662,8 @@ static int test_home_select_engine(void)
     ok &= TSEL->eng_req == ENGI_PROPHET;
     turn(EN_SELECT, -1);
     ok &= TSEL->eng_req == ENGI_WT;
+    turn(EN_SELECT, -1);
+    ok &= TSEL->eng_req == ENGI_MIDI;
     turn(EN_SELECT, -1);
     ok &= TSEL->eng_req == ENGI_DRUM;
     turn(EN_SELECT, -1);
@@ -3668,7 +3672,7 @@ static int test_home_select_engine(void)
     ok &= TSEL->eng_req == ENGI_CZ;
     turn(EN_SELECT, -1);
     ok &= TSEL->eng_req == ENGI_FM6;
-    bad += check("SELECT on HOME: FM6 -> CZ-1 -> SID -> DRUM -> WT -> PROPHET -> FM6 (wraps), back; stays HOME; says it", ok);
+    bad += check("SELECT on HOME: FM6 -> CZ-1 -> SID -> DRUM -> MIDI -> WT -> PROPHET -> FM6 (wraps), back; stays HOME; says it", ok);
     go_title("GLOBAL");
     uint32_t e = TSEL->eng_req;
     turn(EN_SELECT, 1);
@@ -5831,9 +5835,11 @@ static int test_select_octave(void)
     bad += check("  GLO SELECT OCTAVE on a page: up one, the page stays", song.octave == 0 && !ui.home && ui.page == pg);
     glo_select_set(0);
     song.octave = 0;
-    bad += check("  the menu lists OCTAVE beside TRANSPOSE, OFF still last, the saved numbers kept",
-                 hs_step(HS_TRANS, 1) == HS_OCT && hs_step(HS_OCT, 1) == HS_CHORD && hs_step(HS_PATTERN, 1) == HS_OFF &&
-                 hs_step(HS_OFF, 1) == HS_OFF && hs_step(HS_OFF, 0) == HS_BPM && HS_OFF == 8);
+    bad += check("  the menu lists OCTAVE beside TRANSPOSE, ENGINE beside PATTERN, OFF second to last",
+                 hs_step(HS_TRANS, 1) == HS_OCT && hs_step(HS_OCT, 1) == HS_CHORD && hs_step(HS_PATTERN, 1) == HS_ENGINE &&
+                 hs_step(HS_ENGINE, 1) == HS_OFF && hs_step(HS_OFF, 1) == HS_OFF && hs_step(HS_OFF, 0) == HS_BPM);
+    bad += check("  .. the saved numbers kept: OFF 8, OCTAVE 9, ENGINE 10 appended",
+                 HS_OFF == 8 && HS_OCT == 9 && HS_ENGINE == 10);
     ui_power_on();
     return bad;
 }
