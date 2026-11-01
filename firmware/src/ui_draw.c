@@ -1278,6 +1278,7 @@ static void ui_draw(void)                               /* (gfx.c: the fills wai
 }
 static void ui_draw_frame(void)
 {
+    if (boot_work.state == 4u && RES_OK()) { boot_work.state = 0; ui.force = 1; }   /* (Finish setup meanwhile) */
     if (boot_work.state) {
         scrn.idle = fm1_ms;                          /* maintenance/errors never sleep or get covered */
         if (ui.force) { boot_work_draw(); ui.force = 0; }

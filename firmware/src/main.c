@@ -288,6 +288,12 @@ static void fm1_main(void)
     fm1_audio_unmute();                       /* the codec settled on silent I2S since audio_init: no cold-boot click */
     if (boot_work.state != 2u)
         lcd_fill(0, 0, 240, 240, T_BG);
+#ifdef RES_BASE
+    if (flash_ok && !res_ok && !boot_work.state) {    /* the resource region missing: ask for an install (ui_boot.c) */
+        boot_work.state = 4u;
+        ui.force = 1;
+    }
+#endif
 
     for (;;) {
         uint32_t m = fm1_ms;

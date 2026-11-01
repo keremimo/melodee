@@ -19,7 +19,9 @@
  *                                                             stub guards up to the sector's erase, the new one
  *                                                             from its last page on; the window between is the same
  * A cut state is: B the stub boots it, R the stub rescues (the staged loader), O the old firmware still whole (no
- * stub yet, nothing it uses touched), U unprotected (no working stub in sector 0x4000 and not the whole old app). */
+ * stub yet, nothing it uses touched), U unprotected (no working stub in sector 0x4000 and not the whole old app).
+ * NEW's res.bin goes to the resource region after the marker (ldr_res): every cut from the marker's page on boots
+ * NEW, and the region's commit record only ever stands over the whole region. */
 #include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -122,7 +124,8 @@ static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     const uint8_t *s = p;
     uint32_t i;
-    if (off < 0x4000u || off + n > 0x93000u || ((off & 0xFFu) + n) > 256u) bad_range++;
+    if (off < 0x4000u || (off + n > 0x93000u && (off < 0xCB000u || off + n > 0xE0000u)) || ((off & 0xFFu) + n) > 256u)
+        bad_range++;
     for (i = 0; i < n; i++) nor[off + i] &= s[i];
     op_done(off);
     return 0;
@@ -147,7 +150,7 @@ static uint8_t *load_logical(const char *path, size_t *len)
     return lg;
 }
 
-static uint32_t flash_off(const uint8_t *lg)        /* flash.bin offset in the logical image */
+static uint32_t entry_off(const uint8_t *lg, uint32_t type, uint32_t *size)   /* an entry's offset, 0 if none */
 {
     uint8_t h[0x400];
     uint32_t i, n;
@@ -157,9 +160,20 @@ static uint32_t flash_off(const uint8_t *lg)        /* flash.bin offset in the l
     for (i = 0; i < n; i++) {
         uint8_t *e = h + 0x40 + i * 0x50u;
         ota_jl_enc(e, 0x50);
-        if (ota_rd16(e) == 0) return ota_rd32(e + 8);
+        if (ota_rd16(e) == type) { if (size) *size = ota_rd32(e + 12); return ota_rd32(e + 8); }
     }
     return 0;
+}
+static uint32_t flash_off(const uint8_t *lg) { return entry_off(lg, 0, 0); }   /* flash.bin */
+
+static uint32_t res_off, res_size;                  /* NEW's res.bin in the logical image (0: none) */
+static int res_whole(void)                          /* the region == res.bin, the rest of it blank */
+{
+    uint32_t i;
+    if (res_off && memcmp(nor + LDR_RES_LO, logical + res_off, res_size)) return 0;
+    for (i = LDR_RES_LO + res_size; i < LDR_RES_HI; i++)
+        if (nor[i] != 0xFFu) return 0;
+    return 1;
 }
 
 static int check(const char *what, int ok) { printf("%-56s %s\n", what, ok ? "ok" : "FAIL"); return ok ? 0 : 1; }
@@ -200,9 +214,10 @@ static uint32_t stub_says(stub_result_t *r)         /* the device's stub_decide 
     return r->decision;
 }
 
-static void restore(const uint8_t *base)
+static void restore(const uint8_t *base)             /* (the resource region as a first install finds it) */
 {
     memcpy(nor + LDR_APP_LO, base + LDR_APP_LO, LDR_APP_HI - LDR_APP_LO);
+    memset(nor + LDR_RES_LO, 0xFF, LDR_RES_HI - LDR_RES_LO);
     rx_full = 0;
 }
 
@@ -213,6 +228,7 @@ static int cut_case(const char *name, const uint8_t *base, int base_stub, int ba
 {
     static uint8_t head[0x4000];
     uint32_t n, k, cnt[4] = {0, 0, 0, 0}, first_u = 0, last_u = 0, stub_done = 0, req, bad = 0, marker_free = 1, i;
+    uint32_t m = 0;                                                   /* the marker's page: operation number m */
     stub_result_t r;
     int rc;
     memcpy(head, nor, sizeof head);
@@ -229,10 +245,16 @@ static int cut_case(const char *name, const uint8_t *base, int base_stub, int ba
     n = ops; req = requests;
     bad += rc != 0 || memcmp(nor + LDR_APP_LO, new_fl + LDR_APP_LO, LDR_APP_HI - LDR_APP_LO) != 0;
     bad += stub_says(&r) != STUB_BOOT || n > sizeof oplog / sizeof oplog[0];
-    for (k = 0; k < n; k++)                                           /* the stub's sector whole from this op on */
+    bad += !res_whole();
+    for (k = 0; k < n; k++) {                                         /* the stub's sector whole from this op on */
         if (oplog[k] == LDR_STUB_SEC + 0xF00u) stub_done = k + 1u;
+        if (oplog[k] == LDR_MARK_SEC + 0xF00u) m = k + 1u;
+    }
     if (n && oplog[0] != (LDR_MARK_SEC | 1u)) bad++;                  /* the first operation: the marker's erase */
-    if (n && oplog[n - 1u] != LDR_MARK_SEC + 0xF00u) bad++;           /* the last: the marker's page */
+    if (n && !m) bad++;                                               /* the app's last: the marker's page, */
+    for (k = m; k < n; k++)                                           /* then the resource region's only, */
+        bad += (oplog[k] & ~1u) < LDR_RES_LO || oplog[k] >= LDR_RES_HI;
+    if (res_off && n > m && oplog[n - 1u] != LDR_RES_LO) bad++;      /* its commit record last */
     for (k = 1; k <= n; k++) {
         int st, stub_here;
         restore(base);
@@ -246,7 +268,7 @@ static int cut_case(const char *name, const uint8_t *base, int base_stub, int ba
             st = d == STUB_BOOT ? 3 : 2;
             bad += d == STUB_UBOOT;                                   /* (the staged loader is there: never) */
             if (d == STUB_BOOT)                                       /* boot: only the finished image */
-                bad += k != n || memcmp(nor + LDR_APP_LO, new_fl + LDR_APP_LO, LDR_APP_HI - LDR_APP_LO) != 0;
+                bad += k < m || memcmp(nor + LDR_APP_LO, new_fl + LDR_APP_LO, LDR_APP_HI - LDR_APP_LO) != 0;
         } else {
             int whole = base_whole && marker_free;                    /* the old app, but for a sector it never used */
             for (i = LDR_APP_LO; whole && i < LDR_APP_HI; i += 0x1000u)
@@ -256,17 +278,18 @@ static int cut_case(const char *name, const uint8_t *base, int base_stub, int ba
             bad += stub_done && k >= stub_done;                       /* no such state once the stub is written */
         }
         cnt[st]++;
+        bad += ota_rd32(nor + LDR_RES_LO) == 0x3153524Du && !res_whole();   /* a commit record: the region whole */
         ops = 0;
         rc = ldr_session();                                           /* resume from the cut state */
         bad += rc != 0 || memcmp(nor + LDR_APP_LO, new_fl + LDR_APP_LO, LDR_APP_HI - LDR_APP_LO) != 0 ||
-               memcmp(nor, head, sizeof head) != 0;
+               memcmp(nor, head, sizeof head) != 0 || !res_whole();
     }
-    bad += cnt[1] != want_u || cnt[3] != (n ? 1u : 0u) || bad_range;
+    bad += cnt[1] != want_u || cnt[3] != (n ? n - m + 1u : 0u) || bad_range;
     if (cnt[1]) {                                                     /* the window: nothing but the stub's sector */
         for (k = first_u; k <= last_u; k++)                           /* (and the marker's erase before it) */
             bad += (oplog[k - 1u] & ~0xFFFu) != LDR_STUB_SEC && oplog[k - 1u] != (LDR_MARK_SEC | 1u);
     }
-    printf("  %-34s %5u cut points: %4u rescue, %u boot (the end), %u old firmware whole, %2u UNPROTECTED",
+    printf("  %-34s %5u cut points: %4u rescue, %3u boot (the end, resources), %u old firmware whole, %2u UNPROTECTED",
            name, n, cnt[2], cnt[3], cnt[0], cnt[1]);
     if (cnt[1]) printf(" (cuts %u..%u)", first_u, last_u);
     printf("; %u requests  %s\n", req, bad ? "FAIL" : "ok");
@@ -284,6 +307,7 @@ int main(int argc, char **argv)
     logical = load_logical(argv[2], &logical_len);
     ofo = flash_off(old);
     nfo = flash_off(logical);
+    res_off = entry_off(logical, LDR_RES_TYPE, &res_size);
     /* device: OLD installed, plus a valid update record at 0xE4F00 */
     memset(nor, 0xFF, sizeof nor);
     memcpy(nor, old + ofo, 0x93000);
@@ -302,6 +326,7 @@ int main(int argc, char **argv)
     bad += check("finish asked (0xF0000000)", f0_asked >= 1);
     bad += check("update record cleared (RAM + flash)", record_cleared && nor[0xE4F06] == 0xFF);
     bad += check("no write outside the allowed windows", bad_range == 0);
+    bad += check("resource region == res.bin (when the package has one)", res_whole());
     /* same package again: nothing to erase */
     erases = 0; requests = 0;
     rc = ldr_session();

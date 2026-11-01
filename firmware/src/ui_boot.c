@@ -6,7 +6,8 @@
 static struct {
     const char *title;
     uint16_t done, total;
-    uint8_t state;                             /* 0 idle, 1 working, 2 failed, 3 wipe confirmation */
+    uint8_t state;                             /* 0 idle, 1 working, 2 failed, 3 wipe confirmation, 4 the resource
+                                                * region missing (res.c): install again */
     uint8_t presets;                           /* 0 other maintenance, 1 migration, 2 wiping */
 } boot_work;
 
@@ -31,6 +32,15 @@ static void boot_work_draw(void)
     char count[24];
     int32_t y;
     lcd_fill(0, 0, 240, 240, T_BG);
+    if (boot_work.state == 4u) {                /* (the words of the web installer's Finish setup) */
+        draw_text_box(12, 12, 216, TY_LB, "Setup unfinished", T_MID, 1);
+        y = boot_lines(40, TY_TX, "Factory sounds missing", T_TEXT, 26);
+        y = boot_lines(y + 12, TY_TX, "Install the update again", T_THEME, 26);
+        boot_lines(y + 8, TY_LB, "Your own sounds stay.", T_MID, 20);
+        boot_keys(0, "CONTINUE");
+        lcd_sync();
+        return;
+    }
     draw_text_box(12, 12, 216, TY_LB, "Startup maintenance", T_MID, 1);
     y = boot_lines(40, TY_TX, boot_work.title, T_TEXT, 26);
     if (boot_work.state == 3u) {
@@ -94,6 +104,8 @@ static void boot_work_input(uint32_t pressed)
     } else if (boot_work.state == 3u) {
         if (keys == dn) { boot_work.state = 2; ui.force = 1; }
         else if (keys == up) (void)shared_wipe();
+    } else if (boot_work.state == 4u && keys == up) {
+        boot_work.state = 0; ui.force = 1;
     }
 }
 #define BOOT_WORK_BEGIN(title, total) boot_work_begin(title, total, 0)
