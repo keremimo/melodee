@@ -1,13 +1,13 @@
 {
-  "version": "1.6.0-rc.7",
+  "version": "1.6.0-rc.8",
   "product": "FM-1_91060",
   "branch": "next",
-  "commit": "022bab7294d523fe0b4f48581c8afecc39fc4446",
-  "builtAt": "2026-10-29T18:39:55.398233+00:00",
+  "commit": "1150ef2f722721f16af0d279931d40b9edd0a4bf",
+  "builtAt": "2026-11-01T16:26:42.842583+00:00",
   "pkg": {
-    "dual": "../../firmware/melodee-1.6.0-rc.7.fwsc"
+    "dual": "../../firmware/melodee-1.6.0-rc.8.fwsc"
   },
   "sha256": {
-    "dual": "607f746ac7c068fd452035831d8c96368c23b4afc4246e8dbd900815acb83d6a"
+    "dual": "1c56cb34fbe007a21b16994b218d47ba125c787ec083ddf5cc496e0f1bb27a41"
   }
 }
