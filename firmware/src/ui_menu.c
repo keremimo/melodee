@@ -20,6 +20,9 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #if MELODEE_USB_HOST
        MI_USB_HOST,
 #endif
+#if MELODEE_BLE
+       MI_BLE,
+#endif
        MI_MIDI_KNOBS, MI_MIDI_MODE,
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
@@ -29,6 +32,9 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #endif
 #if MELODEE_USB_HOST
                                               "USB HOST",
+#endif
+#if MELODEE_BLE
+                                              "BLUETOOTH",
 #endif
                                               "MIDI KNOBS", "MIDI MODE",
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
@@ -306,6 +312,9 @@ static void draw_menu(void)
 #if MELODEE_USB_HOST
                 if (i == MI_USB_HOST) value = uh.want ? "ON" : "OFF";
 #endif
+#if MELODEE_BLE
+                if (i == MI_BLE) value = ble_midi_value();
+#endif
                 if (i == MI_HOLD) {                         /* "0.4 s" */
                     str_cpy(b, "0.4 s", sizeof b);
                     b[2] = (char)('0' + HOLD_MS[settings_hold % 4u] / 100u);
@@ -407,6 +416,14 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         /* KNOB 1 right ON, left OFF, OCT+ toggles. Not saved: the next boot is a device again (usb_host.c) */
         uh.want = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !uh.want);
         ui.force = 1; ok = 0;                           /* (the row is not part of the menu's signature) */
+    }
+#endif
+#if MELODEE_BLE
+    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_BLE) {
+        /* KNOB 1 steps OFF COMPUTER KEYBOARD, OCT+ steps and wraps; saved and applied once it rests (ble_midi.c) */
+        uint32_t v = settings_ble % 3u;
+        ble_midi_set((uint8_t)(s > 0 ? (v < 2u ? v + 1u : 2u) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % 3u));
+        ui.force = 1; ok = 0;
     }
 #endif
     if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_LIGHTS) {

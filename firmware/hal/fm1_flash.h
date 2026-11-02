@@ -157,6 +157,17 @@ static RAMFN uint32_t fl_jedec_ram(void)                 /* expect 0x856014 */
     return id;
 }
 
+static RAMFN void fl_uid_ram(uint8_t out[16])           /* 0x4B: the part's unique ID (Bluetooth's address) */
+{
+    fl_saved_t s; uint32_t i;
+    if (fl_enter(&s)) return;
+    fl_cs(0); fl_tx(0x4B);
+    for (i = 0; i < 4u; i++) fl_tx(0);                  /* (dummy bytes: three address, one wait, as P25Q / W25Q) */
+    for (i = 0; i < 16u; i++) out[i] = fl_rx();
+    fl_cs(1);
+    fl_exit(&s);
+}
+
 static RAMFN uint32_t fl_status_ram(void)                /* SR1 | SR2 << 8 */
 {
     fl_saved_t s; uint32_t v;

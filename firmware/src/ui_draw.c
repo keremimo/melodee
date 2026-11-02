@@ -258,6 +258,9 @@ static void draw_head(void)
 #if MELODEE_USB_HOST
     sig += uh.on ? (1u + uh.run) * 6151u : 0u;          /* the HOST tag: waiting, or a controller connected */
 #endif
+#if MELODEE_BLE
+    sig += ble_midi_tag() * 92821u;                     /* the BT tag: waiting, or a link with MIDI */
+#endif
     if (bpm != ui.roll_bpm) {
         char a[8];
         fmt_int(a, ui.roll_bpm);
@@ -302,10 +305,13 @@ static void draw_head(void)
     } else {
         const aafont_t *cf = TY_TX;                     /* (where you are: plain words in the track's colour;
                                                          * PATTERNS plain, the grid is in colour) */
+        int32_t hw = 0, btw = 0;
 #if MELODEE_USB_HOST
-        int32_t hw = uh.on ? text_w(TY_LB, "HOST") + 10 : 0;   /* USB HOST: the port is a host, dim until a controller answers */
-#else
-        int32_t hw = 0;
+        hw = uh.on ? text_w(TY_LB, "HOST") + 10 : 0;   /* USB HOST: the port is a host, dim until a controller answers */
+#endif
+#if MELODEE_BLE
+        btw = ble_midi_tag() ? text_w(TY_LB, "BT") + 10 : 0;   /* BLUETOOTH: dim until a link has MIDI */
+        hw += btw;
 #endif
         int32_t cw = text_w(cf, chip) + 4;
         if (x + 6 + cw + (low ? 22 : 0) + hw > 236) { /* a long page name shares room with battery and host state */
@@ -359,8 +365,12 @@ static void draw_head(void)
         if (low)                                        /* the battery, only when it runs low */
             cv_icon_mid(236 - cw - 20, H_HEAD / 2, 16, batt_level() ? ICON_X_BAT1 : ICON_X_BAT0, T_REC, T_BG);
 #if MELODEE_USB_HOST
-        if (hw)
+        if (hw - btw)
             cv_text_on(236 - cw - (low ? 22 : 0) - hw + 4, ty_y(H_HEAD / 2, TY_LB), TY_LB, "HOST", uh.run ? T_THEME : T_MID, T_BG);
+#endif
+#if MELODEE_BLE
+        if (btw)
+            cv_text_on(236 - cw - (low ? 22 : 0) - btw + 4, ty_y(H_HEAD / 2, TY_LB), TY_LB, "BT", ble_midi_tag() == 2u ? T_THEME : T_MID, T_BG);
 #endif
         cv_text_r(236, ty_y(H_HEAD / 2, cf), cf, chip,
                   !ui.home && cur_page()->graph == GR_PATGRID && !ptc_on() ? T_MID : T_THEME, T_BG);

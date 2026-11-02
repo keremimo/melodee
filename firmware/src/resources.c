@@ -14,6 +14,10 @@ enum { RES_ENGINE0, RES_NOTE_HISTORY = RES_ENGINE0 + NPART, RES_FX0,
 #if MELODEE_USB_AUDIO
        RES_USB_TRACKS,
 #endif
+#if MELODEE_BLE
+       RES_BLE,                        /* Bluetooth's stack RAM (ble.o's .ble_bss, app.ld): claimed at its place, for
+                                        * good, the first time BLUETOOTH is ON (ble_midi.c) */
+#endif
        RES_PUNCH, RES_COUNT };
 static uint8_t recording_undo_lost;
 static uint8_t recording_undo_active, recording_undo_skip;
@@ -128,6 +132,43 @@ static void *resource_resize(uint32_t id,uint32_t bytes)
     if(size<=resource[id].size){resource[id].size=size;return resource[id].ptr;}
     return resource_allocate_impl(id,bytes,1);
 }
+
+#if MELODEE_BLE
+/* A block that must be at one place (ble.o's .ble_bss: the linker put the stack's statics there, the main bank's top,
+ * the last the allocator reaches). 1: claimed (zeroed); 0: a live block is in the way. Disposable UI histories in the
+ * way go; sounding engine or effect state is never moved (ble_midi.c: then at the next boot, before any).
+ * The caller guards audio. */
+static int resource_claim(uint32_t id, void *at, uint32_t bytes)
+{
+    uintptr_t begin = (uintptr_t)at, end = begin + ((bytes + 3u) & ~3u);
+    for (uint32_t pass = 0; pass < 2u; pass++) {
+        uint32_t k, hit = 0;
+        for (k = 0; k < RES_COUNT; k++) {
+            uintptr_t b = (uintptr_t)resource[k].ptr;
+            if (k == id || !resource[k].size || b >= end || b + resource[k].size <= begin) continue;
+            if (pass == 0u && (k == RES_STEP_UNDO || k == RES_LOAD_UNDO || k == RES_RECORD_UNDO)) {
+                if (k == RES_RECORD_UNDO) {
+                    recording_undo_lost = 1;
+                    recording_undo_skip |= recording_undo_active;
+                    recording_undo_active = 0;
+                }
+                resource_release(k);
+                continue;
+            }
+            hit = 1;
+        }
+        if (!hit) {
+            memset(at, 0, end - begin);
+            resource[id].ptr = at;
+            resource[id].size = (uint32_t)(end - begin);
+            if (resource_used() > resource_peak) resource_peak = resource_used();
+            return 1;
+        }
+    }
+    resource_failures++;
+    return 0;
+}
+#endif
 
 /* Keep the already allocated path cheap in every engine accessor. */
 static inline void *resource_get(uint32_t id, uint32_t bytes)

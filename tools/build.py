@@ -257,7 +257,7 @@ def build_app(stub):
     subprocess.run([sys.executable, SRC / "tools/gen_909_tables.py", GEN / "x0x_drum_tables.h"], check=True)
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("MELODEE_FLASH", "MELODEE_OTA", "MELODEE_OTA_DRYRUN", "MELODEE_OTA_RAMONLY", "MELODEE_CDC",
-                 "MELODEE_UART", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
+                 "MELODEE_UART", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_BLE", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
                  "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ", "MELODEE_MOD_CACHE", "MELODEE_CONTROL_FAST", "MELODEE_MIX_FAST", "MELODEE_FX_DORMANT", "MELODEE_RECORD_INDEX", "MELODEE_PROPHET_FAST", "MELODEE_PANEL_FAST", "MELODEE_FM6_FAST", "MELODEE_CZ_FAST", "MELODEE_DRUM_FAST", "MELODEE_SID_FAST", "MELODEE_CAPTURE_FAST"):
         v = os.environ.get(flag)    # unset: the default in firmware/src/melodee.c
         if v in ("0", "1"):
@@ -273,10 +273,14 @@ def build_app(stub):
     cmain = (("cc", *flags, "-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns", "-c",
               FW / "src" / "melodee.c", "-o", OUT / "melodee.ll") if size else
              ("cc", *flags, "-c", FW / "src" / "melodee.c", "-o", OUT / "melodee.o"))
+    # Bluetooth MIDI's stack (Optimist's ble/, firmware/src/ble_unit.c) is a unit of its own: app.ld places its
+    # .bss at the audio arena's top (only its radio DMA blocks in RAM), claimed when BLUETOOTH is first ON
+    ble = os.environ.get("MELODEE_BLE") != "0"
+    cble = (("cc", *CFLAGS, "-Ifirmware/hal/ble", "-Ifirmware/src", "-c", FW / "src" / "ble_unit.c", "-o", OUT / "ble.o"),) if ble else ()
     tc_all(("cc", *[f for f in flags if f.startswith("-DMELODEE_DUAL_CORE=")], "-c", FW / "crt0.S", "-o", OUT / "crt0.o"),
            ("cc", "-c", FW / "hal" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
            ("cc", "-c", FW / "hal" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-           cmain)
+           cmain, *cble)
     if size:
         subprocess.run([sys.executable, SRC / "tools" / "size_fns.py", OUT / "melodee.ll", OUT / "melodee_size.ll"],
                        check=True)
@@ -292,7 +296,7 @@ def build_app(stub):
     elf = OUT / "melodee.elf"
     extra_ld = ["--defsym=AUDIO_RESIDENT=1"] if os.environ.get("MELODEE_RAM_AUDIO") == "1" else []
     tc("pi32v2/bin/ld", "--gc-sections", *extra_ld, "-T", FW / "app.ld", OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o",
-       OUT / "melodee.o", "-o", elf)
+       OUT / "melodee.o", *([OUT / "ble.o"] if ble else []), "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin", "dsptext.bin", "dsptables.bin", "audiotext.bin"):
         (OUT / sect).unlink(missing_ok=True)
     *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),

@@ -104,8 +104,12 @@ void fm1_timer5_irq(void)
 #endif
         return;
     }
-    if (owed & 1u)
+    if (owed & 1u) {
         usb_poll();
+#if MELODEE_BLE
+        ble_midi_drain();                       /* Bluetooth MIDI in -> the router, as USB's */
+#endif
+    }
     owed = 0;
     /* The ISR footer can be preempted after the C audio-active flag clears.
      * Its conservative bound therefore needs ordinary TIMER5 service too. */
@@ -211,7 +215,10 @@ static void fm1_main(void)
         ota_boot_cleanup();                             /* staging area left by an update */
 #endif
     settings_init();
-    clock_boot();                             /* the voice budget at the clock found (never changed) */
+    clock_boot();                             /* the voice budget at the clock found (Bluetooth: ble_midi.c) */
+#if MELODEE_BLE
+    ble_midi_claim();                         /* the stack's RAM before the sounds take the arena, when ON */
+#endif
     if (boot_work.state != 2u) {
         lcd_fill(0, 0, 240, 240, T_BG);
         draw_text_box(0, 70, 240, TY_HR, "MELODEE", T_THEME, 1);
@@ -234,6 +241,9 @@ static void fm1_main(void)
     fm1_adc_init();
     panel_init();
     melodee_init();
+#if MELODEE_BLE
+    ble_midi_init();                          /* the radio when BLUETOOTH is ON (about a second, IRQs off) */
+#endif
 #if MELODEE_DUAL_CORE
     /* Default recovery chooses one core after failed supply setup, an early
      * crash, or a retained CPU1 bar. No-fallback diagnostics bypass the last
@@ -281,6 +291,9 @@ static void fm1_main(void)
         }
 #endif
         usb_retry(fm1_ms);
+#if MELODEE_BLE
+        ble_midi_poll();
+#endif
 #if MELODEE_USB_AUDIO
         int usb_change=ua_off_apply(fm1_ms);
         if (usb_change==1) {                           /* USB direction or capture mode changed: the host re-reads */

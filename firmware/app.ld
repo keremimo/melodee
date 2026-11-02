@@ -37,7 +37,11 @@ SECTIONS
     _resource_low_end = 0x01C07F00;
     .data : AT (ALIGN(LOADADDR(.dsp_tables) + SIZEOF(.dsp_tables), 4)) { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) . = ALIGN(4); _data_end = .; } > RAM
     _data_load = LOADADDR(.data);
-    .bss (NOLOAD) : { _bss_start = .; *(.bss*) *(.sbss*) *(COMMON) . = ALIGN(4); _bss_end = .; } > RAM
+    /* MELODEE_BLE: ble.o's statics go to .ble_bss below, but for what the radio's engine reads by DMA (it reaches
+     * low RAM only): the baseband block and the PLL table stay here (src/ble_unit.c) */
+    .bss (NOLOAD) : { _bss_start = .; *ble.o(.bss.bb .bss.fm1_ble_pll_tbl)
+        *(EXCLUDE_FILE(*ble.o) .bss*) *(EXCLUDE_FILE(*ble.o) .sbss*) *(EXCLUDE_FILE(*ble.o) COMMON)
+        . = ALIGN(4); _bss_end = .; } > RAM
     _resource_data_start = _bss_end;
     _resource_data_end = ORIGIN(RAM) + LENGTH(RAM);
     .pool (NOLOAD) : { _pool_start = .; *(.pool*) . = ALIGN(4); _pool_end = .; } > POOL
@@ -56,6 +60,11 @@ SECTIONS
     _cpu1_ustack_top = _cpu1_stacks_lo + 3072;
     _cpu1_sstack_top = _cpu1_stacks_lo + 4096;
     _resource_end = ORIGIN(POOL) + LENGTH(POOL);
+    /* MELODEE_BLE: Bluetooth's stack RAM at the working arena's top (the allocator's last place). It stays the arena's
+     * until BLUETOOTH is ON: ble_midi.c then claims it (resources.c resource_claim) and zeroes it; boot never does */
+    .ble_bss (_resource_end - 0x1000) (NOLOAD) : { _ble_ram_start = .; *ble.o(.bss* .sbss* COMMON) . = ALIGN(4);
+        _ble_ram_end = .; } > POOL
+    ASSERT(_ble_ram_end <= _resource_end, "Bluetooth's stack RAM is above its 4 KiB at the arena's top")
     /* Complete resident interrupt/input graph trades arena capacity for code.
      * Four largest engine states must fit 48 KiB (ram_audio_test); effect
      * delay memory has its own admission/allocation limits. */

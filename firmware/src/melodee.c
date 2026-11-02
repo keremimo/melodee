@@ -41,6 +41,13 @@
 #ifndef MELODEE_VERSION
 #define MELODEE_VERSION "v1.5.1" /* shown in the menu, the console and the editor; build.py --release X.Y[.Z] */
 #endif
+#ifndef MELODEE_BLE
+#define MELODEE_BLE 1            /* Bluetooth MIDI (ble_midi.c, Optimist's stack in ble.o): the menu's BLUETOOTH. Its
+                                  * RAM is the audio arena's top, taken only once it is ON. Needs MELODEE_FLASH */
+#endif
+#if MELODEE_BLE && !MELODEE_FLASH
+#error "MELODEE_BLE needs MELODEE_FLASH"
+#endif
 #if MELODEE_OTA && !MELODEE_FLASH
 #error "MELODEE_OTA needs MELODEE_FLASH"
 #endif
@@ -74,6 +81,9 @@
 
 /* ----------------------------------------------------------- sound --- */
 #include "core.h"
+#if MELODEE_BLE
+#include "ble_midi.h"            /* (the audio interrupt's side of Bluetooth MIDI) */
+#endif
 #include "engines.c"             /* dsp.c, the eng_*.c files, the factory patterns */
 #include "params.c"
 #include "mod.c"               /* the modulation matrix, used by voice.c and mix.c */
@@ -121,5 +131,9 @@
 #endif
 #if MELODEE_CDC
 #include "console.c"
+#endif
+#if MELODEE_BLE
+#include "fm1_clock_stock.h"
+#include "ble_midi.c"            /* Bluetooth MIDI: the menu's BLUETOOTH, the stack's callbacks */
 #endif
 #include "main.c"

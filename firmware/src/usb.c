@@ -141,13 +141,17 @@ static int midi_enqueue(uint32_t pkt, uint32_t source)
 
 static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
 {
+    int sent = 0;
+#if MELODEE_BLE
+    sent = ble_midi_out(pkt);                       /* (the same stream to a Bluetooth link: ble_midi.h) */
+#endif
     if (usb_midi_out_ready() && mo_w - mo_r < MQ) {
         midi_out_q[mo_w % MQ] = pkt;
         RING_PUBLISH();
         mo_w++;
         return 1;
     }
-    return 0;
+    return sent;
 }
 static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
 

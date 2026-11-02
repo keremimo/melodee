@@ -36,7 +36,8 @@ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KE
 #define VOICE_PREF_ROW 8u
 #define VOICE_PREF_BYTE 8u
 /* Retired DIGITAL row bytes 24..27: FQ, version 1, quality 1..2.
- * Untagged/unknown records keep Classic; no settings/project layout change. */
+ * Untagged/unknown records keep Classic; no settings/project layout change. With MELODEE_BLE the same bytes hold
+ * BLUETOOTH, tagged 'B' 'T', version 1, the mode (ble_midi.c); FX RATE is retired (written as zeros). */
 #define FX_PREF_ROW 1u
 #define FX_PREF_BYTE 24u
 /* Retired DIGITAL row bytes 20..23: 'M', 'K', profile, encoder mode.
@@ -98,6 +99,12 @@ static int settings_import(persist_t *p, int n)
         settings_midi_knobs = valid ? m[2] : MK_OFF;
         settings_midi_knob_mode = valid ? m[3] : MK_ABSOLUTE;
     }
+#if MELODEE_BLE
+    {
+        const uint8_t *q = p->favorites.factory[FX_PREF_ROW] + FX_PREF_BYTE;
+        settings_ble = q[0] == 'B' && q[1] == 'T' && q[2] == 1u && q[3] < 3u ? q[3] : 0u;
+    }
+#endif
     settings.magic = SETTINGS_MAGIC;
     settings.palette = palette_from_stored(p->palette);
     settings.lowcut = 0;
@@ -153,6 +160,11 @@ static void settings_export(persist_t *p)
     {
         uint8_t *q = p->favorites.factory[FX_PREF_ROW] + FX_PREF_BYTE;
         memset(q, 0, 4);
+#if MELODEE_BLE
+        if (settings_ble) {                                 /* BLUETOOTH (ble_midi.c): 'B' 'T', version 1, the mode */
+            q[0] = 'B'; q[1] = 'T'; q[2] = 1u; q[3] = settings_ble;
+        }
+#endif
     }
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;
