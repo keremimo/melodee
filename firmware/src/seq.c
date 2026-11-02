@@ -237,6 +237,7 @@ static void rec_release(track_t *t, uint32_t note);
 static volatile uint32_t seq_erase_request, seq_erase_generation;
 static uint32_t seq_erase_transport;
 static uint8_t seq_started;                     /* since the last block; audio ISR only (midi_sync_out_block) */
+static uint32_t seq_advanced;                   /* this block's units so far (an external clock's LFO) */
 static uint8_t seq_erase_seen[NTRK];
 static volatile uint16_t seq_erase_button;
 static int seq_erase_active(const track_t *t);
@@ -1341,6 +1342,7 @@ static void seq_advance_part(uint32_t n)
 
 static void seq_advance(uint32_t n)
 {
+    seq_advanced += n;
     do {
         uint32_t chunk = chord_strum_next(n);
         seq_advance_part(chunk);
@@ -1353,6 +1355,7 @@ static void seq_advance(uint32_t n)
 static void events_block(uint32_t n)
 {
     chord_auto_tick(n);
+    seq_advanced = 0;
     uint32_t i, pr;
     if(song.playing || transport_req==1u)resource_release(RES_NOTE_HISTORY);
     uint32_t selected_clock = (uint32_t)song.g[G_CLOCK];
@@ -1530,7 +1533,9 @@ static void events_block(uint32_t n)
             chord_strum_tick(elapsed);
             for (i = 0; i < NTRK; i++)
                 arp_step(&trk[i], trk[i].arp_phys ? elapsed : 0u, elapsed);
-        }
+            sync_units = elapsed;
+        } else
+            sync_units = lfo_ext_units(n, seq_advanced);
     } else {
         uint32_t left=n;
         if(cin_left) {
@@ -1553,6 +1558,7 @@ static void events_block(uint32_t n)
         if(left) { uint32_t units = int_clock_units(left); seq_advance(units); sync_units += units; }
     }
     midi_sync_out_block(sync_units);
+    lfo_block_units = sync_units;
     if (song.playing)
         song.tick++;
 }

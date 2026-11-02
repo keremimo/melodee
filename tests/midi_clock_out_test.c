@@ -108,7 +108,7 @@ static int no_drift_test(void)
     static const uint8_t DIVS[4] = {2, 1, 3, 5};         /* 1/16, 1/8, 1/32, the 1/16 triplet */
     static const int16_t BPM[] = {97, 120, 137, 173, 40, 240, 101};
     uint32_t period[4], last[4], arp_steps = 0, arp_last = 0, fires = 0, was_on = 0;
-    uint32_t bad_tracks = 0, bad_pulses = 0, bad_arp = 0, bad_tempo = 0, bad_late = 0, per = (uint32_t)FS * 60u;
+    uint32_t bad_tracks = 0, bad_pulses = 0, bad_arp = 0, bad_tempo = 0, bad_late = 0, per = (uint32_t)FS * 60u, bad_lfo = 0;
     uint64_t steps[4] = {0}, ticks;
     int64_t arp_gap = 0; int arp_gap_set = 0;
     out_setup(120);
@@ -124,12 +124,16 @@ static int no_drift_test(void)
     recording[0] = note;
     trk[0].step[3].time = ST_NOTE; trk[0].step[3].flags |= SF_RECORDED;
     recording_reindex();
+    trk[1].p[P_LTRIG] = trk[2].p[P_LTRIG] = 0;
+    trk[1].p[P_LSYNC] = 10; trk[2].p[P_LSYNC] = 1;       /* 1/32 (three pulses: never a whole 2^32 share), 4 bars */
     uint32_t loop = 16u * period[0], on = 3u * period[0] + 97u * period[0] / RECORD_UNIT;
     out_blocks(2);
     out_transport(1);
     out_count_reset();
     for (uint32_t k = 0; k < 4u; k++) last[k] = trk[k].seq_idx;
     ticks = int_clock_rem;
+    uint32_t lfo_ph0[2] = {trk[1].lfo_ph, trk[2].lfo_ph}, lfo_rem0[2] = {lfo_sync_rem[1], lfo_sync_rem[2]};
+    static const uint32_t LFO_X[2] = {3u, 384u};
     for (uint32_t b = 0; b < NELEM(BPM); b++) {
         song.g[G_BPM] = BPM[b];
         uint32_t blocks = 300u * (per / (uint32_t)BPM[b]) / CTL, block_units = CTL * MIDI_BEAT_UNITS * (uint32_t)BPM[b] / per + 1u;
@@ -144,6 +148,10 @@ static int no_drift_test(void)
             }
             if (at[0] != ticks / per) bad_tempo++;
             if (pulses != at[0] / (MIDI_BEAT_UNITS / 24u) + 1u) bad_pulses++;
+            for (uint32_t k = 0; k < 2u; k++) {
+                track_lfo_tick(&trk[k + 1u]);
+                if (trk[k + 1u].lfo_ph - lfo_ph0[k] != (uint32_t)(((at[0] << 22) + lfo_rem0[k]) / LFO_X[k])) bad_lfo++;
+            }
             if (a->arp_note && a->arp_note != arp_last) { arp_steps++; arp_last = a->arp_note; }
             if (arp_steps) {
                 int64_t gap = (int64_t)at[0] - (int64_t)((uint64_t)(arp_steps - 1u) * period[0] + a->arp_pos);
@@ -165,6 +173,7 @@ static int no_drift_test(void)
     bad += check("the song keeps exactly the true tempo, through tempo changes", !bad_tempo);
     bad += check("the clock out stays on the same unit", !bad_pulses && pulses > 50000u);
     bad += check("the ARP never slides", !bad_arp && arp_steps > 8000u);
+    bad += check("synced LFOs never slide", !bad_lfo);
     bad += check("a recorded off-grid note fires in its own block on every loop",
                  !bad_late && fires + 1u >= (uint32_t)(total / loop) && fires <= (uint32_t)(total / loop) + 1u);
     return bad;

@@ -174,6 +174,49 @@ static int long_session_test(void)
     }
     return bad;
 }
+/* An external clock's synced LFO: smooth through pulse jitter, and it cannot slide against the song. */
+static int lfo_lock_test(void)
+{
+    uint32_t start = 24000000u, bpm = 137u, seed = 12345u, pulse = 0, bad_lock = 0, bad_smooth = 0;
+    timing_reset(1, start);
+    song.rec = 0;
+    track_t *t = &trk[0];
+    t->p[P_LTRIG] = 0; t->p[P_LSYNC] = 10;
+    timing_packet(start, 0xFA, 0, 0, 1);
+    events_block(0);
+    int64_t lfo_total = 0, song_total = 0;
+    uint64_t pulse_at = 0, per_pulse = (uint64_t)60000u * MIDI_TICKS_PER_MS / (bpm * 24u);
+    uint32_t blocks = (uint32_t)(1000u * ((uint64_t)FS * 60u / bpm) / CTL);
+    for (uint32_t b = 0; b < blocks; b++) {
+        uint64_t at = (uint64_t)b * CTL * 1000u * MIDI_TICKS_PER_MS / FS;
+        timing_now = start + (uint32_t)at;
+        fm1_ms = 1000u + (uint32_t)(at / MIDI_TICKS_PER_MS);
+        while (pulse_at <= at) {
+            timing_packet(start + (uint32_t)pulse_at, 0xF8, 0, 0, 1);
+            fm1_ms = 1000u + (uint32_t)(at / MIDI_TICKS_PER_MS);     /* (past the 24 MHz wrap too) */
+            midi_in_ms[(mi_w - 1u) % MQ] = fm1_ms;
+            timing_now = start + (uint32_t)at;
+            pulse++;
+            seed = seed * 1103515245u + 12345u;
+            /* The next arrival, up to a millisecond either side of its time. */
+            pulse_at = pulse * per_pulse + (uint64_t)((seed >> 16) % (2u * MIDI_TICKS_PER_MS)) - MIDI_TICKS_PER_MS * (pulse ? 1u : 0u);
+        }
+        events_block(CTL);
+        track_lfo_tick(t);
+        lfo_total += lfo_block_units;
+        song_total += seq_advanced;
+        if (b > blocks / 100u) {
+            int64_t gap = lfo_total - song_total;
+            uint32_t off = (uint32_t)(gap < 0 ? -gap : gap);
+            if (off > 341u) bad_lock++;
+            uint32_t nominal = CTL * MIDI_BEAT_UNITS / beat_samples();
+            if (lfo_block_units + 3u < nominal || lfo_block_units > nominal + 3u) bad_smooth++;
+        }
+    }
+    int bad = check("an external clock's LFO stays within a third of a pulse of the song, at any length", !bad_lock && song.playing);
+    bad += check("pulse jitter does not modulate it", !bad_smooth);
+    return bad;
+}
 static int overflow_phase_test(void)
 {
     int bad = 0;
@@ -479,7 +522,7 @@ static int old_formats_and_overdub_test(void)
 #ifndef MIDI_TIMING_NO_MAIN
 int main(void)
 {
-    int bad = grid_test() + timeline_test() + phase_test() + long_session_test() + overflow_phase_test() + arp_catchup_test() + tempo_flutter_test() + divisions_test() + lengths_and_swing_test() +
+    int bad = grid_test() + timeline_test() + phase_test() + long_session_test() + lfo_lock_test() + overflow_phase_test() + arp_catchup_test() + tempo_flutter_test() + divisions_test() + lengths_and_swing_test() +
               loop_replay_test() + recorded_gate_storage_test() + old_formats_and_overdub_test();
     printf("%s\n", bad ? "MIDI TIMING TEST FAILED" : "MIDI timing tests passed");
     return bad != 0;

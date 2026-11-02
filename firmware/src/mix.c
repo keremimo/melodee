@@ -81,7 +81,7 @@ static uint32_t div_samples(uint32_t div) { return division_samples(beat_samples
 
 /* The sequencer runs on musical units on every clock, so tracks, recordings, ARPs and the clock out cannot slide against
  * each other: 24 clocks/beat and every division divide exactly. A tempo only sets how fast units pass (int_clock_units,
- * or an external clock's pulses) and the LFO timing and display; it never moves an already recorded step. */
+ * or an external clock's pulses) and the display; it never moves an already recorded step. */
 #define MIDI_BEAT_UNITS 24576u
 static uint32_t seq_beat_samples(void)
 {
