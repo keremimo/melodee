@@ -434,11 +434,30 @@ static int drum_retrigger_accounting(void)
     settings_budget=previous_budget;return bad;
 }
 
+static int clock_project_load_test(void)
+{
+    int bad = 0;
+    midi_test_reset(); song.g[G_BPM] = 97;
+    project_save(1); template_save();              /* both saved at CLK INT */
+    song.g[G_CLOCK] = 1; song.g[G_BPM] = 120; events_block(CTL);
+    project_load(1); events_block(CTL);
+    bad += check("a project load keeps the device's CLK and takes its BPM",
+                 song.g[G_CLOCK] == 1 && midi_clock.selected == 1u && song.g[G_BPM] == 97);
+    clock_packet(1, 0xFA, 10); clock_to(1, 10, 7);
+    bad += check("the master is followed right after that load", midi_clock.mode == 1u && song.g[G_BPM] == 120);
+    clock_packet(1, 0xFC, 200);
+    template_load(); events_block(CTL);
+    bad += check("a template load keeps the device's CLK and takes its BPM",
+                 song.g[G_CLOCK] == 1 && midi_clock.selected == 1u && song.g[G_BPM] == 97);
+    memset(&tmpl, 0, sizeof tmpl);
+    return bad;
+}
+
 #ifndef MIDI_CONTROL_NO_MAIN
 int main(void)
 {
     int bad = controls_test() + sustain_test() + ownership_test() + clock_test(1) + clock_test(2) + clock_arp_and_boundaries() +
-              arp_ext_stop_test() + arp_idle_live_test() + usb_burst_test() + routing_range_test() + drum_channel_test() + drum_retrigger_accounting();
+              arp_ext_stop_test() + arp_idle_live_test() + usb_burst_test() + routing_range_test() + drum_channel_test() + drum_retrigger_accounting() + clock_project_load_test();
     printf("%s\n", bad ? "MIDI CONTROL/CLOCK TEST FAILED" : "MIDI control/clock integration tests passed"); return bad != 0;
 }
 #endif
