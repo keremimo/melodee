@@ -1560,6 +1560,8 @@ static uint32_t chain_prepare_from(uint32_t start)
         chain.seek_samples[k] = 0;
         for (uint32_t row = chain_origin(start, k); row < start; row++) chain.seek_samples[k] += chain_row_samples(row);
     }
+    chain.start_units = 0;
+    for (uint32_t row = 0; row < start; row++) chain.start_units += chain_row_samples(row);
     RING_PUBLISH(); chain.armed = 1; transport_req = 1;
     motion_unguard(f);
     return 0;

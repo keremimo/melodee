@@ -7,25 +7,33 @@
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
-static uint32_t pulses, starts, stops;
+static uint32_t pulses, starts, stops, continues, position;
 static uint8_t order[8], order_n;
 
 static void out_drain(void)
 {
     while (mo_r != mo_w) {
         uint32_t pkt = midi_out_q[mo_r++ % MQ], st = (pkt >> 8) & 0xFFu;
+        if (st == 0xF2u) {
+            if ((pkt & 0xFu) != 3u) { printf("bad Song Position packet %08x\n", pkt); exit(1); }
+            position = ((pkt >> 16) & 127u) | ((pkt >> 24) & 127u) << 7;
+            if (order_n < sizeof order) order[order_n++] = (uint8_t)st;
+            continue;
+        }
         if (st < 0xF8u) continue;                   /* a track's own notes */
         if ((pkt & 0xFu) != 0xFu || pkt >> 16) { printf("bad real-time packet %08x\n", pkt); exit(1); }
         if (st == 0xF8u) pulses++;
         else if (st == 0xFAu) starts++;
         else if (st == 0xFCu) stops++;
+        else if (st == 0xFBu) continues++;
         if (st != 0xF8u && order_n < sizeof order) order[order_n++] = (uint8_t)st;
     }
 }
 static void out_count_reset(void)
 {
     out_drain();
-    pulses = starts = stops = order_n = 0;
+    pulses = starts = stops = continues = order_n = 0;
+    position = 0xFFFFu;
 }
 static void out_setup(int16_t bpm)
 {
@@ -179,6 +187,62 @@ static int no_drift_test(void)
     return bad;
 }
 
+/* A song cursor tells a follower where to start: Song Position and Continue, no Start. */
+static int cursor_row(uint32_t len, uint32_t div)
+{
+    out_setup(120);
+    chain_defaults(&chain_config); chain_config.count = 2;
+    memset(chain_patterns, 0, sizeof chain_patterns);
+    for (uint32_t k = 0; k < NPART; k++) {
+        trk[k].p[P_SLEN] = (int16_t)len; trk[k].p[P_SDIV] = (int16_t)div; trk[k].p[P_SSWING] = 0;
+        pattern_commit(&trk[k]);
+    }
+    song.g[G_SWING] = 0;
+    out_count_reset();
+    return chain_prepare_from(1) == 0;
+}
+static int cursor_test(void)
+{
+    int bad = 0;
+    bad += check("song cursor prepares", cursor_row(16, 2));
+    out_blocks(1);
+    bad += check("cursor on a 1/16: Song Position, then Continue, no Start",
+                 order_n == 2u && order[0] == 0xF2u && order[1] == 0xFBu && position == 16u && continues == 1u && !starts);
+    bad += check("its pulse waits a block", !pulses);
+    out_blocks(1);
+    bad += check("the next block's pulse is the cursor's 1/16", pulses == 1u && chain.running && trk[0].seq_idx == 0u);
+    out_transport(2);
+    bad += check("STOP ends it with one Stop", stops == 1u);
+
+    /* Fifteen 1/32 steps end between two 1/16 steps: the follower goes to the next, the pulse waits for the song to get there. */
+    bad += check("song cursor prepares between 1/16 steps", cursor_row(15, 3));
+    out_blocks(1);
+    bad += check("between 1/16 steps: the next one", position == 8u && continues == 1u && !pulses);
+    uint32_t early = 0, bad_pulses = 0;
+    for (uint32_t i = 0; i < 4000u && !pulses; i++) {
+        if (trk[0].seq_idx != 0u) early++;
+        out_blocks(1);
+    }
+    bad += check("the first pulse lands where the song reaches it, on the unit",
+                 !early && pulses == 1u && trk[0].seq_idx == 1u && trk[0].seq_pos < 64u);
+    for (uint32_t i = 0; i < 600u; i++) {
+        out_blocks(1);
+        if (pulses != (trk[0].seq_idx * 3072u + trk[0].seq_pos - 3072u) / 1024u + 1u) bad_pulses++;
+    }
+    bad += check("pulses run on from there, on the same unit", !bad_pulses && pulses > 15u);
+    out_transport(2);
+
+    out_setup(120);
+    chain_defaults(&chain_config); chain_config.count = 2;
+    memset(chain_patterns, 0, sizeof chain_patterns);
+    out_count_reset();
+    chain_prepare_from(0);
+    out_blocks(1);
+    bad += check("a song from its top sends plain Start", starts == 1u && !continues && position == 0xFFFFu);
+    out_transport(2);
+    return bad;
+}
+
 static int source_test(void)
 {
     int bad = 0;
@@ -220,6 +284,7 @@ int main(void)
     int bad = stopped_test();
     bad += transport_test();
     bad += no_drift_test();
+    bad += cursor_test();
     bad += source_test();
     bad += queue_test();
     printf("%s\n", bad ? "MIDI CLOCK OUT TEST FAILED" : "MIDI clock out tests passed");

@@ -14,7 +14,7 @@ static struct {
     volatile uint8_t armed, running, row, remaining;
     uint8_t slot, rec, start, seek_chase, fx_event;
     uint32_t carry, rest_pos, seek_phase[NTRK];
-    uint64_t seek_samples[NTRK];
+    uint64_t seek_samples[NTRK], start_units;     /* start_units: from the song's top to chain.start */
 } chain;
 
 static void seq_release(track_t *t);

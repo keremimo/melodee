@@ -170,9 +170,20 @@ static uint32_t midi_clock_advance(uint32_t now)
  * Start. They count the sequencer's own units, so no division, recording or ARP can slide against a follower.
  * The first pulse after Start is step 0, a block later (so is its sound). */
 static struct {
-    uint32_t pos;
+    int32_t pos;
     uint8_t running;
 } midi_sync_out;
+
+/* A song cursor: Song Position and Continue instead of Start. Song Position counts 1/16 steps, so a cursor between two
+ * goes to the next: returns the units until the song reaches it, where the first pulse belongs. */
+static uint32_t midi_sync_out_position(uint64_t units)
+{
+    uint32_t rem, spot = chain_div_samples(units + 6143u, 6144u, &rem);
+    if (spot > 16383u) spot = 16383u;
+    midi_sync_send(0x3u | 0xF2u << 8 | (spot & 127u) << 16 | (spot >> 7) << 24);
+    midi_sync_emit(0xFBu);
+    return 6143u - rem;
+}
 
 static void midi_sync_out_block(uint32_t units)
 {
@@ -186,15 +197,19 @@ static void midi_sync_out_block(uint32_t units)
     if (song.g[G_CLOCK])
         return;
     if (start && song.playing) {
-        midi_sync_emit(0xFAu);
         midi_sync_out.running = 1;
+        if (chain.running && chain.start_units) {
+            midi_sync_out.pos = (int32_t)(MIDI_BEAT_UNITS / 24u) - (int32_t)midi_sync_out_position(chain.start_units);
+            return;
+        }
+        midi_sync_emit(0xFAu);
         /* the units after step 0 in this block (the end of a count-in) */
         midi_sync_out.pos = MIDI_BEAT_UNITS / 24u + (!chain.running && trk[0].seq_pos < MIDI_BEAT_UNITS / 24u ? trk[0].seq_pos : 0u);
         return;
     }
-    midi_sync_out.pos += units;
-    if (midi_sync_out.pos >= MIDI_BEAT_UNITS / 24u) {
-        midi_sync_out.pos -= MIDI_BEAT_UNITS / 24u;
+    midi_sync_out.pos += (int32_t)units;
+    if (midi_sync_out.pos >= (int32_t)(MIDI_BEAT_UNITS / 24u)) {
+        midi_sync_out.pos -= (int32_t)(MIDI_BEAT_UNITS / 24u);
         midi_sync_emit(0xF8u);
     }
 #else

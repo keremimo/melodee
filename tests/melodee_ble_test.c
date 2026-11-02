@@ -53,6 +53,11 @@ int main(void)
     struct ble_midi_enc air; uint8_t air_buf[8];
     ble_midi_enc_reset(&air); ble_midi_enc_begin(&air, air_buf, sizeof air_buf);
     assert(ble_midi_enc_add(&air, pulse, 5) > 0 && ble_midi_enc_len(&air) == 3 && air_buf[2] == 0xF8u);
+    uint32_t position = 0x3u | 0xF2u << 8 | 16u << 16 | 1u << 24;
+    midi_sync_send(position); assert(mo_w - mo_r == 1 && midi_out_q[mo_r % MQ] == position);
+    assert(ble_app_midi_peek(&out, &ms) && out == position); ble_app_midi_pop(); mo_r = mo_w;
+    ble_midi_enc_begin(&air, air_buf, sizeof air_buf);
+    assert(ble_midi_enc_add(&air, position, 5) > 0 && air_buf[2] == 0xF2u && air_buf[3] == 16u && air_buf[4] == 1u);
     puts("BLE adapter: clock and transport admitted per transport and encoded passed");
 
     reset_ble();
