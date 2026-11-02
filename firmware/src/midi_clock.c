@@ -152,3 +152,40 @@ static uint32_t midi_clock_advance(uint32_t now)
     midi_clock.rendered += n;
     return n;
 }
+
+/* CLK INT: this unit is the master, on USB and BLE. Pulses run while stopped too, so a follower has the tempo before
+ * Start. Six pulses are exactly one 1/16 step, whose period is rounded down from the beat: counted from the beat, a long
+ * song would slide against the follower. The first pulse after Start is step 0, a block later (so is its sound). */
+static struct {
+    uint32_t pos;
+    uint8_t running;
+} midi_sync_out;
+
+static void midi_sync_out_block(uint32_t n)
+{
+#if MELODEE_CLOCK_OUT
+    uint32_t start = seq_started, step = div_samples(2u);
+    seq_started = 0;
+    if (midi_sync_out.running && (start || !song.playing || song.g[G_CLOCK])) {
+        midi_sync_emit(0xFCu);
+        midi_sync_out.running = 0;
+    }
+    if (song.g[G_CLOCK])
+        return;
+    if (start && song.playing) {
+        midi_sync_emit(0xFAu);
+        midi_sync_out.running = 1;
+        midi_sync_out.pos = step;
+        return;
+    }
+    midi_sync_out.pos += n * 6u;
+    if (midi_sync_out.pos >= step) {
+        midi_sync_out.pos -= step;
+        if (midi_sync_out.pos >= step)
+            midi_sync_out.pos = 0;                      /* the tempo just jumped up */
+        midi_sync_emit(0xF8u);
+    }
+#else
+    (void)n;
+#endif
+}

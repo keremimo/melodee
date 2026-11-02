@@ -161,6 +161,24 @@ static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
 }
 static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
 
+/* Clock and transport out, from the audio ISR. Each transport admits them alone, so a stalled one costs the other
+ * nothing, and a pulse leaves half of each queue to notes: a USB port nobody reads still takes them. */
+static void midi_sync_emit(uint32_t st)
+{
+    uint32_t pkt = 0xFu | st << 8, pulse = st == 0xF8u;
+#if MELODEE_BLE
+    uint32_t ie = fm1_icfg(); fm1_irq_off();
+    if (!pulse || mel_ble_half()) (void)mel_ble_emit(pkt);
+#endif
+    if (usb_midi_out_ready() && mo_w - mo_r < (pulse ? MQ / 2u : MQ)) {
+        midi_out_q[mo_w % MQ] = pkt;
+        RING_PUBLISH(); mo_w++;
+    }
+#if MELODEE_BLE
+    fm1_icfg_set(ie);
+#endif
+}
+
 /* ------------------------------------------------------- descriptors --- */
 /* interfaces: 0 audio control, 1 MIDI streaming, then CDC's two, or duplex audio's three (usb_audio_desc.h).
  * bcdDevice: 3.00 MIDI, 3.01 with CDC, 3.30..3.37 with USB audio.

@@ -98,6 +98,7 @@ BLE_API void ble_app_central_keys(const struct ble_keys *k)
 
 static int mel_ble_ready(void) { return mb.ready && mb.on; }
 static int mel_ble_room(void) { return mb.tw - mb.tr < MBQ; }
+static int mel_ble_half(void) { return mb.tw - mb.tr < MBQ / 2u; }
 static int mel_ble_emit(uint32_t pkt)
 {
     if (!mb.ready || !mb.on) return 0;

@@ -35,6 +35,9 @@
 #ifndef MELODEE_UART
 #define MELODEE_UART 1           /* TRS MIDI IN on UART1 / PH8 */
 #endif
+#ifndef MELODEE_CLOCK_OUT
+#define MELODEE_CLOCK_OUT 1     /* CLK INT sends MIDI clock, Start and Stop (midi_clock.c); host note tests build it off */
+#endif
 #ifndef MELODEE_BLE
 #define MELODEE_BLE 1           /* Optimist LE MIDI: one bidirectional peripheral or central link */
 #endif

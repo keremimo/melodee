@@ -91,7 +91,7 @@ PY="${PYTHON:-python3}"                           # (as build.sh: the Python wit
 OUT=build/host
 LOG=$OUT/log
 CC="${CC:-cc} -O1 -ffp-contract=off -Wall -Wno-unused-function"
-FW="-w -Ibuild/gen -Ifirmware/src"
+FW="-w -Ibuild/gen -Ifirmware/src -DMELODEE_CLOCK_OUT=0"
 P5=build/prophet5/Prophet-5+10-Factory-Programs-ReadMe1.03
 SOUND=${SOUND:-1}
 PARALLEL=${PARALLEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
@@ -368,6 +368,7 @@ if core && [ $TABLES = 1 ]; then
     t "recording/performance tools and legacy migrations" performance_tools_test -O1 $FW
     t "momentary snapshots: parameter IDs and native patch union restore exactly" ui_momentary_test -O1 $FW
     t "USB/TRS clock, bend, sustain, ownership and panic recovery" midi_control_test -O1 $FW
+    t "CLK INT as MIDI master: clock, Start and Stop on the output queues, locked to the steps" midi_clock_out_test -O1 $FW
     t "MIDI panel knobs: profiles, native edits, encoder modes and bounded foreground dispatch" midi_knob_test -O1 $FW
     t "MIDI timing: quantized TRS/USB recording, audio timeline, tempo changes and timer wrap" midi_timing_test -O1 $FW
     t "MIDI recording: raw events, quantization at take end, independent releases, banks and capacity" recording_test \

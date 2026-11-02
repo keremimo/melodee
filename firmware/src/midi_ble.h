@@ -19,6 +19,7 @@
 
 static int mel_ble_ready(void);
 static int mel_ble_room(void);
+static int mel_ble_half(void);
 static int mel_ble_emit(uint32_t pkt);
 static void mel_ble_drain(void);
 static void mel_ble_poll(void);

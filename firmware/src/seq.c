@@ -236,6 +236,7 @@ static void rec_note(track_t *t, uint32_t note, uint32_t vel);
 static void rec_release(track_t *t, uint32_t note);
 static volatile uint32_t seq_erase_request, seq_erase_generation;
 static uint32_t seq_erase_transport;
+static uint8_t seq_started;                     /* since the last block; audio ISR only (midi_sync_out_block) */
 static uint8_t seq_erase_seen[NTRK];
 static volatile uint16_t seq_erase_button;
 static int seq_erase_active(const track_t *t);
@@ -937,6 +938,7 @@ static __attribute__((noinline)) void audition_tick(uint32_t n)
 static void seq_start(void)
 {
     cin_left = 0; /* MIDI Start also cancels a pending local count-in. */
+    seq_started = 1;
     uint32_t i;
     seq_erase_request = 0;
     seq_erase_transport++;
@@ -1550,6 +1552,7 @@ static void events_block(uint32_t n)
         }
         if(left)seq_advance(left);
     }
+    midi_sync_out_block(n);
     if (song.playing)
         song.tick++;
 }
