@@ -81,7 +81,7 @@
     </div>
   </nav>
   <h1>Manual</h1>
-  <p class="small">Firmware: <span data-firmware-version>next-1106352</span>. Use the guide shipped with your firmware; the <a href="https://keremimo.github.io/melodee/webapp/manual/nightly/">nightly manual</a> follows the latest development build.</p>
+  <p class="small">Firmware: <span data-firmware-version>next-9671858</span>. Use the guide shipped with your firmware; the <a href="https://keremimo.github.io/melodee/webapp/manual/nightly/">nightly manual</a> follows the latest development build.</p>
   <p>How to use Melodee on the M-VAVE FM-1 after installing the custom firmware. This guide shows screenshots of each page and tables what each knob and control on that page does. Screens shown here use the NIGHT theme; your colors depend on the MENU Settings page (long hold HOME button) → COLOR. Type on the device is large. FONT in that same menu switches between Rubik and Melodee Pixel.</p>
 
   <div class="layout">
@@ -103,6 +103,7 @@
       <a class="sub" href="#cz1">CZ-1</a>
       <a class="sub" href="#sid">SID</a>
       <a class="sub" href="#drum">Drum</a>
+      <a class="sub" href="#midi-track">MIDI Track</a>
       <a class="sub" href="#voice">Voice</a>
       <a href="#designer">Sound designer</a>
       <a href="#modulation">Envelopes and modulation</a>
@@ -118,6 +119,10 @@
       <a href="#global">Global</a>
       <a href="#menu">Menu</a>
       <a href="#midi">MIDI</a>
+      <a class="sub" href="#midi-clock">Clock and transport</a>
+      <a class="sub" href="#midi-learn">MIDI LEARN</a>
+      <a class="sub" href="#bluetooth">Bluetooth</a>
+      <a class="sub" href="#usb-host">USB Host</a>
       <a href="#usb-audio">USB audio</a>
       <a href="#editor">Web editor</a>
       <a href="#backup">Backup and official firmware</a>
@@ -127,8 +132,8 @@
     <article id="doc">
       <section id="about">
         <h2>About</h2>
-        <p>Melodee is multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. After you install it, the unit runs Melodee instead of the official firmware: one to four tracks, each with one instrument, a 64-step sequencer with patterns and songs, effects, and USB MIDI and audio.</p>
-        <p>The selectable engines are <strong>Prophet</strong>, <strong>FM6</strong>, <strong>CZ-1</strong>, <strong>SID</strong> and <strong>Drum</strong>. Melodee is based on <a href="https://github.com/hugelton/Felucca" target="_blank" rel="noopener">Felucca</a>; it is not affiliated with or endorsed by M-VAVE or Hügelton Instruments. Report Melodee problems on the <a href="https://github.com/keremimo/melodee" target="_blank" rel="noopener">Melodee GitHub</a>, not to Felucca.</p>
+        <p>Melodee is multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. After you install it, the unit runs Melodee instead of the official firmware: up to eight tracks (four that play an instrument, four more for external MIDI gear), a 64-step sequencer with patterns and songs, effects, USB MIDI and audio, Bluetooth MIDI and USB Host.</p>
+        <p>The selectable engines are <strong>Prophet</strong>, <strong>FM6</strong>, <strong>CZ-1</strong>, <strong>SID</strong> and <strong>Drum</strong>, plus <strong>MIDI Track</strong> for external gear. Melodee is based on <a href="https://github.com/hugelton/Felucca" target="_blank" rel="noopener">Felucca</a>; it is not affiliated with or endorsed by M-VAVE or Hügelton Instruments. Report Melodee problems on the <a href="https://github.com/keremimo/melodee" target="_blank" rel="noopener">Melodee GitHub</a>, not to Felucca.</p>
       </section>
 
       <section id="before">
@@ -136,15 +141,19 @@
         <p>You need <strong>Chrome or Edge</strong>, a <strong>data USB cable</strong> plugged straight into the computer (not a charge-only cable or hub if you can avoid it), and the FM-1 powered and connected.</p>
         <ul>
           <li>Switching to another custom firmware? Choose <strong>Back up and install TransitFM1</strong> in the installer first. Once the FM-1 shows <strong>TRANSIT</strong>, use the next firmware’s own installer. Use TransitFM1 <strong>0.1.3</strong>; 0.1 has startup and MIDI stalls, and 0.1.2 was withdrawn. <strong>For Baud Girl, install official V15 first, then use Baud Girl’s installer</strong>: its image can exceed TransitFM1’s write range.</li>
-          <li>Before installing or downgrading, export anything you care about: projects and user sounds. This version keeps every engine in one shared bank of 384 slots (<strong>U001–U384</strong>). The first start after an update from an older bank may show <strong>MIGRATING PRESETS</strong>; leave the power connected until it finishes. Older firmware cannot read the new bank, so keep a backup made before that update if you may want to go back. A downgrade or skipped backup can lose Melodee music, sounds and settings.</li>
-          <li>Projects, templates and presets from Melodee 1.0 or later load. Anything saved before 1.0 shows <strong>OLD FORMAT</strong> and stays untouched until you choose to replace it. If you still have those, open and save them with 1.1.0 before updating. A backup the device cannot read is refused before anything is written.</li>
+          <li>Before installing or downgrading, make a backup with the <a href="../../editor/">web editor</a>’s backup tools and export the projects and user sounds you care about. Projects and user sounds share one storage pool, and every engine keeps its sounds in one bank of 384 slots (<strong>U001–U384</strong>). The first start after an update from an older version may show <strong>MIGRATING PRESETS</strong>; leave the power connected until it finishes. A backup made before that update is your way back: older firmware cannot read what this version saves, may overwrite it, and refuses backups made here. A downgrade or skipped backup can lose Melodee music, sounds and settings.</li>
+          <li>Projects, templates and presets from Melodee 1.0 or later load, with patterns 9–16 empty. Anything saved before 1.0 shows <strong>OLD FORMAT</strong> and stays untouched until you choose to replace it. If you still have those, open and save them with 1.1.0 before updating. A backup the device cannot read is refused before anything is written.</li>
+          <li>Coming from 1.5.1 or earlier, check your balance: CZ-1 tracks are 6&nbsp;dB lower against the other engines, and the limiter starts later, so loud mixes keep more peak level. USB recordings no longer follow <kbd>MASTER KNOB</kbd>, and computer playback follows <strong>USB VOLUME</strong> instead (see <a href="#usb-audio">USB audio</a>).</li>
           <li>Melodee is a field-testing release with <strong>no warranty</strong>. Use at your own risk.</li>
         </ul>
       </section>
 
       <section id="install">
         <h2>Installing</h2>
-        <p>Open the <a href="../../installer/">web installer</a> in Chrome or Edge, connect the FM-1, and press Install. Leave the cable connected until writing finishes. When it succeeds, the FM-1 reports Melodee’s product identity (for example <code>FM-1_9xxxx</code>).</p>
+        <p>Open the <a href="../../installer/">web installer</a> in Chrome or Edge, connect the FM-1, and press Install. Leave the cable connected until writing finishes. When it succeeds, the FM-1 reports Melodee’s product identity (for example <code>FM-1_9xxxx</code>). The startup screen shows the firmware version.</p>
+        <p>Factory sounds, the Rubik font and the Bluetooth radio program live in their own flash region, apart from the application. The update package carries them, and one web install writes everything. If they are missing, the FM-1 starts with <strong>Setup unfinished</strong> and <strong>Factory sounds missing</strong>; your own sounds stay. <kbd>OCT+</kbd> (<strong>CONTINUE</strong>) starts without them: Melodee Pixel instead of Rubik, only the INIT sounds, and no Bluetooth. To fix it, open the installer and press <strong>Finish setup</strong>, which writes only those files. Stop playback and switch Bluetooth off first.</p>
+        <figure class="shot"><img src="boot_setup.png" alt="Startup screen saying setup is unfinished" width="240" height="240"><figcaption>Factory sounds are missing: install again or press Finish setup.</figcaption></figure>
+        <p>Updating from 1.5.1 or earlier with something other than the web installer, such as Firmware Hub? Install twice. Older firmware kept preset banks where this region now lives. The first install leaves them alone, the new firmware moves them into the storage pool at startup and shows Setup unfinished, and the second install writes the factory sounds.</p>
         <p>Current builds use <strong>both cores</strong>; Prophet can play up to eight voices per track. Single-core builds have been retired. If an update leaves the unit in the loader, install a working package again using the recovery steps below.</p>
         <p>From a terminal you can also run <code>tools/fm1_install.py</code> (see the project README).</p>
       </section>
@@ -180,7 +189,7 @@
           <tbody>
             <tr><td>Piano Keys</td><td>Play notes on the selected track. In layers and grids they also select patterns, effects, roots and drum lanes.</td></tr>
             <tr><td><kbd>KNOB 1</kbd>–<kbd>4</kbd></td><td>Edit the four controls on the open page, or Stage’s four sound knobs.</td></tr>
-            <tr><td><kbd>MASTER KNOB</kbd></td><td>Overall output volume.</td></tr>
+            <tr><td><kbd>MASTER KNOB</kbd></td><td>Overall output volume. The click and computer playback have their own levels (<strong>CLICK LEVEL</strong>, <strong>USB VOLUME</strong>), and USB recording is taken before this knob.</td></tr>
             <tr><td><kbd>ALGORITHM KNOB</kbd></td><td>Change the selected track, from 1 up to the last one in use, on every page; the screen takes that track’s color.</td></tr>
             <tr><td><kbd>PRESETS KNOB</kbd></td><td>Browse sounds; on engine EDIT pages, jump between sections (or pick the operator / line); on NOTES, zoom.</td></tr>
             <tr><td><kbd>SELECT KNOB</kbd></td><td>Turn the pages within the open section, both ways. On Stage, turn the <strong>HOME SELECT</strong> control instead.</td></tr>
@@ -198,11 +207,13 @@
 
       <section id="stage">
         <h2>Stage</h2>
-        <p><kbd>HOME</kbd> is Stage: the live performance screen. Each track in use has a lane with its sound name, pattern (and the next one while it waits for the bar), every step of that pattern as dots. A hit is the track’s color, a tie is dimmer, a rest is faint, and the step playing now is bright. The dots are as large as the row allows, grouped by bar. With one track, that sound is drawn large across the screen, with its pattern and the bar. The header shows tempo, a REC mark, and an octave badge such as <code>+2</code> or <code>−1</code>. On Stage, <kbd>SELECT</kbd> turns the value chosen in <strong>HOME SELECT</strong>, and the header shows it.</p>
+        <p><kbd>HOME</kbd> is Stage: the live performance screen. Each track in use has a lane with its sound name, pattern (and the next one while it waits for the bar), every step of that pattern as dots. A hit is the track’s color, a tie is dimmer, a rest is faint, and the step playing now is bright. The dots are as large as the row allows, grouped by bar. Stage shows four rows at a time: tracks 1–4, or tracks 5–8 when one of those is selected. A place not in use shows a greyed <strong>Add track</strong> row. Set <strong>UNUSED TRACKS</strong> to <strong>HIDE</strong> (hold <kbd>HOME</kbd>) to drop those rows so the tracks in use fill the screen; one track is then drawn large, with its pattern and the bar. The header shows tempo, a REC mark, and an octave badge such as <code>+2</code> or <code>−1</code>. On Stage, <kbd>SELECT</kbd> turns the value chosen in <strong>HOME SELECT</strong>, and the header shows it.</p>
         <div class="shots">
           <figure class="shot"><img src="home.png" alt="Stage with a lane for each track in use" width="240" height="240"><figcaption>Tracks in use: sound, pattern, step dots.</figcaption></figure>
           <figure class="shot"><img src="home_note.png" alt="Stage showing played notes over the waveform" width="240" height="240"><figcaption>Notes you play sit in front of the live waveform.</figcaption></figure>
           <figure class="shot"><img src="stage_filter.png" alt="Stage with a sound knob turning" width="240" height="240"><figcaption>Turning a knob shows what it shapes.</figcaption></figure>
+          <figure class="shot"><img src="stage_unused_3tracks.png" alt="Stage with a greyed Add track row" width="240" height="240"><figcaption>A place not in use: Add track.</figcaption></figure>
+          <figure class="shot"><img src="stage_midi.png" alt="Stage showing MIDI tracks 5 to 8" width="240" height="240"><figcaption>Tracks 5–8 when one of them is selected.</figcaption></figure>
         </div>
         <p>The selected track’s four <strong>sound knobs</strong> stay in the bottom strip. Turning a knob updates its value there; the Stage display remains visible. What they do depends on the engine:</p>
         <table>
@@ -213,23 +224,24 @@
             <tr><td>CZ-1</td><td>WAVE</td><td>DCW</td><td>DETUNE</td><td>VIBRATO</td></tr>
             <tr><td>SID</td><td>WAVE</td><td>PW</td><td>CUT</td><td>RES</td></tr>
             <tr><td>Drum</td><td>TUNE</td><td>TONE</td><td>DECY</td><td>SNAP</td></tr>
+            <tr><td>MIDI Track</td><td>CH</td><td>TRS</td><td>—</td><td>—</td></tr>
           </tbody>
         </table>
         <p>On a Drum track, lanes light as they hit. Hold <kbd>OCT+</kbd> for the Stage sheet: Init sound, Save as user…, Favourite, Undo last load, Sound designer, <strong>Add track</strong> and <strong>Remove track</strong>.</p>
         <p>Tap <kbd>HOME</kbd> again for the chord view: the twelve notes in a circle of fifths, the song’s key marked, sounding notes lit in their track’s color and joined into the chord, each track’s level pulsing in a corner, the output waveform, and four octaves of keys. A Drum track pulses with its level and does not add pitches to the wheel. Let go and the last chord stays, faded. Lifting notes one at a time keeps that whole chord until the last note is up; playing a new note starts a new chord. The knobs and octave buttons work as they do on Stage. Tap <kbd>HOME</kbd> again to return.</p>
-        <p><strong>HOME SELECT</strong> (hold <kbd>HOME</kbd>) chooses what <kbd>SELECT</kbd> turns on both Stage pages: <strong>BPM</strong> (default), <strong>MOD WHEEL</strong> (the selected track’s, also sent as MIDI CC1), <strong>LEVEL</strong>, <strong>SWING</strong>, <strong>TRANSPOSE</strong>, <strong>CHORD</strong> (OFF, DIA3, DIA7, MAJ, MIN, DOM7, MAJ7, MIN7, SUS4, POW), <strong>ARP RATE</strong>, <strong>PATTERN</strong> (that track’s next pattern), or <strong>OFF</strong>. The choice is remembered. <strong>GLO SELECT</strong> offers the same choices for <kbd>GLO</kbd>+<kbd>SELECT</kbd> on any page, also defaulting to BPM.</p>
+        <p><strong>HOME SELECT</strong> (hold <kbd>HOME</kbd>) chooses what <kbd>SELECT</kbd> turns on both Stage pages: <strong>BPM</strong> (default), <strong>MOD WHEEL</strong> (the selected track’s, also sent as MIDI CC1), <strong>LEVEL</strong>, <strong>SWING</strong>, <strong>TRANSPOSE</strong>, <strong>OCTAVE</strong> (the same shift as the octave buttons, −3 to +3), <strong>CHORD</strong> (the choices on the CHORD page), <strong>ARP RATE</strong>, <strong>PATTERN</strong> (that track’s next pattern), or <strong>OFF</strong>. The choice is remembered. <strong>GLO SELECT</strong> offers the same choices for <kbd>GLO</kbd>+<kbd>SELECT</kbd> on any page, also defaulting to BPM.</p>
       </section>
 
       <section id="tracks">
         <h2>Tracks</h2>
-        <p>One to four tracks, one instrument and sound each. A new song starts with one. <kbd>ALGORITHM</kbd> selects among the tracks in use; the screen and its knobs take that track’s color. In <strong>NIGHT</strong> the four tracks are coral, amber, mint and lilac. Other themes use their own four. Knob 1 is the track color; the other three knobs are shades of it.</p>
+        <p>Up to eight tracks, one instrument and sound each. Tracks 1–4 can use any engine; tracks 5–8 are MIDI-only (see <a href="#midi-track">MIDI Track</a>). A new song starts with the four parts. <kbd>ALGORITHM</kbd> selects among the tracks in use; the screen and its knobs take that track’s color. In <strong>NIGHT</strong> the four tracks are coral, amber, mint and lilac, and tracks 5–8 repeat them. Other themes use their own four. Knob 1 is the track color; the other three knobs are shades of it.</p>
         <ul>
-          <li>On Stage, hold <kbd>OCT+</kbd> and choose <strong>Add track</strong>. The next track (up to four) starts with its own power-on sound and empty patterns, becomes selected, and opens the sound browser. <kbd>OCT−</kbd> keeps that starting sound. <strong>TRACKS FULL</strong> means four are already in use.</li>
+          <li>On Stage, hold <kbd>OCT+</kbd> and choose <strong>Add track</strong>. The next track (up to eight) starts with its own power-on sound and empty patterns, becomes selected, and opens the sound browser. <kbd>OCT−</kbd> keeps that starting sound. A new track 5–8 opens on its MIDI channel instead. <strong>TRACKS FULL</strong> means eight are already in use.</li>
           <li><strong>Remove track</strong> removes the selected track after a question, and only while stopped (<strong>STOP FIRST</strong> otherwise). The tracks after it move down, taking their sounds, patterns, song sections, motion and recordings with them. The last remaining track cannot be removed.</li>
-          <li>Stage, the mixer, PATTERNS, SONG and GLO show the tracks in use. Projects and the template keep their own track count. A project saved before this version keeps all four.</li>
+          <li>Stage, the mixer, PATTERNS, SONG and GLO show four tracks at a time: the selected track’s group, 1–4 or 5–8. Projects and the template keep their own track count.</li>
           <li>Each track carries its own engine, sound, patterns, transpose, effect sends, modulation and voice settings. ROOT, SCL, QNT and MPC degree are shared by the project.</li>
           <li>Mixing and solo live under <kbd>GLO</kbd> — see <a href="#global">Global</a> for MIXER, GLOBAL and SYSTEM.</li>
-          <li>Sounding voices share one <strong>BUDGET</strong> (<kbd>GLO</kbd> → GLOBAL, <kbd>KNOB 2</kbd>): 8–32 points, default 18, remembered with the device. An idle track reserves nothing. FM6 uses 1 point per voice (up to 16). Prophet uses 2 per voice (up to eight voices a track). Other engines use 2. Melodee runs at the boot loader’s 360&nbsp;MHz and does not change the clock. A unit updated while it was still at 320&nbsp;MHz keeps that clock until the next power-off, and the allowance is smaller until then.</li>
+          <li>Sounding voices share one <strong>BUDGET</strong> (<kbd>GLO</kbd> → GLOBAL, <kbd>KNOB 2</kbd>): 8–32 points, default 18, remembered with the device. An idle track reserves nothing, and MIDI tracks use none. FM6 uses 1 point per voice (up to 16). Prophet uses 2 per voice (up to eight voices a track). Other engines use 2. <kbd>GLO</kbd> → WEIGHTS can replace those points for each engine. Melodee runs at the boot loader’s 360&nbsp;MHz and does not change the clock. A unit updated while it was still at 320&nbsp;MHz keeps that clock until the next power-off, and the allowance is smaller until then.</li>
         </ul>
       </section>
 
@@ -243,16 +255,17 @@
         <table>
           <thead><tr><th>Control</th><th>What it does</th></tr></thead>
           <tbody>
-            <tr><td><kbd>KNOB 1</kbd> LIST</td><td>Choose the list — categories (BASS, LEAD, PAD, …), FAV, or RECENT.</td></tr>
+            <tr><td><kbd>KNOB 1</kbd> LIST</td><td>Choose the list — ALL, FAV, RECENT, or a category (BASS, LEAD, PAD, …). Each track remembers its own list.</td></tr>
             <tr><td><kbd>KNOB 2</kbd> / <kbd>PRESETS</kbd></td><td>Scroll sounds. While the list moves fast, the sound loads when the knob rests.</td></tr>
             <tr><td><kbd>KNOB 3</kbd> FAV</td><td>Mark or unmark the current sound as a favourite (device favourites survive power-off).</td></tr>
-            <tr><td><kbd>KNOB 4</kbd> ENGINE</td><td>Change the engine and start from its <strong>init</strong> sound (dry, nothing changed): INIT PROPHET, FM6 INIT VOICE, INIT TONE, INIT SID, or the 808 kit.</td></tr>
+            <tr><td><kbd>KNOB 4</kbd> ENGINE</td><td>Change the engine and start from its <strong>init</strong> sound (dry, nothing changed): INIT PROPHET, FM6 INIT VOICE, INIT TONE, INIT SID, or the 808 kit. MIDI Track is one of the choices on tracks 1–4.</td></tr>
             <tr><td><kbd>OCT+</kbd> / <kbd>OCT−</kbd></td><td>Keep the browsed sound / revert to the one you had.</td></tr>
           </tbody>
         </table>
         <ul>
           <li>Knobs accelerate on a spin; MENU → <strong>KNOB ACCEL</strong> OFF keeps every detent one step.</li>
           <li>Hold <kbd>EDIT</kbd> to return to the sound you had before browsing. Loading a sound never changes your patterns.</li>
+          <li>Tracks 5–8 are MIDI tracks: they have no sounds to browse, and <kbd>PRESETS</kbd> leaves them as they are.</li>
           <li>Hold <kbd>OCT+</kbd> on a sound page for the sheet: Init sound, Save as user…, Favourite, Undo last load, Sound designer. On Stage that sheet also has <strong>Add track</strong> and <strong>Remove track</strong>.</li>
         </ul>
 
@@ -286,9 +299,9 @@
 
       <section id="projects">
         <h2>Projects</h2>
-        <p>Four project slots <strong>A–D</strong>, plus a template and a new-song wizard. Open SAVE → <strong>PROJECT</strong>. A project holds the tracks in use, their pattern banks (eight each, up to 32), timing, arrangement, automation and settings (FBKG format).</p>
+        <p>32 project slots, <strong>01–32</strong>, plus a template and a new-song wizard. Open SAVE → <strong>PROJECT</strong>. A project holds the tracks in use, their patterns (16 on tracks 1–4, eight on tracks 5–8), timing, arrangement, automation and settings.</p>
         <div class="shots">
-          <figure class="shot"><img src="project.png" alt="Project slot list" width="240" height="240"><figcaption>PROJECT: slots A–D, template, New song.</figcaption></figure>
+          <figure class="shot"><img src="project.png" alt="Project slot list" width="240" height="240"><figcaption>PROJECT: slots 01–32, template, New song.</figcaption></figure>
           <figure class="shot"><img src="project_new.png" alt="Project new song entry" width="240" height="240"><figcaption>NEW song past the template.</figcaption></figure>
           <figure class="shot"><img src="new_key.png" alt="New song key and tempo" width="240" height="240"><figcaption>NEW: key, scale and tempo.</figcaption></figure>
           <figure class="shot"><img src="new_roles.png" alt="New song track roles" width="240" height="240"><figcaption>Roles on the four knobs. -- skips that place and creates no track for that slot.</figcaption></figure>
@@ -296,25 +309,26 @@
         <table>
           <thead><tr><th>Control</th><th>What it does</th></tr></thead>
           <tbody>
-            <tr><td><kbd>KNOB 1</kbd> SLOT</td><td>A, B, C, D, TMPL (template), or <strong>NEW</strong> past the template.</td></tr>
-            <tr><td><kbd>KNOB 2</kbd> BOOT</td><td>OFF or A–D — which project loads at power-on. BOOT OFF with a saved template uses the template.</td></tr>
-            <tr><td><kbd>KNOB 3</kbd> LOAD</td><td>GO to load the chosen slot.</td></tr>
-            <tr><td><kbd>KNOB 4</kbd> SAVE</td><td>GO to save into the chosen slot.</td></tr>
-            <tr><td><kbd>OCT+</kbd></td><td>The slot’s sheet: Load, Save here, Rename, Boot, Erase (Erase asks first).</td></tr>
+            <tr><td><kbd>KNOB 1</kbd> / <kbd>KNOB 2</kbd></td><td>Move through the slots 01–32, <strong>T</strong> (the template) and <strong>+</strong> (New song).</td></tr>
+            <tr><td><kbd>OCT+</kbd></td><td>The slot’s sheet: Load, Save here, Rename, Boot, Erase (Erase asks first). The template’s sheet: Load template, Save as template. On New song it starts the wizard.</td></tr>
+            <tr><td><kbd>OCT−</kbd></td><td>Back to Stage.</td></tr>
           </tbody>
         </table>
         <ul>
-          <li><strong>NEW</strong> opens the wizard, stopped only. Set key, scale and tempo (<kbd>KNOB 1</kbd> ROOT, <kbd>KNOB 2</kbd> SCALE, <kbd>KNOB 3</kbd> TEMPO), then a role on each of the four knobs: <strong>--</strong> (no track), <strong>KEEP</strong>, <strong>DRUMS</strong>, <strong>BASS</strong>, <strong>CHORDS</strong>, <strong>LEAD</strong> or <strong>PAD</strong>. The song keeps the places that have a role, in order, with empty patterns. With no template, track 1 starts as KEEP and the rest as --, so the song has one track. A saved template starts KEEP on as many tracks as the template has. A role’s first factory sound is used when the template’s sound does not already fit that role.</li>
-          <li><strong>TMPL</strong>: save your current sounds, settings and number of tracks as the template for new projects (empty patterns). With BOOT off and no template, power-on is one track and the power-on sound.</li>
-          <li>Holding <kbd>SAVE</kbd>, or <kbd>SAVE</kbd>+<kbd>REC</kbd>, writes the project back to its slot (<code>SAVED B</code>, and so on). If it is playing, the screen says <strong>STOPPING TO SAVE</strong> and the transport stops first. A project with no slot yet opens PROJECT on a free slot (<strong>NEW PROJECT: PICK SLOT</strong>).</li>
+          <li><strong>Boot</strong> on a slot’s sheet loads that project at power-on, and the slot shows a Boot mark. With no boot project, a saved template is used.</li>
+          <li><strong>Storage:</strong> projects and user sound banks share one pool. A project takes only what it holds, typically about two 4&nbsp;KB sectors, and an empty slot takes nothing. The selected slot shows the room left in KB. A full pool refuses a save with <strong>STORAGE FULL</strong>; erasing a project frees its space. A save finishes writing before it replaces the old version, so an interrupted save keeps the previous one.</li>
+          <li><strong>Limits:</strong> about 1,450 set steps fit across a project’s patterns. An edit past that is refused with <strong>PATTERN STORAGE FULL</strong>, so the music can always be saved. A save that does not fit says <strong>PROJECT FULL</strong> and the saved copy stays. A project saved by earlier firmware keeps its full size until it is saved again.</li>
+          <li><strong>New song</strong> opens the wizard, stopped only. Set key, scale and tempo (<kbd>KNOB 1</kbd> ROOT, <kbd>KNOB 2</kbd> SCALE, <kbd>KNOB 3</kbd> TEMPO), then a role on each of the four knobs: <strong>--</strong> (no track), <strong>KEEP</strong>, <strong>DRUMS</strong>, <strong>BASS</strong>, <strong>CHORDS</strong>, <strong>LEAD</strong> or <strong>PAD</strong>. The song keeps the places that have a role, in order, with empty patterns. With no template, all four start as KEEP. A saved template starts KEEP on as many of the four as it has tracks. A role’s first factory sound is used when the template’s sound does not already fit that role. Add MIDI tracks from Stage’s sheet afterwards.</li>
+          <li><strong>Template</strong>: save your current sounds, settings and number of tracks as the template for new projects (empty patterns). With no boot project and no template, power-on is four tracks with the default sounds: It’s a Prophet, FM6 SOLID BASS, CZ-1 SYNTH.LEAD 1 and the 808 kit.</li>
+          <li>Holding <kbd>SAVE</kbd>, or <kbd>SAVE</kbd>+<kbd>REC</kbd>, writes the project back to its slot (<code>SAVED 02</code>, and so on). If it is playing, the screen says <strong>STOPPING TO SAVE</strong> and the transport stops first. A project with no slot yet opens PROJECT on a free slot (<strong>NEW PROJECT: PICK SLOT</strong>).</li>
           <li><strong>Autosave:</strong> stopped and untouched for five seconds (no key, button, knob or MIDI), a project that already has a slot saves itself when it changed. Hold <kbd>HOME</kbd> and set <strong>AUTOSAVE</strong> to <strong>OFF</strong> to save only by hand. It defaults <strong>ON</strong>, and the choice survives power-off. Manual <kbd>SAVE</kbd> stays available either way.</li>
         </ul>
       </section>
 
       <section id="engines">
         <h2>Engines</h2>
-        <p>Selectable instruments: <strong>PROPHET</strong>, <strong>FM6</strong>, <strong>CZ-1</strong>, <strong>SID</strong>, <strong>DRUM</strong>. Press <kbd>EDIT</kbd> for that engine’s pages; press again or use <kbd>SELECT</kbd> to move through them. On engines with several sections, <kbd>PRESETS</kbd> jumps between sections (and on FM6 / CZ-1 picks the operator / line). On an EDIT page, tap <kbd>EDIT</kbd> again for the section map. In that map, <kbd>KNOB 2</kbd> moves by category, and <kbd>KNOB 1</kbd> or <kbd>SELECT</kbd> picks a page within it, one step per detent. Each category remembers its page. <kbd>OCT+</kbd> opens the page; <kbd>OCT−</kbd> or <kbd>EDIT</kbd> closes the map. Hold <kbd>EDIT</kbd> to undo.</p>
-        <p>Track 1 powers on with PROPHET FUNK BASS II. Retired engines (ANALOG, DIGITAL, PHASE, VOICE, NOISE, TRIO, WHEEL, PHYS, and others) stay silent if an old project still names them; their saved values remain. Choose another sound to play again. Ranges below are the device’s own; the same values appear in the <a href="../../editor/">web editor</a>.</p>
+        <p>Selectable instruments: <strong>PROPHET</strong>, <strong>FM6</strong>, <strong>CZ-1</strong>, <strong>SID</strong>, <strong>DRUM</strong>, and <strong>MIDI Track</strong> for external gear. Press <kbd>EDIT</kbd> for that engine’s pages; press again or use <kbd>SELECT</kbd> to move through them. On engines with several sections, <kbd>PRESETS</kbd> jumps between sections (and on FM6 / CZ-1 picks the operator / line). On an EDIT page, tap <kbd>EDIT</kbd> again for the section map. In that map, <kbd>KNOB 2</kbd> moves by category, and <kbd>KNOB 1</kbd> or <kbd>SELECT</kbd> picks a page within it, one step per detent. Each category remembers its page. <kbd>OCT+</kbd> opens the page; <kbd>OCT−</kbd> or <kbd>EDIT</kbd> closes the map. Hold <kbd>EDIT</kbd> to undo.</p>
+        <p>Retired engines (ANALOG, DIGITAL, PHASE, VOICE, NOISE, TRIO, WHEEL, PHYS, and others) stay silent if an old project still names them; their saved values remain. Choose another sound to play again. Ranges below are the device’s own; the same values appear in the <a href="../../editor/">web editor</a>.</p>
 
         <section id="prophet">
           <h3>Prophet</h3>
@@ -478,8 +492,8 @@
 
         <section id="drum">
           <h3>Drum</h3>
-          <p class="small">808 kit: Hügelton’s TR-808 circuit models. 909 kit: the schwung module <a href="https://github.com/athousanddetails/schwung-9W9" target="_blank" rel="noopener">9W9</a> by AThousandDetails (after ER-99), ported via Charles Vestal’s x0x.</p>
-          <p>Synthesized TR-808, TR-909 and SID kits on the General MIDI key map. SID KIT uses a single 6581 chip whose three voices share the hits; SID DIGI also plays its synthesized kick and snare through the chip’s four-bit volume register. In SID mode, DIGI replaces KICK on the HIT page and RES replaces DRV. The DRUM EDIT pages have <strong>Sound</strong> (KIT / HIT macros), <strong>Drum</strong> (per-instrument Sound and Mix), <strong>Lanes</strong> and <strong>Voice</strong> tabs. On DRUM SOUND and DRUM MIX, black keys pick the drum lane and white keys pick a drum within it; the knobs then shape that drum.</p>
+          <p class="small">808 kit: Hügelton’s TR-808 circuit models. 909 kit: the schwung module <a href="https://github.com/athousanddetails/schwung-9W9" target="_blank" rel="noopener">9W9</a> by AThousandDetails (after ER-99), ported via Charles Vestal’s x0x. CR78 kit: designed after the CompuRhythm CR-78’s voice list, not measured from a unit.</p>
+          <p>Synthesized TR-808, TR-909, SID, CR78 and FM kits on the General MIDI key map. SID KIT uses a single 6581 chip whose three voices share the hits; SID DIGI also plays its synthesized kick and snare through the chip’s four-bit volume register. In SID mode, DIGI replaces KICK on the HIT page and RES replaces DRV. <strong>CR78</strong> is a late-1970s rhythm box built from the 808’s circuit pieces, with tambourine, cowbell, conga, bongos, claves and maracas; HATS (HAT or METAL, its metal beat) replaces KICK on the HIT page. <strong>FM</strong> is two-operator FM drums with noise. Both play all eight lanes on one voice, like the SID kit. The DRUM EDIT pages have <strong>Sound</strong> (KIT / HIT macros), <strong>Drum</strong> (per-instrument Sound and Mix), <strong>Lanes</strong> and <strong>Voice</strong> tabs. On DRUM SOUND and DRUM MIX, black keys pick the drum lane and white keys pick a drum within it; the knobs then shape that drum.</p>
           <div class="shots">
             <figure class="shot"><img src="stage_drum.png" alt="Drum Stage" width="240" height="240"><figcaption>Drum Stage: lanes light as they hit.</figcaption></figure>
             <figure class="shot"><img src="drum_sound_808.png" alt="Drum sound page" width="240" height="240"><figcaption>DRUM SOUND: TUNE, DECAY, TONE for the picked drum.</figcaption></figure>
@@ -492,7 +506,7 @@
           <table>
             <thead><tr><th>Page</th><th>Controls</th></tr></thead>
             <tbody>
-              <tr><td>KIT</td><td>KIT (808, 909 or SID), TUNE (overall pitch), TONE (overall character / brightness), DECY (overall decay).</td></tr>
+              <tr><td>KIT</td><td>KIT (808, 909, SID, CR78 or FM), TUNE (overall pitch), TONE (overall character / brightness), DECY (overall decay).</td></tr>
               <tr><td>HIT</td><td>SNAP (snare snappy / noise amount), ACC (how strongly velocity changes level — the circuits alone only move about 2&nbsp;dB from soft to hard), KICK (PUNCH keeps the bass-drum attack click; ROUND softens it), DRV (drive into a soft clip, level kept).</td></tr>
             </tbody>
           </table>
@@ -508,6 +522,24 @@
             </tbody>
           </table>
           <p>Stage knobs: TUNE, TONE, DECY, SNAP. The SEQ sequencer drum grid uses white keys for steps and black keys to select which lane; recorded takes use the same NOTES piano roll as other engines after recording stops. A recorded hit can keep its own pitch and length (see <a href="#notes">Notes</a> and DRUM HIT).</p>
+        </section>
+
+        <section id="midi-track">
+          <h3>MIDI Track</h3>
+          <p>A track that plays external gear instead of making sound. Tracks 1–4 can choose it as their engine; tracks 5–8 are always MIDI tracks. Keys, scales, chords, arpeggios, step sequences, recorded takes, pattern changes and SONG work as they do on an instrument, and the notes go out over MIDI: over USB to the computer or, with <a href="#usb-host">USB HOST</a> on, to the attached device, and over a <a href="#bluetooth">Bluetooth</a> connection.</p>
+          <table>
+            <thead><tr><th>Control</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><kbd>KNOB 1</kbd> CH</td><td>Output channel, 1–16. It starts as the track’s number.</td></tr>
+              <tr><td><kbd>KNOB 2</kbd> TRS</td><td>ON also accepts routed TRS input, alongside the input chosen at <kbd>GLO</kbd> → SYSTEM → MIDI. With OFF the track receives only that input.</td></tr>
+            </tbody>
+          </table>
+          <ul>
+            <li>A MIDI track uses no voices or audio memory. Level, pan, audio modulation, effects and sends do nothing on it.</li>
+            <li>Tracks 5–8 have eight patterns; tracks 1–4 keep their 16 when they use MIDI Track.</li>
+            <li>Incoming channel controls go out on the track’s output channel. Mute, solo, stop and a change of channel or sound release outgoing notes.</li>
+            <li>Projects save CH and TRS for every track. The template keeps them for tracks 1–4.</li>
+          </ul>
         </section>
 
         <section id="voice">
@@ -637,7 +669,7 @@
         <p>AUTO remembers melody onsets for two beats and also considers held live notes and sounding step notes. Generated chords, kits, slices and microtonal tracks do not guide its choices. An out-of-scale root takes the scale note below it (the next available note at the bottom of the MIDI range). TRN shifts the complete harmonic scale. At the ends of the MIDI range, the complete chord moves by octaves. Repeated presses with the same context keep the same chord; held chords stay unchanged through strumming, sustain and release. After a two-beat pause, STOP, panic or a scale/root/transpose/layout/voicing change, the harmonic history starts fresh. Recordings retain the notes you heard. CHR allows all twelve notes and defaults to major triads. AUTO plays only the root in mono modes, keeps kit mappings, and plays the input note alone for microtonal selections; use the existing chord modes for those tunings.</p>
         <p><strong>AUTO2: melody with harmony underneath.</strong> This second automatic option keeps the mapped key as the highest note. It chooses a familiar three-note chord containing that melody, using only notes in the selected Western scale. The same key chooses the same harmony regardless of the backing tracks, previous presses or timing. Original AUTO retains its existing behaviour.</p>
         <p>With AUTO2, CLOSE places accompaniment within the octave below your melody. OPEN lowers the bottom voice; INV1/INV2 choose the third/fifth as bass, adding a lower copy when the melody is that chord tone; +OCT adds a lower root. Your melody stays on top in every voicing. During a strum it sounds immediately, followed by accompaniment in DOWN/UP/ALT order. At the bottom of the MIDI range unavailable lower notes are omitted. Out-of-scale inputs map downward as in AUTO; QNT ALL makes successive keys walk the scale. Mono modes play the mapped melody alone. Kits and microtonal selections keep AUTO's bypass behaviour. The CHORD page highlights the melody and names the resulting harmony.</p>
-        <p><strong>QNT:</strong> OFF (chromatic), SNAP (every key, rounded down to the scale), WHITE (white keys only; black silent), ALL (every key is the next scale degree), MPC (for an Akai MPC pad controller). With QNT MPC, MPC Sample banks <strong>E, F, G and H play Melodee tracks 1, 2, 3 and 4</strong> respectively, on any MIDI channel, overriding ROUT and the DRUM channel for notes. Playing a valid MPC pad silently selects its Melodee track, so the controls and octave indicator follow the most recently played bank. MPC mode suppresses the “MIDI IN → T…” notices; normal MIDI routing also remains silent and keeps the manually selected track. Each melodic bank’s 16 pads play successive scale degrees. The <strong>DEG</strong> control sets the degree pad&nbsp;02 plays (1 = ROOT); pad&nbsp;01 is one degree below, pad&nbsp;03 one above. On Stage, the octave buttons shift only the selected track’s bank (−3 to +3); pressing both resets that bank. The header and button lights show its octave. Each bank’s setting survives track/sound changes and is saved with projects and templates. Outside MPC mode, the shared keyboard octave stays independent. This uses the default program pad map: E = MIDI 100–115, F = 116–127 then 0–3, G = 4–19, H = 20–35. Banks A–D and absent tracks are silent. Enable the MPC’s Pad MIDI Out (Always, or Empty for empty pads). Controllers retain their MIDI channel routing; sustain and panic also follow that channel’s held notes across banks. Incoming MIDI follows WHITE and ALL the same way the keys do, without the octave buttons. ROOT, SCL, QNT and DEG are shared by all tracks; TRN (transpose) remains per track. Older projects with differing roots use the saved selected track’s root when loaded. Chord keys work on the keys, MIDI in, recording and the arpeggiator. Native drum keys keep their chromatic key map and octave; other kits and slices keep their own maps.</p>
+        <p><strong>QNT:</strong> OFF (chromatic), SNAP (every key moves onto the scale: down to the scale note on 12-tone scales, to the nearest degree on microtonal ones), WHITE (white keys only; black silent), ALL (every key is the next scale degree), MPC (for an Akai MPC pad controller). With QNT MPC, MPC Sample banks <strong>E, F, G and H play Melodee tracks 1, 2, 3 and 4</strong> respectively, on any MIDI channel, overriding ROUT and the DRUM channel for notes. Playing a valid MPC pad silently selects its Melodee track, so the controls and octave indicator follow the most recently played bank. MPC mode suppresses the “MIDI IN → T…” notices; normal MIDI routing also remains silent and keeps the manually selected track. Each melodic bank’s 16 pads play successive scale degrees. The <strong>DEG</strong> control sets the degree pad&nbsp;02 plays (1 = ROOT); pad&nbsp;01 is one degree below, pad&nbsp;03 one above. On Stage, the octave buttons shift only the selected track’s bank (−3 to +3); pressing both resets that bank. The header and button lights show its octave. Each bank’s setting survives track/sound changes and is saved with projects and templates. Outside MPC mode, the shared keyboard octave stays independent. This uses the default program pad map: E = MIDI 100–115, F = 116–127 then 0–3, G = 4–19, H = 20–35. Banks A–D and absent tracks are silent. Enable the MPC’s Pad MIDI Out (Always, or Empty for empty pads). Controllers retain their MIDI channel routing; sustain and panic also follow that channel’s held notes across banks. Incoming MIDI follows WHITE and ALL the same way the keys do, without the octave buttons. ROOT, SCL, QNT and DEG are shared by all tracks; TRN (transpose) remains per track. Older projects with differing roots use the saved selected track’s root when loaded. Chord keys work on the keys, MIDI in, recording and the arpeggiator. Native drum keys keep their chromatic key map and octave; other kits and slices keep their own maps.</p>
         <p><strong>MPC drum pads:</strong> A DRUM track automatically uses this finger-drumming layout in its assigned bank. Pad 01 is bottom left. Drum pads ignore bank octave, scale, ROOT, TRN and DEG, so each pad keeps its sound. Normal MIDI outside MPC mode and recorded patterns retain their GM drum mapping.</p>
         <table aria-label="MPC 808 and SID drum pads, viewed from above">
           <thead><tr><th>Left</th><th>Middle left</th><th>Middle right</th><th>Right</th></tr></thead>
@@ -648,7 +680,7 @@
             <tr><td>01 Kick</td><td>02 Snare</td><td>03 Clap</td><td>04 Rim</td></tr>
           </tbody>
         </table>
-        <p>The 909 keeps these main positions, with 07 Ride and 08 Crash. Its extra pads repeat useful hits: 12 Ride, 13 Kick, 14 Snare, 15 Closed hat and 16 Open hat. Each pad retriggers the hit even while its duplicate is held.</p>
+        <p>The 909 keeps these main positions, with 07 Ride and 08 Crash. Its extra pads repeat useful hits: 12 Ride, 13 Kick, 14 Snare, 15 Closed hat and 16 Open hat. Each pad retriggers the hit even while its duplicate is held. CR78 and FM use the 808’s pad positions and play their own sound for each; on CR78, for example, 03 is its tambourine.</p>
       </section>
 
       <section id="arp">
@@ -673,7 +705,7 @@
             <tr><td>NOTES</td><td>Edit entered steps and recorded takes (piano roll; drum grid on Drum).</td></tr>
             <tr><td>PATTERN</td><td>How long the selected track’s loop is, how fast its steps run, and its own swing and note length.</td></tr>
             <tr><td>TEMPO</td><td>Project speed (BPM) and song swing; the project-wide quantize grid for the next recorded take on any track.</td></tr>
-            <tr><td>PATTERNS</td><td>One row per track in use, eight patterns each.</td></tr>
+            <tr><td>PATTERNS</td><td>A row per track, four at a time. Tracks 1–4 have 16 patterns, shown as two pages of eight; tracks 5–8 have eight.</td></tr>
             <tr><td>SONG</td><td>Arrangement of sections.</td></tr>
             <tr><td>MOTION</td><td>Knob automation for the selected pattern (shown once that pattern has some automation saved).</td></tr>
             <tr><td>DRUM HIT</td><td>On a Drum track: the macros of a selected recorded hit.</td></tr>
@@ -713,35 +745,41 @@
             <figure class="shot"><img src="notes_mixed.png" alt="Notes piano roll" width="240" height="240"><figcaption>Piano roll: steps, recorded notes, ties.</figcaption></figure>
             <figure class="shot"><img src="step.png" alt="Notes step view" width="240" height="240"><figcaption>A single step highlighted.</figcaption></figure>
             <figure class="shot"><img src="ref_sheet_note.png" alt="Note action sheet" width="240" height="240"><figcaption>Note sheet (OCT+ on a note).</figcaption></figure>
+            <figure class="shot"><img src="notes_bulk.png" alt="Notes with a range selected" width="240" height="240"><figcaption>A selected range: all four knobs act on it.</figcaption></figure>
+            <figure class="shot"><img src="notes_bulk_menu.png" alt="Selected notes sheet" width="240" height="240"><figcaption>Sheet for a selected range.</figcaption></figure>
           </div>
           <table>
             <thead><tr><th>Control</th><th>What it does</th></tr></thead>
             <tbody>
               <tr><td><kbd>KNOB 1</kbd> STEP</td><td>Walk every interval, including empty ones and each pitch of a chord.</td></tr>
-              <tr><td><kbd>KNOB 2</kbd> PITCH</td><td>Change pitch; on an empty manual step, insert a note. Keys and MIDI enter notes or chords when stopped (then advance when released).</td></tr>
-              <tr><td><kbd>KNOB 3</kbd> LENGTH</td><td>Resize at quarter-step boundaries (0.25, 0.50, 0.75, 1.00, …). Hold <kbd>ENV</kbd> for fine 1/16-step adjustments on recorded notes.</td></tr>
+              <tr><td><kbd>KNOB 2</kbd> PITCH</td><td>Change the highlighted note’s pitch; with <strong>NOTE PREVIEW</strong> on you hear each turn. On an empty step the screen says <strong>SELECT A NOTE</strong>: PITCH never adds a note.</td></tr>
+              <tr><td><kbd>KNOB 3</kbd> LENGTH</td><td>Resize at quarter-step boundaries (0.25, 0.50, 0.75, 1.00, …), also while the sequence plays. Hold <kbd>ENV</kbd> for fine 1/16-step adjustments.</td></tr>
               <tr><td><kbd>KNOB 4</kbd> VEL</td><td>Velocity 1–127. Hold <kbd>ENV</kbd> and turn KNOB 4 for SLIDE on a manual note.</td></tr>
+              <tr><td>Keys, MIDI</td><td>Stopped: enter notes or chords at the cursor, then advance when released. Playing: they only play, unless the track is armed and records them live.</td></tr>
               <tr><td><kbd>PRESETS</kbd></td><td>Zoom (16 steps down to one). Hold <kbd>SCL</kbd> and turn SELECT or KNOB 1 to move; hold <kbd>ENV</kbd> and turn them to resize.</td></tr>
               <tr><td><kbd>EDIT</kbd></td><td>Tap to delete the highlighted pitch. Hold <kbd>EDIT</kbd> while recording to erase under the playhead (header: ERASING). Otherwise a hold undoes.</td></tr>
-              <tr><td><kbd>OCT+</kbd></td><td>On empty space places a note; on a note opens its sheet: Length, Velocity, Chance, Slide, Move note, Copy note, Delete note. Recorded notes offer Length, Velocity, Move, Copy and Delete.</td></tr>
+              <tr><td><kbd>OCT+</kbd></td><td>On empty space places the last note played; on a note opens its sheet: Length, Velocity, Chance, Slide, Move note, Copy note, Delete note. Recorded notes offer Length, Velocity, Move, Copy and Delete.</td></tr>
             </tbody>
           </table>
-          <p>Stop live recording before editing recorded properties. Hold <kbd>EDIT</kbd> to undo step edits; <kbd>EDIT</kbd>+<kbd>OCT−</kbd> / <kbd>OCT+</kbd> undo / redo up to eight edits. An erase pass starts a fresh history. Tap <kbd>EDIT</kbd> deletes the highlighted pitch, including a recorded hit.</p>
-          <p>Hold <kbd>OCT+</kbd> and turn <kbd>SELECT</kbd>, <kbd>KNOB 1</kbd> or <kbd>KNOB 2</kbd> to select a range, then turn <kbd>KNOB 1</kbd> to move those notes at quarter-step boundaries. Tap or hold <kbd>OCT+</kbd> for <strong>Copy: KNOB 1</strong>, <strong>Quantize</strong>, <strong>Delete selected</strong> or <strong>Clear selection</strong>. Delete selected removes manual and recorded notes in the range. A single note’s <strong>Move note</strong> or <strong>Copy note</strong> works the same way: choose it, then turn <kbd>KNOB 1</kbd>. Copies and moves wrap around the loop. Hold <kbd>OCT+</kbd> without a range for the pattern tools: <strong>Quantize</strong> (the whole pattern, or the selection if there is one), <strong>Clear pattern</strong> and <strong>Clear motion</strong>. On Quantize, <kbd>KNOB 1</kbd> chooses <strong>1</strong>, <strong>0.5</strong> or <strong>0.25</strong> step and <kbd>OCT+</kbd> applies it. Durations and velocities stay. Each operation is one undo. Moving, copying and quantizing notes need the transport stopped. Clear pattern and Clear motion requested during playback wait for the track’s loop end.</p>
+          <p>Stop live recording before editing recorded properties. Hold <kbd>EDIT</kbd> to undo step edits; <kbd>EDIT</kbd>+<kbd>OCT−</kbd> / <kbd>OCT+</kbd> undo / redo up to eight edits. An erase pass starts a fresh history. Tap <kbd>EDIT</kbd> deletes the highlighted pitch, including a recorded hit. Edits made while the sequence plays keep no undo.</p>
+          <p>Hold <kbd>OCT+</kbd> and turn <kbd>SELECT</kbd>, <kbd>KNOB 1</kbd> or <kbd>KNOB 2</kbd> to select a range. Then <kbd>KNOB 1</kbd> moves those notes at quarter-step boundaries, and <kbd>KNOB 2</kbd> PITCH, <kbd>KNOB 3</kbd> LENGTH and <kbd>KNOB 4</kbd> VEL change every selected note by the same amount, so the intervals and differences stay. A turn stops where the first note meets its limit, and a run of turns is one undo. PITCH is previewed only when the selected notes sit on one step. Tap or hold <kbd>OCT+</kbd> for <strong>Move: KNOB 1</strong>, <strong>Copy: KNOB 1</strong>, <strong>Quantize</strong>, <strong>Delete selected</strong> or <strong>Clear selection</strong>. Delete selected removes manual and recorded notes in the range. A single note’s <strong>Move note</strong> or <strong>Copy note</strong> works the same way: choose it, then turn <kbd>KNOB 1</kbd> to place it or <kbd>KNOB 2</kbd> to change its pitch. In Copy mode, <kbd>KNOB 2</kbd> makes the copy in place first and pitches the copy. Copies and moves wrap around the loop. Hold <kbd>OCT+</kbd> without a range for the pattern tools: <strong>Quantize</strong> (the whole pattern, or the selection if there is one), <strong>Clear pattern</strong> and <strong>Clear motion</strong>. On Quantize, <kbd>KNOB 1</kbd> chooses <strong>1</strong>, <strong>0.5</strong> or <strong>0.25</strong> step and <kbd>OCT+</kbd> applies it. Durations and velocities stay. Each operation is one undo. Moving, copying and quantizing notes need the transport stopped. Clear pattern and Clear motion requested during playback wait for the track’s loop end.</p>
         </section>
 
         <section id="patterns">
           <h3>Patterns</h3>
-          <p>Eight patterns per track. The PATTERNS grid shows one row for each track in use; <kbd>KNOB 1</kbd>–<kbd>4</kbd> queue patterns for tracks 1–4 when that track exists. <kbd>SELECT</kbd> goes on to SONG.</p>
+          <p>Sixteen patterns on each of tracks 1–4, eight on tracks 5–8. The PATTERNS grid shows the selected track’s group of four rows, eight patterns to a page. The two pages of a part’s 16 are marked by dots over the numerals, and a tick at the edge of a row says its pattern is on the other page. The page follows the pattern you turn to. <kbd>KNOB 1</kbd>–<kbd>4</kbd> queue patterns for the four tracks shown, when that track exists. <kbd>SELECT</kbd> goes on to SONG.</p>
           <div class="shots">
-            <figure class="shot"><img src="patterns.png" alt="Patterns grid" width="240" height="240"><figcaption>PATTERNS: one row per track, eight patterns.</figcaption></figure>
-            <figure class="shot"><img src="patterns_sheet.png" alt="Patterns sheet" width="240" height="240"><figcaption>Pattern sheet: Copy to…, Delete.</figcaption></figure>
+            <figure class="shot"><img src="patterns.png" alt="Patterns grid" width="240" height="240"><figcaption>PATTERNS: a row per track, eight patterns to a page.</figcaption></figure>
+            <figure class="shot"><img src="patterns_page2.png" alt="Patterns grid on its second page" width="240" height="240"><figcaption>Second page: patterns 9–16.</figcaption></figure>
+            <figure class="shot"><img src="patterns_sheet.png" alt="Patterns sheet" width="240" height="240"><figcaption>Pattern sheet: presets, Copy to…, Delete.</figcaption></figure>
+            <figure class="shot"><img src="patterns_copy_t2.png" alt="Copying a pattern to another track" width="240" height="240"><figcaption>Copy to: the frame on another track’s row.</figcaption></figure>
           </div>
           <ul>
-            <li>Hold <kbd>SEQ</kbd> and press one of the first eight white keys to select pattern 1–8 (or use the PATTERNS grid / <kbd>SEQ</kbd>+<kbd>SELECT</kbd>). The playing pattern is lit; ones with notes glow; one waiting for the loop end breathes. Selecting an empty pattern arms one recording pass. Double-tap a used pattern key to arm one pass there. Those shortcuts disarm after the pass; an already explicit REC arming stays on. On PATTERNS while unarmed, or with SEQ held on any page, the first eight black keys select tracks 1–8 directly. Unused track keys stay dark. On PATTERNS, pressing one creates the missing tracks through that slot and selects it without leaving the page; tracks 5–8 are MIDI-only.</li>
+            <li>On PATTERNS while unarmed, or with <kbd>SEQ</kbd> held, the white keys F3–G5 select patterns 1–16 (F3–F4, patterns 1–8, on a MIDI track). You can also use the PATTERNS grid or <kbd>SEQ</kbd>+<kbd>SELECT</kbd>. The playing pattern is lit; ones with notes glow; one waiting for the loop end breathes. Selecting an empty pattern arms one recording pass. Double-tap a used pattern key to arm one pass there. Those shortcuts disarm after the pass; an already explicit REC arming stays on. On PATTERNS while unarmed, or with SEQ held on any page, the first eight black keys select tracks 1–8 directly. Unused track keys stay dark. On PATTERNS, pressing one creates the missing tracks through that slot and selects it without leaving the page; tracks 5–8 are MIDI-only.</li>
             <li>Turn <kbd>PRESET</kbd> on PATTERNS to change the active audio track’s sound. A temporary card shows its name and engine immediately. Keys play the sound while the card is open; it closes two seconds after your last turn or released audition note, then keys select tracks and patterns again. Hold <kbd>SEQ</kbd> to select during preview, or press <kbd>OCT−</kbd> / <kbd>OCT+</kbd> to close the card. PRESET leaves MIDI tracks 5–8 unchanged.</li>
             <li>Hold a pattern key alone for a second to open its action dialog: press that key again to delete the pattern, another pattern key to copy it there, or <kbd>OCT−</kbd> to cancel. In the dialog the fourth and fifth black keys (C♯, D♯) blink: C♯ halves the pattern (the steps past the new length stay hidden), D♯ doubles it (its steps, recorded notes and motion copied after themselves, up to 64 steps). Keep the original pattern key or <kbd>SEQ</kbd> held to leave the dialog open and halve or double repeatedly. After a resize, releasing both closes it. On the playing pattern, hold <kbd>EDIT</kbd> to undo.</li>
             <li>On PATTERNS, <kbd>OCT+</kbd> opens the sheet: <strong>Set preset</strong>, <strong>Remove preset</strong>, <strong>Copy to…</strong> (confirm before replacing a used slot) or <strong>Delete pattern</strong> (confirm). Set preset opens the sound browser for the selected pattern: <kbd>OCT+</kbd> saves an independent sound copy; <kbd>OCT−</kbd> cancels. Playback uses <strong>Song override → Pattern override → Default track sound</strong>. STOP restores the default track sound. Copy includes the preset; Delete removes the pattern’s manual notes, recorded notes, motion and preset together. Remove preset restores inheritance without changing notes. Preset assignments save with the project and support undo. Tracks 5–8 remain MIDI-only. <kbd>OCT−</kbd> clears what is queued. Hold <kbd>EDIT</kbd> to undo.</li>
+            <li><strong>Copy to…</strong> frames where the pattern goes. Turn the same track’s knob to move the frame along its row, or another track’s knob to jump to that row. <kbd>ALGORITHM</kbd> picks any track, including those outside the four shown. <kbd>OCT+</kbd> copies, <kbd>OCT−</kbd> leaves. To another track, steps, timing and recorded notes are copied; motion only when both tracks use the same engine; the target keeps its own sound. The hold dialog above copies within the track only.</li>
             <li>While playing, a pattern change waits until that track’s loop ends. Selecting the active pattern cancels a queued change. Destructive pattern operations (delete, clear notes or motion, or copy over a used or playing pattern) also wait for that track’s loop end. The header shows the pending action with <strong>AT LOOP END</strong>; the pattern key breathes. Live note, hit, erase and motion-lane edits stay immediate. STOP applies pending choices.</li>
           </ul>
         </section>
@@ -752,22 +790,23 @@
           <div class="shots">
             <figure class="shot"><img src="song.png" alt="Song arrangement" width="240" height="240"><figcaption>SONG: sections of patterns.</figcaption></figure>
             <figure class="shot"><img src="ref_sheet_song.png" alt="Song action sheet" width="240" height="240"><figcaption>Song sheet.</figcaption></figure>
+            <figure class="shot"><img src="song_punch.png" alt="Punch editor for a section" width="240" height="240"><figcaption>Punch editor: four lanes on the section’s steps.</figcaption></figure>
           </div>
           <ul>
             <li>While you jam with no song playing, every loop of track 1 logs the tracks’ patterns as a section (same patterns again: a repeat).</li>
             <li>Hold <kbd>REC</kbd> on SONG (or use Take jam on the sheet) to turn that log into the arrangement. Overwrite asks for confirmation.</li>
             <li>PLAY runs the arrangement; PLAY starts from the selected section with its full repeats; sections change every track at track 1’s loop boundary; the final section stops. STOP returns to the patterns selected before SONG.</li>
             <li>The ruler above the blocks shows elapsed <strong>minutes:seconds</strong>. <kbd>KNOB 4</kbd> extends the selected block into following sections on its own track, or trims its right edge. Notes and automation continue through the extended block; trimming leaves rests. Extension stops at another occupied block and can append empty sections at the end.</li>
-            <li><kbd>KNOB 3</kbd> chooses <strong>REST</strong> below P1. A rest leaves that track silent while release, delay and reverb tails decay. Track 1 rests and continued blocks retain one straight four-beat bar per section repeat.</li>
-            <li><kbd>OCT+</kbd> opens cell actions: Set rest, Copy to…, Move to…, Add empty section. Add empty section inserts a section of rests at the cursor. For copy and move, choose a destination on the grid, then <kbd>OCT+</kbd> applies or <kbd>OCT−</kbd> cancels. Copy and move act on the whole block. Destinations must be empty. Copies reuse the pattern; editing its notes changes every occurrence.</li>
-            <li><strong>Set preset:</strong> select the section and track, then <kbd>OCT+</kbd> → Set preset. Browse sounds as usual; <kbd>OCT+</kbd> saves a separate copy for the whole selected pattern block, including its continued sections, <kbd>OCT−</kbd> cancels. Select anywhere inside a long block to change its sound. Other occurrences of the same pattern stay independent. Blocks without a Song override use the Pattern override, then the default track sound. STOP restores the default track sound. Remove preset clears the whole block’s Song override. Native patches are included, so later library edits cannot change the song. Song copy/move and undo include these assignments; the note pattern remains shared. Tracks 5–8 remain MIDI-only.</li>
-            <li>Hold <kbd>OCT+</kbd> for Insert empty section, Duplicate section, Move section, Copy sections, Delete section, Take jam, and Clear song. Inserted empty sections contain rests on every track.</li>
+            <li><kbd>KNOB 3</kbd> chooses the pattern, or <strong>REST</strong> below P1. A rest leaves that track silent while release, delay and reverb tails decay. Track 1 rests and continued blocks retain one straight four-beat bar per section repeat.</li>
+            <li><kbd>OCT+</kbd> opens cell actions: Set preset, Remove preset, Set rest, Copy to…, Move to…, Add empty section, Loop song, Punch FX. Add empty section inserts a section of rests at the cursor. For copy and move, choose a destination on the grid, then <kbd>OCT+</kbd> applies or <kbd>OCT−</kbd> cancels. Copy and move act on the whole block. Destinations must be empty. Copies reuse the pattern; editing its notes changes every occurrence.</li>
+            <li><strong>Set preset:</strong> select the section and track, then <kbd>OCT+</kbd> → Set preset. Browse sounds as usual; <kbd>OCT+</kbd> saves a separate copy for the whole selected pattern block, including its continued sections, <kbd>OCT−</kbd> cancels. Select anywhere inside a long block to change its sound. Other occurrences of the same pattern stay independent. Blocks without a Song override use the Pattern override, then the default track sound. STOP restores the default track sound. Remove preset clears the whole block’s Song override. Native patches are included, so later library edits cannot change the song. Up to 64 distinct copies fit, subject to memory and the project’s saved size. Song copy/move and undo include these assignments; the note pattern remains shared. Tracks 5–8 remain MIDI-only.</li>
+            <li>Hold <kbd>OCT+</kbd> for Insert empty section, Duplicate section, Move section, Copy sections, Delete section, Loop song, Punch FX, Take jam, and Clear song. Inserted empty sections contain rests on every track.</li>
             <li>Hold <kbd>OCT+</kbd> and turn <kbd>KNOB 1</kbd> to select a phrase, then tap <kbd>OCT+</kbd> to copy, move, duplicate or delete its sections. Copy and move insert before the destination. Duplication inserts after the source.</li>
             <li>Hold <kbd>EDIT</kbd> to undo song edits; <kbd>EDIT</kbd> + <kbd>OCT−</kbd>/<kbd>OCT+</kbd> undo/redo. Up to eight edits are retained while edit memory is available.</li>
             <li><strong>Loop song</strong> in the tapped or held <kbd>OCT+</kbd> menu returns the final section to section 1. Set it while stopped; it saves with the project and defaults off. The header shows LOOP, or SONG LOOP while playing. PLAY still stops the song.</li>
-            <li>Tap <kbd>FX</kbd> on SONG to place a master punch. Press an effect key or turn <kbd>KNOB 1</kbd>; <kbd>KNOB 2</kbd> selects one of four named lanes. Turn <kbd>KNOB 3</kbd> to move START and <kbd>KNOB 4</kbd> to set END. These are numbered steps: START <strong>5</strong> and END <strong>8</strong> highlights steps 5 through 8 on the grid, on each section repeat. PLAY auditions with a moving playhead. Vertical coloured spans inside the rounded, filled song blocks show where each punch applies. The footer keeps the song progress bar; effect names stay in the punch editor.</li>
-            <li>In the punch editor, <kbd>SELECT</kbd> browses sections, <kbd>OCT+</kbd> selects a free punch, <kbd>KNOB 1</kbd> turned left to <strong>OFF</strong> clears the selected punch. <kbd>EDIT</kbd> also removes it; holding <kbd>EDIT</kbd> undoes either action. <kbd>PLAY</kbd> auditions the song; stop before editing. <kbd>OCT−</kbd> returns to SONG. Holding <kbd>FX</kbd> on SONG still opens the live performance layer.</li>
-            <li><kbd>PLAY</kbd> starts at the cursor and stops playback; moving the cursor while playing does not jump. PLAY on the add-section column starts from section 1. <kbd>OCT+</kbd> is for editing.</li>
+            <li>Tap <kbd>FX</kbd> on SONG, or choose Punch FX on its sheet, to place a master punch: up to four per section, saved with the section. Press an effect key or turn <kbd>KNOB 1</kbd>; <kbd>KNOB 2</kbd> selects one of four named lanes. Turn <kbd>KNOB 3</kbd> to move START and <kbd>KNOB 4</kbd> to set END. These are numbered steps: START <strong>5</strong> and END <strong>8</strong> highlights steps 5 through 8 on the grid, on each section repeat. PLAY auditions with a moving playhead. Vertical coloured spans inside the rounded, filled song blocks show where each punch applies. The footer keeps the song progress bar; effect names stay in the punch editor.</li>
+            <li>In the punch editor, <kbd>SELECT</kbd> browses sections, <kbd>OCT+</kbd> selects a free punch, <kbd>KNOB 1</kbd> turned left to <strong>OFF</strong> clears the selected punch. <kbd>EDIT</kbd> also removes it; holding <kbd>EDIT</kbd> undoes either action. <kbd>PLAY</kbd> auditions the song; stop before editing. <kbd>OCT−</kbd> returns to SONG. Holding <kbd>FX</kbd> on SONG still opens the live performance layer, and a live effect key overrides the lane until you release it.</li>
+            <li><kbd>PLAY</kbd> starts at the cursor and stops playback; moving the cursor while playing does not jump. A note still held at that point plays from there; notes that already ended stay silent. With CLK on INT, external gear gets the same place (see <a href="#midi-clock">Clock and transport</a>). PLAY on the add-section column starts from section 1. <kbd>OCT+</kbd> is for editing.</li>
           </ul>
         </section>
 
@@ -804,7 +843,7 @@
           <li>While stopped and armed, the first key or MIDI note starts playback and records immediately, skipping count-in. A count-in you start with <kbd>PLAY</kbd> still runs (internal clock only; external clock skips it).</li>
           <li><strong>Capture (Take Taker):</strong> sometimes referred to as "retroactive recording" - while the transport runs, Melodee keeps only what you play on the selected track. Switching tracks clears the previous capture buffer; notes on other tracks are ignored. Hold <kbd>REC</kbd> to write the selected track’s last bars into its pattern. An empty pattern takes 1, 2 or 4 bars and sets LEN (the pattern length on SEQ → Pattern); a pattern with notes takes its last LEN steps. Hold <kbd>EDIT</kbd> to undo. Capture pauses while a track is actively recording.</li>
           <li><strong>SEQ → TEMPO → QNT</strong> sets one recording grid for all audio and MIDI tracks, saved with the project or template. It quantizes the new take’s onsets when recording ends. <strong>OFF</strong> (default) keeps the timing you played. This is separate from scale QNT on SCL. Track GATE affects manually entered steps.</li>
-          <li>A project shares <strong>1,024 timed notes</strong> across all 32 banks. <strong>RECORDING FULL</strong> leaves existing takes intact; clear or replace recorded steps to free space.</li>
+          <li>A project shares <strong>1,024 timed notes</strong> across all its patterns. <strong>RECORDING FULL</strong> leaves existing takes intact; clear or replace recorded steps to free space.</li>
         </ul>
         <p>The header shows <strong>WAIT LOOP</strong> while recording waits for the selected track’s loop boundary, and <strong>ERASING</strong> during an erase pass. These stay visible while the state applies. An armed track has a REC border around its Stage row.</p>
         <p>There are some Menu (long hold <kbd>HOME</kbd>) preferences related to recording: AUDIO CLICK, CLICK LEVEL, COUNT-IN.</p>
@@ -812,7 +851,7 @@
 
       <section id="global">
         <h2>Global</h2>
-        <p>Press <kbd>GLO</kbd> for the mixer, then again for GLOBAL and SYSTEM. Hold <kbd>GLO</kbd> for a quick layer: mute / solo on the keys, TAP tempo (internal clock), and track levels on the knobs; <kbd>GLO</kbd>+<kbd>PLAY</kbd> restarts from the top without stopping.</p>
+        <p>Press <kbd>GLO</kbd> for the mixer, then again for GLOBAL, SYSTEM, WEIGHTS and WEIGHTS 2. Hold <kbd>GLO</kbd> for a quick layer: mute / solo on the keys, TAP tempo (internal clock), and track levels on the knobs; <kbd>GLO</kbd>+<kbd>PLAY</kbd> restarts from the top without stopping.</p>
         <div class="shots">
           <figure class="shot"><img src="mixer.png" alt="Mixer" width="240" height="240"><figcaption>MIXER.</figcaption></figure>
           <figure class="shot"><img src="global.png" alt="Global page" width="240" height="240"><figcaption>GLOBAL.</figcaption></figure>
@@ -823,8 +862,9 @@
           <thead><tr><th>Page</th><th>Controls</th></tr></thead>
           <tbody>
             <tr><td>MIXER</td><td><kbd>KNOB 1</kbd> LEVEL, <kbd>KNOB 2</kbd> PAN, <kbd>KNOB 4</kbd> MUTE for the selected track. Sends live on the effect pages.</td></tr>
-            <tr><td>GLOBAL</td><td><kbd>KNOB 1</kbd> A4 concert pitch (<strong>400–480&nbsp;Hz</strong>, default 440), <kbd>KNOB 2</kbd> <strong>BUDGET</strong> budget for CPU resources (8–32 points, default 18; see <a href="#tracks">Tracks</a>), <kbd>KNOB 3</kbd> CLK (INT / USB / TRS), <kbd>KNOB 4</kbd> TUNE (fine cents, ±50). A4, BUDGET, CLK and TUNE are device settings; they survive power-off and stay when you load projects.</td></tr>
-            <tr><td>SYSTEM</td><td>MIDI input source (USB or TRS), DRUM channel (OFF or 1–16, default 10), ROUT (<strong>CH1-4</strong>, <strong>SEL</strong>, <strong>CH5-8</strong>, <strong>CH9-12</strong> or <strong>CH13-16</strong>), and CPU info. <kbd>KNOB 1</kbd> also shows USB / TRS receive activity. See <a href="#midi">MIDI</a>.</td></tr>
+            <tr><td>GLOBAL</td><td><kbd>KNOB 1</kbd> A4 concert pitch (<strong>400–480&nbsp;Hz</strong>, default 440), <kbd>KNOB 2</kbd> <strong>BUDGET</strong> budget for CPU resources (8–32 points, default 18; see <a href="#tracks">Tracks</a>), <kbd>KNOB 3</kbd> CLK (INT / USB / TRS / BLE; see <a href="#midi-clock">Clock and transport</a>), <kbd>KNOB 4</kbd> TUNE (fine cents, ±50). A4, BUDGET and CLK are device settings: they survive power-off and stay when you load a project. TUNE, and SYSTEM’s MIDI and ROUT, come back at power-on, but a project or template brings its own.</td></tr>
+            <tr><td>SYSTEM</td><td>MIDI (the input MIDI tracks listen to: USB, TRS or BLE; instrument tracks accept every input), DRUM channel (OFF or 1–16, default 10), ROUT (<strong>CH1-4</strong>, <strong>SEL</strong>, <strong>CH5-8</strong>, <strong>CH9-12</strong> or <strong>CH13-16</strong>), and CPU info. <kbd>KNOB 1</kbd> also shows receive activity. See <a href="#midi">MIDI</a>.</td></tr>
+            <tr><td>WEIGHTS, WEIGHTS 2</td><td>Budget points per sounding voice for P5, CZ-1, FM6, SID and DRUM: <strong>AUTO</strong> (default, the rule under <a href="#tracks">Tracks</a>) or a number. A higher number lets fewer voices of that engine start. WEIGHTS 2 also has BUDGET and <strong>GUARD</strong>: ON lets an audio overload cut releasing voices. With OFF (default) the audio may glitch instead, and an overload that lasts several seconds can freeze the panel and restart the FM-1. Device settings; they survive power-off and stay when you load a project.</td></tr>
           </tbody>
         </table>
       </section>
@@ -837,6 +877,7 @@
           <figure class="shot"><img src="menu_hold.png" alt="Menu hold time item" width="240" height="240"><figcaption>HOLD time.</figcaption></figure>
           <figure class="shot"><img src="menu_autosave_on.png" alt="Autosave menu item" width="240" height="240"><figcaption>AUTOSAVE.</figcaption></figure>
           <figure class="shot"><img src="menu_usb_stereo.png" alt="USB input set to stereo" width="240" height="240"><figcaption>USB INPUT: stereo master.</figcaption></figure>
+          <figure class="shot"><img src="menu_unused_tracks.png" alt="Unused tracks menu item" width="240" height="240"><figcaption>UNUSED TRACKS.</figcaption></figure>
         </div>
         <table>
           <thead><tr><th>Item</th><th>What it does</th></tr></thead>
@@ -846,20 +887,25 @@
             <tr><td>HOLD</td><td>The duration of a long hold of a button or knob (0.3–0.6&nbsp;s) to pull up an additional menu or action.</td></tr>
             <tr><td>LIGHTS</td><td>Idle indicator brightness, OFF (only pressed / engaged / selectable) through FULL.</td></tr>
             <tr><td>USB AUDIO</td><td>In+Out / In / Out / Off.</td></tr>
-            <tr><td>USB INPUT</td><td><strong>STEREO</strong> (default) records the master, including track and shared effects. <strong>4 TRACKS</strong> records an isolated mono stem per track place, after that track’s effects and level and before the shared effects and the master. A track that is not in the song is silent on its stem.</td></tr>
+            <tr><td>USB INPUT</td><td><strong>STEREO</strong> (default) records the finished mix, including track and shared effects and punches, before <kbd>MASTER KNOB</kbd>. <strong>4 TRACKS</strong> records an isolated mono stem per track place, after that track’s effects and level and before the shared effects and the master. A track that is not in the song is silent on its stem.</td></tr>
+            <tr><td>USB VOLUME</td><td>Level of the computer’s audio through the FM-1, 0–100% (default 50), apart from <kbd>MASTER KNOB</kbd>. Remembered.</td></tr>
+            <tr><td>USB HOST</td><td><strong>ON</strong> makes the USB-C port the host of a USB-MIDI device instead of talking to a computer. Not saved: every power-on starts OFF. See <a href="#usb-host">USB Host</a>.</td></tr>
+            <tr><td>BLUETOOTH</td><td><kbd>OCT+</kbd> opens the Bluetooth MIDI page. See <a href="#bluetooth">Bluetooth</a>.</td></tr>
             <tr><td>MIDI KNOBS</td><td><strong>OFF</strong> (default), <strong>GENERAL</strong> or <strong>MINILAB</strong>. Operate the eight panel controls from a MIDI controller. Remembered; see <a href="#midi-knobs">MIDI knobs</a>.</td></tr>
             <tr><td>MIDI MODE</td><td><strong>ABSOLUTE</strong> (default), <strong>REL 1</strong>, <strong>REL 2</strong> or <strong>REL 3</strong>. Match the controller’s encoder output. Remembered.</td></tr>
+            <tr><td>MIDI LEARN</td><td>Bind CCs to knobs. The row shows how many are bound. Kept until power-off. See <a href="#midi-learn">MIDI LEARN</a>.</td></tr>
             <tr><td>AUDIO CLICK</td><td><strong>OFF</strong> / <strong>REC</strong> (while recording) / <strong>ON</strong>.</td></tr>
-            <tr><td>CLICK LEVEL</td><td>Metronome volume.</td></tr>
+            <tr><td>CLICK LEVEL</td><td>Metronome volume, 0–100% (default 12), apart from <kbd>MASTER KNOB</kbd>.</td></tr>
             <tr><td>COUNT-IN</td><td>Bars of count-in before an armed track records when you start with <kbd>PLAY</kbd> (internal clock only).</td></tr>
             <tr><td>NOTE PREVIEW</td><td>Hear notes as you edit steps.</td></tr>
             <tr><td>CHORD ENTRY</td><td>How keys and MIDI build a chord on a stopped step: HOLD = press pitches together, then release to advance; ADD = tap pitches one by one to add or remove them at the same cursor (up to four; a full step shows CHORD FULL).</td></tr>
             <tr><td>AUTOSAVE</td><td><strong>ON</strong> (default) writes a changed project back to its slot after five seconds stopped and untouched. <strong>OFF</strong> leaves saving to you. The choice survives power-off.</td></tr>
             <tr><td>PICKER POPUPS</td><td><strong>ON</strong> (default) opens a picker for a long list of names. <strong>OFF</strong> edits those names on the knob. Remembered across power-off.</td></tr>
             <tr><td>KNOB ACCEL</td><td>Knob acceleration on a spin; OFF keeps every detent one step.</td></tr>
-            <tr><td>HOME SELECT</td><td>What <kbd>SELECT</kbd> turns on Stage: BPM, MOD WHEEL, LEVEL, SWING, TRANSPOSE, CHORD, ARP RATE, PATTERN, or OFF. See <a href="#stage">Stage</a>.</td></tr>
+            <tr><td>HOME SELECT</td><td>What <kbd>SELECT</kbd> turns on Stage: BPM, MOD WHEEL, LEVEL, SWING, TRANSPOSE, OCTAVE, CHORD, ARP RATE, PATTERN, or OFF. See <a href="#stage">Stage</a>.</td></tr>
             <tr><td>GLO SELECT</td><td>What <kbd>GLO</kbd>+<kbd>SELECT</kbd> turns on any page: the same choices as HOME SELECT, default BPM. Remembered.</td></tr>
-            <tr><td>SCREEN OFF</td><td>Blank the screen after a time.</td></tr>
+            <tr><td>UNUSED TRACKS</td><td><strong>SHOW</strong> (default) keeps a greyed Add track row on Stage and MIXER for each place not in use. <strong>HIDE</strong> shows the tracks in use only. Remembered.</td></tr>
+            <tr><td>SCREEN OFF</td><td>Blank the screen after a time: NEVER, 5, 15, 30 or 60 minutes.</td></tr>
             <tr><td>CALIBRATION</td><td>Hardware calibration (also: hold <kbd>OCT−</kbd>+<kbd>OCT+</kbd> at power-on).</td></tr>
             <tr><td>ABOUT</td><td>Version / credits.</td></tr>
             <tr><td>SOUND DESIGNER</td><td>Opens the <a href="#designer">sound designer</a>.</td></tr>
@@ -869,16 +915,25 @@
 
       <section id="midi">
         <h2>MIDI</h2>
-        <p>USB and TRS MIDI in and out.</p>
+        <p>USB MIDI in and out, TRS MIDI in, <a href="#bluetooth">Bluetooth MIDI</a> in and out, and <a href="#usb-host">USB Host</a> for a keyboard or synth on the USB-C port. Instrument tracks accept every input. <kbd>GLO</kbd> → SYSTEM → MIDI chooses the input <a href="#midi-track">MIDI tracks</a> listen to.</p>
         <ul>
           <li>ROUT chooses which MIDI channels play. <strong>CH1-4</strong>, <strong>CH5-8</strong>, <strong>CH9-12</strong> and <strong>CH13-16</strong> map those four channels onto tracks 1–4, and only onto tracks in use. Notes and controllers on a channel outside the group are ignored. <strong>SEL</strong> sends every channel to the selected track.</li>
           <li>The <strong>DRUM</strong> channel (default 10) plays the first Drum track only when that channel is inside the ROUT group, or when ROUT is <strong>SEL</strong>. With <strong>CH1-4</strong>, channel 10 does nothing: set ROUT to <strong>CH9-12</strong> or <strong>SEL</strong>, or set DRUM to a channel in the group (DRUM 2 plays the kit instead of track 2). With no Drum track, the channel follows ordinary routing. Set OFF to disable.</li>
           <li>A note that already started still releases on the track that played it if you change ROUT so its channel is no longer included.</li>
           <li>The keys send on the selected track’s channel.</li>
-          <li>Pitch bend, sustain, panic and clock (INT / USB / TRS) are supported. Common CCs control level, pan, cutoff/brightness, envelope times and glide. CC91 does nothing. CC93 operates KNOB1 with the MINILAB profile; otherwise it does nothing.</li>
-          <li>Local <kbd>PLAY</kbd> keeps the internal tempo until the selected MIDI input sends Start, Continue or Stop. Clock pulses alone do not take over.</li>
+          <li>Pitch bend, sustain and panic are supported. Common CCs control level, pan, cutoff/brightness, envelope times and glide. CC91 does nothing. CC93 operates KNOB1 with the MINILAB profile; otherwise it does nothing.</li>
           <li>Microtonal MIDI out sends degree addresses; an external synth needs the same tuning and mapping to match.</li>
         </ul>
+        <section id="midi-clock">
+          <h3>Clock and transport</h3>
+          <p><kbd>GLO</kbd> → GLOBAL → <strong>CLK</strong> chooses who keeps time. It is a device setting: it survives power-off, and loading a project does not change it.</p>
+          <ul>
+            <li><strong>INT</strong> (default): the FM-1 leads. It sends MIDI clock on USB and Bluetooth, stopped or playing, with Start on <kbd>PLAY</kbd> and Stop on STOP, so a DAW or drum machine can follow. <kbd>GLO</kbd>+<kbd>PLAY</kbd> sends Stop then Start. <kbd>PLAY</kbd> from a cursor on SONG sends Song Position and Continue, so the follower starts at the same place; gear that needs time to locate may miss the first pulses. Leaving INT sends one Stop.</li>
+            <li><strong>USB</strong>, <strong>TRS</strong> or <strong>BLE</strong>: the FM-1 follows clock, Start, Continue and Stop from that input and sends no clock. Song Position followed by Continue starts every pattern where playing from the top would put it; the FM-1 stays in its patterns and does not run its own SONG sections. Local <kbd>PLAY</kbd> keeps the internal tempo until that input sends Start, Continue or Stop; clock pulses alone do not take over. If the leader has stopped, <kbd>PLAY</kbd> runs on the internal tempo until its next Start, Continue or Stop.</li>
+            <li>TRS is an input only, so no clock leaves through it.</li>
+            <li>An LFO with SYNC on (LFO 2) locks to the song on either kind of clock.</li>
+          </ul>
+        </section>
         <h3 id="midi-knobs">MIDI knobs</h3>
         <p>Hold <kbd>HOME</kbd> and choose <strong>MIDI KNOBS → MINILAB</strong> for an Arturia MiniLab 3 with its factory Arturia or User CC assignments. Use its MIDI port and Arturia/User program, outside arpeggiator editing; DAW/MCU mode sends a different mapping. Leave <strong>MIDI MODE → ABSOLUTE</strong> for factory settings. No controller reprogramming is needed. The profile and mode survive power-off.</p>
         <p>There is no universal eight-knob panel layout. <strong>GENERAL</strong> uses MIDI’s eight general-purpose CCs for controllers you can assign. Both profiles use this order:</p>
@@ -896,16 +951,69 @@
           </tbody>
         </table>
         <p>KNOB1–4 follow the current page, selected track and held panel-button layers. In ABSOLUTE mode, the first value establishes the knob’s position; subsequent movement sets ordinary parameter values across their full range (0 = minimum, 127 = maximum). Navigation and special controls jog by the change in position, so connecting a controller does not jump to a different page, track or preset. For unlimited navigation with endless encoders, select a matching relative mode: REL 1 uses 63/65 for down/up (64 neutral), REL 2 uses 127/1 (0 neutral), REL 3 uses 15/17 (16 neutral). Relative movement retains each transmitted step without extra panel acceleration.</p>
-        <p>Volume responds immediately and attenuates the physical master knob: 0 mutes, 127 keeps the physical knob’s level. It also applies to computer playback. Turning MIDI KNOBS OFF restores the physical master level. MIDI volume resets to full on power-on.</p>
-        <p>USB and TRS work identically. A channel admitted by ROUT controls the selected panel track, even when that channel’s notes play another track. Mapped CCs are consumed by the panel; they do not also change a synth parameter or pass through a MIDI Track. Other CCs retain their normal behavior. Set MIDI KNOBS OFF to keep all conventional CC behavior, including CC74 brightness and CC71 resonance. The MiniLab assignments are documented in <a href="https://support.arturia.com/hc/en-us/articles/6189475866396-MiniLab-3-General-Questions">Arturia’s MIDI implementation chart</a>.</p>
+        <p>Volume responds immediately and attenuates the physical master knob: 0 mutes, 127 keeps the physical knob’s level. Computer playback follows <strong>USB VOLUME</strong> instead. Turning MIDI KNOBS OFF restores the physical master level. MIDI volume resets to full on power-on.</p>
+        <p>USB, TRS and Bluetooth work identically. A channel admitted by ROUT controls the selected panel track, even when that channel’s notes play another track. Mapped CCs are consumed by the panel; they do not also change a synth parameter or pass through a MIDI Track. Other CCs retain their normal behavior. Set MIDI KNOBS OFF to keep all conventional CC behavior, including CC74 brightness and CC71 resonance. The MiniLab assignments are documented in <a href="https://support.arturia.com/hc/en-us/articles/6189475866396-MiniLab-3-General-Questions">Arturia’s MIDI implementation chart</a>.</p>
+
+        <section id="midi-learn">
+          <h3>MIDI LEARN</h3>
+          <p>Bind a CC to any knob of a track’s page, or to Stage’s knobs. Up to 16 CCs.</p>
+          <ol>
+            <li>Hold <kbd>HOME</kbd>, go to <strong>MIDI LEARN</strong> and press <kbd>OCT+</kbd>. The menu closes and the screen says <strong>LEARN: TURN A KNOB</strong>.</li>
+            <li>Go to the page and turn the knob. The screen says <strong>SEND A CC</strong>.</li>
+            <li>Move the controller. The screen confirms it, for example <strong>CC 74 = T1 WAVE</strong>. Bind as many as you like.</li>
+            <li>Hold <kbd>HOME</kbd> to open the menu; that ends learning.</li>
+          </ol>
+          <ul>
+            <li>A binding belongs to that track, page and knob, on any MIDI channel, and only works while the track has the engine it was learned on. It works from any page. Lists, slot pages, SONG, PATTERNS and MOTION cannot be learned.</li>
+            <li>A learned CC no longer does what the standard map gave it. CCs with a meaning of their own cannot be learned: 0, 1, 6, 11, 32, 38, 64, 96–101 and 120 up.</li>
+            <li>A new binding replaces the CC’s or the knob’s old one. <strong>MIDI LEARN FULL</strong> means 16 are in use. Turn <kbd>KNOB 1</kbd> left on the menu row to forget them all.</li>
+            <li>Bindings are kept only until power-off.</li>
+          </ul>
+        </section>
+
+        <section id="bluetooth">
+          <h3>Bluetooth</h3>
+          <p>One Bluetooth MIDI connection, in and out, alongside USB and TRS. Hold <kbd>HOME</kbd>, go to <strong>BLUETOOTH</strong> and press <kbd>OCT+</kbd>. <kbd>KNOB 2</kbd> or <kbd>PRESETS</kbd> picks a row, <kbd>KNOB 1</kbd>, <kbd>OCT+</kbd> or <kbd>SAVE</kbd> acts on it, and <kbd>OCT−</kbd> goes back.</p>
+          <table>
+            <thead><tr><th>Row</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>Radio</td><td>ON or OFF, remembered across power-off. Starting it needs stopped music, released notes and idle USB audio (<strong>STOP AUDIO TO START BLE</strong>). After a power-on it starts at the first quiet moment.</td></tr>
+              <tr><td>Mode</td><td><strong>CONNECT OUT</strong>: this page scans and lists the BLE-MIDI controllers and synths it finds. <strong>VISIBLE</strong>: no scan; the FM-1 advertises as <strong>Melodee XXXX</strong> so a Mac, iPad or phone can connect to it.</td></tr>
+              <tr><td>Disconnect</td><td>Leave the current connection.</td></tr>
+              <tr><td>Last device</td><td>Connect to the last device you connected out to; the row shows its name.</td></tr>
+              <tr><td>Forget pairings</td><td>Asks first, then disconnects and clears the pairings. Forget Melodee on the other device too if it needs it.</td></tr>
+              <tr><td>Devices found</td><td>In CONNECT OUT, below those rows. Pick one and press <kbd>OCT+</kbd> or <kbd>SAVE</kbd> to connect.</td></tr>
+            </tbody>
+          </table>
+          <ul>
+            <li><strong>From a computer or phone:</strong> set Mode to VISIBLE. The header shows <code>VISIBLE 1A2B</code>. On a Mac, use the Bluetooth window in Audio MIDI Setup; on a phone or iPad, an app’s Bluetooth MIDI settings.</li>
+            <li><strong>Pairing:</strong> <code>PIN 000042</code> in the header means enter all six digits on the other device, leading zeros included. <code>BLE WAIT</code> means the radio has connected and MIDI is still being set up. <code>FORGET ON PEER</code> means the other device holds an old pairing: forget Melodee there and connect again.</li>
+            <li><strong>Reconnecting:</strong> the radio’s state, the pairing and the last device stay across power cycles. Melodee looks for the last device until it finds it and connects. Disconnect, Forget pairings, VISIBLE, a refused pairing or an unanswered PIN ends that search.</li>
+            <li><strong>Routing:</strong> instrument tracks play from the connection as from any input. Set <kbd>GLO</kbd> → SYSTEM → MIDI to BLE for MIDI tracks to listen to it, and CLK to BLE to follow its clock. MIDI tracks send over the connection too.</li>
+            <li><strong>RADIO CALIBRATION MISSING:</strong> the radio could not get a calibration and will not start. <strong>FINISH SETUP IN WEB APP:</strong> the radio program is missing; see <a href="#install">Installing</a>.</li>
+            <li><strong>Not included:</strong> Bluetooth audio, two connections at once, Secure Connections pairing (a device that requires it fails to pair), wireless updates, and editor or SysEx traffic. Few devices have been tried so far.</li>
+          </ul>
+        </section>
+
+        <section id="usb-host">
+          <h3>USB Host</h3>
+          <p>Hold <kbd>HOME</kbd> and set <strong>USB HOST</strong> to <strong>ON</strong> to play from a USB-MIDI keyboard or sequence a USB synth from the FM-1’s own USB-C port. The header shows <code>HOST</code>. While it is on, the computer link is gone: no USB MIDI to a computer, no USB audio and no firmware updates. It is not saved, so every power-on starts as a normal USB device.</p>
+          <ul>
+            <li><strong>Power:</strong> the FM-1 supplies no USB power. Use a hub with its own supply, or an OTG adapter that powers the device. A USB-C to USB-A adapter, or a hub with USB-A sockets, is the safer first try.</li>
+            <li><strong>Devices:</strong> a full-speed device with a USB-MIDI 1.0 interface, alone or behind a hub, including hubs built from two chips. A device that is more than MIDI also works, such as a sampler or audio interface with MIDI (tried with an Akai MPC Sample). The first one found with MIDI is used. Low-speed devices are not supported.</li>
+            <li><strong>In:</strong> notes, controllers, clock and transport arrive as USB MIDI. Instrument tracks play from it; MIDI tracks listen with SYSTEM MIDI on USB; CLK on USB follows its clock. SysEx from the device is ignored.</li>
+            <li><strong>Out:</strong> <a href="#midi-track">MIDI tracks</a> send to the device. Output-only synths work.</li>
+            <li><strong>Messages:</strong> <strong>USB MIDI READY</strong> (connected), <strong>USB NO MIDI DEVICE</strong>, <strong>USB LOW SPEED</strong>, <strong>USB CONTROLLER LOST</strong>. Reconnect the device, or switch USB HOST off and on, to try again.</li>
+          </ul>
+        </section>
       </section>
 
       <section id="usb-audio">
         <h2>USB audio</h2>
         <p>Class-compliant, no driver. 16- or 24-bit at 44.1&nbsp;kHz. The computer sees one device named <strong>Melodee</strong>, with playback and recording together:</p>
         <ul>
-          <li><strong>Playback</strong> — play the computer through the FM-1. The computer’s volume and mute apply to that playback, on top of the <kbd>MASTER KNOB</kbd>. Computer playback and the monitor click stay out of recordings, and the computer’s volume does not change what is recorded.</li>
-          <li><strong>Recording</strong> — <strong>STEREO</strong> by default: a copy of the master, including track effects, shared effects, pan and the output protection. Hold <kbd>HOME</kbd> and set <strong>USB INPUT</strong> to <strong>4 TRACKS</strong> for four isolated mono stems, after each track’s effects and level and before the shared effects and the master. A track that is not in the song is silent on its stem.</li>
+          <li><strong>Playback</strong> — play the computer through the FM-1. Its level is <strong>USB VOLUME</strong> (hold <kbd>HOME</kbd>; default 50%) times the computer’s own volume, and the computer’s mute applies. It does not follow the <kbd>MASTER KNOB</kbd>. Computer playback and the monitor click stay out of recordings, and neither volume changes what is recorded.</li>
+          <li><strong>Recording</strong> — <strong>STEREO</strong> by default: the finished mix, including track effects, shared effects, punches, pan and the output limiter, taken before the <kbd>MASTER KNOB</kbd>, so a low knob does not mean a quiet take. Hold <kbd>HOME</kbd> and set <strong>USB INPUT</strong> to <strong>4 TRACKS</strong> for four isolated mono stems, after each track’s effects and level and before the shared effects and the master. A track that is not in the song is silent on its stem.</li>
         </ul>
         <p>Switch either direction off from the HOME menu’s <strong>USB AUDIO</strong>. Changing a USB option reconnects the device; reselect Melodee in your DAW if it disappears. A computer that still lists the older separate playback and recording devices needs that same reselection.</p>
       </section>
@@ -914,6 +1022,7 @@
         <h2>Web editor</h2>
         <p>Edit the FM-1 from the computer in Chrome or Edge: <a href="../../editor/">Open the patch editor</a>.</p>
         <p>Connect over USB for sound and mixer controls, a 6-operator FM editor, Prophet and CZ-1 panels, sequencer and motion, the shared library of 384 user slots, SysEx import/export, projects, settings (including BUDGET), and complete backup / restore.</p>
+        <p>The editor understands rests, continued blocks, 64 sections and Loop song, but some of this version’s features are device-only for now. Its arrangement view has four tracks, its pattern view shows eight patterns, and its project command reaches slots 1–4. Timed punches and song presets are edited on the device, and replacing a whole arrangement from the editor clears them. Backups keep them all.</p>
       </section>
 
       <section id="backup">
@@ -921,10 +1030,10 @@
         <ul>
           <li>Before leaving Melodee for another custom firmware, choose <strong>Back up and install TransitFM1</strong> in the <a href="../../installer/">installer</a>, then use the destination firmware’s own installer once the FM-1 shows <strong>TRANSIT</strong>. Use <strong>0.1.3</strong>. <strong>Baud Girl requires official V15 first</strong>, then its own installer; TransitFM1 refuses images beyond its write range.</li>
           <li><a href="https://quixotic7.github.io/TransitFM1/" target="_blank" rel="noopener">TransitFM1</a> makes no sound. It guards the next firmware’s write against interruptions except possibly its last sector. Close DAWs and other apps sending MIDI. Keep power and USB connected; if interrupted, resume the same firmware.</li>
-          <li>The installer’s <strong>Return to official V15</strong> saves a complete Melodee backup first when the firmware can export one.</li>
+          <li>The installer’s <strong>Return to official V15</strong> saves a complete Melodee backup first when the firmware can export one. A trip through official firmware does not preserve projects, and it erases the factory sounds region; restore your backup after reinstalling.</li>
           <li><strong>Skip backup</strong> is available when export is impossible; confirm that Melodee music, sounds and settings may be lost.</li>
           <li>After reinstalling Melodee, restore from the <a href="../../editor/">web editor</a>’s backup tools.</li>
-          <li>Older Melodee builds cannot read newer data (for example native motion events need 1.0.2 or later; the new effects and recorded takes need 1.3.0 or later; the shared 384-slot bank needs this version). Export user sounds and keep the installer’s backup before downgrading. A backup made before the preset migration is what an older version can restore.</li>
+          <li>Older Melodee builds cannot read newer data (for example native motion events need 1.0.2 or later; the new effects and recorded takes need 1.3.0 or later; the shared storage pool, 32 slots and compact projects need 1.6.0 or later). Older firmware may overwrite that storage, and it refuses backups made on 1.6 or later. Export user sounds and keep the installer’s backup before downgrading. A backup made before the update is what an older version can restore.</li>
           <li>Startup maintenance stays on screen while it works: the job’s name, then <strong>Keep power connected</strong> and <strong>Do not switch off.</strong> A short <strong>CHECKING SETTINGS</strong> pass can appear when saved settings need a small repair. The first start that converts older preset banks is <strong>MIGRATING PRESETS</strong>. If it cannot finish, the screen says <strong>Could not finish</strong> and <strong>Restart to retry</strong>. <kbd>OCT+</kbd> (<strong>KEEP</strong>) keeps the presets and continues (preset writes stay protected until conversion succeeds). <kbd>OCT−</kbd> (<strong>WIPE</strong>) asks <strong>Wipe all user presets?</strong>, then <kbd>OCT+</kbd> confirms. Projects, settings and factory sounds stay. A wipe that was confirmed resumes if power is lost during it.</li>
           <li><strong>RESETTING PRESETS</strong> runs when a bank or a slot cannot be read. An unreadable bank becomes empty. Unreadable slots in a bank that can be read are cleared; presets this version understands stay, including a recognized older conversion. A newer preset record this version cannot read is cleared. If the reset cannot finish, the same <strong>KEEP</strong> / <strong>WIPE</strong> choice applies.</li>
           <li><strong>RESETTING SETTINGS</strong> replaces device settings this version cannot read with the defaults (color, calibration, and the globals kept on the device). Projects stay. A template stored with those settings is not kept. Settings saved by a newer Melodee are left alone. If the write cannot finish, the screen stays until you restart; <kbd>OCT+</kbd> continues, and there is no wipe.</li>
@@ -937,6 +1046,8 @@
         <h2>If something goes wrong</h2>
         <ul>
           <li>Install stops or fails: unplug and replug the cable, use a data cable and a direct port, open Chrome or Edge, and press Install again.</li>
+          <li>No factory sounds, or <strong>Setup unfinished</strong> at startup: the factory sounds region is missing. Your own sounds are safe. Press <strong>Finish setup</strong> in the <a href="../../installer/">installer</a> or install again; see <a href="#install">Installing</a>.</li>
+          <li><strong>STORAGE FULL</strong> on a save: erase a project you no longer need, then save again. The installer’s Finish setup can also need that room.</li>
           <li>Three short key-light flashes mean the MIDI update loader is running; one long flash means ROM UBOOT. A unit that shows <strong>Melodee Update</strong> is in the MIDI update loader: press Install again, or run <code>tools/fm1_install.py</code> with a working package. An update that loses power while the application is being written comes back here on its own. Hold <kbd>OCT−</kbd> alone as you power on to force that rescue. Holding <kbd>OCT−</kbd> and <kbd>OCT+</kbd> together is calibration, not rescue. The first install of this recovery, and an update that rewrites the boot stub, can still need the ROM recovery below if power is lost during that write.</li>
           <li>A unit that no longer starts and appears as USB <strong>4c4a:8057</strong> (inquiry <strong>WL82 / UBOOT1.00</strong>) is already in ROM UBOOT. Release downloads include <code>fm1-recover</code> for Windows x64, Linux x64, and macOS Intel and Apple Silicon. Extract the archive, open a terminal in that folder, and run <code>fm1-recover --info</code> (<code>.\fm1-recover.exe --info</code> in Windows PowerShell). Passing a <code>.fwsc</code> file makes a full backup and leaves flash alone; add <code>--write</code> to restore application flash. The bootloader and the current saved-data regions are kept. Read <code>RECOVERY.md</code> in the archive for drivers and the full procedure. The tool does not force a running device into UBOOT. Melodee 1.4 does not change the system clock. A black screen left by a 1.3.0 or 1.3.1 clock change is this same UBOOT state: recover, then install.</li>
           <li>Report Melodee bugs on <a href="https://github.com/keremimo/melodee/issues" target="_blank" rel="noopener">GitHub Issues</a>, not to Felucca or M-VAVE.</li>
