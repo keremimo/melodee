@@ -319,7 +319,9 @@ static void fm1_delay_ms(uint32_t ms) { (void)ms; }
 #define RING_PUBLISH() ((void)0)
 #define MELODEE_USB_AUDIO 1
 #define MELODEE_CDC 0
-#define MELODEE_OTA 0
+#ifndef MELODEE_OTA
+#define MELODEE_OTA 0                                   /* (run_tests.sh also builds it 1: SysEx out) */
+#endif
 #define MELODEE_USB_HOST 1
 #include "usb_audio_memory.h"
 #include "../firmware/src/usb.c"
@@ -336,7 +338,7 @@ static void connect(int which)
     dflt = 0;
     rx_head = rx_tail = 0;
     mi_r = mi_w = 0;
-    mo_r = mo_w = 0;
+    mo_r = mo_w = rt_r = rt_w = 0;
     wire_n = 0;
     root_resets = host_attaches = 0;
     memset(port_resets, 0, sizeof port_resets);
@@ -403,6 +405,8 @@ static void test_parse(void)
     assert(uh_midi_ok(0x643C9009u) == 0x643C9009u);        /* note on ch0 */
     assert(uh_midi_ok(0x643C9019u) == 0x643C9009u);        /* cable 1 is dropped */
     assert(uh_midi_ok(0x0000F80Fu) == 0x0000F80Fu);        /* clock */
+    assert(uh_midi_ok(0x0201F203u) == 0x0201F203u);        /* Song Position */
+    assert(uh_midi_ok(0x0280F203u) == 0 && uh_midi_ok(0x8001F203u) == 0 && uh_midi_ok(0x0201F303u) == 0);   /* bad data, other common */
     assert(uh_midi_ok(0x0000F70Fu) == 0 && uh_midi_ok(0x4F7DF004u) == 0);   /* SysEx, other realtime */
     assert(uh_midi_ok(0x643C8009u) == 0);                  /* CIN does not match status */
     assert(uh_midi_ok(0x003CC00Cu) == 0x003CC00Cu);        /* program change */
@@ -697,6 +701,20 @@ static void test_host_output(int via_hub)
     assert(midi_track_emit(0x003c8008u)); assert(midi_track_emit(0x000040bbu));
     usb_poll(); assert(ep_cnt[1] == 8 && mo_w - mo_r == 2);
     ack_tx(); usb_poll(); assert(wire[MQ] == 0x003c8008u && wire[MQ+1] == 0x000040bbu);
+    /* Clock and transport go ahead of queued notes and keep their slots until ACK too. */
+    uint32_t sent = wire_n, pulse = 0xFu | 0xF8u << 8, start = 0xFu | 0xFAu << 8;
+    assert(midi_track_emit(0x003d8008u));
+    midi_sync_emit(0xF8u); midi_sync_emit(0xFAu);
+    usb_poll();
+    assert(ep_cnt[1] == 12 && uh.tx_count == 3 && uh.tx_rt == 2 && rt_w - rt_r == 2 && mo_w - mo_r == 1);
+    midi_sync_emit(0xF8u);                             /* arrives while that packet is out */
+    regs[1][17] = 0x80; usb_poll();                    /* NAK: every slot retained */
+    assert(rt_w - rt_r == 3 && mo_w - mo_r == 1);
+    ack_tx(); usb_poll();
+    assert(wire[sent] == pulse && wire[sent + 1] == start && wire[sent + 2] == 0x003d8008u);
+    assert(rt_w - rt_r == 1 && mo_r == mo_w && ep_cnt[1] == 4 && uh.tx_rt == 1);
+    ack_tx(); usb_poll();
+    assert(wire[sent + 3] == pulse && rt_r == rt_w && !uh.tx_count && !uh.tx_rt);
     /* A stall discards old queued note-ons and requests cleanup, then re-enumerates. */
     assert(midi_track_emit(0x643c9009u)); usb_poll(); regs[1][17] = 0x20; usb_poll();
     assert(uh.fault && !uh.run && !midi_track_emit(0x643d9009u)); recover_host();
@@ -716,6 +734,20 @@ static void test_host_output(int via_hub)
     assert(ua_off_apply(fm1_ms) == 1 && !uh.on && !usb_midi_out_ready());
     usb_retry(fm1_ms + 1000); usb.config = 1;
     assert(midi_track_emit(0x643c9009u));               /* ordinary computer-facing output remains available */
+    midi_sync_emit(0xF8u);                             /* ... with the clock ahead of notes, never inside a SysEx */
+#if MELODEE_OTA
+    /* A real-time byte inside a SysEx would reach RtMidi clients as part of the message. */
+    sx_busy = 1; sx_out_q[so_w++ % SXQ] = 0x467DF004u;
+    regs[1][17] = 0; usb_poll();
+    assert(ep_cnt[1] == 4 && so_r == so_w && rt_w - rt_r == 1 && mo_w - mo_r == 1);
+    regs[1][17] = 0; usb_poll();                       /* (still composing it) */
+    assert(rt_w - rt_r == 1 && mo_w - mo_r == 1);
+    sx_busy = 0;
+#endif
+    regs[1][17] = 0; usb_poll();
+    assert(rt_r == rt_w && mo_r == mo_w && ep_cnt[1] == 8);
+    const uint8_t *out = ep_tadr[1];
+    assert(out[0] == 0x0Fu && out[1] == 0xF8u && out[4] == 0x09u);
     usb.config = usb.up = 0; mo_r = mo_w;
     printf("USB host OUT %s: duplex, ACK ownership, NAK/error retries, bounded faults, mode settings: OK\n",
            via_hub ? "behind a hub" : "direct");

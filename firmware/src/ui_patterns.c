@@ -390,9 +390,9 @@ static uint32_t sg_row_bars(uint32_t r)                 /* the conductor pattern
 {
     return (chain_patterns[r][0] >= NPAT ? 1u : pat_bars(0, chain_patterns[r][0])) * chain_config.row[r].repeat;
 }
-static void sg_time_text(char *text, uint64_t samples)
+static void sg_time_text(char *text, uint64_t units)
 {
-    uint32_t seconds = chain_div_samples(samples + FS / 2u, FS, 0);
+    uint32_t seconds = chain_seconds(units);
     fmt_int(text, seconds / 60u); str_cpy(text + str_len(text), seconds % 60u < 10u ? ":0" : ":", 3);
     fmt_int(text + str_len(text), seconds % 60u);
 }
@@ -437,7 +437,7 @@ static void sg_head(void)
 {
     if (head_shared_status() || song_edit_status()[0]) { sgv.top = ~0u; draw_head(); return; }
     char b[24], t[12];
-    uint32_t secs = chain_div_samples(sg.total + FS / 2u, FS, 0), jam_on = song.playing && !chain.running;
+    uint32_t secs = chain_seconds(sg.total), jam_on = song.playing && !chain.running;
     uint32_t sig = secs * 7u + jam.n * 131u + jam_on * 3u + (uint32_t)(ui.act == 4u) * 5u + ux.gen * 977u + ux.pal * 31u +
                    (ui.msg_t ? str_hash(3u, ui.msg) : 0u);
     int32_t x;

@@ -165,6 +165,8 @@ static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
     return 0;
 }
 #endif
+/* a backup's runtime object brings CLK back with it; a project load alone keeps the device's */
+static void ed_bk_clock(void){song.g[G_CLOCK]=(int16_t)clamp(proj_scratch.g[G_CLOCK],GP[G_CLOCK].min,GP[G_CLOCK].max);}
 static uint32_t ed_bk_commit_inner(void)
 {
     uint8_t *raw = ED_BK_RAW;
@@ -177,6 +179,7 @@ static uint32_t ed_bk_commit_inner(void)
         if(!ed_bk_id){
             up_boot();if(up_migration_error)return 4;
             if(project_restore_runtime(&proj_scratch))return 2;
+            ed_bk_clock();
             if(full)bank_restore_tail(proj_image_tail());
             return 0;
         }
@@ -203,6 +206,7 @@ static uint32_t ed_bk_commit_inner(void)
             if(up_migration_error)return 4;
 #endif
             if (project_restore_runtime(&proj_scratch)) return 2;
+            ed_bk_clock();
             if (full) bank_restore(raw);
             return 0;
         }

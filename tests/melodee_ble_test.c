@@ -36,6 +36,36 @@ int main(void)
     mb.tw = mb.tr; mo_r = mo_w;
     puts("BLE adapter: independent and atomic USB/BLE output admission passed");
 
+    /* Clock out: its own rings, ahead of notes, each transport admitting it alone. */
+    uint32_t pulse = 0xFu | 0xF8u << 8, start = 0xFu | 0xFAu << 8, note = packet(0x90, 61, 90);
+    assert(midi_track_emit(note) && mo_w - mo_r == 1);
+    midi_sync_emit(0xF8u);
+    assert(rt_w - rt_r == 1 && midi_rt_q[rt_r % RTQ] == pulse && mo_w - mo_r == 1);
+    assert(ble_app_midi_peek(&out, &ms) && out == pulse);     /* ahead of the note queued first */
+    midi_sync_emit(0xFAu);                                    /* arrives between peek and pop: pop still takes the pulse */
+    ble_app_midi_pop();
+    assert(ble_app_midi_peek(&out, &ms) && out == start); ble_app_midi_pop();
+    assert(ble_app_midi_peek(&out, &ms) && out == note); ble_app_midi_pop();
+    assert(!ble_app_midi_peek(&out, &ms));
+    mo_r = mo_w; rt_r = rt_w;
+    for (uint32_t i = 0; i < 2u * MBRT; i++) midi_sync_emit(0xF8u);
+    assert(mb.rt_w - mb.rt_r == MBRT - 4u && rt_w - rt_r == RTQ - 4u);   /* pulses keep room for transport */
+    midi_sync_emit(0xFAu); assert(mb.rt_w - mb.rt_r == MBRT - 3u && rt_w - rt_r == RTQ - 3u);
+    mb.rt_w = mb.rt_r + MBRT; rt_r = rt_w;
+    midi_sync_emit(0xFCu); assert(rt_w - rt_r == 1);           /* a full BLE ring costs USB nothing */
+    mb.rt_r = mb.rt_w; rt_r = rt_w; rt_w += RTQ;
+    midi_sync_emit(0xFAu); assert(ble_app_midi_peek(&out, &ms) && out == start);   /* nor the other way */
+    ble_app_midi_pop(); rt_r = rt_w;
+    struct ble_midi_enc air; uint8_t air_buf[8];
+    ble_midi_enc_reset(&air); ble_midi_enc_begin(&air, air_buf, sizeof air_buf);
+    assert(ble_midi_enc_add(&air, pulse, 5) > 0 && ble_midi_enc_len(&air) == 3 && air_buf[2] == 0xF8u);
+    uint32_t position = 0x3u | 0xF2u << 8 | 16u << 16 | 1u << 24;
+    midi_sync_send(position); assert(rt_w - rt_r == 1 && midi_rt_q[rt_r % RTQ] == position);
+    assert(ble_app_midi_peek(&out, &ms) && out == position); ble_app_midi_pop(); rt_r = rt_w;
+    ble_midi_enc_begin(&air, air_buf, sizeof air_buf);
+    assert(ble_midi_enc_add(&air, position, 5) > 0 && air_buf[2] == 0xF2u && air_buf[3] == 16u && air_buf[4] == 1u);
+    puts("BLE adapter: clock and transport admitted per transport and encoded passed");
+
     reset_ble();
     ble_app_midi_in(packet(0x90, 60, 100), 10, 10); mel_ble_drain(); events_block(0);
     assert(mn_get(0,60) && midi_note_source(0,60) == 3);
@@ -59,6 +89,9 @@ int main(void)
     ble_app_midi_in(0xF80Fu, 0, 0); mel_ble_drain(); events_block(0);
     assert(midi_rx_pulses[2] == 1);
     mb.overflow = 1; mel_ble_drain(); events_block(0); assert(!song.playing);
+    ble_app_midi_in(0x0005F203u, 0, 0); mel_ble_drain(); events_block(0);
+    assert(midi_clock.spot_valid && midi_clock.spot == 5u);          /* Song Position, stopped */
+    midi_clock.spot_valid = 0;
     puts("BLE adapter: external clock and overflow release passed");
 
     reset_ble();

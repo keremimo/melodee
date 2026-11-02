@@ -189,11 +189,12 @@ int main(void)
         0xF8, 64, 0xFE, 102,             /* realtime inside a message */
         0xC1, 5, 6,                      /* program change + running */
         0xF0, 0x22, 0x24, 0x35, 0x7D, 0xF7, 70, 71,   /* SysEx dropped; cancels running status */
-        0xB0, 7, 0x7F, 0xF2, 1, 2, 9, 9, /* CC, song position (dropped), data without status */
+        0xB0, 7, 0x7F, 0xF2, 1, 2, 9, 9, /* CC, song position, data without status (no running status) */
+        0xF3, 4, 5,                      /* other system common: dropped */
         0x80, 60, 0,
     };
     static const uint32_t want[] = {
-        0x643C9009u, 0x653E9009u, 0x0000F80Fu, 0x66409009u, 0x0005C10Cu, 0x0006C10Cu, 0x7F07B00Bu, 0x003C8008u,
+        0x643C9009u, 0x653E9009u, 0x0000F80Fu, 0x66409009u, 0x0005C10Cu, 0x0006C10Cu, 0x7F07B00Bu, 0x0201F203u, 0x003C8008u,
     };
     uint32_t i, bad = 0, n = sizeof want / sizeof want[0];
     for (i = 0; i < sizeof in; i++)

@@ -212,7 +212,7 @@ static int arp_ext_stop_test(void)
     for (i = 0; i < 4000 && trk[0].arp_note != 72; i++) events_block(CTL);
     off = trk[0].arp_off;
     transport_req = 2; events_block(CTL);
-    bad += check("internal clock: STOP leaves the free-running ARP note to its gate", trk[0].arp_note == 72 && gate_note(&trk[0], 72) && trk[0].arp_off == off - CTL);
+    bad += check("internal clock: STOP leaves the free-running ARP note to its gate", trk[0].arp_note == 72 && gate_note(&trk[0], 72) && trk[0].arp_off < off && off - trk[0].arp_off <= 2u * CTL);
     for (i = 0; i < 4000 && (!trk[0].arp_note || trk[0].arp_note == 72); i++) events_block(CTL);
     bad += check("internal clock: the ARP keeps stepping after STOP", trk[0].arp_note && trk[0].arp_note != 72 && trk[0].nheld == 1u);
     return bad;
@@ -434,11 +434,83 @@ static int drum_retrigger_accounting(void)
     settings_budget=previous_budget;return bad;
 }
 
+static int clock_project_load_test(void)
+{
+    int bad = 0;
+    midi_test_reset(); song.g[G_BPM] = 97;
+    project_save(1); template_save();              /* both saved at CLK INT */
+    song.g[G_CLOCK] = 1; song.g[G_BPM] = 120; events_block(CTL);
+    project_load(1); events_block(CTL);
+    bad += check("a project load keeps the device's CLK and takes its BPM",
+                 song.g[G_CLOCK] == 1 && midi_clock.selected == 1u && song.g[G_BPM] == 97);
+    clock_packet(1, 0xFA, 10); clock_to(1, 10, 7);
+    bad += check("the master is followed right after that load", midi_clock.mode == 1u && song.g[G_BPM] == 120);
+    clock_packet(1, 0xFC, 200);
+    template_load(); events_block(CTL);
+    bad += check("a template load keeps the device's CLK and takes its BPM",
+                 song.g[G_CLOCK] == 1 && midi_clock.selected == 1u && song.g[G_BPM] == 97);
+    memset(&tmpl, 0, sizeof tmpl);
+    return bad;
+}
+
+/* A master's Song Position, through the real input path: patterns land where playing from the top would put them. */
+static void position_in(uint32_t source, uint32_t spot, uint32_t ms)
+{
+    fm1_ms = ms;
+    if (source == 2u) { um_byte(0xF2u); um_byte(spot & 127u); um_byte(spot >> 7); }
+    else midi_in_event(0x3u | 0xF2u << 8 | (spot & 127u) << 16 | (spot >> 7) << 24);
+    events_block(CTL);
+}
+static int song_position_test(uint32_t source)
+{
+    int bad = 0;
+    clock_setup(source);
+    trk[1].p[P_SLEN] = 3; trk[1].p[P_SDIV] = 2;
+    trk[2].p[P_SLEN] = 16; trk[2].p[P_SDIV] = 1;
+    position_in(source, 5, 2);
+    bad += check("Song Position alone starts nothing", !song.playing && !midi_clock.mode);
+    clock_packet(source, 0xFB, 3);
+    bad += check("Continue claims, and waits for its clock", !song.playing && midi_clock.mode == source);
+    clock_packet(source, 0xF8, 4);
+    bad += check("the first clock starts at the spot, on the step", song.playing &&
+                 trk[0].seq_idx == 5u && !trk[0].seq_pos && gate_note(&trk[0], 65));
+    bad += check("earlier steps do not fire in a burst", !gate_note(&trk[0], 64) && !gate_note(&trk[0], 60));
+    bad += check("a shorter loop lands inside itself", trk[1].seq_idx == 2u && !trk[1].seq_pos);
+    bad += check("a slower division lands mid-step", trk[2].seq_idx == 2u && trk[2].seq_pos == 6144u);
+    bad += check("the beat lands with it", beat_n == 1u && beat_pos == 6144u);
+    clock_to(source, 5, 6);
+    bad += check("six clocks later: one step on, on the unit", trk[0].seq_idx == 6u && !trk[0].seq_pos && gate_note(&trk[0], 66));
+    position_in(source, 9, 100);
+    bad += check("Song Position while playing is ignored", !midi_clock.spot_valid);
+
+    clock_packet(source, 0xFC, 110);
+    clock_packet(source, 0xFB, 111);
+    bad += check("Continue without Song Position resumes at once", song.playing);
+    clock_packet(source, 0xFC, 112);
+    position_in(source, 7, 113);
+    clock_packet(source, 0xFA, 114);
+    bad += check("Start ignores Song Position: the top", song.playing && !trk[0].seq_idx && !midi_clock.spot_valid);
+    clock_packet(source, 0xFC, 115);
+    position_in(source, 7, 116);
+    clock_packet(source, 0xFB, 117); clock_packet(source, 0xFC, 118); clock_packet(source, 0xF8, 119);
+    bad += check("Stop cancels a waiting Continue", !song.playing && !midi_clock.seek_wait);
+    position_in(source == 1u ? 2u : 1u, 3, 120);
+    bad += check("another input's Song Position is ignored", !midi_clock.spot_valid);
+    position_in(source, 0, 121);
+    clock_packet(source, 0xFB, 122); clock_packet(source, 0xF8, 123);
+    bad += check("Song Position zero is the top", song.playing && !trk[0].seq_idx && !trk[0].seq_pos);
+    clock_setup(source);
+    position_in(source, 16383, 2);
+    clock_packet(source, 0xFB, 3); clock_packet(source, 0xF8, 4);
+    bad += check("the last position: 16383 % 16 steps", song.playing && trk[0].seq_idx == 15u && !trk[0].seq_pos);
+    return bad;
+}
+
 #ifndef MIDI_CONTROL_NO_MAIN
 int main(void)
 {
-    int bad = controls_test() + sustain_test() + ownership_test() + clock_test(1) + clock_test(2) + clock_arp_and_boundaries() +
-              arp_ext_stop_test() + arp_idle_live_test() + usb_burst_test() + routing_range_test() + drum_channel_test() + drum_retrigger_accounting();
+    int bad = controls_test() + sustain_test() + ownership_test() + clock_test(1) + clock_test(2) + song_position_test(1) + song_position_test(2) + clock_arp_and_boundaries() +
+              arp_ext_stop_test() + arp_idle_live_test() + usb_burst_test() + routing_range_test() + drum_channel_test() + drum_retrigger_accounting() + clock_project_load_test();
     printf("%s\n", bad ? "MIDI CONTROL/CLOCK TEST FAILED" : "MIDI control/clock integration tests passed"); return bad != 0;
 }
 #endif

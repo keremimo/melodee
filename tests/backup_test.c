@@ -456,12 +456,15 @@ int main(void)
     reset();
     trk[2].step[5] = (step_t){{67}, 1, ST_NOTE, 0, 96, 0, 0};
     trk[2].p[P_LEVEL] = 77;
+    song.g[G_CLOCK] = 1;
     project_capture(&proj_scratch);
     proj_pack(&st, &proj_scratch);
     host_tracks_init();
-    bad += check("the runtime object restores the tracks",
+    song.g[G_CLOCK] = 0;
+    bad += check("the runtime object restores the tracks and CLK",
                  put_all(0, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && trk[2].step[5].note[0] == 67u &&
-                 trk[2].p[P_LEVEL] == 77);
+                 trk[2].p[P_LEVEL] == 77 && song.g[G_CLOCK] == 1);
+    song.g[G_CLOCK] = 0;
 
     /* Unsupported banks and settings export their committed bytes, not empty cache defaults. */
     reset();

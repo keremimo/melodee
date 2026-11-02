@@ -190,12 +190,13 @@ static void test_lfo(void)
 {
     reset_controls(); track_t *t=TSEL;
     for(uint32_t s=1;s<NELEM(N_LSYNC);s++){
-        t->p[P_LSYNC]=s;
-        for(uint32_t bpm=60;bpm<=240;bpm+=60){
-            song.g[G_BPM]=bpm;uint32_t cycle=div_samples(LSYNC_DIV[s]);
-            double expected=4294967296.0*CTL/cycle;
-            assert(fabs((double)lfo_sync_inc(t)-expected)<1.01);
+        t->p[P_LSYNC]=s;lfo_sync_rem[t-trk]=0;
+        /* One cycle of units is exactly one turn, however the blocks fall. */
+        uint32_t turn=0;
+        for(uint32_t left=seq_div_samples(LSYNC_DIV[s]);left;left-=lfo_block_units){
+            lfo_block_units=left<37u?left:37u;turn+=lfo_sync_inc(t);
         }
+        assert(!turn);
     }
     t->p[P_LSYNC]=0;t->p[P_LTRIG]=1;t->lfo_ph=0x34567890;
     trk_note_on(t,60,100);assert(t->lfo_ph==0x34567890);trk_note_off(t,60);
