@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.6.0",
+    "product": "FM-1_91060",
+    "pkg": {
+      "dual": "../../firmware/melodee-1.6.0.fwsc"
+    },
+    "sha256": {
+      "dual": "f51bfc75654129874ea5b7d033335127c7112d7d8a3df056806fef38774eaf44"
+    }
+  },
+  {
     "version": "1.5.1",
     "product": "FM-1_91051",
     "pkg": {
