@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Settings > Bluetooth: PRESETS/K2 chooses, OCT+/SAVE acts, OCT- returns.
+/* Settings > Bluetooth: PRESETS/K2 chooses, OCT+/SAVE acts, OCT- returns. Mode CONNECT OUT lists what the scan
+ * finds; VISIBLE lists nothing (Melodee is the one found).
  * The ongoing connection state and passkey stay in the shared header. */
 static uint8_t ble_row;
 static uint32_t ble_page_sig;
@@ -16,13 +17,17 @@ static int ble_start_quiet(void)
 #endif
     return 1;
 }
+/* power-on: the radio as it was left, at the first quiet moment (its start holds interrupts) */
+static void ble_boot_poll(void)
+{ if (mb.boot && ble_start_quiet()) (void)mel_ble_set(1); }
+static uint32_t ble_found_n(void) { return mb_saved.flags & MB_VISIBLE ? 0u : mb.count; }   /* (VISIBLE: no list) */
 static void ble_page_open(void)
 { ui.menu = 3; ble_row = 0; ui.force = 1; mel_ble_scan(1); }
 
 static void ble_page_input(uint32_t oct)
 {
     int32_t delta = panel_enc(EN_PRESET) + panel_enc(EN_K2);
-    ble_row = (uint8_t)clamp((int32_t)ble_row + delta, 0, (int32_t)mb.count + 3);
+    ble_row = (uint8_t)clamp((int32_t)ble_row + delta, 0, (int32_t)ble_found_n() + 4);
     int32_t turn = panel_enc(EN_K1), link = panel_enc(EN_K4);
     if (oct & 1u) { mel_ble_scan(0); ui.menu = 1; ui.force = 1; return; }
     if ((oct & 2u) || turn || link) {
@@ -32,38 +37,45 @@ static void ble_page_input(uint32_t oct)
             else if (!mel_ble_set(on)) ui_message(RES_OK() ? "RADIO CALIBRATION MISSING" : "FINISH SETUP IN WEB APP");
             mel_ble_scan(1);
         } else if (ble_row == 1) {
-            mel_ble_disconnect(); mel_ble_scan(1);
+            mel_ble_visible(turn ? turn > 0 : !(mb_saved.flags & MB_VISIBLE)); mel_ble_scan(1);
         } else if (ble_row == 2) {
-            (void)mel_ble_last();
+            mel_ble_disconnect(); mel_ble_scan(1);
         } else if (ble_row == 3) {
+            (void)mel_ble_last();
+        } else if (ble_row == 4) {
             mel_ble_scan(0); ui.menu = 0; confirm_open(CF_BLE_FORGET, 0);
         } else {
-            (void)mel_ble_connect(ble_row - 4u);
+            (void)mel_ble_connect(ble_row - 5u);
         }
         ui.force = 1;
     }
     /* A scan is a page action, never a background reconnection/pairing loop. */
-    if (mb.on && !mb.attempt && !ble_connected() && !mb.scanning && !mb.failure[0]) mel_ble_scan(1);
+    if (mb.on && !(mb_saved.flags & MB_VISIBLE) && !mb.attempt && !ble_connected() && !mb.scanning && !mb.failure[0])
+        mel_ble_scan(1);
     enc_drop();
 }
 
 static void draw_ble_page(void)
 {
-    uint32_t sig = mel_ble_signature() + ble_row * 1009u;
+    uint32_t sig = mel_ble_signature() + ble_row * 1009u + mb_saved.flags * 7919u, n = ble_found_n();
     draw_head();
     if (!ui.force && sig == ble_page_sig) return;
     ble_page_sig = sig;
     uint32_t first = ble_row >= 4u ? ble_row - 3u : 0;
     for (uint32_t band = 0; band < 210u; band += CV_MAX / 240u) {
         cv_begin_band(240, 210, T_BG, band); cv_oy = -30;
-        for (uint32_t r = first; r < first + 4u && r < 4u + mb.count; r++) {
+        for (uint32_t r = first; r < first + 4u && r < 5u + n; r++) {
             char name[32], value[20]; value[0] = 0;
             if (r == 0) { str_cpy(name, "Radio", sizeof name); str_cpy(value, mb.on ? "ON" : "OFF", sizeof value); }
-            else if (r == 1) str_cpy(name, "Disconnect", sizeof name);
-            else if (r == 2) { str_cpy(name, "Last device", sizeof name); ble_store_name(&mb.store, value); }
-            else if (r == 3) str_cpy(name, "Forget pairings", sizeof name);
+            else if (r == 1) {
+                str_cpy(name, "Mode", sizeof name);
+                str_cpy(value, mb_saved.flags & MB_VISIBLE ? "VISIBLE" : "CONNECT OUT", sizeof value);
+            }
+            else if (r == 2) str_cpy(name, "Disconnect", sizeof name);
+            else if (r == 3) { str_cpy(name, "Last device", sizeof name); ble_store_name(&mb.store, value); }
+            else if (r == 4) str_cpy(name, "Forget pairings", sizeof name);
             else {
-                const struct ble_found *f = &mb.found.e[mb.idx[r - 4u]];
+                const struct ble_found *f = &mb.found.e[mb.idx[r - 5u]];
                 if (f->name[0]) str_cpy(name, f->name, sizeof name);
                 else ble_addr_text(f->addr, name);
             }

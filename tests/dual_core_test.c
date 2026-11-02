@@ -83,6 +83,7 @@ static void setup_case(uint32_t alg, uint32_t eng, uint32_t voices)
     dc_l = dc_r = dce_l = dce_r = 0;
     rng_state = 0x12345678u;
     mod_seed = 0x2545F491u;
+    dith_r = DITH_SEED;                     /* (the dither starts over too: dsp.c) */
     vage = 0; panic_req = 0;
     host_tracks_init();
     fm6_fn_reset();

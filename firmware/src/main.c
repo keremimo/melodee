@@ -223,6 +223,7 @@ static void fm1_main(void)
     lcd_fill(0, 0, 240, 240, T_BG);
     draw_text_box(0, 70, 240, TY_HR, "MELODEE", T_THEME, 1);   /* (large type) */
     draw_text_box(0, 140, 240, TY_TX, "Starting up", T_MID, 1);
+    draw_text_box(0, 176, 240, TY_LB, MELODEE_VERSION, T_MID, 1);   /* (#86: the version at power-on) */
     lcd_sync();
     dsp_tables_init();                        /* the RAM lookup tables (FM6), before anything renders */
     persist_boot();
@@ -239,6 +240,7 @@ static void fm1_main(void)
         lcd_fill(0, 0, 240, 240, T_BG);
         draw_text_box(0, 70, 240, TY_HR, "MELODEE", T_THEME, 1);
         draw_text_box(0, 140, 240, TY_TX, "Multi-engine synth", T_MID, 1);
+        draw_text_box(0, 176, 240, TY_LB, MELODEE_VERSION, T_MID, 1);
     }
     if (melodee_dbg.magic != DBG_MAGIC) {
         memset(&melodee_dbg, 0, sizeof melodee_dbg);
@@ -399,6 +401,7 @@ static void fm1_main(void)
         ui_input();
         glo_poll();                                     /* a kept GLO value changed: the settings, later */
 #if MELODEE_BLE
+        ble_boot_poll();
         mel_ble_poll();
         if (mb_revision != mb_committed) persist_pending = 1;
 #endif

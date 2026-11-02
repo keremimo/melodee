@@ -318,3 +318,52 @@ static void notes_range_pitch(int32_t delta)
     fm1_irq_on();
     if(close&&count&&notes_preview_on())notes_audition(nn,vv,count,drum?pitch:0,0);
 }
+/* LENGTH / VELOCITY on a range (#107): every selected note changes by the same amount and the turn stops where the
+ * first one meets its edge, so the differences survive; one undo for a run of turns, none while playing (as
+ * notes_range_pitch). LENGTH turns the range's manual steps into recorded notes first (as note_manual_length). */
+static void notes_range_edit(uint32_t slot,int32_t delta,uint32_t quantum)
+{
+    if(chain_busy()||live_rec_sel()){ui_message("STOP TO EDIT");return;}
+    uint32_t len=step_pattern_len(TSEL),chosen=notes_selected(TSEL),found=0,length=slot==2u,cursor=ui.cursor,needed=0,free=0;
+    int32_t low=-(1<<30),high=1<<30,least=length?(int32_t)quantum:1,most=length?128*RECORD_UNIT:127;
+    fm1_irq_off();
+    uint8_t selected[RECORD_MAX/8u];memset(selected,0,sizeof selected);
+    for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])if(note_transform_has(i,chosen)){
+        int32_t v=length?(int32_t)(recording[i].duration*(1u<<recorded_exponent(&recording[i]))):recording[i].vel;
+        if(least-v>low)low=least-v;if(most-v<high)high=most-v;found=1;
+        selected[i/8u]|=(uint8_t)(1u<<(i%8u));
+    }
+    for(uint32_t s=0;s<len;s++)if(notes_bulk_manual(s)){
+        const step_t *st=&TSEL->step[s];
+        int32_t v=length?(int32_t)(step_note_length(TSEL,s)*RECORD_UNIT):st->flags&SF_ACCENT?127:st->vel?st->vel:96;
+        if(least-v>low)low=least-v;if(most-v<high)high=most-v;found=1;
+        needed+=st->n+(drum_track(TSEL)?__builtin_popcount(step_lanes(st)):0u);
+    }
+    int32_t shift=found?clamp(delta*(length?(int32_t)quantum:1),low,high):0;
+    if(!shift){fm1_irq_on();return;}
+    for(uint32_t i=0;i<RECORD_MAX;i++)free+=!recording[i].vel;
+    if(length&&needed>free){fm1_irq_on();ui_message("RECORDING FULL");return;}
+    uint32_t snapshot=!song.playing;
+    if(snapshot&&!notes_pitch_run()){if(!note_transaction_begin()){fm1_irq_on();return;}note_transaction.pitch=1;}
+    else if(!snapshot)recording_prune(TSEL);
+    for(uint32_t s=0;s<len;s++)if(notes_bulk_manual(s)){
+        step_t *st=&TSEL->step[s];
+        if(!length){st->vel=(uint8_t)((st->flags&SF_ACCENT?127:st->vel?st->vel:96)+shift);st->flags&=(uint8_t)~SF_ACCENT;continue;}
+        note_convert(s);                                /* (its notes join the range: bulk_has of their step) */
+        for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])
+            if(recording_view(TSEL,&recording[i])==s)selected[i/8u]|=(uint8_t)(1u<<(i%8u));
+    }
+    cursor_set((int32_t)cursor);
+    uint64_t touched=0;
+    for(uint32_t i=0;i<RECORD_MAX;i++)if(selected[i/8u]&(1u<<(i%8u))){
+        recorded_note_t r=recording_snapshot(i);
+        if(length){note_duration(&r,(uint32_t)((int32_t)(r.duration*(1u<<recorded_exponent(&r)))+shift));if(drum_track(TSEL))recorded_set_gate(&r,1);}
+        else r.vel=(uint8_t)(r.vel+shift);
+        touched|=(uint64_t)1u<<recording_view(TSEL,&r);recording_remove(TSEL,i);recording_restore_note(TSEL,i,r);
+    }
+    for(uint32_t s=0;s<NSTEP;s++)if((touched>>s)&1u)notes_rebuild(TSEL,s);
+    if(bulk.on==2u)bulk.generation=recording_generation;
+    if(chosen<RECORD_MAX&&recording[chosen].vel){ui.note_pick=(uint16_t)(chosen+1u);note_assign(&ui.note_identity,&recording[chosen]);ui.note_generation=recording_generation;}
+    if(snapshot)note_transaction_end();else step_history_clear();
+    ui.force=1;fm1_irq_on();
+}

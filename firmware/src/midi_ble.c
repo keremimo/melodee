@@ -3,7 +3,8 @@
 /* Melodee transport adapter for Optimist's stack (see docs/BLE_MIDI.md).
  * BLE IRQ -> private RX ring -> TIMER5 -> the existing audio input ring.
  * Audio/UI -> TX ring -> BLE IRQ. Foreground mutations mask the BLE IRQs only.
- * One radio link, either role. No USB echo/bridge and no wireless update SysEx. */
+ * One radio link, either role: Mode CONNECT OUT scans on the Bluetooth page and keeps the last device linked
+ * (relink), Mode VISIBLE advertises for a computer or phone. No USB echo/bridge and no wireless update SysEx. */
 #include "ble/ble_stack.c"
 #include "ble/ble_vm.c"
 
@@ -13,8 +14,10 @@ static struct {
     volatile uint32_t rw, rr, tw, tr;
     volatile uint8_t ready, lost, overflow;
     uint8_t on, started, cal, scanning, attempt, was_ready, connected, was_pairing, closing, forgetting;
+    uint8_t boot, relink, relink_scan;          /* radio start owed from power-on; looking for the last device */
     uint8_t idx[BLE_SCAN_N], count;
-    uint32_t epoch_ms, deadline, aged, generation;
+    uint32_t epoch_ms, deadline, aged, generation, relink_t;
+    char shown[24];                             /* "VISIBLE 1A2B": Melodee 1A2B on the computer */
     struct ble_rf_trims trims;
     struct ble_scan_tab found;
     struct ble_dev_store store;
@@ -139,11 +142,23 @@ static void mel_ble_boot(void) /* CPU1 held, IRQs off; does not start the radio 
     }
     ble_store_load(&mb.store, mb_saved.dev);
     ble_scan_clear(&mb.found);
+    mb.boot = (uint8_t)!!(mb_saved.flags & MB_RADIO);   /* (ble_boot_poll starts it once quiet) */
     ble_hw_wl82_attach(); fm1_ble_crumb_boot();
+}
+
+/* Relink: a round every MB_RELINK_MS looks for the last device up to MB_RELINK_SCAN_MS and connects when it is seen
+ * (a private address resolves only from a scan). Never a new pairing loop: a refusal ends it, as does Disconnect. */
+#define MB_RELINK_MS 30000u
+#define MB_RELINK_SCAN_MS 10000u
+static void mb_relink(int on)
+{
+    mb.relink = (uint8_t)(on && !(mb_saved.flags & MB_VISIBLE) && ble_store_has_last(&mb.store));
+    mb.relink_scan = 0; mb.relink_t = fm1_ms - MB_RELINK_MS;
 }
 
 static int mel_ble_set(int on)
 {
+    mb.boot = 0;
     if (on && (!mb.cal || !RES_OK())) return 0;     /* (RES_OK: the radio program, res.c) */
     if (on && !mb.started) {
         if (!mb_saved.valid) {
@@ -153,26 +168,44 @@ static int mel_ble_set(int on)
         /* Caller rejects live music; startup holds IRQs, keeps CPU1 in its RAM idle loop. */
         mel_ble_radio_start(&mb.trims);
         ble_init(mb_saved.addr, 1);
+        ble_ll_advertise(!!(mb_saved.flags & MB_VISIBLE));
         if (mb_saved.bond[0] == 0xB5u && mb_saved.bond[1] == 1)
             ble_host_set_key(mb_saved.bond + 2, ble_rd16(mb_saved.bond + 10), mb_saved.bond + 12);
         mb.started = 1;
     }
+    uint8_t f = (uint8_t)(on ? mb_saved.flags | MB_RADIO : mb_saved.flags & ~MB_RADIO);
+    if (f != mb_saved.flags) { mb_saved.flags = f; mb_dirty(); }
     mb_lock();
     mb.on = (uint8_t)!!on;
     if (!on) { mb.scanning = mb.attempt = 0; mb.lost = 1; }
     if (mb.started) ble_enable(on);
     mb_unlock(); mb.generation++;
+    mb_relink(on);
     return 1;
 }
 
 static void mel_ble_scan(int on)
 {
     mb_lock();
-    mb.scanning = (uint8_t)(on && mb.on && !mb.attempt && !ble_connected());
+    mb.scanning = (uint8_t)(on && mb.on && !(mb_saved.flags & MB_VISIBLE) && !mb.attempt && !ble_connected());
     if (mb.started) ble_ll_scan(mb.scanning);
     mb_unlock();
 }
-static void mel_ble_disconnect(void)
+/* Mode: VISIBLE advertises (no scan, no relink), CONNECT OUT stays quiet unless scanning or connecting out.
+ * A link up stays up; the mode applies when it ends. */
+static void mel_ble_visible(int on)
+{
+    uint8_t f = (uint8_t)(on ? mb_saved.flags | MB_VISIBLE : mb_saved.flags & ~MB_VISIBLE);
+    if (f == mb_saved.flags) return;
+    mb_saved.flags = f; mb_dirty();
+    mb_lock();
+    mb.failure[0] = 0;
+    if (on) mb.scanning = 0;
+    if (mb.started) { ble_ll_advertise(on); if (on) ble_ll_scan(0); }
+    mb_unlock(); mb.generation++;
+    mb_relink(mb.on);
+}
+static void mb_drop(void)
 {
     mb_lock();
     mb.closing = (uint8_t)ble_connected(); mb.ready = 0; mb.tr = mb.tw;
@@ -181,6 +214,7 @@ static void mel_ble_disconnect(void)
     mb.failure[0] = 0; mb.generation++;
     mb_unlock();
 }
+static void mel_ble_disconnect(void) { mb.relink = 0; mb_drop(); }
 static void mel_ble_forget(void)
 {
     mel_ble_disconnect();
@@ -243,6 +277,31 @@ static int mel_ble_last(void)
     return mb_connect_target();
 }
 
+static void mb_relink_poll(void)
+{
+    if (!mb.relink || !mb.on || mb.attempt || ble_connected() || mb.scanning) {
+        if (mb.relink_scan && !mb.scanning && mb.started) { mb_lock(); ble_ll_scan(0); mb_unlock(); }   /* (the page's own) */
+        mb.relink_scan = 0;
+        return;
+    }
+    uint32_t t = fm1_ms - mb.relink_t;
+    if (t >= MB_RELINK_MS) {
+        mb.relink_t = fm1_ms; t = 0; mb.relink_scan = 1;
+        mb_lock(); ble_ll_scan(1); mb_unlock();
+    }
+    if (!mb.relink_scan) return;
+    for (uint32_t i = 0; i < mb.count; i++) {
+        const struct ble_found *e = &mb.found.e[mb.idx[i]];
+        if (mb_same_peer(e->addr, e->addr_rand)) {
+            mb.relink_scan = 0;
+            mb_lock(); ble_ll_scan(0); mb_unlock();
+            mb.target = *e; (void)mb_connect_target();
+            return;
+        }
+    }
+    if (t >= MB_RELINK_SCAN_MS) { mb.relink_scan = 0; mb_lock(); ble_ll_scan(0); mb_unlock(); }
+}
+
 static void mel_ble_poll(void)
 {
     if (!mb.started) return;
@@ -263,18 +322,23 @@ static void mel_ble_poll(void)
         }
         if (state == BLE_CS_READY && !mb.was_ready) {
             mb.was_ready = 1;
+            mb.relink = (uint8_t)!(mb_saved.flags & MB_VISIBLE); mb.relink_t = fm1_ms;   /* (kept linked from now) */
             mb_remember();
             ble_store_save(&mb.store, mb_saved.dev); mb_dirty(); mb.generation++;
         } else if (state == BLE_CS_IDLE) {
             uint32_t why = ble_central_fail();
             if (why == BLE_CF_KEY) { ble_store_drop_bond(&mb.store); ble_store_save(&mb.store, mb_saved.dev); mb_dirty(); }
-            str_cpy(mb.failure, why == BLE_CF_KEY ? "FORGET ON PEER" : why == BLE_CF_AUTH || why == BLE_CF_PAIRING ?
+            if (why != BLE_CF_LOST && why != BLE_CF_NONE) mb.relink = 0;   /* (gone: looked for again; refused: not) */
+            if (!mb.relink) str_cpy(mb.failure, why == BLE_CF_KEY ? "FORGET ON PEER" : why == BLE_CF_AUTH || why == BLE_CF_PAIRING ?
                 "PAIRING FAILED" : why == BLE_CF_NO_MIDI ? "NO MIDI SERVICE" : "DISCONNECTED", sizeof mb.failure);
             mb.attempt = 0; mb.generation++;
         } else if (!mb.was_ready && fm1_ms - mb.deadline > (ble_central_pairing() ? 45000u : 10000u)) {
-            mel_ble_disconnect(); str_cpy(mb.failure, "CONNECTION TIMEOUT", sizeof mb.failure);
+            if (ble_central_pairing()) mb.relink = 0;   /* (a code nobody entered: no second prompt) */
+            mb_drop();
+            if (!mb.relink) str_cpy(mb.failure, "CONNECTION TIMEOUT", sizeof mb.failure);
         }
     }
+    mb_relink_poll();
 }
 static uint32_t mel_ble_code(void)
 { return mb.on && mb.attempt ? ble_central_passkey() : BLE_NO_PASSKEY; }
@@ -285,9 +349,17 @@ static const char *mel_ble_status(void)
     if (mel_ble_code() != BLE_NO_PASSKEY) return "PAIRING CODE";
     if (mb.ready) return "BLE CONNECTED";
     if (mb.failure[0]) return mb.failure;
-    if (mb.attempt) return ble_central_pairing() ? "PAIRING" : "FINDING MIDI";
+    if (mb.attempt) return ble_central_pairing() ? "PAIRING" : mb.relink ? "RECONNECTING" : "FINDING MIDI";
     if (ble_connected()) return "WAITING FOR MIDI";
-    return mb.scanning ? "SCANNING" : "BLE AVAILABLE";
+    if (mb.scanning) return "SCANNING";
+    if (mb.relink) return "RECONNECTING";
+    if (!(mb_saved.flags & MB_VISIBLE)) return "BLE AVAILABLE";
+    const uint8_t *p; uint32_t n = ble_gap_name(&p), i = n;
+    while (i && p[i - 1u] != ' ') i--;          /* (the header has room for the name's address digits only) */
+    if (n - i > sizeof mb.shown - 9u) n = i + sizeof mb.shown - 9u;
+    str_cpy(mb.shown, "VISIBLE ", sizeof mb.shown);
+    memcpy(mb.shown + 8, p + i, n - i); mb.shown[8u + n - i] = 0;
+    return mb.shown;
 }
 static uint32_t mel_ble_signature(void)
 { return mb.generation + mb.found.gen * 13u + (uint32_t)mb.ready * 997u + mel_ble_code() * 17u + (uint32_t)ble_central_state() * 65537u; }

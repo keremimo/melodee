@@ -38,6 +38,7 @@ BLE_API void ble_ll_init(const uint8_t addr[6], uint8_t addr_random);   /* addr 
 BLE_API void ble_ll_set_adv_data(const uint8_t *ad, uint8_t ad_len, const uint8_t *sr, uint8_t sr_len);
 /* advertise whenever not connected (1), or stop advertising and leave any connection (0) */
 BLE_API void ble_ll_enable(int on);
+BLE_API void ble_ll_advertise(int on);                    /* Melodee: 0 = no advertising when idle (called like ble_ll_enable) */
 BLE_API int ble_ll_connected(void);
 /* queue one L2CAP basic frame for channel cid (payload n octets): 1 queued, 0 no room (nothing queued) */
 BLE_API int ble_ll_send(uint16_t cid, const uint8_t *p, uint16_t n);

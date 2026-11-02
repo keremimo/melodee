@@ -54,3 +54,28 @@ static void midi_master_physical(uint32_t q12)
     midi_master_physical_q12 = q12;
     midi_master_apply();
 }
+
+/* MIDI LEARN (#105): a CC onto one knob of one track's page, whatever channel it comes on. The audio ISR keeps the
+ * latest value of each learned CC (mlearn_val, a dirty bit each) and the CC a learn waits for; ui_midi_knobs.c turns
+ * the knob (mlearn_poll). Up to MLEARN_N CCs; a learned CC no longer does what the standard map gave it. Kept until
+ * power-off */
+#define MLEARN_N 16u
+typedef struct { uint8_t cc, track, page, slot, eng, id; } mlearn_t;   /* cc 0: free (never learned); page 0xFF:
+                                                                      * Stage's knobs */
+static mlearn_t mlearn[MLEARN_N], mlearn_want;          /* mlearn_want.cc 1: a knob turned while learning waits */
+static volatile uint8_t mlearn_on, mlearn_val[MLEARN_N];   /* mlearn_on: learning (the menu's MIDI LEARN) */
+static volatile uint16_t mlearn_dirty;
+static volatile int16_t mlearn_seen = -1;                /* learning: the last CC sent */
+static int mlearn_ok(uint32_t cc)                          /* not the CCs with a meaning of their own */
+{
+    return cc != 0u && cc != 1u && cc != 6u && cc != 11u && cc != 32u && cc != 38u && cc != 64u &&
+           (cc < 96u || cc > 101u) && cc < 120u;
+}
+static int mlearn_receive(uint32_t cc, uint32_t value)
+{
+    if (!mlearn_ok(cc)) return 0;
+    if (mlearn_on) { mlearn_seen = (int16_t)cc; return 1; }
+    for (uint32_t k = 0; k < MLEARN_N; k++)
+        if (mlearn[k].cc == cc) { mlearn_val[k] = (uint8_t)value; mlearn_dirty |= (uint16_t)(1u << k); return 1; }
+    return 0;
+}

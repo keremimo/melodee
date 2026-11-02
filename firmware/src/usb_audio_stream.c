@@ -58,6 +58,8 @@ static const uint16_t ua_volume_gain[65] = {
     52, 46, 41, 37, 33, 29, 26, 23,
     21,
 };
+#define UA_VOLUME_DEFAULT 50u                  /* USB VOLUME: the old level at the default MASTER (0.5) */
+static uint8_t settings_usb_volume = UA_VOLUME_DEFAULT;   /* the menu's USB VOLUME, 0..100 % (settings_persist.c) */
 static int16_t ua_host_volume_q8;
 static uint8_t ua_host_mute;
 static int32_t ua_host_target_q15 = 32768, ua_host_gain_q15 = 32768;
@@ -202,17 +204,20 @@ static uint32_t ua_transmit(uint8_t *p)
     return n * width * ua_cap_channels;
 }
 
-/* Stereo Q15 post-FX/master/limiter mix, or four pre-master mono stems.
- * Stereo copies the finished synth output; playback follows MASTER and the
- * host's standard volume/mute controls, with a short gain ramp.
+/* Stereo Q15 post-FX/limiter mix, or four mono stems, both before MASTER: the
+ * volume pot never sets the recording's level (#103). Stereo reads the mixer's
+ * unity copy (tracks: L, R per frame), or the output for a block collected while
+ * capture was off. Playback has its own level (volume_q12: USB VOLUME, apart from
+ * MASTER, as the click) and the host's standard volume/mute controls, with a short
+ * gain ramp.
  * Call in blocks of CTL (32), with USB service excluded during this copy.
  * In track mode a null stem pointer skips capture for a block collected while
  * capture was disabled. Stereo requires no stems or additional DSP pass. */
-static void ua_audio(int32_t *out, const int32_t *tracks, uint32_t n, uint32_t master_q12)
+static void ua_audio(int32_t *out, const int32_t *tracks, uint32_t n, uint32_t volume_q12)
 {
     uint32_t i, capture = ua.cap_alt && (ua_cap_channels == 2u || (tracks && ua_track_extra)), playback = 0;
     int32_t gain = ua_host_gain_q15, target = ua_host_mute ? 0 : ua_host_target_q15;
-    uint32_t play_gain_q15 = (master_q12 * (uint32_t)gain) >> 12;
+    uint32_t play_gain_q15 = (volume_q12 * (uint32_t)gain) >> 12;
     if (capture && ua.cw - ua.cr + n > UA_RING) {
         ua.cap_overruns++;
         ua_cap_reset();
@@ -235,8 +240,8 @@ static void ua_audio(int32_t *out, const int32_t *tracks, uint32_t n, uint32_t m
         int32_t l = out[2u * i], r = out[2u * i + 1u];
         if (capture) {
             if (ua_cap_channels == 2u) {
-                ua.cap[ci] = (int16_t)l;
-                ua.cap[ci + 1u] = (int16_t)r;
+                ua.cap[ci] = (int16_t)(tracks ? ua_clip(tracks[2u * i]) : l);
+                ua.cap[ci + 1u] = (int16_t)(tracks ? ua_clip(tracks[2u * i + 1u]) : r);
             } else {
                 ua.cap[ci]=(int16_t)ua_clip(tracks[i*4u]);
                 ua.cap[ci+1u]=(int16_t)ua_clip(tracks[i*4u+1u]);
@@ -248,7 +253,7 @@ static void ua_audio(int32_t *out, const int32_t *tracks, uint32_t n, uint32_t m
             if (gain != target) {            /* at most 128 samples (~3 ms) for a full-scale change */
                 int32_t delta = target - gain;
                 gain += delta > 256 ? 256 : delta < -256 ? -256 : delta;
-                play_gain_q15 = (master_q12 * (uint32_t)gain) >> 12;
+                play_gain_q15 = (volume_q12 * (uint32_t)gain) >> 12;
             }
             l += (ua.play[pi] * (int32_t)play_gain_q15) >> 15;
             r += (ua.play[pi + 1u] * (int32_t)play_gain_q15) >> 15;

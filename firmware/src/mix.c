@@ -24,7 +24,7 @@ static inline __attribute__((always_inline)) void mix_add(int32_t l,int32_t r,ui
 }
 static volatile uint32_t kb_mask, kb_layer;
 static volatile uint8_t kb_lock;
-#define LIM_T 18000
+#define LIM_T 26000                              /* -2 dBFS: only overs, a chord does not duck a held note (#108) */
 static int32_t lim_env = LIM_T;
 static int32_t dc_l, dc_r, dce_l, dce_r;
 
@@ -96,7 +96,7 @@ static uint32_t seq_div_samples(uint32_t div)
 static void events_block(uint32_t n);
 #if MELODEE_USB_AUDIO
 static int ua_capture_active(void);
-static uint8_t track_capture_on;
+static uint8_t track_capture_on, master_capture_on;   /* track_capture holds the stems, or the stereo mix at unity */
 static int32_t track_capture[CTL * NPART];
 #endif
 
@@ -112,6 +112,15 @@ static __attribute__((noinline)) void mix_cache_update(const track_t *t, mix_cac
     mc->lvl=LEVEL_Q12[mc->level & 127];
     mc->gl=4096-(mc->pan>0?mc->pan*64:0);mc->gr=4096+(mc->pan<0?mc->pan*64:0);
 }
+/* b (the part's sum, +-884000) x lvl (Q12, up to +7.5 dB) / 4096, dithered (dsp.c dith_cut): (b >> 2) * lvl fills 31
+ * bits, so the two low bits of b go in apart, (4A + B) >> 12 = (A + (B >> 2)) >> 10. b = 0 or lvl = 0 stays 0 */
+static inline __attribute__((always_inline)) int32_t mix_level(int32_t b, int32_t lvl, uint32_t k)
+{
+    int32_t a, lo, d = ((int32_t)dith[k & (DITH_N - 1u)] >> 3) + 2048;
+    b = clamp(b, -884000, 884000);
+    a = (b >> 2) * lvl; lo = (b & 3) * lvl;
+    return clamp((a + ((lo + (d & -(int32_t)((a | lo) != 0))) >> 2)) >> 10, -524287, 524287);
+}
 static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_t n)
 {
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
@@ -121,9 +130,10 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
     int32_t gla=4096-(pa>0?pa*64:0),gra=4096+(pa<0?pa*64:0);
     int32_t glb=4096-(pb>0?pb*64:0),grb=4096+(pb<0?pb*64:0);
     int32_t glm=(gla+glb)>>1,grm=(gra+grb)>>1,gld=(gla-glb)>>1,grd=(gra-grb)>>1,pk=t->peak;
+    uint32_t dk=(uint32_t)(t-trk)*8u;
     for(uint32_t i=0;i<n;i++){
-        int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287);
-        int32_t y=clamp(((clamp((d[i]<<1)-b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287);
+        int32_t x=mix_level(b[i],lvl,i+dk);
+        int32_t y=mix_level((d[i]<<1)-b[i],lvl,i+dk+4u);
         int32_t a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
@@ -142,8 +152,9 @@ static __attribute__((noinline,section(".dsp_text"))) void MIX_MONO_GENERAL(trac
 {
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
     int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=t->peak;
+    uint32_t dk=(uint32_t)(t-trk)*8u;
     for(uint32_t i=0;i<n;i++){
-        int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl,i+dk),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
@@ -159,8 +170,9 @@ static __attribute__((noinline,section(".dsp_text"))) void MIX_MONO_GENERAL(trac
 static __attribute__((noinline,section(".dsp_text"))) void mix_mono_dry(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
 {
     int32_t lvl=mc->lvl,pk=t->peak;
+    uint32_t dk=(uint32_t)(t-trk)*8u;
     for(uint32_t i=0;i<n;i++){
-        int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl,i+dk),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
@@ -178,8 +190,9 @@ static __attribute__((noinline,section(".dsp_text"))) void mix_mono_samples(trac
      * cannot overflow. Equal channels also share the send's scaling work.
      * Keep each loop separate to avoid register pressure in the general path. */
     int32_t lvl=mc->lvl,pk=t->peak;
+    uint32_t dk=(uint32_t)(t-trk)*8u;
     for(uint32_t i=0;i<n;i++){
-        int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl,i+dk),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
@@ -300,14 +313,19 @@ static __attribute__((noinline,section(".dsp_text"))) void master_samples(int32_
         if(gain!=target)gain+=clamp(target-gain,-128,128);
         int32_t l=mix_l[i],r=mix_r[i];
         {uint32_t ret=(uint32_t)gain*2u;
-            l+=(fx_scale(fx_left[i],ret)>>2)*4;
-            r+=(fx_scale(fx_right[i],ret)>>2)*4;}
+            l+=fx_scale(fx_left[i],ret);
+            r+=fx_scale(fx_right[i],ret);}
         mix_l[i]=l;mix_r[i]=r;
     }
     punch_process(mix_l,mix_r,n);
     /* Attenuate the finished output: punch history, freeze and the DC blocker
      * keep running at unity, so even an already sounding tail follows MASTER. */
-    for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);out[2u*i]=(l*master)>>12;out[2u*i+1u]=(r*master)>>12;}
+    for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);
+#if MELODEE_USB_AUDIO
+        if(master_capture_on){track_capture[2u*i]=l;track_capture[2u*i+1u]=r;}   /* (USB stereo capture: before MASTER, #103) */
+#endif
+        if(master==4096){out[2u*i]=l;out[2u*i+1u]=r;continue;}   /* (full MASTER: nothing to cut) */
+        out[2u*i]=dith_cut(l*master,12,i+5u);out[2u*i+1u]=dith_cut(r*master,12,i+5u);}   /* (one dither: mono stays L = R) */
     fx_bus_mix=gain;
 }
 static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
@@ -316,10 +334,11 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
     fx_profile_poll();
 #endif
 #if MELODEE_USB_AUDIO
-    track_capture_on=(uint8_t)ua_capture_active();
+    {int cap=ua_capture_active();track_capture_on=(uint8_t)(cap==4);master_capture_on=(uint8_t)(cap==2);}
     if(track_capture_on)memset(track_capture,0,n*NPART*sizeof *track_capture);
 #endif
     memset(mix_l,0,n*sizeof *mix_l);memset(mix_r,0,n*sizeof *mix_r);
+    dither_block();                                     /* (before any engine renders: dsp.c) */
     AP_START(events_start);events_block(n);AP_END(AP_EVENTS,events_start);
     fx_bus_select();fx_send_on=(uint8_t)fx_bus_active();if(fx_send_on){memset(fx_send_l,0,n*sizeof *fx_send_l);memset(fx_send_r,0,n*sizeof *fx_send_r);
         if(fx_bus_separate){memset(fx_send_extra_l,0,sizeof fx_send_extra_l);memset(fx_send_extra_r,0,sizeof fx_send_extra_r);}}
@@ -332,9 +351,7 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
     batch_ready=0;part_buf=part_storage;spread_buf=spread_storage;
 #endif
     fx_bus_start(n);
-    /* Preserve the existing unity mix rounding while shared wet processing runs.
-     * MASTER is applied once, after punch FX and the limiter/DC blocker. */
-    for(uint32_t i=0;i<n;i++){mix_l[i]=(mix_l[i]>>2)*4;mix_r[i]=(mix_r[i]>>2)*4;}
+    /* MASTER is applied once, after punch FX and the limiter/DC blocker (the bus keeps every bit: #100) */
     fx_bus_join();
     void (*volatile run)(int32_t *,uint32_t)=master_samples;
     AP_START(output_start);run(out,n);AP_END(AP_OUTPUT,output_start);

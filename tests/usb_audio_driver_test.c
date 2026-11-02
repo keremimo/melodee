@@ -303,7 +303,7 @@ static void volume_controls(void)
                     assert(sample >= 0 && sample <= 2000 && sample - previous <= 16 && previous - sample <= 16);
                     previous = sample;
                     for (uint32_t ch = 0; ch < channels; ch++)
-                        assert((ch<2u?ua.cap[(at+i)*2u+ch]:ua_track_extra[(at+i)*2u+ch-2u]) == (channels == 4 ? stems[i*4+ch] : ch ? -1000 : 1000));
+                        assert((ch<2u?ua.cap[(at+i)*2u+ch]:ua_track_extra[(at+i)*2u+ch-2u]) == (channels == 4 ? stems[i*4+ch] : stems[i*2+ch]));   /* (stereo: the unity pairs, #103) */
                 }
             }
             assert(previous == (phase == 1 ? 0 : (2000 * 16423) >> 15));

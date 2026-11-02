@@ -257,7 +257,7 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
     for(uint32_t i=0;i<n;i++){
         float sample=first==last?lines[first][i]:modulation==4u?lines[0][i]*lines[1][i]*2.0f:(lines[0][i]+lines[1][i])*0.5f;
         float gain=((float)m->amp0+(float)(m->amp1-m->amp0)*(float)i*(1.0f/CTL))*(1.0f/32768.0f);
-        out[i]+=(int32_t)(sample*gain*(4.0f*VOICE_FS));
+        out[i]+=dith_cutf(sample*gain*(2.0f*VOICE_FS),i+(uint32_t)m->amp1);   /* (the other engines' level: a chord stays under the limiter, #108) */
     }
 #else
     for(uint32_t i=0;i<n;i++){
@@ -281,7 +281,7 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
         }
         float sample=first==last?line[first]:modulation==4u?line[0]*line[1]*2.0f:(line[0]+line[1])*0.5f;
         float gain=((float)m->amp0+(float)(m->amp1-m->amp0)*(float)i*(1.0f/CTL))*(1.0f/32768.0f);
-        out[i]+=(int32_t)(sample*gain*(4.0f*VOICE_FS));
+        out[i]+=dith_cutf(sample*gain*(2.0f*VOICE_FS),i+(uint32_t)m->amp1);
     }
 #endif
     v->ph[0]=ph[0];v->ph[1]=ph[1];v->s[0]=(int32_t)tg[0];v->s[1]=(int32_t)tg[1];
