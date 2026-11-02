@@ -1438,7 +1438,8 @@ static void persist_boot(void)                    /* before settings_init / pane
     persist_t p;
     boot_work.state = 0;
     uint32_t f = irq_save();
-    flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;       /* the expected 1 MiB part, else stay RAM-only */
+    uint32_t jid = FL_FAR(fl_jedec_ram)();
+    flash_ok = (jid == 0x856014u || jid == 0xB36014u);    /* the expected 1 MiB parts (0x85 Puya, 0xB3 UCUN), else stay RAM-only */
     irq_restore(f);
     if (!flash_ok)
         return;

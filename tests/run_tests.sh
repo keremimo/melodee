@@ -412,6 +412,7 @@ if core && [ $TABLES = 1 ]; then
         -DMELODEE_BENCH_SILENT=1 $FW
     t "384 shared presets: all-engine capacity, conversion, torn writes and high-slot identity" unified_presets_test $FW
     t "persistence: deferred settings, retry and failed-save rollback" persistence_test $FW
+    t "flash JEDEC gate: accepted parts (Puya, UCUN) enable writes, unknown IDs stay RAM-only" flash_id_test $FW
     t "first boot: foreign settings, safe defaults, ownership and interrupted cleanup" settings_origin_test $FW
     t "first boot: reset unsupported preset banks, preserve good entries and retry cuts" preset_boot_reset_test $FW
     t "first boot: moved preset banks leave the resource region to the update loader" res_boot_test $FW
