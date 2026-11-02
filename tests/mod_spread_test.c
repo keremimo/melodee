@@ -73,6 +73,7 @@ static void fresh(uint32_t e, uint32_t pi)        /* the boot state (no FX tails
     vage = 0;                                             /* the seeds: every run the same (noise by voice age) */
     rng_state = 0x1234567u;
     mod_seed = 0x2545F491u;
+    dith_r = DITH_SEED;                     /* (the dither starts over too: dsp.c) */
     memset(trk, 0, sizeof trk);trk_voices_bind();
     memset(&mod, 0, sizeof mod);
     host_tracks_init();
@@ -378,7 +379,7 @@ static void test_spread(void)
         lr_t r1 = spread_run(127, 0, V_POLY, TWO + 1, 1, NREND / 2);   /* (67 alone: left, the first) */
         snprintf(msg, sizeof msg, "SPRD 127: the second note hard right (L holds the first only: %.3f)", sqrt(b.l / r1.l));
         (void)r1;
-        check(msg, b.r > 0 && b.l > 0 && b.rmax > 1000 && b.lmax > 1000);
+        check(msg, b.r > 0 && b.l > 0 && b.rmax > 500 && b.lmax > 500);   /* (CZ-1 at the other engines' level, #108) */
     }
     {   /* the sides: alternate per new voice; a sounding voice retriggered keeps its side (no jump) */
         track_t *t = &trk[0];

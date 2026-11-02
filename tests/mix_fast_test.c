@@ -26,7 +26,7 @@ static __attribute__((noinline)) void reference(track_t *t,int32_t *b,uint32_t n
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
     int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=t->peak;
     for(uint32_t i=0;i<n;i++){
-        int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl,i+(uint32_t)(t-trk)*8u),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif

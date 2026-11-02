@@ -9,20 +9,26 @@ audio and simultaneous central/peripheral links are not included.
 
 Hold HOME, select **Bluetooth**, then confirm with OCT+.
 
-- **Radio:** OCT+/SAVE toggles it; K1 right enables, left disables. It starts
-  OFF every boot. The first start requires stopped music, released voices and
-  idle USB audio, because radio initialization briefly holds interrupts.
+- **Radio:** OCT+/SAVE toggles it; K1 right enables, left disables. The state is
+  kept across power-on: a radio left on starts again at the first quiet moment
+  after boot. Starting requires stopped music, released voices and idle USB
+  audio, because radio initialization briefly holds interrupts.
+- **Mode:** **CONNECT OUT** scans for devices while this page is open and stays
+  quiet elsewhere. **VISIBLE** advertises for a computer or phone, never scans
+  and hides the device list; the header shows `VISIBLE 1A2B`. Kept across power-on.
 - **Disconnect:** leaves the current connection and resumes discovery.
 - **Last device:** reconnects the last successful outgoing connection. Saved
-  bonds and device identity survive reboot; there is no automatic connection
-  or repeated pairing prompt at boot.
+  bonds and device identity survive reboot. With the radio on in CONNECT OUT, the
+  FM-1 scans for 10 s every 30 s until the last device is seen, then connects, and
+  re-arms after a dropped link. Disconnect, Forget pairings, VISIBLE, a refused key
+  or pairing and an unanswered PIN end this.
 - **Forget pairings:** asks for confirmation, disconnects, and clears the
   incoming bond and remembered outgoing device. It preserves this FM-1's own
   address, calibration and music. Forget Melodee on the peer too if necessary.
 - Turn K2 or PRESETS to select a discovered BLE-MIDI device; OCT+/SAVE connects.
   OCT- returns to Settings and stops discovery, retaining an established link.
 
-A computer or phone can connect to **Melodee XXXX** while it advertises. On a
+A computer or phone can connect to **Melodee XXXX** in VISIBLE mode. On a
 Mac use Audio MIDI Setup's Bluetooth MIDI window; on a phone use a music app's
 Bluetooth MIDI settings. Connecting out from Melodee finds a BLE controller,
 synth, another FM-1, or an app advertising the BLE-MIDI service.

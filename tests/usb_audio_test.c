@@ -30,6 +30,8 @@ static void block(int32_t l, int32_t r, uint32_t master, int32_t *out)
         tracks[4 * i + 2] = 300;
         tracks[4 * i + 3] = -700;
     }
+    if (ua_cap_channels == 2u)                    /* stereo: the mixer's unity copy, L R a frame (#103) */
+        for (i = 0; i < 32; i++) { tracks[2 * i] = l; tracks[2 * i + 1] = r; }
     ua_audio(out, tracks, 32, master);
 }
 

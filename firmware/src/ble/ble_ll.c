@@ -30,6 +30,7 @@ enum { P_NONE, P_FEAT, P_LEN, P_TERM, P_UPD, P_PHY, P_ENC, P_VER };
 static struct {
     uint8_t state, enabled, addr_rand;
     uint8_t scan_want;                             /* BLE_CENTRAL: scan instead of advertising (ble_ll_scan) */
+    uint8_t adv_off;                               /* Melodee: no advertising when idle (ble_ll_advertise) */
     uint8_t addr[6];
     uint8_t adv[2 + 37], adv_len, sr[2 + 37], sr_len;
     /* the connection */
@@ -200,8 +201,19 @@ static void ll_idle(void)
         return;
     }
 #endif
-    if (bll.enabled)
+    if (bll.enabled && !bll.adv_off)
         ll_adv_start();
+}
+
+/* Melodee: advertise when idle (on, the default after ble_ll_init) or stay quiet; a connection is left as it is */
+BLE_API void ble_ll_advertise(int on)
+{
+    bll.adv_off = on ? 0u : 1u;
+    if (!on && bll.state == LL_ADV) {
+        ble_hw_adv_stop();
+        bll.state = LL_OFF;
+    } else if (on && bll.enabled && bll.state == LL_OFF)
+        ll_idle();
 }
 
 BLE_API void ble_ll_enable(int on)

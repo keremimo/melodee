@@ -14,7 +14,7 @@ static void matrix_setup(const uint32_t cat[4],uint32_t variant)
     memset(mix_cache,0,sizeof mix_cache);memset(&mod,0,sizeof mod);memset(fx_state,0,sizeof fx_state);
     memset(midi_bend_q8,0,sizeof midi_bend_q8);memset(midi_bend_target,0,sizeof midi_bend_target);
     fx_bus_mix=fx_bus_target=fx_bus_pending=fx_bus_result=0;fx_epoch++;
-    rng_state=0x12345678u;mod_seed=0x2545f491u;vage=voice_kills=0;track_solo=0;
+    rng_state=0x12345678u;mod_seed=0x2545f491u;dith_r=DITH_SEED;vage=voice_kills=0;track_solo=0;
     lim_env=LIM_T;dc_l=dc_r=dce_l=dce_r=0;host_tracks_init();fm6_fn_reset();
     for(uint32_t p=0;p<NPART;p++){
         uint32_t c=cat[p];host_preset(&trk[p],matrix_engines[c],c==0?3:c==1?4:c==3?8:c==5?1:0);

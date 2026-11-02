@@ -46,6 +46,10 @@ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KE
 /* Retired DIGITAL row bytes 20..23: 'M', 'K', profile, encoder mode.
  * Untagged/unknown records keep panel MIDI OFF and the PER5 layout unchanged. */
 #define MIDI_KNOB_PREF_BYTE 20u
+/* Retired GRAIN row bytes 4..7 (past Felucca 1.0's stars in bits 0..11): 'U', 'V', version 1, USB VOLUME 0..100 %.
+ * Untagged records take UA_VOLUME_DEFAULT. */
+#define USB_VOLUME_ROW 8u
+#define USB_VOLUME_BYTE 4u
 /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
  * Melodee builds along with the other favorites; no layout or magic change. */
 static const uint8_t SETTINGS_OWNER[4] = {'M', 'D', 'S', 1};
@@ -114,6 +118,12 @@ static int settings_import(persist_t *p, int n)
         settings_click_level = q[0] == 'C' && q[1] == 'K' && q[2] == 1u && q[3] <= 100u ? q[3] :
                                (uint8_t)(level == 1u ? 6u : level == 2u ? 25u : CLICK_LEVEL_DEFAULT);
     }
+#if MELODEE_USB_AUDIO
+    {
+        const uint8_t *u = p->favorites.factory[USB_VOLUME_ROW] + USB_VOLUME_BYTE;
+        settings_usb_volume = u[0] == 'U' && u[1] == 'V' && u[2] == 1u && u[3] <= 100u ? u[3] : (uint8_t)UA_VOLUME_DEFAULT;
+    }
+#endif
     settings_countin = (uint8_t)(((rp >> 4) & 3u) < 3u ? (rp >> 4) & 3u : 0u);
     settings_preview = (uint8_t)((rp >> 6) & 1u);
     settings_chord_add = (uint8_t)((rp >> 7) & 1u);
@@ -168,6 +178,13 @@ static void settings_export(persist_t *p)
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;
     p->favorites.factory[15][26] = ua_tracks ? 0xA1u : 0u; /* tagged; old/unknown bytes default to stereo */
+    {
+        uint8_t *u = p->favorites.factory[USB_VOLUME_ROW] + USB_VOLUME_BYTE;
+        memset(u, 0, 4);
+        if (settings_usb_volume != UA_VOLUME_DEFAULT) {
+            u[0] = 'U'; u[1] = 'V'; u[2] = 1u; u[3] = settings_usb_volume > 100u ? 100u : settings_usb_volume;
+        }
+    }
 #endif
     p->favorites.factory[15][27]=settings_screen;
     p->favorites.factory[15][28] = settings_autosave ? 0u : AUTOSAVE_OFF_TAG;

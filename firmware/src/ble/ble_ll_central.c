@@ -96,7 +96,7 @@ BLE_API void ble_ll_scan(int on)
     else if (!on && bll.state == LL_SCAN) {
         ble_hw_scan_stop();
         bll.state = LL_OFF;
-        if (bll.enabled)
+        if (bll.enabled && !bll.adv_off)
             ll_adv_start();
     }                                              /* (initiating or connected: only the wish is kept) */
 }

@@ -9,7 +9,7 @@
 #include "hostsim.c"
 #undef main
 
-struct result { uint64_t hash, energy, monitor; };
+struct result { uint64_t hash, energy, monitor, taken; };   /* taken: the stereo capture's energy */
 
 static struct result render(uint32_t channel, int sliced, int variant)
 {
@@ -97,14 +97,16 @@ static struct result stereo_render(int insert, int send, uint32_t master)
         trk_note_on(&trk[0], 60, 100);
         for (uint32_t block = 0; block < 2048; block++) {
             mix_block(out, CTL);
-            assert(!track_capture_on);
-            for (uint32_t i = 0; i < CTL * NPART; i++) assert(track_capture[i] == 123456);
+            assert(!track_capture_on && master_capture_on);   /* stereo: the mix before MASTER, L R a frame (#103) */
+            for (uint32_t i = CTL * 2; i < CTL * NPART; i++) assert(track_capture[i] == 123456);
             ua.cw = ua.cr = 0;
-            ua_audio(out, 0, CTL, master);
+            ua_audio(out, track_capture, CTL, master);
             assert(ua.cw == CTL);
             for (uint32_t i = 0; i < CTL * 2; i++) {
                 assert(out[i] >= -32768 && out[i] <= 32767);
-                assert(ua.cap[i] == out[i]);
+                assert(ua.cap[i] == ua_clip(track_capture[i]));
+                if (master == 4096u) assert(ua.cap[i] == out[i]);   /* (full MASTER: the output itself) */
+                result.taken += (int64_t)ua.cap[i] * ua.cap[i];
                 result.hash = (result.hash ^ (uint32_t)out[i]) * 16777619u;
                 result.energy += (int64_t)out[i] * out[i];
                 if (!(i & 1u)) result.monitor += abs(out[i] - out[i + 1u]);
@@ -151,13 +153,13 @@ static void mode_packets(uint8_t alt)
             for (uint32_t at = 0; at < UA_TARGET + CTL; at += CTL) {
                 for (uint32_t i = 0; i < CTL * NPART; i++) track_capture[i] = 123456;
                 mix_block(out, CTL);
-                assert(track_capture_on == tracks);
+                assert(track_capture_on == tracks && master_capture_on == !tracks);
                 for (uint32_t i = 0; i < CTL * 2u; i++) assert(out[i] == 0);
-                if (!tracks)
-                    for (uint32_t i = 0; i < CTL * NPART; i++) assert(track_capture[i] == 123456);
+                if (!tracks)                            /* stereo: the mix before MASTER (0 here), L R a frame (#103) */
+                    for (uint32_t i = CTL * 2u; i < CTL * NPART; i++) assert(track_capture[i] == 123456);
                 for (uint32_t i = 0; i < CTL * channels; i++)
-                    expected[at * channels + i] = (int16_t)(tracks ? ua_clip(track_capture[i]) : out[i]);
-                ua_audio(out, track_capture_on ? track_capture : 0, CTL, song.master_q12);
+                    expected[at * channels + i] = (int16_t)ua_clip(track_capture[i]);
+                ua_audio(out, track_capture, CTL, song.master_q12);
             }
             uint32_t read = 0, width = ua_sample_bytes(alt);
             uint64_t energy[NPART] = {0};
@@ -173,7 +175,7 @@ static void mode_packets(uint8_t alt)
                     }
                 }
             }
-            for (uint32_t ch = 0; ch < channels; ch++) assert(!!energy[ch] == tracks);
+            for (uint32_t ch = 0; ch < channels; ch++) assert(energy[ch]);   /* MASTER 0: both record (#103) */
         }
         _exit(0);
     }
@@ -208,9 +210,10 @@ int main(void)
     struct result wet = stereo_render(1, 1, 4096);
     assert(dry.energy && dry.monitor && insert.energy && wet.energy);
     assert(dry.hash == insert.hash && insert.hash != wet.hash); /* historical track audio FX are inert */
-    assert(stereo_render(1, 1, 0).energy == 0);
-    assert(stereo_render(1, 1, 2048).energy < wet.energy);
-    puts("USB stereo: inert track audio FX, exact post-send/pan/master/limiter copy, no stem collection: OK");
+    struct result muted = stereo_render(1, 1, 0), half = stereo_render(1, 1, 2048);
+    assert(muted.energy == 0 && half.energy < wet.energy);    /* MASTER sets the output, */
+    assert(muted.taken == wet.taken && half.taken == wet.taken);   /* never the recording (#103) */
+    puts("USB stereo: inert track audio FX, exact post-send/pan/limiter copy before MASTER, no stem collection: OK");
     for (uint32_t ch = 0; ch < NPART; ch++) {
         struct result dry = render(ch, 0, 0);
         assert(dry.energy && dry.monitor);

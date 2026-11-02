@@ -51,7 +51,8 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 }
 static uint32_t irq_save(void) { return 0; }
 static void irq_restore(uint32_t f) { (void)f; }
-static uint32_t fl_jedec_ram(void) { return 0x856014u; }   /* (persist_boot: the expected part) */
+static uint32_t fl_jedec_id = 0x856014u;                   /* persist_boot's JEDEC gate; flash_id_test varies it */
+static uint32_t fl_jedec_ram(void) { return fl_jedec_id; } /* (persist_boot: the expected part by default) */
 static void fl_plain_window_init(void) {}
 #define FL_FAR(fn) (fn)
 #include "../firmware/src/storage.c"
