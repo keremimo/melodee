@@ -7,22 +7,34 @@
 static struct {
     uint32_t pos, rendered, last_ms, start_ms, last_time, interval_time, tempo_time, tempo_dt;
     uint16_t pulse_count;
-    uint8_t mode, selected, have_pulse, tempo_valid, tempo_n, tempo_count, count_valid;
+    uint16_t spot;                                  /* Song Position: 1/16 steps from the top */
+    uint8_t mode, selected, have_pulse, tempo_valid, tempo_n, tempo_count, count_valid, spot_valid, seek_wait;
 } midi_clock;
 
-/* Preserve fractional sequencer/ARP phase when external transport takes over. */
+/* An external clock's LFO units: the measured tempo, so pulse jitter cannot modulate it. Past a quarter of a pulse from
+ * the song's units it is pulled back, so it cannot slide either. */
+static struct {
+    uint32_t rem;
+    int32_t err;
+} lfo_ext;
+static uint32_t lfo_ext_units(uint32_t n, uint32_t song_units)
+{
+    uint32_t beat = beat_samples(), ticks = n * MIDI_BEAT_UNITS + lfo_ext.rem, units = ticks / beat;
+    lfo_ext.rem = ticks % beat;
+    lfo_ext.err += (int32_t)song_units - (int32_t)units;
+    int32_t pull = lfo_ext.err / 256, out = (int32_t)units + pull;
+    if (out < 0) {
+        pull -= out;
+        out = 0;
+    }
+    lfo_ext.err -= pull;
+    return (uint32_t)out;
+}
+
+/* (Sequencer and ARP phase carry over: every clock counts the same units.) */
 static void midi_clock_mode(uint32_t mode)
 {
-    uint32_t old = seq_beat_samples();
     midi_sync_active = (uint8_t)mode;
-    uint32_t next = seq_beat_samples();
-    for (uint32_t i = 0; i < NTRK; i++) {
-        track_t *t = &trk[i];
-        if (t->seq_pos < 0x7FFFFFFFu) t->seq_pos = (uint32_t)((uint64_t)t->seq_pos * next / old);
-        if (t->arp_pos < 0xFFFFFFFu) t->arp_pos = (uint32_t)((uint64_t)t->arp_pos * next / old);
-        t->arp_off = (uint32_t)((uint64_t)t->arp_off * next / old);
-    }
-    beat_pos = (uint32_t)((uint64_t)beat_pos * next / old);
     midi_clock.mode = (uint8_t)mode;
 }
 
@@ -39,10 +51,32 @@ static uint32_t midi_clock_local_start(uint32_t ms)
     return 0;
 }
 
+/* Song Position, stopped only: the next Continue starts there, on its first clock (a master holds that clock until its
+ * song reaches the spot). Every pattern is where it would be after playing from the top; a song's sections stay local. */
+static void midi_clock_position(uint32_t spot)
+{
+    if (song.playing) return;
+    midi_clock.spot = (uint16_t)spot;
+    midi_clock.spot_valid = 1;
+}
+static void midi_clock_seek(void)
+{
+    uint32_t units = midi_clock.spot * (MIDI_BEAT_UNITS / 4u);
+    midi_clock.seek_wait = 0;
+    midi_clock.pos = midi_clock.rendered = 0;
+    midi_clock.have_pulse = 0;
+    seq_seek_units = units;
+    seq_start();
+    beat_pos = units % MIDI_BEAT_UNITS;
+    beat_n = (units / MIDI_BEAT_UNITS) & 3u;
+}
+
 static __attribute__((noinline)) void midi_clock_transport(uint32_t status, uint32_t ms)
 {
     if (status == 0xFAu) {
+        midi_clock.spot_valid = midi_clock.seek_wait = 0;
         midi_clock.pos = midi_clock.rendered = 0;
+        lfo_ext.err = 0;
         midi_clock.have_pulse = midi_clock.tempo_valid = 0;
         midi_clock.count_valid = 0;
         midi_clock.interval_time = 0;
@@ -51,10 +85,16 @@ static __attribute__((noinline)) void midi_clock_transport(uint32_t status, uint
     } else if (status == 0xFBu) {
         cin_left = 0;
         midi_clock.pos = midi_clock.rendered;
+        lfo_ext.err = 0;
         midi_clock.have_pulse = midi_clock.tempo_valid = 0;
         midi_clock.count_valid = 0;
         midi_clock.interval_time = 0;
         midi_clock.start_ms = ms;
+        if (midi_clock.spot_valid && !song.playing) {
+            midi_clock.spot_valid = 0;
+            midi_clock.seek_wait = 1;
+            return;
+        }
         if (!song.playing) {
             motion_begin();
             song.rec_wait = song.rec;
@@ -62,12 +102,14 @@ static __attribute__((noinline)) void midi_clock_transport(uint32_t status, uint
         }
         song.playing = 1;
     } else if (status == 0xFCu) {
+        midi_clock.seek_wait = 0;
         seq_stop();
     }
 }
 
 static __attribute__((noinline)) void midi_clock_pulse(uint32_t ms, uint32_t time, uint16_t count)
 {
+    if (midi_clock.seek_wait) midi_clock_seek();
     uint32_t pulses = midi_clock.count_valid ? (uint16_t)(count - midi_clock.pulse_count) : 1u;
     if (!pulses || (midi_clock.have_pulse && ms - midi_clock.last_ms > 500u)) pulses = 1u;
     midi_clock.pulse_count = count;
@@ -151,4 +193,51 @@ static uint32_t midi_clock_advance(uint32_t now)
     n = (int32_t)(target - midi_clock.rendered) > 0 ? target - midi_clock.rendered : 0u;
     midi_clock.rendered += n;
     return n;
+}
+
+/* CLK INT: this unit is the master, on USB and BLE. Pulses run while stopped too, so a follower has the tempo before
+ * Start. They count the sequencer's own units, so no division, recording or ARP can slide against a follower.
+ * The first pulse after Start is step 0, a block later (so is its sound). */
+static struct {
+    int32_t pos;
+    uint8_t running;
+} midi_sync_out;
+
+/* A song cursor: Song Position and Continue instead of Start. Song Position counts 1/16 steps, so a cursor between two
+ * goes to the next: returns the units until the song reaches it, where the first pulse belongs. */
+static uint32_t midi_sync_out_position(uint64_t units)
+{
+    uint32_t rem, spot = chain_div_samples(units + 6143u, 6144u, &rem);
+    if (spot > 16383u) spot = 16383u;
+    midi_sync_send(0x3u | 0xF2u << 8 | (spot & 127u) << 16 | (spot >> 7) << 24);
+    midi_sync_emit(0xFBu);
+    return 6143u - rem;
+}
+
+static void midi_sync_out_block(uint32_t units)
+{
+    uint32_t start = seq_started;
+    seq_started = 0;
+    if (midi_sync_out.running && (start || !song.playing || song.g[G_CLOCK])) {
+        midi_sync_emit(0xFCu);
+        midi_sync_out.running = 0;
+    }
+    if (song.g[G_CLOCK])
+        return;
+    if (start && song.playing) {
+        midi_sync_out.running = 1;
+        if (chain.running && chain.start_units) {
+            midi_sync_out.pos = (int32_t)(MIDI_BEAT_UNITS / 24u) - (int32_t)midi_sync_out_position(chain.start_units);
+            return;
+        }
+        midi_sync_emit(0xFAu);
+        /* the units after step 0 in this block (the end of a count-in) */
+        midi_sync_out.pos = MIDI_BEAT_UNITS / 24u + (!chain.running && trk[0].seq_pos < MIDI_BEAT_UNITS / 24u ? trk[0].seq_pos : 0u);
+        return;
+    }
+    midi_sync_out.pos += (int32_t)units;
+    if (midi_sync_out.pos >= (int32_t)(MIDI_BEAT_UNITS / 24u)) {
+        midi_sync_out.pos -= (int32_t)(MIDI_BEAT_UNITS / 24u);
+        midi_sync_emit(0xF8u);
+    }
 }

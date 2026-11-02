@@ -121,6 +121,8 @@ static uint32_t uh_midi_ok(uint32_t pkt)
     pkt &= ~0xF0u;
     if (cin == 0xFu)
         return st == 0xF8u || st == 0xFAu || st == 0xFBu || st == 0xFCu ? pkt : 0u;
+    if (cin == 3u)                                      /* Song Position */
+        return st == 0xF2u && !(pkt & 0x80800000u) ? pkt : 0u;
     if (cin >= 8u && cin <= 0xEu && (st >> 4) == cin && !((pkt >> 16) & 0x80u) &&
         ((cin == 0xCu || cin == 0xDu) || !(pkt & 0x80000000u)))
         return pkt;

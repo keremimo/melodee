@@ -117,7 +117,7 @@ static void tempo_memory(void)
     reset();midi_sync_active=1;midi_beat_samples=FS;beat_pos=MIDI_BEAT_UNITS/2;
     assert(punch_clock_samples()==FS/2);song.playing=1;punch.req=PX_LOOP8;
     test_signal(0);punch_process(l,r,CTL);assert(punch.len==PUNCH_N-1024u);
-    reset();song.playing=1;beat_pos=beat_samples()/2-64;punch.req=PX_LOOP8;
+    reset();song.playing=1;beat_pos=(uint32_t)(((uint64_t)(beat_samples()/2-64)*MIDI_BEAT_UNITS+beat_samples()-1u)/beat_samples());punch.req=PX_LOOP8;
     test_signal(0);punch_process(l,r,CTL);assert(punch.pre==32);
     test_signal(0);punch_process(l,r,CTL);assert(!punch.pre);
     /* Shorter musical spans remain exact; long spans clamp before wrap. */

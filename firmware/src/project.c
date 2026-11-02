@@ -950,7 +950,7 @@ static int project_restore_runtime(const project_t *input)
     motion_base_valid = 0;
     ui.song_row = 0;
     for (i = 0; i < G_COUNT; i++)
-        if (i != G_SLOT && i != G_LOAD && i != G_SAVE)
+        if (i != G_SLOT && i != G_LOAD && i != G_SAVE && i != G_CLOCK)   /* CLK: the device's (a backup: ed_bk_clock) */
             song.g[i] = global_reserved(i) ? 0 : (int16_t)clamp(p->g[i], GP[i].min, GP[i].max);
     shared_fx_normalize(song.g);
     for (k = PROJ_TRK; k < NTRK; k++) {                 /* the MIDI-only tracks: as a new one starts (an FBKL record's
@@ -1171,7 +1171,7 @@ static int tmpl_take(const uint8_t *b,uint32_t len)
 
 /* CLK TUNE MIDI ROUT: the device keeps them as last used (settings ext.glo), not only the projects */
 static const uint8_t GLO_KEPT[4] = {G_CLOCK, G_TUNE, G_MIDI, G_ROUTE};
-static void glo_restore(void)                     /* power-on, before the BOOT project or the template (theirs win) */
+static void glo_restore(void)                     /* power-on, before the BOOT project or the template (theirs win, not CLK) */
 {
     uint32_t k;
     for (k = 0; k < 4u; k++)
@@ -1560,6 +1560,8 @@ static uint32_t chain_prepare_from(uint32_t start)
         chain.seek_samples[k] = 0;
         for (uint32_t row = chain_origin(start, k); row < start; row++) chain.seek_samples[k] += chain_row_samples(row);
     }
+    chain.start_units = 0;
+    for (uint32_t row = 0; row < start; row++) chain.start_units += chain_row_samples(row);
     RING_PUBLISH(); chain.armed = 1; transport_req = 1;
     motion_unguard(f);
     return 0;

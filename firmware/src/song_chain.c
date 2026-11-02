@@ -14,7 +14,7 @@ static struct {
     volatile uint8_t armed, running, row, remaining;
     uint8_t slot, rec, start, seek_chase, fx_event;
     uint32_t carry, rest_pos, seek_phase[NTRK];
-    uint64_t seek_samples[NTRK];
+    uint64_t seek_samples[NTRK], start_units;     /* start_units: from the song's top to chain.start */
 } chain;
 
 static void seq_release(track_t *t);
@@ -125,6 +125,12 @@ static uint32_t chain_div_samples(uint64_t value, uint32_t divisor, uint32_t *re
     }
     if (remainder) *remainder = r;
     return q;
+}
+/* a length in sequencer units (mix.c), as whole seconds at the song's tempo */
+static uint32_t chain_seconds(uint64_t units)
+{
+    uint32_t per_minute = MIDI_BEAT_UNITS * (uint32_t)song.g[G_BPM];
+    return chain_div_samples(units * 60u + per_minute / 2u, per_minute, 0);
 }
 static const step_t *seq_steps(const track_t *t)
 {

@@ -285,7 +285,7 @@ static void fm1_main(void)
         settings_save();
     }
     glo_restore();                            /* CLK TUNE MIDI ROUT as last used, */
-    project_boot();                           /* then the BOOT project or the template (theirs win) */
+    project_boot();                           /* then the BOOT project or the template (theirs win, not CLK) */
     fm1_delay_ms(400);
     fm1_audio_unmute();                       /* the codec settled on silent I2S since audio_init: no cold-boot click */
     if (boot_work.state != 2u)

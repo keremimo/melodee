@@ -50,7 +50,7 @@ static struct {
     uint8_t answered;                                   /* the device on the port answered its first request */
     uh_hub_t hub[UH_HUB_LEVELS];
     uint8_t hub_poll_level, hub_poll_port;
-    uint8_t in_ep, out_mps, tx_count, tx_errors, line_idle;
+    uint8_t in_ep, out_mps, tx_count, tx_rt, tx_errors, line_idle;   /* tx_rt: of tx_count, from the clock's ring */
     uint8_t msg;                                        /* one UH_MSG_* for main.c to show */
     volatile uint8_t errors;
     uint32_t t_ms, retry_ms;
@@ -295,7 +295,7 @@ static void uh_start_ep(const uh_midi_t *m)
     sie_wr(S_INDEX, 1);
     uh.in_ep = m->in_ep;
     uh.out_mps = (uint8_t)m->out_mps;
-    uh.tx_count = uh.tx_errors = 0;
+    uh.tx_count = uh.tx_rt = uh.tx_errors = 0;
     uh.line_idle = 0;
     if (m->in_ep) {
         fm1_usb_ep_rxbuf(1, uh_rx);
@@ -327,8 +327,9 @@ static void uh_session_end(void)
 {
     uh.run = 0;
     uh.out_mps = 0;
-    uh.tx_count = 0;
+    uh.tx_count = uh.tx_rt = 0;
     mo_r = mo_w;
+    rt_r = rt_w;
     RING_PUBLISH();
     midi_usb_lost = 1;
 }
@@ -501,11 +502,21 @@ static void uh_tx_poll(void)
         }
         if (csr & 0x03u) return;                        /* TxPktRdy / FIFONotEmpty: no ACK yet */
         RING_PUBLISH();
-        mo_r += uh.tx_count;
-        uh.tx_count = uh.tx_errors = 0;
+        rt_r += uh.tx_rt;
+        mo_r += (uint32_t)uh.tx_count - uh.tx_rt;
+        uh.tx_count = uh.tx_rt = uh.tx_errors = 0;
     }
-    while (mo_r + n / 4u != mo_w && n + 4u <= uh.out_mps) {
-        uint32_t p = midi_out_q[(mo_r + n / 4u) % MQ];
+    while (rt_r + n / 4u != rt_w && n + 4u <= uh.out_mps) {
+        uint32_t p = midi_rt_q[(rt_r + n / 4u) % RTQ];
+        ep1tx[n] = (uint8_t)p;
+        ep1tx[n + 1] = (uint8_t)(p >> 8);
+        ep1tx[n + 2] = (uint8_t)(p >> 16);
+        ep1tx[n + 3] = (uint8_t)(p >> 24);
+        n += 4u;
+    }
+    uh.tx_rt = (uint8_t)(n / 4u);
+    while (mo_r + n / 4u - uh.tx_rt != mo_w && n + 4u <= uh.out_mps) {
+        uint32_t p = midi_out_q[(mo_r + n / 4u - uh.tx_rt) % MQ];
         ep1tx[n] = (uint8_t)p;
         ep1tx[n + 1] = (uint8_t)(p >> 8);
         ep1tx[n + 2] = (uint8_t)(p >> 16);

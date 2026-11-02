@@ -36,11 +36,11 @@ static int cursor_playback(void)
     turn(EN_K1, -10); pattern_poll(); events_block(1);
     bad += check("SONG starts selected section at step zero with its full repeats", chain.running && chain.row == 62 && chain.remaining == 2 && trk[0].seq_idx == 0 && trk[0].seq_n == 1);
     uint32_t period = seq_div_samples(trk[0].p[P_SDIV]);
-    events_block(period);
+    units_block(period);
     bad += check("cursor movement does not seek a running song", chain.row == 62 && chain.remaining == 1 && ui.song_row == 52);
-    events_block(period);
+    units_block(period);
     bad += check("cursor playback continues into the following section", chain.row == 63 && chain.running);
-    events_block(period);
+    units_block(period);
     bad += check("cursor playback stops at the end and restores the original bank", !chain.running && !song.playing && trk[0].pattern == 0 && trk[0].step[0].note[0] == 60);
     ui.song_row = 20; press(B_OCTUP);
     bad += check("OCT+ opens cell actions and never starts playback", pop.on == POP_SHEET && !chain.armed && !song.playing);
@@ -72,16 +72,16 @@ static int rests(void)
     events_block(1);
     bad += check("REST suppresses manual notes, recorded notes and motion", chain.running && !t->seq_n && t->p[P_LEVEL] == level && !t->rh_n);
     uint32_t bar = 16u * seq_div_samples(2u);
-    events_block(bar - 1u);
+    units_block(bar - 1u);
     bad += check("a resting track one keeps a complete four-beat section", !chain.row && chain.remaining == 2 && !t->seq_n);
     events_block(1);
     bad += check("resting sections use the normal repeat count", !chain.row && chain.remaining == 1);
-    events_block(bar);
+    units_block(bar);
     bad += check("leaving a rest resumes the referenced pattern and motion", chain.row == 1 && t->p[P_LEVEL] == 12 && t->seq_n && !trk[1].seq_n);
     seq_stop();
     bad += check("STOP after rests restores timing, sound controls and pattern contents", t->p[P_SLEN] == 1 && t->step[0].note[0] == 60 && t->p[P_LEVEL] == level);
     arrangement(1); memset(chain_patterns[0], CHAIN_REST, NTRK); chain_config.row[0].slot = CHAIN_REST;
-    chain_prepare(); events_block(1); events_block(bar);
+    chain_prepare(); events_block(1); units_block(bar);
     bad += check("an entirely resting song advances and stops normally", !song.playing && !chain.running);
     return bad;
 }
@@ -142,11 +142,11 @@ static int block_spans(void)
     bad += check("KNOB 4 extends only the selected block into following sections", chain_patterns[1][1]==CHAIN_HOLD && chain_patterns[3][1]==CHAIN_HOLD && chain_patterns[4][1]==CHAIN_REST && chain_config.row[0].repeat==1 && chain_config.count==5);
     bad += check("resizing leaves every other track assignment intact", chain_patterns[1][0]==0 && chain_patterns[1][2]==CHAIN_REST);
     chain_prepare(); events_block(1); uint32_t generation=trk[1].pattern_gen;
-    uint32_t period=seq_div_samples(trk[0].p[P_SDIV]); events_block(period);
+    uint32_t period=seq_div_samples(trk[0].p[P_SDIV]); units_block(period);
     bad += check("a spanning block keeps its step and held note across section boundaries", chain.row==1 && trk[1].seq_idx==1 && trk[1].seq_n==1 && trk[1].pattern_gen==generation);
-    events_block(period);
+    units_block(period);
     bad += check("automation follows the block's continuous phase", chain.row==2 && trk[1].seq_idx==2 && trk[1].p[P_LEVEL]==12);
-    events_block(period); events_block(period);
+    units_block(period); units_block(period);
     bad += check("the end of a resized block releases its notes into the following rest", chain.row==4 && !trk[1].seq_n);
     seq_stop(); ui.song_row=2; turn(EN_K4,-2);
     bad += check("shrinking from inside a block trims its right edge and leaves rests", chain_patterns[1][1]==CHAIN_HOLD && chain_patterns[2][1]==CHAIN_REST && chain_patterns[3][1]==CHAIN_REST && !ui.song_row);
@@ -195,9 +195,9 @@ static int recorded_block(void)
     for(uint32_t r=0;r<5;r++){chain_patterns[r][0]=0;chain_config.row[r].slot=0;}
     chain_patterns[0][1]=0;chain_patterns[1][1]=chain_patterns[2][1]=CHAIN_HOLD;
     chain_prepare();events_block(1);uint32_t period=seq_div_samples(trk[0].p[P_SDIV]);
-    events_block(period);events_block(period);
+    units_block(period);units_block(period);
     bad+=check("recorded notes remain held through continued sections",chain.row==2&&recording_owns(&trk[1],72));
-    events_block(period);
+    units_block(period);
     bad+=check("a block's right edge releases its retained recorded notes",chain.row==3&&!recording_owns(&trk[1],72));
     seq_stop();chain_prepare_from(2);events_block(1);
     bad+=check("cursor playback inside a block chases an ongoing recorded note",chain.row==2&&trk[1].seq_idx==2&&recording_owns(&trk[1],72));
@@ -221,10 +221,10 @@ static int song_looping(void)
     song_page();press(B_OCTUP);sheet_do("Loop song");
     bad+=check("OCT+ offers Loop song with a persistent header state",chain_config.rsv[CHAIN_LOOP]&&str_eq(song_edit_status(),"LOOP"));
     chain_prepare_from(1);events_block(1);uint32_t period=seq_div_samples(trk[0].p[P_SDIV]);
-    trk[0].seq_pos=period-8u+3u;events_block(8);
+    trk[0].seq_pos=period-8u+3u;units_block(8);
     bad+=check("a cursor start loops the complete song with fractional timing intact",chain.running&&song.playing&&!chain.row&&chain.remaining==2&&trk[0].seq_pos==3);
-    events_block(period);bad+=check("looping retains the first section's complete repeat count",!chain.row&&chain.remaining==1);
-    events_block(period);events_block(period);
+    units_block(period);bad+=check("looping retains the first section's complete repeat count",!chain.row&&chain.remaining==1);
+    units_block(period);units_block(period);
     bad+=check("song looping survives multiple passes",chain.running&&!chain.row&&chain.remaining==2);
     song_loop_set(0);bad+=check("changing loop mode while playing is refused",chain.config.rsv[CHAIN_LOOP]&&chain_config.rsv[CHAIN_LOOP]&&msg_is("STOP TO EDIT"));
     press(B_PLAY);events_block(1);
@@ -237,7 +237,7 @@ static int song_looping(void)
     song_loop_set(0);project_save(1);song_loop_set(1);project_load(1);
     bad+=check("ordinary older project records default to non-looping",!chain_config.rsv[CHAIN_LOOP]);
     arrangement(1);memset(chain_patterns[0],CHAIN_REST,NTRK);chain_config.row[0].slot=CHAIN_REST;song_loop_set(1);
-    chain_prepare();events_block(1);uint32_t bar=16u*seq_div_samples(2u);chain.rest_pos=bar-8u+2u;events_block(8);
+    chain_prepare();events_block(1);uint32_t bar=16u*seq_div_samples(2u);chain.rest_pos=bar-8u+2u;units_block(8);
     bad+=check("a single resting section loops without hanging or losing time",chain.running&&!chain.row&&chain.rest_pos==2&&!trk[0].seq_n);
     seq_stop();return bad;
 }

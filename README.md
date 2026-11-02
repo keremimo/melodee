@@ -34,8 +34,8 @@ For a black-screen device already in ROM UBOOT, use the
 [direct USB recovery tool](BUILDING.md#recover-a-black-screen-fm-1).
 
 Multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. Current stable release:
-**[Melodee 1.6.0](https://github.com/keremimo/melodee/releases/tag/v1.6.0)**
-([release notes](docs/RELEASE_1.6.0.md)).
+**[Melodee 1.6.1](https://github.com/keremimo/melodee/releases/tag/v1.6.1)**
+([release notes](docs/RELEASE_1.6.1.md)).
 
 Four internal synth/MIDI parts plus four dedicated MIDI tracks, 64-section songs with timed
 punch FX, 32 projects, USB Host input/output, Bluetooth MIDI, AUTO/AUTO2 harmony and a shared
@@ -56,6 +56,18 @@ Tagged releases from 1.4.4 use the [FM-1 shared build workflow](https://github.c
 to build and attest firmware from the tagged source. See [release verification](BUILDING.md#releases)
 for the process and the command to check a downloaded package. An attestation establishes
 build provenance; hardware validation is a separate check.
+
+## What's new in 1.6.1
+
+Clock output and Song Position are covered by automated tests; they have not yet been tried with a real follower.
+
+- **MIDI clock out:** with CLK on INT, the FM-1 sends clock on USB and Bluetooth, stopped or playing, with Start on PLAY and Stop on STOP.
+- **Song Position:** PLAY from a SONG cursor sends Song Position and Continue. Following on USB, TRS or Bluetooth, Song Position then Continue starts every pattern where playing from the top would put it.
+- **Timing:** INT runs on exact musical units, so nothing drifts, and synced LFOs lock to the song on either kind of clock. Clock and transport go ahead of notes in the MIDI queues.
+- **CLK is the device's:** loading a project no longer changes it.
+- **Manual:** rewritten against the firmware, with new sections for MIDI tracks, clock, MIDI LEARN, Bluetooth and USB Host.
+
+Stored data is unchanged from 1.6.0. See the [1.6.1 release notes](docs/RELEASE_1.6.1.md).
 
 ## What's new in 1.6.0
 
@@ -494,17 +506,18 @@ user presets saved by earlier Melodee versions are not imported, and the user sa
 ## Features
 
 - **Five selectable instruments:** PROPHET, FM6, CZ-1, SID and DRUM, each with factory presets;
-  DRUM contains synthesized 808 and 909 kits
-- **MIDI Track:** a USB MIDI engine with one **DEFAULT** preset. Its **CH** control (Stage KNOB 1,
+  DRUM contains synthesized 808, 909, SID, CR78 and FM kits
+- **MIDI Track:** a MIDI engine with one **DEFAULT** preset. Its **CH** control (Stage KNOB 1,
   EDIT 1 KNOB 1) selects output channel 1–16, initially the track number. Keys, scales, chords, arpeggios,
   step sequences, recorded takes, pattern changes and SONG use the same musical paths as the instruments.
-  **TRS** (THRU, KNOB 2) additionally accepts routed TRS input while SYSTEM **MIDI** shows USB; with it off,
-  MIDI Track receives the input selected there. Synth tracks continue accepting both inputs. Incoming channel
+  **TRS** (THRU, KNOB 2) additionally accepts routed TRS input, alongside the input chosen at SYSTEM **MIDI**; with it
+  off, MIDI Track receives only that input. Instrument tracks accept every input. Incoming channel
   controls are forwarded on the chosen output channel. Projects save Channel and TRS THRU for every track;
   templates retain them for tracks 1–4.
-  With Menu > **USB HOST** on, the same MIDI tracks send to the first attached USB-MIDI device's output
-  endpoint (cable 0), directly or behind one externally powered hub. Output-only USB synths are supported;
-  the device must supply a MIDI 1.0 streaming interface. With HOST off, output goes to the computer as before.
+  Notes go out over USB to the computer and over a Bluetooth connection. With Menu > **USB HOST** on, the USB output
+  goes instead to the first attached device with a USB-MIDI interface (cable 0), alone or behind an externally powered
+  hub, including hubs built from two chips. Output-only USB synths are supported; the device must supply a MIDI 1.0
+  streaming interface and may be more than MIDI, such as a sampler or audio interface.
   Track level, pan, audio modulation, insert FX, note FX and FX sends are disabled; MIDI Track allocates no
   audio voices or engine/FX working memory. Mute, solo, stop and sound/channel changes release outgoing notes.
 - **Up to eight tracks:** tracks 1–4 can use any instrument, including MIDI Track; tracks 5–8 are MIDI-only.
@@ -518,9 +531,11 @@ user presets saved by earlier Melodee versions are not imported, and the user sa
   moves; unquantized live loop recording with overdub and optional quantization at take end; MIDI step entry; tied-note length,
   movement and deletion; eight-level manual step undo/redo; divisions from 1/32 to 4 bars;
   loading a sound never touches your patterns
-- **Patterns:** eight independent 64-step banks per track, with up to four notes per step, ties,
-  chance, drum hits and bank-specific motion (64 automation events shared across the project)
-- **Songs:** up to 16 rows, each choosing a bank for every track and repeating 1–16 times
+- **Patterns:** 16 independent 64-step patterns on each of tracks 1–4 and eight on each of tracks 5–8, with up to
+  four notes per step, ties, chance, drum hits and pattern-specific motion (64 automation events shared across the
+  project). A pattern can carry its own sound
+- **Songs:** up to 64 sections, each choosing a pattern or a rest for every track, with an elapsed-time ruler, blocks
+  that span sections, up to four timed master punches per section, a sound per block and Loop song
 - **Chord keys:** AUTO chooses scale-compliant Western chords with melodic context and smooth voice leading;
   AUTO2 keeps your played melody on top with stable harmony underneath;
   one finger also plays the scale's triads or sevenths, or fixed chord
@@ -528,19 +543,20 @@ user presets saved by earlier Melodee versions are not imported, and the user sa
 - **Arpeggiator** with REPEAT and a beat LED, 70 scales with a white-key mode, glide,
   MONO / LEGATO / UNISON
 - **Modulation matrix:** 4 slots per track, MIDI controllers as sources
-- **Dry mixer:** track level, pan and synth voice spread, optional per-track FX, with output protection
+- **Mixer and effects:** track level, pan and synth voice spread, per-track note effects, a three-slot shared audio
+  rack with CHAIN or SPLIT sends, 27 master punch effects and output protection
 - **Quick layers:** hold GLO or SCL for shortcuts on the keys and knobs; double-press GLO to lock
   its layer. Repeated SCL taps navigate the scale pages. Multi-level undo (EDIT held); REC on every page;
   OCT+ confirms, OCT- goes back
 - **Presets:** browse by category (BASS, LEAD, PAD, KEYS, ORGAN, STRING, BRASS, WIND, PLUCK, BELL, DRUM, FX), favourites or
-  RECENT, with knob acceleration; factory presets, 384 shared user slots and 4 projects, named on the device;
-  a startup project and a template for new projects; compatible upstream projects from earlier versions load
+  RECENT, with knob acceleration; factory presets, 384 shared user slots and 32 projects, named on the device, in one
+  storage pool; a startup project and a template for new projects; projects from Melodee 1.0 or later load
 - **Screen:** Melodee's own look: Rubik type, icons drawn for Melodee, every track in its own colour (the screen takes the
   selected track's, each knob a shade of it), eight palettes: NIGHT, DAY, CONTRAST, SUNSET, OCEAN, NEON, CANDY and LO-FI
 - **Stage (HOME):** the selected track's own four knobs (its engine's: the Prophet's cutoff, resonance, filter envelope
   and release, the CZ-1's wave, DCW, detune and vibrato), the notes and chord it plays in front of the live waveform
   (the last voicing stays after release; a DRUM track lights its lanes as they hit), and a lane per track: its sound,
-  its pattern (and the next one while it waits for the bar), the bar playing and its level. An armed track's lane has a
+  its pattern (and the next one while it waits for the bar) and every step of that pattern as dots. An armed track's lane has a
   soft red border: breathing while it waits, flashing on each beat while it records. A knob turning shows its value
   in its cell, never over the picture
 - **Lights:** one grammar for keys and buttons: dark nothing there, dim something there, bright happening now,
@@ -548,33 +564,58 @@ user presets saved by earlier Melodee versions are not imported, and the user sa
   while its note sounds, MIDI in too, and the idle buttons glow; REC breathes while armed and waiting for the pattern start, PLAY while
   counting in; the HOME-held menu's LIGHTS sets the level (OFF: only what is pressed, engaged or selectable)
 - **USB:** class-compliant MIDI in and out; one **Melodee** audio device handles playback and recording.
-  Playback plays the computer through the FM-1; recording defaults to a stereo copy of the synth master,
-  including track effects, shared effects,
-  pan, master level and output protection. The HOME-held menu's **USB INPUT** selects **STEREO** or
+  Playback plays the computer through the FM-1; recording defaults to a stereo copy of the finished mix,
+  including track effects, shared effects, punch FX,
+  pan and output protection, taken before MASTER, so a low knob does not mean a quiet take. The HOME-held menu's
+  **USB INPUT** selects **STEREO** or
   **4 TRACKS** (four isolated mono stems, after track effects/level, before shared effects and master).
   Stereo skips stem collection and halves capture transfer/packing work; no extra effects pass or resampling.
   Computer playback and the monitor click stay out of recordings. Both support 16/24-bit audio at 44.1 kHz.
-  The computer or phone's standard USB volume and mute controls adjust playback, with smooth level changes.
-  The synth master and recorded channels keep their levels; the FM-1's MASTER still sets playback's overall limit.
+  Playback's level is the HOME-held menu's **USB VOLUME** (0–100%, default 50) times the computer or phone's standard
+  USB volume, with smooth level changes; their mute applies. It does not follow MASTER, and neither volume changes
+  what is recorded.
   Each direction can be disabled with **USB AUDIO**. Changing USB options reconnects automatically; reselect the
   input in your DAW if needed. Switching between stereo and four-track modes changes the USB layout
   revision along with the channel count. No driver needed
 - **System clock:** Melodee runs at 360 MHz, the clock the FM-1's boot loader sets, and never changes it. The
   OVERCLOCK menu of 1.3.x is gone: on some FM-1s its clock change left the device in UBOOT
-- **MIDI:** USB and TRS MIDI in; GLO > SYSTEM **ROUT** selects **CH1-4**, **CH5-8**, **CH9-12** or **CH13-16**.
+- **MIDI:** USB, TRS and Bluetooth MIDI in; GLO > SYSTEM **ROUT** selects **CH1-4**, **CH5-8**, **CH9-12** or **CH13-16**.
   The panel abbreviates these as **1-4**, **5-8**, **9-12**, **13-16**. Only that range plays tracks 1–4
   (those in use), in order; other channels are ignored. **SEL** receives all
   channels on the selected track. **DRUM** (10 by default, any channel or OFF) redirects its channel to the
   first DRUM track only within the chosen range; without a DRUM track, normal routing applies.
-  The keys send on the track's channel; pitch bend, sustain, panic; clock from internal, USB or TRS;
-  GLO > SYSTEM KNOB 1 shows the USB or the TRS input's status (RX while it receives; synths accept both;
+  The keys send on the track's channel; pitch bend, sustain, panic;
+  GLO > SYSTEM KNOB 1 shows the selected input's status (RX while it receives; instrument tracks accept every input;
   MIDI Track follows this selection and its TRS THRU option).
-  Local PLAY uses the internal tempo until the selected input sends Start, Continue or Stop. Clock
-  pulses alone do not take over. Changing the clock source clears this transport selection.
+- **Clock and transport:** GLO > GLOBAL **CLK** chooses who keeps time. It is the device's setting: it survives
+  power-off and loading a project does not change it. **INT** (default): the FM-1 leads. It sends MIDI clock on USB and
+  Bluetooth, stopped or playing, with Start on PLAY and Stop on STOP. GLO + PLAY sends Stop then Start, PLAY from a
+  cursor on SONG sends Song Position and Continue, and leaving INT sends one Stop. **USB**, **TRS** or **BLE**: the FM-1
+  follows clock, Start, Continue, Stop and Song Position from that input and sends no clock. Song Position followed by
+  Continue starts every pattern where playing from the top would put it; the FM-1 stays in its patterns and does not
+  run its own SONG sections. Local PLAY uses the internal tempo until the selected input sends Start, Continue or Stop.
+  Clock pulses alone do not take over, and if the leader has stopped, PLAY runs on the internal tempo until its next
+  Start, Continue or Stop. Changing the clock source clears this transport selection. TRS is an input only, so no clock
+  leaves through it
+- **MIDI LEARN and controllers:** the HOME menu's **MIDI LEARN** binds up to 16 CCs to any knob of a track's page or
+  Stage's knobs: start it, turn a knob, send a CC. Bindings are kept only until power-off. **MIDI KNOBS** (GENERAL or
+  MINILAB) operates the eight panel controls from a controller
+- **Bluetooth MIDI:** one BLE-MIDI connection, in and out, alongside USB and TRS. Hold HOME and choose **BLUETOOTH**.
+  **Mode** picks how you connect: **CONNECT OUT** scans for BLE controllers and synths from that page; **VISIBLE**
+  advertises as Melodee XXXX so a Mac, iPad or phone can connect. The radio's on/off state, the pairing and the last
+  device stay across power cycles, and after a power-on Melodee looks for the last device until it connects. Bluetooth
+  audio, two connections at once, Secure Connections pairing, wireless updates and editor or SysEx traffic are not
+  included. See [Bluetooth MIDI](docs/BLE_MIDI.md)
+- **USB Host:** Menu > **USB HOST** makes the USB-C port the host of a USB-MIDI keyboard, controller or synth, alone
+  or behind a hub, instead of talking to a computer. The FM-1 supplies no USB power, so use a hub with its own supply or
+  an OTG adapter that powers the device. It is not saved: every power-on starts as a normal USB device
 - **Web:** editor for every parameter (with a 6-operator FM patch editor), step grid, mixer,
-  preset library and FM6 voice editor; full backup and restore; return to the official firmware
+  preset library and FM6 voice editor; full backup and restore; return to the official firmware. The editor
+  understands rests, continued blocks, 64 sections and Loop song; its arrangement view has four tracks, its pattern
+  view shows eight patterns and its project command reaches slots 1–4. Timed punches and song presets are edited on
+  the device, and replacing a whole arrangement from the editor clears them. Backups keep them all
 
-## Feature feedback improvements (in development)
+## Feature feedback improvements
 
 Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
 [issue #39](https://github.com/keremimo/melodee/issues/39). These changes add:
@@ -591,10 +632,8 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
   selection remain available. ON keeps the existing automatic picker for longer named lists.
 - **UI feedback:** ON/OFF values have filled or outlined badges. SONG and SCALES put their
   titles on the right, and MOTION clears the entire page background when entering.
-- **Installer:** choose a stable release explicitly; Standard stays the default and Single
-  core is under **Advanced / Hardware fallback**. The flashing log scrolls within a bounded
-  box. Previously published releases with both core variants are staged with verified
-  checksums and retained for later selection; the banner no longer names an outdated version.
+- **Installer:** choose a stable release explicitly. The flashing log scrolls within a bounded
+  box, and the banner no longer names an outdated version.
 - **Documentation:** the screen strip comes from the firmware renderer, and the hardware
   diagram matches the current buttons, HOME assignment, effects and shortcuts.
 
@@ -607,11 +646,12 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
   lists and grids, KNOB 2 moves down; on parameter pages KNOB 1–4 edit the four controls
 - **BPM**, the song's **SWG** and the selected track's recording **QNT** are on **SEQ > TEMPO**:
   the project's, saved and loaded with it (power-on: the BOOT project's, the template's or 120);
-  GLO > GLOBAL keeps CLK and TUNE, the device's
+  on GLO > GLOBAL, A4, BUDGET and CLK are the device's and stay when you load a project, while TUNE, and SYSTEM's
+  MIDI and ROUT, come back at power-on but follow the project or template you load
 - **GLO > WEIGHTS** sets how many BUDGET points one voice of **P5** (Prophet), **CZ-1**, **FM6** and **SID** costs;
-  **WEIGHTS 2** has **DRUM**, **BUDGET** and **SAFETY**. AUTO keeps the built-in cost; 1–15 replaces it, so a
-  heavier weight lets fewer voices of that engine start. **SAFETY OFF** stops an overload from cutting releasing
-  voices: the audio may glitch instead, and an overload that lasts several seconds can freeze the panel and
+  **WEIGHTS 2** has **DRUM**, **BUDGET** and **GUARD**. AUTO keeps the built-in cost; 1–15 replaces it, so a
+  heavier weight lets fewer voices of that engine start. **GUARD ON** lets an audio overload cut releasing voices. With
+  **OFF** (default) the audio may glitch instead, and an overload that lasts several seconds can freeze the panel and
   restart the FM-1. Device settings, kept across projects
 - SCL, ENV, LFO, EDIT, GLO, SAVE, ARP and SEQ open their pages; press again for the next page.
   HOME returns home; on HOME, tap HOME again for its second page: the chord in the middle of a wheel
@@ -619,24 +659,24 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
   into the chord's shape), each track's level pulsing in the corners, the output's waveform and four octaves of keys
   lit as they sound. The knobs and octave buttons work there as on Stage
 - **SELECT on HOME** turns what you choose in the menu (hold HOME): **HOME SELECT** BPM (default), MOD WHEEL (the
-  selected track's, as MIDI CC1; also sent to MIDI out), LEVEL, SWING, TRANSPOSE, CHORD (the chord its keys play:
-  OFF, DIA3, DIA7, MAJ, MIN, DOM7, MAJ7, MIN7, SUS4, POW), ARP RATE, PATTERN (the selected track's next pattern) or OFF.
+  selected track's, as MIDI CC1; also sent to MIDI out), LEVEL, SWING, TRANSPOSE, OCTAVE (the same shift as the octave
+  buttons, −3 to +3), CHORD (the choices on the CHORD page), ARP RATE, PATTERN (the selected track's next pattern) or OFF.
   The header shows the value
 - **GLO + SELECT** turns the menu's **GLO SELECT** on any page: the same choices, BPM by default
 - **Held:** GLO and SCL open their quick layers; EDIT undoes, SAVE saves the project, HOME opens the menu, SEQ the PATTERNS grid with
   the song under it, REC captures (below).
-- **Undo:** hold EDIT to undo the last sound or pattern load or Capture; hold it again to go further back (up to 8
-  levels); while EDIT is held, OCT- undoes and OCT+ redoes. On the step pages EDIT's undo
+- **Undo:** hold EDIT to undo a finished recording take (**UNDO RECORDING**; there is one such undo), else the last
+  sound or pattern load or Capture; hold it again to go further back (up to 8 levels); while EDIT is held, OCT- undoes and OCT+ redoes. On the step pages EDIT's undo
   covers the step edits first
   When editing synth steps, SCL and EDIT use the editing controls below instead.
-- **FX** opens the track's three insert pages; SELECT moves between the slots.
+- **FX** opens the track's rack: three note-effect slots and a Shared row; SELECT visits the racks and occupied slots.
 - **Tracks:** a blank song starts with four parts. On Stage, hold OCT+ for the sheet: **Add track** adds the next
   track, up to eight, with empty patterns and selects it. Tracks 1–4 open the sound browser (OCT− keeps the starting
   sound); tracks 5–8 open their MIDI channel controls, initially channels 5–8. **Remove track** removes the selected track after a question, stopped only: the tracks after
   it move down a place with their sounds, patterns, song sections, motion and recordings. Stage, MIXER, PATTERNS,
   SONG and GLO show the group of four containing the selected track. ALGORITHM cycles through every track; with
-  SEQ held, the first eight black keys select tracks 1–8 directly. With one track, Stage
-  shows its sound across the screen in large type. Projects keep every track’s settings and patterns. Templates
+  SEQ held, the first eight black keys select tracks 1–8 directly. Menu > **UNUSED TRACKS** HIDE drops the greyed Add
+  track rows so the tracks in use fill the screen; one track is then drawn large. Projects keep every track’s settings and patterns. Templates
   keep the track count and the first four parts’ settings; extra MIDI tracks start with their default settings
 - PLAY starts and stops all tracks; REC arms or disarms the selected track without starting the
   transport. While playing, REC waits for that track's next pattern start and keeps recording
@@ -655,18 +695,19 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
 - **Bulk presets:** hold OCT+ and turn SELECT, KNOB 1 or KNOB 2 to select a contiguous range in USER
   or STORE. Release, then tap OCT+ for **Send selected** over USB SysEx, **Erase selected** (one confirmation),
   or **Clear selection**. Empty slots are skipped. Single-slot **Send** is also available in USER.
-- **New song:** SAVE > PROJECT, turn KNOB 1 past TMPL to **NEW**, KNOB 3 to pick it and OCT+ (unsaved changes ask
+- **New song:** SAVE > PROJECT, move past the slots and **T** (the template) to **+** and press OCT+, stopped only (unsaved changes ask
   first). Set the key (KNOB 1 ROOT, 2 SCALE) and tempo (KNOB 3), OCT+; give each track a role with KNOB 1–4 (--
-  for no track, KEEP, DRUMS, BASS, CHORDS, LEAD, PAD), OCT+ creates it: the tracks with a role, in order (track 1
-  KEEP and the rest -- to start with, or as many as your template has), your template's sounds (none saved: the
-  power-on ones), a role's first sound where the template's does not fit it, every pattern empty
-- **Hold SAVE** (or **SAVE + REC**) to save the project back to the slot it was loaded from or last saved to (`SAVED B`), stopping
+  for no track, KEEP, DRUMS, BASS, CHORDS, LEAD, PAD), OCT+ creates it: the tracks with a role, in order (all four
+  KEEP to start with, or KEEP on as many as your template has tracks), your template's sounds (none saved: the
+  power-on ones), a role's first sound where the template's does not fit it, every pattern empty. Add MIDI tracks from
+  Stage's sheet afterwards
+- **Hold SAVE** (or **SAVE + REC**) to save the project back to the slot it was loaded from or last saved to (`SAVED 02`), stopping
   the transport first; a new project opens SAVE > PROJECT on a free slot. **Autosave:** stopped and untouched for
   5 seconds (no key, button, knob or MIDI), a project that has a slot saves itself there when it changed.
   Hold **HOME** and set **AUTOSAVE** to **OFF** to disable it (default **ON**). The choice survives power-off;
   manual saves still work
-- **Capture:** while the transport runs, Melodee keeps what you play on every track that is not recording. Hold
-  **REC** to write the selected track's last bars into its pattern, with their timing, velocities and lengths: an
+- **Capture:** while the transport runs and no track is recording, Melodee keeps what you play on the selected track;
+  switching tracks clears it. Hold **REC** to write the selected track's last bars into its pattern, with their timing, velocities and lengths: an
   empty pattern takes 1, 2 or 4 bars (as many as your notes span) and its LEN follows; a pattern with notes takes its
   last LEN steps over what it holds. Hold EDIT to undo
 
@@ -677,7 +718,8 @@ sound: each engine's factory presets in engine order, followed by the shared use
 The list can be **FAV**, **RECENT** (sounds browsed since power-on, newest first) or one category: **BASS LEAD PAD KEYS ORGAN STRING
 BRASS WIND PLUCK BELL DRUM FX OTHER**. Every factory sound, the Prophet, CZ-1 and FM6 libraries included, has a
 category; shared user slots take the category of a factory sound with the same name, otherwise the words in
-their name (BASS, PIANO, STRINGS, ...). The chosen category is kept with the device settings.
+their name (BASS, PIANO, STRINGS, ...). Each track remembers its own list; a track without one takes the last one
+picked, kept with the device settings (RECENT is not kept).
 
 **KNOB 4** chooses the engine and starts it from its init sound, nothing changed and dry (INIT PROPHET, INIT TONE,
 INIT SID, FM6's INIT VOICE; DRUM its 808 kit), for designing a sound from scratch; each engine's init sound comes
@@ -690,7 +732,7 @@ sweeps 0–127; the tempo and lists of more than 256 entries go twice as far, so
 away. Lists of names (waveforms, modes) never accelerate.
 MENU > **KNOB ACCEL** OFF keeps every detent one step. While the list moves fast, the screen follows at once and the
 sound loads when the knob rests, so a flick does not load every sound it passes; playing a key or changing the track
-loads it at once. Hold **SAVE** to return to the sound you had before browsing.
+loads it at once. **OCT−** in the browser, or **EDIT** held afterwards, returns to the sound you had before browsing.
 
 ### Patterns and songs
 
@@ -699,38 +741,63 @@ they do not play notes. Arming a pattern immediately restores normal playing, in
 for the loop. Play a note to start recording immediately, or press **PLAY** to use the configured count-in.
 When the take disarms, the keys return to selection. Holding **SEQ** also gives these selection shortcuts on other pages.
 
-Press one of the first eight white keys to pick pattern 1–8: the pattern playing is lit, the others
+The white keys F3–G5 pick patterns 1–16 (F3–F4, patterns 1–8, on a MIDI track): the pattern playing is lit, the others
 holding notes glow, the one waiting for the loop end breathes. Picking an empty pattern arms REC with it; on a
 pattern with notes, hit its key twice quickly to arm REC. These shortcuts record one pattern pass
 and automatically disarm. Selecting an empty pattern preserves existing explicit REC arming.
 Hold a pattern key alone for a second: a small dialog asks what next: press it again to delete the pattern, another
 pattern key to copy it there, OCT- to leave it. In the dialog the 4th and 5th black keys (C#, D#) blink: C# halves the
 pattern (LEN /2, the steps past it kept hidden), D# doubles it (LEN x2, its steps, recorded notes and motion copied
-after themselves; 64 steps at most). While SEQ is held the dialog stays, its title saying the length, so either can
-be pressed again; letting go of SEQ closes it. On the pattern playing EDIT held undoes them. The first eight black keys select
+after themselves; 64 steps at most). While the original pattern key or SEQ is held the dialog stays, its title saying
+the length, so either can be pressed again; after a resize, releasing both closes it. On the pattern playing EDIT held undoes them. The first eight black keys select
 tracks 1–8 directly (the selected one lit, an armed one breathing). **SEQ + SELECT** also chooses a pattern. While playing,
 destructive edits wait for the track's loop end, as a pattern change does: deleting or clearing a pattern, clearing
 its motion, copying over a pattern in use or the one playing (the header says **… AT LOOP END**, the pattern's key
 breathes); STOP does them at once. Live edits (a note, a hit, ERASE, a motion lane) stay immediate. While playing, each
 track changes at its own loop end. Selecting the active pattern cancels a queued change. STOP applies pending choices.
 
-**SEQ > PATTERNS** (or hold SEQ) shows the selected group’s eight patterns per track: the one playing in the track's colour
-(with how far it has played), the one waiting outlined, the others holding notes raised; under it, the song's rows
-around the one playing (no song yet: the jam's). **KNOB 1–4** pick that group’s patterns; SELECT goes on to SONG.
-**OCT+** opens the selected track's pattern's sheet: **Copy to…** frames the place it goes on the track's row (the
-first empty one), any knob moves the frame, OCT+ copies there (over a pattern in use it asks first) and OCT- cancels;
-**Delete pattern** asks, then empties the pattern, its notes and automation (hold EDIT to undo).
+**SEQ > PATTERNS** (or hold SEQ) shows the selected group’s four rows, eight patterns to a page. A part's 16 patterns
+are two pages, marked by dots over the numerals; a tick at the edge of a row says its pattern is on the other page.
+The one playing is in the track's colour (with how far it has played), the one waiting is dashed, the others holding
+notes show three bars; at the foot, the song as its sections' letters, the one playing lit (no song yet: the jam's).
+**KNOB 1–4** pick that group’s patterns; SELECT goes on to SONG.
+**OCT+** opens the selected track's pattern's sheet: **Set preset** and **Remove preset** (below); **Copy to…** frames
+the place it goes on the track's row (the first empty one): that track's knob moves the frame along the row, another
+track's knob jumps to that row and ALGORITHM picks any track; OCT+ copies there (over a pattern in use it asks first)
+and OCT- cancels. To another track, steps, timing and recorded notes are copied, motion only between tracks of the same
+engine, and the target keeps its own sound. **Delete pattern** asks, then empties the pattern, its notes, automation
+and preset (hold EDIT to undo).
 
-On **SEQ > SONG**, KNOB 1 chooses the section, KNOB 2 the track, KNOB 3 that track's pattern and
-KNOB 4 the section's repeats. **Jam to song:** from PLAY on, every loop of track 1 logs all tracks’
+On **SEQ > SONG**, KNOB 1 chooses the section (up to 64), KNOB 2 the track, KNOB 3 that track's pattern or REST, and
+KNOB 4 resizes the selected block into the following sections on that track: notes and automation continue through it,
+trimming leaves rests, and extending stops at another occupied block and can add empty sections at the end. A ruler
+above the blocks shows elapsed minutes:seconds. A rest leaves that track silent while tails decay.
+OCT+ opens Set preset, Remove preset, Set rest, Copy to…, Move to…, Add empty section, Loop song and Punch FX. Hold OCT+
+for Insert empty section, Duplicate section, Move section, Copy sections, Delete section, Loop song, Punch FX, Take jam
+and Clear song; hold OCT+ and turn KNOB 1 to select a phrase. EDIT held undoes song edits, and EDIT + OCT− / OCT+ undo
+and redo up to eight of them. **Jam to song:** from PLAY on, every loop of track 1 logs all tracks’
 patterns as a section (the same patterns again: a repeat), so switching patterns while you jam writes a song;
-hold **REC** on SONG to turn the logged jam into the arrangement (over a song with sections: confirm).
-PLAY runs the arrangement; sections change all tracks
-at track 1's loop boundary and the final section stops. STOP returns to the patterns selected before
-SONG. Project saves and complete backups include every bank and the arrangement (up to 64 banks). Songs using only
-tracks 1–4 keep the existing FBKK format. Songs with tracks 5–8 use FBKL, storing programmed steps in the same flash
-slots. If a song is too dense to fit, **PROJECT FULL** refuses the save and preserves the previous saved copy. All
-banks can be filled in working memory; a fully dense eight-track song exceeds a saved project’s capacity.
+hold **REC** on SONG, or choose Take jam, to turn the logged jam into the arrangement (over a song with sections: confirm).
+PLAY starts at the selected section, including the position inside a long block; a note still held at that point plays
+from there. Sections change all tracks at track 1's loop boundary and the final section stops, unless **Loop song**
+(saved per project, default off) returns it to section 1; PLAY still stops it. STOP returns to the patterns selected before
+SONG.
+
+**Timed punch FX:** tap **FX** on SONG, or choose Punch FX on its sheet, to place master punches in the selected section:
+up to four per section, any of the 27 punch effects, with START and END step numbers. START 5 / END 8 covers steps 5
+through 8, on every section repeat. Effect-coloured spans show inside the song blocks, and PLAY auditions them with a
+playhead. Edits need the transport stopped; holding a live FX key overrides the lane until you release it.
+
+**A preset for each block or pattern:** **Set preset** on SONG gives one track's block its own sound, across its
+continued sections; on PATTERNS it gives a pattern its own sound. Playback uses the song block's, then the pattern's,
+then the track's sound, and STOP returns to the track's. Each assignment is an independent copy, native patches
+included, so later library edits cannot change the song: up to 64 distinct copies, subject to memory and the project's
+saved size.
+
+Project saves and complete backups include every pattern and the arrangement. About 1,450 set steps fit across a
+project's patterns: an edit past that is refused with **PATTERN STORAGE FULL**, so the music can always be saved. A
+save that still does not fit says **PROJECT FULL** and preserves the previous saved copy; a full storage pool says
+**STORAGE FULL**, and erasing a project frees its space.
 
 ### Note editing
 
@@ -742,11 +809,12 @@ The highlighted note has a bright outline; the playhead is a separate moving lin
 - **SELECT** keeps its global job: turning the SEQ pages. **KNOB 1 STEP** walks every interval,
   including empty ones, and visits separate chord pitches or repeated hits one at a time. Going
   backwards lands on the previous interval's last note.
-- **KNOB 2 PITCH** changes the highlighted pitch. On an empty manual step, it inserts a note;
-  playing keys or MIDI enters a note or chord, then advances when released. Playing on a recorded
+- **KNOB 2 PITCH** changes the highlighted pitch, heard with NOTE PREVIEW on. On an empty step the screen says
+  **SELECT A NOTE**: PITCH never adds a note. While stopped, playing keys or MIDI enters a note or chord, then
+  advances when released; while the sequence plays they only play. Playing on a recorded
   interval auditions without replacing the take. During live recording, keys and MIDI record normally.
 - **KNOB 3 LENGTH** extends or shortens a note at hard quarter-step boundaries (0.25, 0.50, 0.75,
-  1.00, 1.25…); hold **ENV** for 1/16-step boundaries. Adjusting an ordinary step note while stopped
+  1.00, 1.25…), also while the sequence plays; hold **ENV** for 1/16-step boundaries. Adjusting an ordinary step note while stopped
   converts its chord and ties into precise timed notes, retaining their pitches and velocities.
   Recorded chord pitches then have independent lengths. Held-key entry and ENV + SELECT retain
   their whole-step tie controls for manual notes.
@@ -760,10 +828,14 @@ The highlighted note has a bright outline; the playhead is a separate moving lin
   Note durations and velocities stay intact; moving into an unselected manual note or tie is blocked.
   Hold **ENV** and turn SELECT or KNOB 1 to resize instead.
 - Hold **OCT+** and turn SELECT, KNOB 1 or KNOB 2 to select a range; turn **KNOB 1** to move its notes
-  at quarter-step boundaries, preserving relative timing, durations and velocities. Tap or hold OCT+ for
-  **Copy: KNOB 1**, **Quantize**, or **Clear selection**. A single note's sheet offers **Move note** and **Copy note**;
-  choose either, then turn KNOB 1. After copying, KNOB 1 moves the duplicate; OCT- finishes the move.
-  Copies and moves wrap around the loop. Hold OCT+ without a range to open the pattern tools: **Quantize** snaps
+  at quarter-step boundaries, preserving relative timing, durations and velocities. **KNOB 2 PITCH**, **KNOB 3 LENGTH**
+  and **KNOB 4 VEL** change every selected note by the same amount, so the intervals and differences stay; a turn stops
+  where the first note meets its limit, and a run of turns is one undo. Tap or hold OCT+ for **Move: KNOB 1**,
+  **Copy: KNOB 1**, **Quantize**, **Delete selected** or **Clear selection**. A single note's sheet offers **Move note**
+  and **Copy note**; choose either, then turn KNOB 1 to place it or KNOB 2 to change its pitch (in Copy mode KNOB 2 makes
+  the copy in place first and pitches the copy). After copying, KNOB 1 moves the duplicate; OCT- finishes the move.
+  Copies and moves wrap around the loop. Hold OCT+ without a range to open the pattern tools: **Clear pattern**,
+  **Clear motion** and **Quantize**, which snaps
   the pattern's note onsets, or only the selected range when one exists. On the Quantize row, KNOB 1 chooses
   **1**, **0.5**, or **0.25 step**, and OCT+ applies it. Durations and velocities stay intact; EDIT held undoes it.
 - Tap **EDIT** to delete the highlighted pitch. Recorded deletion affects just that hit; manual
@@ -801,23 +873,25 @@ Project saves, backups and bank copies preserve edited performance events and th
 User-preset patterns and the ordinary step-edit protocol carry only the grouped step overview;
 external overview edits can replace a recording group with ordinary step sequencing.
 
-A project holds **1,024 timed notes shared across all 32 banks**. A chord uses one entry per note.
+A project holds **1,024 timed notes shared across all its patterns**. A chord uses one entry per note.
 Distinct repeated hits are separate entries; repeating the same pitch at exactly the same time
 replaces that event. **RECORDING FULL** leaves existing recordings intact; clearing or replacing
 recorded steps makes space for new takes. Notes held longer than 128
 nominal steps are capped at that duration.
 
-Each track has **three FX insert slots**. Press **FX** for the rack; KNOB 2 selects
-its row, KNOB 1 the effect, and KNOB 4 its amount. OCT+ opens an effect's controls;
-SELECT visits occupied slots and the shared rack. Audio choices are **Phaser,
-Width, Formant, Tape, Spit, Room, Reverb, Chorus, Drive, Crush, Flanger,
-Pedal phaser and Pedal chorus**. Track slots also offer **Note tail**
-(envelope release) and **Note echo** (note repeats with tempo divisions and
-velocity decay). The MIDI effects are available only on individual tracks.
-The picker groups effects into Space, Motion, Dirt, Colour and Notes. OCT+ on
-an empty slot opens the effect browser: KNOB 1 selects a family, KNOB 2 an
-effect, and OCT+ confirms. Note tail has its single REL control on the rack;
-Note echo has LEVEL, TIME and DECAY on its page.
+Each track has **three note-effect slots** for **Note tail** (envelope release) and
+**Note echo** (note repeats with tempo divisions and velocity decay), followed by a
+**Shared** row. Audio processors run in the shared rack. Press **FX** for the track's
+rack; KNOB 2 selects its row, KNOB 1 the effect, and KNOB 4 its amount. OCT+ opens the
+selected slot, its effect picker if empty, or the shared rack; SELECT visits the racks
+and occupied slots. Note tail has its single REL control on the rack; Note echo has
+LEVEL, TIME and DECAY on its page.
+
+The shared rack's audio choices are **Phaser, Width, Formant, Tape, Spit, Room, Reverb,
+Chorus, Drive, Crush, Flanger, Pedal phaser and Pedal chorus**, grouped into Space,
+Motion, Dirt and Colour. OCT+ on an empty shared slot opens the effect browser: KNOB 1
+selects a family, KNOB 2 an effect, and OCT+ confirms. Audio processors in older projects' track
+slots load OFF; recreate them in the shared rack and set the track's send.
 
 Phaser sweeps all-pass sections, Width processes the left side with the right
 dry, Formant makes vowel shapes, Tape drifts smooth crossover filters, and Spit
@@ -830,9 +904,10 @@ slot dry and shows MEMORY FULL; switch it off and on to retry.
 
 **Shared** opens three shared audio slots, with CHAIN or SPLIT routing and a
 RETURN level. In CHAIN, each track's SEND feeds the three slots in series. In
-SPLIT, each shared slot has its own track send. Effects, routing and send levels
-save with projects and templates; sound changes preserve them. Four mono USB
-stems include each track's inserts; the stereo master includes the shared return.
+SPLIT, each shared slot has its own track send. Only one shared REVERB can be
+active. Effects, routing and send levels save with projects and templates; sound
+changes preserve them. Four mono USB stems are taken after each track's effects
+and level, before the shared rack; the stereo master includes the shared return.
 
 **SLOOP master punch FX and REVERB are available.** Hold FX and press any of
 its 27 keys for loops, reverse, tape stop, half speed, filter sweeps, crush,
@@ -840,42 +915,45 @@ aliasing, gate, echo, wobble, band kills, rewind, octave up, flanger, auto-pan,
 freeze, mono or fade. Double-tap FX to lock the layer; tap it again to close.
 Release the effect key to restore dry audio. KNOB 1 browses the key reference.
 The effects process the complete stereo master, including shared returns and
-USB stereo capture. They do not alter notes or instrument patches.
+USB stereo capture. They do not alter notes or instrument patches. To time them
+in a song, see **Timed punch FX** above.
 
 SLOOP's **REVERB** replaces Echoverb at effect ID 8, with SIZE (decay), DAMP
-and TONE in track/shared racks. It has a mono input and a stereo return at
+and TONE in the shared rack. It has a mono input and a stereo return at
 44.1 kHz, using 19,396 bytes per active slot. Echoverb's DSP and 60,340-byte
 allocation are removed. Existing ID 8 slots now play the new reverb; the other
 effect IDs and routing stay intact. FREEZE uses this reverb in the optional
 punch allocation, with no second tank.
 
-The racks also offer SLOOP-style **DRIVE**, **CRUSH**, **FLANGER**,
+The shared rack also offers SLOOP-style **DRIVE**, **CRUSH**, **FLANGER**,
 **PEDAL PHASER** and **PEDAL CHORUS**. DRIVE exposes DRIVE, TONE and SHAPE
 (SOFT, HARD, FOLD or FUZZ) with unity output level; CRUSH has BITS and ALIAS
 with bit-depth and sample-rate readouts and a fixed protective low-pass.
 The swept effects expose RATE, DEPTH and signed RESO. They preserve stereo,
-process equal mono input once until stereo arrives, and run on both inserts
-and CHAIN/SPLIT shared returns. Shared swept returns exclude the pedal's dry
+process equal mono input once until stereo arrives, and run on the
+CHAIN/SPLIT shared returns. Shared swept returns exclude the pedal's dry
 half. The existing PHASER/CHORUS remain distinct choices: the normal CHORUS is
 cheaper in host instruction measurements, while PEDAL CHORUS offers feedback.
 
-Buffered punches request 64 KiB while in use. MEMORY FULL / FX MEMORY indicates
+Buffered punches request 32 KiB while in use. MEMORY FULL / FX MEMORY indicates
 insufficient working memory. Hold FX briefly before reverse/rewind so the
 optional history contains past audio. See [implementation and key map](docs/SLOOP_PUNCH_FX.md).
 Audio Echo ID 6 stays retired and loads OFF. Note tail and Note echo remain note
 inserts. The old FX RATE fidelity setting is removed.
 
-With **CLK TRS** or **CLK USB**, musical timing follows MIDI clock pulses directly, so tempo
+With **CLK TRS**, **CLK USB** or **CLK BLE**, musical timing follows MIDI clock pulses directly, so tempo
 changes do not shift the pattern. DIV sets the pattern's step length, while TEMPO QNT independently
 selects the grid committed at recording end. The DRUM grid keeps its white-key step and black-key lane controls.
 
 ### Startup and compatibility
 
-On **SAVE > PROJECT**, KNOB 2 **BOOT** selects OFF or project A–D to load at power-on.
-KNOB 1 **SLOT** also offers **TMPL**: save your sounds and settings there as the template for new
-projects, with empty patterns and its number of tracks. BOOT OFF uses the template when one is saved, else one track
-with the power-on sound. CLK, TUNE, MIDI
-and ROUT persist between starts; loading a project or template applies its own settings. DRUM is the
+On **SAVE > PROJECT**, KNOB 1 and KNOB 2 move through the slots 01–32, **T** (the template) and **+** (New song).
+OCT+ opens a slot's sheet: Load, Save here, Rename, **Boot** (load that project at power-on; the slot shows a Boot mark)
+and Erase. The template's sheet offers Load template and Save as template: your sounds and settings as the template for
+new projects, with empty patterns and its number of tracks. With no boot project, power-on uses the template when one
+is saved, else four tracks with the default sounds (It's a Prophet, FM6 SOLID BASS, CZ-1 SYNTH.LEAD 1 and the 808 kit).
+A4, BUDGET and CLK are device settings: they survive power-off and stay when you load a project. TUNE, MIDI
+and ROUT persist between starts, but loading a project or template applies its own. DRUM is the
 device's own setting.
 
 For handpans and other instruments with a different concert pitch, open **GLO > GLOBAL** and turn
@@ -885,12 +963,24 @@ pitched engines, including FM6 and CZ-1, and takes effect on held notes. It is s
 settings and stays selected when loading projects, templates or presets. MIDI note numbers and
 incoming computer audio are unchanged; external MIDI instruments need their own tuning adjustment.
 
-Projects use the FBKG format: all 32 banks, their timing, arrangement and automation. Felucca 1.0
-projects load into pattern 1; their old project-based SONG rows are cleared. Pre-1.0 Melodee's
-multi-pattern projects/settings/templates and incompatible 58/62-parameter user presets are not imported.
+Projects and preset banks share one storage pool. A project takes only what it holds, typically about two 4 KB
+sectors, and an empty slot takes nothing; the selected slot shows the room left in KB. A save finishes writing before
+it replaces the old version, so an interrupted save keeps the previous one. Projects hold every pattern, their timing,
+the arrangement, punches, song and pattern presets and automation, in the formats FBKM to FBKQ, which older firmware
+cannot read and may overwrite.
+Projects from Melodee 1.0 or later load, songs included, with patterns 9–16 empty; they keep their full size until
+saved again, and a dense one that does not fit the new format is saved in its earlier format while patterns 9–16 stay
+unused. Anything saved before Melodee 1.0 shows **OLD FORMAT** and stays untouched until you choose to replace it.
+
+Factory sounds, the Rubik font and the Bluetooth radio program live in a resource region apart from the application.
+The update package carries it and the web installer writes it. If it is missing, the FM-1 says **Setup unfinished** at
+startup and your own sounds stay; press **Finish setup** in the installer. From 1.5.1 or earlier through Firmware Hub,
+install twice: the first install's firmware moves the old preset banks out of that region, and the second writes the
+factory sounds.
+
 User sample slots USR1–3 and sample uploads are removed; their flash space now stores projects.
-SAMPLE, GRAIN, SLICE, OBXF and the custom drum kit are removed; DRUM provides synthesized 808 and
-909 kits. Earlier sample data is overwritten as projects
+SAMPLE, GRAIN, SLICE, OBXF and the custom drum kit are removed; DRUM provides synthesized 808, 909, SID, CR78 and
+FM kits. Earlier sample data is overwritten as projects
 are saved. Complete backups with nonempty user samples require firmware that supports those slots.
 All engines use **one bank of 384 user presets, U001–U384**. Every slot can hold any engine:
 fill the entire bank with CZ-1 tones, Prophet programs, FM6 voices, SID sounds, drum sounds, or any mix.
@@ -951,13 +1041,17 @@ calibration; the FPU conversion does not establish hardware fidelity.
   portamento, wheel, foot, breath and aftertouch), saved with the project and the template
 - **CZ-1**: native Casio tones, with separate eight-point pitch, timbre and volume envelopes on each line
 - **SID**: a Commodore MOS 6581 / 8580 per note, modelled at the register level after reSID: three oscillators on the 16-bit frequency register (pulse width 12 bits, the 23-bit noise register, ring modulation, hard sync, combined waveforms sampled from real chips), the chip's envelope generator (16 rates, exponential decay, the ADSR delay), each revision's DACs and cutoff curve, the 6581's thump through the C64's output stage; 32 factory presets. MODEL C64 6581 / C64 8580 plays the track as one channel of a C64 tune: one voice, with frequency, pulse width, cutoff and resonance written once a PAL frame (50 Hz) as a player routine writes them; in POLY a held chord is arpeggiated on that voice, one note a frame, with one gate and envelope for the whole chord
-- **DRUM**: synthesized TR-808 and TR-909 kits with the General MIDI key map. Every drum has its
+- **DRUM**: synthesized TR-808, TR-909, SID, CR78 and FM kits with the General MIDI key map. Every drum has its
   own tuning, decay, tone, attack/snappy and level controls; recorded hits can override pitch and length.
   KIT SID plays the track as a C64 drum routine on one 6581: its three voices take the hits, each drum a
   50 Hz frame program (waveform, frequency slide, gate) on the chip's envelope; TONE and RES set its filter
   for kick, snare, toms and clap; DIGI ON plays kick and snare as 4-bit samples on the volume register
   ($D418), synthesized at build time, and the voices ringing meanwhile follow that volume as on a C64.
-  Two factory kits: SID KIT (every drum on the chip's voices) and SID DIGI (DIGI ON)
+  Two factory kits: SID KIT (every drum on the chip's voices) and SID DIGI (DIGI ON).
+  KIT CR78 is a late-1970s rhythm box after the CompuRhythm CR-78's voice list, built from the 808's circuit pieces and
+  not measured from a unit, with tambourine, cowbell, conga, bongos, claves and maracas; HATS (HAT or METAL, its metal
+  beat) replaces KICK on the HIT page. KIT FM is two-operator FM drums with noise. Both play all eight lanes on one
+  voice, like the SID kit
 
 ANALOG, DIGITAL, PHASE, VOICE, NOISE, TRIO, WHEEL and PHYS are retired. Their engine IDs, saved edit
 values and favourite bits remain reserved; old tracks using these engines are silent. PROPHET replaces
@@ -1018,7 +1112,7 @@ in that browser. Its filters keep the active tuning until a scale is selected;
 browser favorites and device favorites are separate.
 
 On the **SCL** page, set **QNT** to WHITE to play the selected scale using only the
-white keys (SNAP keeps every key and rounds it down to the scale). C4 plays **ROOT**; consecutive white keys play consecutive scale notes
+white keys (SNAP keeps every key and moves it onto the scale: down on 12-tone scales, to the nearest degree on microtonal ones). C4 plays **ROOT**; consecutive white keys play consecutive scale notes
 above and below it. Black keys are silent, including during live recording and
 step entry. **TRN** transposes the resulting notes; the octave buttons shift them
 by full repeat periods (octaves for the original scales). Set QNT to OFF for the normal chromatic keyboard.
@@ -1072,7 +1166,8 @@ MPC DRUM layout for 808 and SID, viewed from above (pad 01 is bottom left):
 
 The 909 keeps the same main positions: pad 07 is Ride and 08 is Crash. Its extra pads repeat useful
 hits: 12 Ride, 13 Kick, 14 Snare, 15 Closed hat and 16 Open hat. Each pad retriggers the hit even
-while its duplicate is held. Normal MIDI drum notes outside MPC mode and existing recorded patterns keep their GM mapping.
+while its duplicate is held. CR78 and FM use the 808's pad positions and play their own sound for each; on CR78, for
+example, 03 is its tambourine. Normal MIDI drum notes outside MPC mode and existing recorded patterns keep their GM mapping.
 
 On the **CHORD** page, CHRD picks the chord keys (OFF, the scale's triads or
 sevenths, a fixed shape, AUTO or AUTO2) and VOIC the voicing.
@@ -1150,8 +1245,10 @@ You can leave a tip with [ko-fi](https://ko-fi.com/keremimo).
 - SID engine: after [reSID](https://github.com/libsidplayfp/resid) by Dag Lem (GPL-2.0-or-later); its samples of a real
   6581's and 8580's combined waveforms are included as data ([assets/resid](assets/resid/README.md))
 - FM6 engine: msfa from [Dexed](https://github.com/asb2m10/dexed) by Google Inc. and Pascal Gauthier ([Apache-2.0](LICENSES/Apache-2.0-msfa.txt))
+- Bluetooth MIDI: the BLE stack of [Optimist](https://github.com/w0ts/optimist) (GPL-3.0-only); provenance in [docs/BLE_MIDI.md](docs/BLE_MIDI.md#source-provenance)
 - Package format and boot files: [JieLi AC79 SDK](https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK) ([Apache-2.0](LICENSES/Apache-2.0.txt); three of its files are in every package, none in this tree)
-- Contributions: [Charles Vestal](https://github.com/charlesvestal) (knob acceleration and 808/909 models),
+- Contributions: [Charles Vestal](https://github.com/charlesvestal) (knob acceleration, 808/909 models and the radio calibration, PR #90),
+  gabo_tor (nearest-degree microtonal SNAP, PR #93), David Konsumer (web emulator build, PR #53), HNguyen0325 (UC25HQ80 flash, PR #111),
   [keremimo](https://github.com/keremimo) (white-key scales, #2), [ChanceTheMaker](https://github.com/ChanceTheMaker)
   (TRS MIDI, bend, sustain and clock, palettes, favourites, editor display settings: #8, #10, #11, #12),
   [andreahaku](https://github.com/andreahaku) (sample recording and trim, #29; SLICE manual slices and tests, #27, #22),

@@ -49,24 +49,26 @@ static uint32_t lfo_rand(track_t *t)
     return s;
 }
 
-/* LFO 2 (1.2, #154; params.c N_LSYNC): with SYNC on, one cycle lasts the note value of the tempo (mix.c div_samples:
- * BPM, or the external clock's measured tempo while it runs), whatever RATE says (the matrix's RATE too): the phase
- * advances 2^32 x CTL / cycle a block (two 32-bit divides; the 1-bit truncation of 0xFFFFFFFF drifts by less than a
- * millionth of a cycle a cycle). OFF: RATE's table, as before */
-static uint32_t div_samples(uint32_t div);         /* (mix.c) */
-static struct { uint32_t cycle, inc; } lfo_sync_cache[NTRK];
+/* LFO 2 (1.2, #154; params.c N_LSYNC): with SYNC on, one cycle lasts the note value in the sequencer's units (mix.c),
+ * whatever RATE says (the matrix's RATE too), so it cannot slide against the song: the phase advances
+ * units x 2^32 / cycle a block, the remainder carried. Cycles are x times 1024 units, so units x 2^22 / x; a burst goes
+ * in 512 units at a time to stay in 32 bits. OFF: RATE's table, as before */
+static uint32_t seq_div_samples(uint32_t div);     /* (mix.c) */
+static uint32_t lfo_block_units;                   /* events_block, before the tracks render */
+static uint16_t lfo_sync_rem[NTRK];
 static __attribute__((noinline)) uint32_t lfo_sync_inc(const track_t *t)   /* (not inlined: its divides stay out of
                                                                            * the audio ISR's loop over the tracks) */
 {
-    uint32_t cyc, q, r;
-    cyc = div_samples(LSYNC_DIV[(uint32_t)t->p[P_LSYNC] % NELEM(LSYNC_DIV)]);
-    cyc = cyc ? cyc : 1u;
-    uint32_t ti=(uint32_t)(t-trk)%NTRK;
-    if(lfo_sync_cache[ti].cycle==cyc)return lfo_sync_cache[ti].inc;
-    q = 0xFFFFFFFFu / cyc;
-    r = 0xFFFFFFFFu % cyc;
-    lfo_sync_cache[ti].cycle=cyc;
-    return lfo_sync_cache[ti].inc=q*CTL+(r*CTL+CTL)/cyc;
+    uint32_t ti = (uint32_t)(t - trk) % NTRK, rem = lfo_sync_rem[ti], inc = 0;
+    uint32_t x = seq_div_samples(LSYNC_DIV[(uint32_t)t->p[P_LSYNC] % NELEM(LSYNC_DIV)]) / 1024u;
+    for (uint32_t n = lfo_block_units; n;) {
+        uint32_t chunk = n < 512u ? n : 512u, v = (chunk << 22) + rem;
+        inc += v / x;
+        rem = v % x;
+        n -= chunk;
+    }
+    lfo_sync_rem[ti] = (uint16_t)rem;
+    return inc;
 }
 
 static void track_lfo_tick(track_t *t)

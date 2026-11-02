@@ -63,7 +63,7 @@ static int take_prepare(const take_spec_t *s, const uint8_t *raw, uint32_t count
     song.rec = song.rec_latch = song.rec_wait = song.rec_pass = 0;
     song.g[G_BPM] = (int16_t)s->bpm; song.g[G_CLOCK] = 0; song.g[G_ROUTE] = 0; song.g[G_SWING] = 0;
     settings_countin = (uint8_t)countin; settings_drumch = 0;
-    take_step = seq_div_samples((uint32_t)trk[0].p[P_SDIV]);
+    take_step = div_samples((uint32_t)trk[0].p[P_SDIV]);     /* audio frames: the runner's real-time schedule */
     return 1;
 }
 static uint32_t take_drum(const take_spec_t *s, uint32_t k) { return s->assignment[k] >= '4'; }

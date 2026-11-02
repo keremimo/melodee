@@ -236,6 +236,9 @@ static void rec_note(track_t *t, uint32_t note, uint32_t vel);
 static void rec_release(track_t *t, uint32_t note);
 static volatile uint32_t seq_erase_request, seq_erase_generation;
 static uint32_t seq_erase_transport;
+static uint8_t seq_started;                     /* since the last block; audio ISR only (midi_sync_out_block) */
+static uint32_t seq_advanced;                   /* this block's units so far (an external clock's LFO) */
+static uint64_t seq_seek_units;                 /* the next start's place, from the top (midi_clock.c: Song Position) */
 static uint8_t seq_erase_seen[NTRK];
 static volatile uint16_t seq_erase_button;
 static int seq_erase_active(const track_t *t);
@@ -261,13 +264,13 @@ static void arp_off(track_t *t)                  /* the sounding arp note ends (
     t->arp_note = 0;
 }
 
-/* n and gate_n: sample time (INT), musical units (MIDI); a stopped external
- * transport uses real time converted to musical units for a tapped note's gate. */
+/* n and gate_n: musical units (mix.c); a stopped external
+ * transport uses real time converted to them for a tapped note's gate. */
 static volatile uint32_t beat_pos, beat_n;      /* clock units into the beat, beat of the bar (0..3) */
 static uint32_t punch_clock_samples(void)
 {
     uint32_t beat = beat_samples();
-    return midi_sync_active ? (uint32_t)((uint64_t)beat_pos * beat / MIDI_BEAT_UNITS) : beat_pos;
+    return (uint32_t)((uint64_t)beat_pos * beat / MIDI_BEAT_UNITS);
 }
 /* destructive edits wait for a track's loop end while it plays (ui_input.c dq_poll): its loop ends so far; the banks one
  * waits to destroy; the tracks kept silent from a loop end until it is done (a UI frame that missed the last step) */
@@ -298,10 +301,8 @@ static void arp_step(track_t *t, uint32_t n, uint32_t gate_n)
             return;
         if (t->arp_pos >= 0xFFFFFFFu)
             t->arp_pos = 0;
-        else if (midi_sync_active)
-            t->arp_pos -= period + (uint32_t)((t->arp_idx & 1u) ? sw : -sw);
         else
-            t->arp_pos = 0;
+            t->arp_pos -= period + (uint32_t)((t->arp_idx & 1u) ? sw : -sw);
         /* build the note list: held notes (sorted or as played) over OCT octaves */
         len = 0;
         for (i = 0; i < t->nheld; i++)
@@ -351,7 +352,6 @@ static void arp_step(track_t *t, uint32_t n, uint32_t gate_n)
             trk_note_on(t, t->arp_note, 100);
             chord_auto_observe(t, t->arp_note);
         }
-        if (!midi_sync_active) return;
         /* A recovered clock burst may cross several ARP steps. Consume them all
          * and retain the residual phase, just as the sequencer does. */
         if (t->arp_note) {
@@ -937,6 +937,8 @@ static __attribute__((noinline)) void audition_tick(uint32_t n)
 static void seq_start(void)
 {
     cin_left = 0; /* MIDI Start also cancels a pending local count-in. */
+    seq_started = 1;
+    int_clock_rem = 0;                             /* every start from the same place: a take repeats exactly */
     uint32_t i;
     seq_erase_request = 0;
     seq_erase_transport++;
@@ -953,7 +955,8 @@ static void seq_start(void)
         if (t->p[P_LTRIG] && t->p[P_LSYNC]) t->lfo_ph = (uint32_t)t->p[P_LPHASE] << 25;
         t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
         t->seq_pos = 0x7FFFFFFF;                   /* step 0 fires on the first block */
-        if (chain.running && chain.seek_samples[i]) {
+        if (!chain.running) chain.seek_samples[i] = seq_seek_units;   /* (a song's are its own: chain_prepare_from) */
+        if (chain.seek_samples[i]) {
             uint32_t period = seq_div_samples((uint32_t)t->p[P_SDIV]), loop = recording_loop(t, period);
             uint32_t phase = 0, idx = 0;
             if (loop) chain_div_samples(chain.seek_samples[i], loop, &phase);
@@ -968,6 +971,7 @@ static void seq_start(void)
         t->rh_n = 0;
         cap_step[i] = 0xFFFFu;                     /* (capture: step 0 is the first) */
     }
+    seq_seek_units = 0;
     cap_from = cap_w;                              /* capture and the jam log: this run */
     cap_track = song.sel;
     jam.n = 0;
@@ -1181,7 +1185,7 @@ static void seq_grid_tick(track_t *t, uint32_t n)
         uint32_t starting = t->seq_pos >= 0x7FFFFFFFu;
         uint32_t punch_in = 0;
         t->seq_pos = starting ? (chain.running ? chain.carry : 0u) : t->seq_pos - cur_len;
-        if (starting && chain.running) {
+        if (starting) {
             t->seq_pos += chain.seek_phase[trk_index(t)]; chain.seek_phase[trk_index(t)] = 0;
         }
         t->seq_idx = (uint16_t)((t->seq_idx + 1u) % (len ? len : 1u));
@@ -1210,7 +1214,7 @@ static void seq_grid_tick(track_t *t, uint32_t n)
         cap_step[trk_index(t)]++;
         if (!t->seq_idx && t == &trk[0] && !chain.running)
             jam_loop();
-        if (starting && chain.running && chain.seek_samples[trk_index(t)] && !chain_rest(t)) {
+        if (starting && chain.seek_samples[trk_index(t)] && !chain_rest(t)) {
             if (chain.seek_chase & (1u << trk_index(t)))
                 for (uint32_t j = 0; j < len; j++) motion_step(t, j, &motion);
             for (uint32_t j = 0; j < t->seq_idx; j++) motion_step(t, j, &motion);
@@ -1235,13 +1239,13 @@ static void seq_grid_tick(track_t *t, uint32_t n)
             }
             if (chain_rest(t) || ((seq_hush >> trk_index(t)) & 1u))
                 s = &SEQ_HUSH_STEP;
-            if (starting && chain.running && chain.seek_samples[trk_index(t)] && s->time == ST_TIE) {
+            if (starting && chain.seek_samples[trk_index(t)] && s->time == ST_TIE) {
                 uint32_t j = t->seq_idx;
                 for (uint32_t count = 0; count < len && seq_steps(t)[j].time == ST_TIE; count++) j = (j + len - 1u) % len;
                 if (seq_steps(t)[j].time == ST_NOTE) seq_step(t, &seq_steps(t)[j], period, skip);
             }
             seq_step(t, s, step_gate(s) ? step_samples(t, period, t->seq_idx) : period, skip);
-            if (starting && chain.running) chain.seek_samples[trk_index(t)] = 0;
+            if (starting) chain.seek_samples[trk_index(t)] = 0;
         }
     }
 }
@@ -1255,7 +1259,7 @@ static void seq_tick(track_t *t, uint32_t n)
     if (!((recording_tracks | song.rec) & (1u << trk_index(t)))) { seq_grid_tick(t, n); return; }
     if (!song.playing) { seq_grid_tick(t, n); return; }
     if (t->seq_pos >= 0x7FFFFFFFu) {
-        uint32_t seek = chain.running && chain.seek_samples[trk_index(t)];   /* (the first step clears it) */
+        uint32_t seek = chain.seek_samples[trk_index(t)] != 0;   /* (the first step clears it) */
         seq_grid_tick(t, n);
         recording_zero(t, seek);
         return;
@@ -1341,6 +1345,7 @@ static void seq_advance_part(uint32_t n)
 
 static void seq_advance(uint32_t n)
 {
+    seq_advanced += n;
     do {
         uint32_t chunk = chord_strum_next(n);
         seq_advance_part(chunk);
@@ -1353,6 +1358,7 @@ static void seq_advance(uint32_t n)
 static void events_block(uint32_t n)
 {
     chord_auto_tick(n);
+    seq_advanced = 0;
     uint32_t i, pr;
     if(song.playing || transport_req==1u)resource_release(RES_NOTE_HISTORY);
     uint32_t selected_clock = (uint32_t)song.g[G_CLOCK];
@@ -1481,7 +1487,9 @@ static void events_block(uint32_t n)
         if (midi_render_timed && (int32_t)(time - midi_render_time) > 0)
             break;
         mi_r++;midi_dispatch_left--;
-        if (status >= 0xF8u) {
+        if (status == 0xF2u) {
+            if (selected_clock == source) midi_clock_position(d1 | d2 << 7);
+        } else if (status >= 0xF8u) {
             if (selected_clock == source) {
                 if (status == 0xFAu || status == 0xFBu || status == 0xFCu) {
                     if (!clock_mode) midi_clock_mode(source);
@@ -1515,6 +1523,7 @@ static void events_block(uint32_t n)
     if (ble_discard && (int32_t)(mi_r - ble_discard_until) >= 0) ble_discard = 0;
 #endif
     if(song.playing)resource_release(RES_NOTE_HISTORY);
+    uint32_t sync_units = 0;
     if (clock_mode) {
         if (song.playing) {
             uint32_t last = midi_clock.have_pulse ? midi_clock.last_ms : midi_clock.start_ms;
@@ -1529,7 +1538,9 @@ static void events_block(uint32_t n)
             chord_strum_tick(elapsed);
             for (i = 0; i < NTRK; i++)
                 arp_step(&trk[i], trk[i].arp_phys ? elapsed : 0u, elapsed);
-        }
+            sync_units = elapsed;
+        } else
+            sync_units = lfo_ext_units(n, seq_advanced);
     } else {
         uint32_t left=n;
         if(cin_left) {
@@ -1548,8 +1559,11 @@ static void events_block(uint32_t n)
                 }
             }
         }
-        if(left)seq_advance(left);
+        sync_units = int_clock_units(n - left);        /* (the clock out runs through a count-in) */
+        if(left) { uint32_t units = int_clock_units(left); seq_advance(units); sync_units += units; }
     }
+    midi_sync_out_block(sync_units);
+    lfo_block_units = sync_units;
     if (song.playing)
         song.tick++;
 }

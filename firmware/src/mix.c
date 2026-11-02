@@ -79,13 +79,26 @@ static uint32_t div_samples(uint32_t div) { return division_samples(beat_samples
 
 #include "punch.c"
 
-/* External sequencing uses musical units, independent of the measured tempo.
- * 24 clocks/beat and every division divide exactly; tempo estimates only set
- * LFO timing and the display, never move an already recorded step. */
+/* The sequencer runs on musical units on every clock, so tracks, recordings, ARPs and the clock out cannot slide against
+ * each other: 24 clocks/beat and every division divide exactly. A tempo only sets how fast units pass (int_clock_units,
+ * or an external clock's pulses) and the display; it never moves an already recorded step. */
 #define MIDI_BEAT_UNITS 24576u
 static uint32_t seq_beat_samples(void)
 {
-    return midi_sync_active ? MIDI_BEAT_UNITS : beat_samples();
+    return MIDI_BEAT_UNITS;
+}
+/* CLK INT: audio samples to units at exactly the BPM, the remainder carried. CTL samples at a time stay in 32 bits. */
+static uint32_t int_clock_rem;
+static uint32_t int_clock_units(uint32_t n)
+{
+    uint32_t per = (uint32_t)FS * 60u, units = 0;
+    while (n) {
+        uint32_t chunk = n < CTL ? n : CTL, ticks = chunk * MIDI_BEAT_UNITS * (uint32_t)song.g[G_BPM] + int_clock_rem;
+        int_clock_rem = ticks % per;
+        units += ticks / per;
+        n -= chunk;
+    }
+    return units;
 }
 static uint32_t seq_div_samples(uint32_t div)
 {

@@ -322,6 +322,7 @@ if core; then
     t "USB audio: routing, clock drift and stream recovery" usb_audio_test
     t "USB audio: endpoint lifecycle and packet ownership" usb_audio_driver_test
     t "USB MIDI host: duplex I/O, enumeration, ACK ownership, back-pressure and recovery" usb_host_test -O1 -fsanitize=address,undefined
+    t "USB MIDI device: the clock ahead of notes, a SysEx never split" usb_host_ota:usb_host_test -DMELODEE_OTA=1 -O1 -fsanitize=address,undefined
     run "USB descriptors: MIDI, CDC and audio configurations" "$PY" tests/usb_audio_desc_test.py
     run "boot audio: packed image, decoder bounds, malformed streams and XIP dependencies" "$PY" tests/boot_audio_test.py
     run "BLE MIDI: protocol, encryption, pairing, radio driver and Melodee integration" "$PY" tests/ble_tests.py
@@ -368,6 +369,7 @@ if core && [ $TABLES = 1 ]; then
     t "recording/performance tools and legacy migrations" performance_tools_test -O1 $FW
     t "momentary snapshots: parameter IDs and native patch union restore exactly" ui_momentary_test -O1 $FW
     t "USB/TRS clock, bend, sustain, ownership and panic recovery" midi_control_test -O1 $FW
+    t "CLK INT as MIDI master: clock, Start and Stop on the output queues, locked to the steps" midi_clock_out_test -O1 $FW
     t "MIDI panel knobs: profiles, native edits, encoder modes and bounded foreground dispatch" midi_knob_test -O1 $FW
     t "MIDI timing: quantized TRS/USB recording, audio timeline, tempo changes and timer wrap" midi_timing_test -O1 $FW
     t "MIDI recording: raw events, quantization at take end, independent releases, banks and capacity" recording_test \
