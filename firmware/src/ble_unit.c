@@ -143,6 +143,14 @@ void ble_unit_poll(uint32_t now)
     }
     if (bu.mode != BU_MODE_KEYBOARD)
         return;
+    if (ble_ll_connected() && !ble_ll_central()) {   /* a computer's link from COMPUTER: the one link is the keyboard's */
+        fm1_ble_irqs_hold(1);
+        ble_ll_disconnect(0x13u);
+        fm1_ble_irqs_hold(0);
+        bu.quiet_t = now;
+        bu.scanning = 0;                         /* (scanning again once it is gone, below) */
+        return;
+    }
     busy = ble_ll_central() || ble_ll_initiating();
     if (ble_central_state() == BLE_CS_READY && !bu.was_ready)
         bu.last_ok = 1;                          /* (the one to prefer while it is around) */
@@ -151,7 +159,7 @@ void ble_unit_poll(uint32_t now)
         bu.quiet_t = now;
         return;
     }
-    if (!bu.scanning) {                          /* a link ended, or connecting failed: scan again after a pause */
+    if (!bu.scanning || !ble_ll_scanning()) {    /* a link ended, or connecting failed: scan again after a pause */
         if (now - bu.quiet_t < BU_RETRY_MS)
             return;
         fm1_ble_irqs_hold(1);
