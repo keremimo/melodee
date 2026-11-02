@@ -121,6 +121,8 @@ static void screen_clear(void)
 #endif
 }
 
+/* a stretch of sequencer time in one go (mix.c: units, on every clock) */
+static void units_block(uint32_t units) { events_block(0); seq_advance(units); }
 static int check(const char *what, int ok)
 {
     printf("ui: %-74s %s\n", what, ok ? "ok" : "FAIL");
@@ -1352,7 +1354,7 @@ static int test_grid(void)
     fm1_in.notes = 0;
     keyboard_block();
     ok = t->step[5].hit == 1u << DV_HATO && !t->step[5].n && t->rskip_n == 0u;
-    t->seq_pos = step_samples(t, div_samples((uint32_t)t->p[P_SDIV]), 5) - 10u;   /* late: rounds to step 7 */
+    t->seq_pos = step_samples(t, seq_div_samples((uint32_t)t->p[P_SDIV]), 5) - 10u;   /* late: rounds to step 7 */
     fm1_in.notes = 1u << key_at(1, 0);
     keyboard_block();
     ok &= t->step[5].hit == (1u << DV_HATO) && t->step[6].hit == (1u << DV_KICK) && t->rskip_n == 1u && t->rskip_idx == 6;
@@ -1402,7 +1404,7 @@ static int test_grid(void)
         ok = !memcmp(keep, t->step, sizeof keep) && !grid_on();
         t->seq_hold = 0;
         t->seq_n = 0;
-        seq_step(t, &t->step[0], div_samples((uint32_t)t->p[P_SDIV]), 0);
+        seq_step(t, &t->step[0], seq_div_samples((uint32_t)t->p[P_SDIV]), 0);
         ok &= t->seq_n == 1u && t->seq_notes[0] == 36u;
         seq_release(t);
         bad += check("a sound load keeps the grid; on SID its hits play as their GM notes", ok);
@@ -2698,12 +2700,12 @@ static int test_chain(void)
     events_block(n);
     bad += check("SONG starts all tracks at source step 0, recording paused", chain.running && song.playing &&
         !song.rec && trk[0].seq_idx == 0 && seq_steps(&trk[0])[0].n == 3 && trk[0].seq_n == 3 && trk[0].seq_notes[0] == 60);
-    period = div_samples((uint32_t)trk[0].p[P_SDIV]);
-    events_block(period);
-    events_block(period);
+    period = seq_div_samples((uint32_t)trk[0].p[P_SDIV]);
+    units_block(period);
+    units_block(period);
     bad += check("SONG first row repeats without a gap", chain.row == 0 && chain.remaining == 1 && trk[0].seq_idx == 0);
-    events_block(period);
-    events_block(period);
+    units_block(period);
+    units_block(period);
     ok = chain.row == 1 && chain.remaining == 1;
     for (i = 0; i < NPART; i++) {
         ok &= trk[i].seq_idx == 0 && trk[i].p[P_SLEN] == 3 && seq_steps(&trk[i])[0].note[0] == 65;
@@ -2715,9 +2717,9 @@ static int test_chain(void)
     for (k = 0; k < NPAGES && cur_page()->scope != SC_STEP; k++) open_family(FAM_SEQ);
     turn(EN_K2, 1); press(B_EDIT); hold(B_REC); hold(B_EDIT);
     bad += check("SONG playing: step edits, clears, recording and undo are blocked", trk[0].step[0].note[0] == 65 && trk[0].step[0].n == 3 && !ui.confirm);
-    events_block(period);
-    events_block(period);
-    events_block(period);
+    units_block(period);
+    units_block(period);
+    units_block(period);
     ok = !song.playing && !chain.running && song.rec == 3;
     for (i = 0; i < NPART; i++) ok &= !trk[i].seq_n && !memcmp(trk[i].step, before[i], sizeof before[i]) &&
         !memcmp(&trk[i].p[P_SLEN], timing[i], sizeof timing[i]);
@@ -2726,9 +2728,9 @@ static int test_chain(void)
     chain_config.row[0].repeat = 1;
     chain_prepare(); events_block(n);
     trk[0].seq_idx = 1;
-    last = step_samples(&trk[0], div_samples((uint32_t)trk[0].p[P_SDIV]), 1);
+    last = step_samples(&trk[0], seq_div_samples((uint32_t)trk[0].p[P_SDIV]), 1);
     trk[0].seq_pos = last - n + 19u;
-    events_block(n);
+    units_block(n);
     ok = chain.row == 1;
     for (i = 0; i < NPART; i++) ok &= trk[i].seq_pos == 19u && trk[i].seq_idx == 0;
     bad += check("SONG transition preserves fractional block time on all tracks", ok);

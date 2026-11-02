@@ -96,22 +96,78 @@ static int transport_test(void)
     return bad;
 }
 
-/* The period of a step is rounded down from the beat (137 BPM: 1 sample a beat, 3 at worst): pulses must not slide. */
-static int lock_test(int16_t bpm)
+static int gated(const track_t *t, uint32_t note)
 {
-    uint32_t bad_pulses = 0, last = 0, worst = 0;
-    out_setup(bpm);
-    out_transport(1);
-    for (uint32_t i = 0; i < 1000u * ((uint32_t)FS * 60u / (uint32_t)bpm) / CTL; i++) {
-        out_blocks(1);
-        if (pulses != last && (pulses - 1u) % 6u == 0u) {
-            if (trk[0].seq_idx != (pulses - 1u) / 6u % 16u) bad_pulses++;
-            if (trk[0].seq_pos > worst) worst = trk[0].seq_pos;   /* samples into the step, at its pulse */
-        }
-        last = pulses;
+    for (uint32_t i = 0; i < NVOICE; i++) if (t->v[i].active && t->v[i].gate && t->v[i].note == note) return 1;
+    return 0;
+}
+/* Everything that keeps time counts the same units. Exact equality, no tolerance: four divisions, an ARP, a recorded
+ * off-grid note and the clock out against each other and against the true tempo, for a long run through tempo changes. */
+static int no_drift_test(void)
+{
+    static const uint8_t DIVS[4] = {2, 1, 3, 5};         /* 1/16, 1/8, 1/32, the 1/16 triplet */
+    static const int16_t BPM[] = {97, 120, 137, 173, 40, 240, 101};
+    uint32_t period[4], last[4], arp_steps = 0, arp_last = 0, fires = 0, was_on = 0;
+    uint32_t bad_tracks = 0, bad_pulses = 0, bad_arp = 0, bad_tempo = 0, bad_late = 0, per = (uint32_t)FS * 60u;
+    uint64_t steps[4] = {0}, ticks;
+    int64_t arp_gap = 0; int arp_gap_set = 0;
+    out_setup(120);
+    song.g[G_SWING] = 0;
+    for (uint32_t k = 0; k < 4u; k++) {
+        trk[k].p[P_SLEN] = 16; trk[k].p[P_SDIV] = DIVS[k]; trk[k].p[P_SSWING] = 0;
+        period[k] = seq_div_samples(DIVS[k]);
     }
-    return check("six pulses stay on the 1/16 step, within two blocks, over 1000 beats",
-                 !bad_pulses && worst <= 2u * CTL && pulses > 23000u);
+    track_t *a = &trk[3];
+    a->p[P_AMODE] = 1; a->p[P_ARATE] = 2; a->nheld = 2; a->held[0] = 60; a->held[1] = 64; a->arp_phys = 1;
+    recorded_note_t note = {.step = 3, .on = 97, .note7 = 61, .vel = 90, .duration = RECORD_UNIT / 8};
+    recorded_set_owner(&note, recording_owner(&trk[0]));
+    recording[0] = note;
+    trk[0].step[3].time = ST_NOTE; trk[0].step[3].flags |= SF_RECORDED;
+    recording_reindex();
+    uint32_t loop = 16u * period[0], on = 3u * period[0] + 97u * period[0] / RECORD_UNIT;
+    out_blocks(2);
+    out_transport(1);
+    out_count_reset();
+    for (uint32_t k = 0; k < 4u; k++) last[k] = trk[k].seq_idx;
+    ticks = int_clock_rem;
+    for (uint32_t b = 0; b < NELEM(BPM); b++) {
+        song.g[G_BPM] = BPM[b];
+        uint32_t blocks = 300u * (per / (uint32_t)BPM[b]) / CTL, block_units = CTL * MIDI_BEAT_UNITS * (uint32_t)BPM[b] / per + 1u;
+        for (uint32_t i = 0; i < blocks; i++) {
+            out_blocks(1);
+            ticks += CTL * MIDI_BEAT_UNITS * (uint32_t)BPM[b];
+            uint64_t at[4];
+            for (uint32_t k = 0; k < 4u; k++) {
+                if (trk[k].seq_idx != last[k]) { steps[k]++; last[k] = trk[k].seq_idx; }
+                at[k] = steps[k] * period[k] + trk[k].seq_pos;
+                if (at[k] != at[0]) bad_tracks++;
+            }
+            if (at[0] != ticks / per) bad_tempo++;
+            if (pulses != at[0] / (MIDI_BEAT_UNITS / 24u) + 1u) bad_pulses++;
+            if (a->arp_note && a->arp_note != arp_last) { arp_steps++; arp_last = a->arp_note; }
+            if (arp_steps) {
+                int64_t gap = (int64_t)at[0] - (int64_t)((uint64_t)(arp_steps - 1u) * period[0] + a->arp_pos);
+                if (!arp_gap_set) { arp_gap = gap; arp_gap_set = 1; }
+                if (gap != arp_gap) bad_arp++;
+            }
+            uint32_t now_on = (uint32_t)gated(&trk[0], 61);
+            if (now_on && !was_on) {
+                fires++;
+                uint32_t pos = (uint32_t)(at[0] % loop);
+                if (pos < on || pos - on >= block_units) bad_late++;
+            }
+            was_on = now_on;
+        }
+    }
+    uint64_t total = steps[0] * period[0] + trk[0].seq_pos;
+    int bad = 0;
+    bad += check("every division stays on the same unit", !bad_tracks && total > 51000000u);
+    bad += check("the song keeps exactly the true tempo, through tempo changes", !bad_tempo);
+    bad += check("the clock out stays on the same unit", !bad_pulses && pulses > 50000u);
+    bad += check("the ARP never slides", !bad_arp && arp_steps > 8000u);
+    bad += check("a recorded off-grid note fires in its own block on every loop",
+                 !bad_late && fires + 1u >= (uint32_t)(total / loop) && fires <= (uint32_t)(total / loop) + 1u);
+    return bad;
 }
 
 static int source_test(void)
@@ -154,8 +210,7 @@ int main(void)
 {
     int bad = stopped_test();
     bad += transport_test();
-    bad += lock_test(137);
-    bad += lock_test(97);
+    bad += no_drift_test();
     bad += source_test();
     bad += queue_test();
     printf("%s\n", bad ? "MIDI CLOCK OUT TEST FAILED" : "MIDI clock out tests passed");

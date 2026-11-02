@@ -36,7 +36,7 @@ static void test_recording_tools(void)
     reset_tools();settings_click=CLICK_ON;seq_start();assert(click_req==2);
     int32_t audio[2*CTL]={0};click_render(audio,CTL);int energy=0;
     for(uint32_t i=0;i<2*CTL;i++)energy|=audio[i];assert(energy);
-    seq_advance(beat_samples());assert(click_req==1);
+    seq_advance(seq_beat_samples());assert(click_req==1);
     seq_stop();settings_click=CLICK_OFF;seq_start();assert(!click_req);seq_stop();
 }
 static void test_click_volume(void)

@@ -34,11 +34,11 @@ static int independent_switches(void)
     }
     seq_start(); events_block(32);
     pattern_request(&trk[0], 1); pattern_request(&trk[1], 1);
-    uint32_t period = div_samples(trk[0].p[P_SDIV]);
+    uint32_t period = seq_div_samples(trk[0].p[P_SDIV]);
     bad += check("playing bank choices queue without replacing the sounding chord", trk[0].pattern == 0 && trk[0].pattern_next == 1 && trk[0].step[0].note[0] == 60);
-    events_block(period); events_block(period);
+    units_block(period); units_block(period);
     bad += check("shorter track switches at its own loop end while the longer track keeps playing", trk[0].pattern == 1 && trk[1].pattern == 0 && trk[0].seq_idx == 0 && trk[0].seq_n == 4 && trk[0].seq_notes[3] == 72);
-    events_block(period);
+    units_block(period);
     bad += check("longer track switches at its own boundary with its four-note chord", trk[1].pattern == 1 && trk[1].seq_idx == 0 && trk[1].seq_n == 4 && trk[1].seq_notes[3] == 72);
     pattern_request(&trk[0], 3); pattern_request(&trk[0], 1);
     bad += check("selecting the active bank cancels a pending switch", trk[0].pattern_next == 0xff);
@@ -113,14 +113,14 @@ static int arranged_chords(void)
         trk[k].seq_notes[0] == 48+k+chain_patterns[0][k];
     bad += check("SONG starts four independently assigned banks with four-note chords", ok);
     bad += check("SONG protects its bank selections and contents while running", pattern_request(TSEL, 7) && pattern_copy(TSEL, 0, 7));
-    uint32_t period = div_samples(trk[0].p[P_SDIV]);
-    events_block(period); events_block(period);
+    uint32_t period = seq_div_samples(trk[0].p[P_SDIV]);
+    units_block(period); units_block(period);
     bad += check("SONG repeats the first row without changing its bank assignments", chain.running && chain.row == 0 && chain.remaining == 1 && trk[0].pattern == 1);
-    events_block(period); events_block(period); ok = chain.running && chain.row == 1;
+    units_block(period); units_block(period); ok = chain.running && chain.row == 1;
     for (uint32_t k = 0; k < NPART; k++) ok &= trk[k].pattern == chain_patterns[1][k] && trk[k].seq_n == 4 &&
         trk[k].seq_notes[0] == 48+k+chain_patterns[1][k];
     bad += check("SONG changes all four banks together at track one's loop boundary", ok);
-    events_block(period); events_block(period); ok = !song.playing && !chain.running;
+    units_block(period); units_block(period); ok = !song.playing && !chain.running;
     for (uint32_t k = 0; k < NPART; k++) ok &= !trk[k].pattern && !trk[k].seq_n;
     bad += check("SONG completion restores original banks and releases all sequence voices", ok);
     return bad;
@@ -229,11 +229,11 @@ static int doubled_banks(void)
 
     ui_power_on(); t = TSEL; track_defaults_steps(t); t->p[P_SLEN] = 4;
     seq_start(); events_block(32);
-    uint32_t period = div_samples(t->p[P_SDIV]);
-    events_block(period); events_block(period); events_block(period);
+    uint32_t period = seq_div_samples(t->p[P_SDIV]);
+    units_block(period); units_block(period); units_block(period);
     uint32_t before = t->seq_idx;
     pattern_key_len(0, 0, 1);
-    events_block(period);
+    units_block(period);
     bad += check("playing, on its last step: on into the copy (not back to step 1)", before == 3u && t->seq_idx == 4u &&
         t->p[P_SLEN] == 8);
     seq_stop();

@@ -301,7 +301,7 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
     wav_hdr(w, frames);
     for (f = 0; f < frames; f += CTL) {
         int32_t o[2 * CTL];
-        uint32_t barn = f / bar, period = div_samples(2);
+        uint32_t barn = f / bar, period = seq_div_samples(2);
         if (barn == 4u && !song.rec)
             song.rec = 0x0Eu;                      /* bars 5..6: tracks 2, 3, 4 armed */
         if (barn == 6u)
@@ -598,7 +598,7 @@ static void rec_run_to(track_t *t, uint32_t idx, uint32_t q)
     do {
         mix_block(o, CTL);
     } while (++guard < 100000u && !(t->seq_idx == idx &&
-             t->seq_pos >= step_samples(t, div_samples((uint32_t)t->p[P_SDIV]), idx) * q / 100u));
+             t->seq_pos >= step_samples(t, seq_div_samples((uint32_t)t->p[P_SDIV]), idx) * q / 100u));
 }
 static int rec_step_is(const track_t *t, uint32_t i, uint32_t time, uint32_t n, uint32_t note)
 {

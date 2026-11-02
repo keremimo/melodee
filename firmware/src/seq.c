@@ -262,13 +262,13 @@ static void arp_off(track_t *t)                  /* the sounding arp note ends (
     t->arp_note = 0;
 }
 
-/* n and gate_n: sample time (INT), musical units (MIDI); a stopped external
- * transport uses real time converted to musical units for a tapped note's gate. */
+/* n and gate_n: musical units (mix.c); a stopped external
+ * transport uses real time converted to them for a tapped note's gate. */
 static volatile uint32_t beat_pos, beat_n;      /* clock units into the beat, beat of the bar (0..3) */
 static uint32_t punch_clock_samples(void)
 {
     uint32_t beat = beat_samples();
-    return midi_sync_active ? (uint32_t)((uint64_t)beat_pos * beat / MIDI_BEAT_UNITS) : beat_pos;
+    return (uint32_t)((uint64_t)beat_pos * beat / MIDI_BEAT_UNITS);
 }
 /* destructive edits wait for a track's loop end while it plays (ui_input.c dq_poll): its loop ends so far; the banks one
  * waits to destroy; the tracks kept silent from a loop end until it is done (a UI frame that missed the last step) */
@@ -299,10 +299,8 @@ static void arp_step(track_t *t, uint32_t n, uint32_t gate_n)
             return;
         if (t->arp_pos >= 0xFFFFFFFu)
             t->arp_pos = 0;
-        else if (midi_sync_active)
-            t->arp_pos -= period + (uint32_t)((t->arp_idx & 1u) ? sw : -sw);
         else
-            t->arp_pos = 0;
+            t->arp_pos -= period + (uint32_t)((t->arp_idx & 1u) ? sw : -sw);
         /* build the note list: held notes (sorted or as played) over OCT octaves */
         len = 0;
         for (i = 0; i < t->nheld; i++)
@@ -352,7 +350,6 @@ static void arp_step(track_t *t, uint32_t n, uint32_t gate_n)
             trk_note_on(t, t->arp_note, 100);
             chord_auto_observe(t, t->arp_note);
         }
-        if (!midi_sync_active) return;
         /* A recovered clock burst may cross several ARP steps. Consume them all
          * and retain the residual phase, just as the sequencer does. */
         if (t->arp_note) {
@@ -939,6 +936,7 @@ static void seq_start(void)
 {
     cin_left = 0; /* MIDI Start also cancels a pending local count-in. */
     seq_started = 1;
+    int_clock_rem = 0;                             /* every start from the same place: a take repeats exactly */
     uint32_t i;
     seq_erase_request = 0;
     seq_erase_transport++;
@@ -1517,6 +1515,7 @@ static void events_block(uint32_t n)
     if (ble_discard && (int32_t)(mi_r - ble_discard_until) >= 0) ble_discard = 0;
 #endif
     if(song.playing)resource_release(RES_NOTE_HISTORY);
+    uint32_t sync_units = 0;
     if (clock_mode) {
         if (song.playing) {
             uint32_t last = midi_clock.have_pulse ? midi_clock.last_ms : midi_clock.start_ms;
@@ -1550,9 +1549,10 @@ static void events_block(uint32_t n)
                 }
             }
         }
-        if(left)seq_advance(left);
+        sync_units = int_clock_units(n - left);        /* (the clock out runs through a count-in) */
+        if(left) { uint32_t units = int_clock_units(left); seq_advance(units); sync_units += units; }
     }
-    midi_sync_out_block(n);
+    midi_sync_out_block(sync_units);
     if (song.playing)
         song.tick++;
 }

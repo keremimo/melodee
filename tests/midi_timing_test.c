@@ -122,9 +122,8 @@ static int timeline_test(void)
     trk[0].arp_pos = 2048;
     song.g[G_CLOCK] = 0;
     events_block(0);
-    uint32_t internal_beat = FS * 60u / (uint32_t)song.g[G_BPM];
     bad += check("switching to INT preserves fractional sequence and ARP position",
-                 trk[0].seq_pos == 3072u * internal_beat / 24576u && trk[0].arp_pos == 2048u * internal_beat / 24576u);
+                 trk[0].seq_pos == 3072u && trk[0].arp_pos == 2048u);
     return bad;
 }
 static int phase_test(void)

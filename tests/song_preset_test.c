@@ -59,18 +59,18 @@ static void playback(void)
     uint32_t tick = seq_div_samples(TSEL->p[P_SDIV]);
     assert(!chain_prepare_from(1)); events_block(1);
     assert(chain.row == 1 && TSEL->eng_req == ENGI_PROPHET && !memcmp(p5_patch_of(TSEL), &song_sound_get(id)->patch.p5, sizeof(p5_patch_t)));
-    events_block(tick);
+    units_block(tick);
     assert(chain.row == 2 && TSEL->eng_req == engine);
     for (uint32_t i = 0; i < P_COUNT; i++) assert(TSEL->p[i] == base[i]);
-    events_block(tick); assert(!chain.running);
+    units_block(tick); assert(!chain.running);
     assert(!chain_prepare_from(1)); transport_req = 2; events_block(1);
     assert(!chain.armed && !chain.running && TSEL->eng_req == engine);
     chain_patterns[1][0] = CHAIN_HOLD; chain_config.row[1].slot = CHAIN_HOLD;
-    assert(!chain_prepare_from(0)); events_block(1); events_block(tick);
+    assert(!chain_prepare_from(0)); events_block(1); units_block(tick);
     assert(chain.row == 1 && TSEL->eng_req == ENGI_PROPHET && TSEL->seq_idx == 0);
     seq_stop(); assert(TSEL->eng_req == engine && !memcmp(TSEL->p, base, sizeof base));
     chain_config.rsv[CHAIN_LOOP] = 1;
-    assert(!chain_prepare_from(1)); events_block(1); events_block(16u * tick); events_block(tick);
+    assert(!chain_prepare_from(1)); events_block(1); events_block(16u * tick); units_block(tick);
     assert(chain.running && !chain.row && TSEL->eng_req == engine);
     seq_stop();
     puts("Song presets: direct start, section restore, continuations, cancellation, loop and STOP passed");
@@ -124,7 +124,7 @@ static void automation_and_failures(void)
     int16_t base = TSEL->p[P_ED_FLT];
     uint32_t tick = seq_div_samples(TSEL->p[P_SDIV]);
     assert(!chain_prepare_from(0)); events_block(1); assert(TSEL->p[P_ED_FLT] == 31);
-    events_block(tick); assert(chain.row == 1 && TSEL->p[P_ED_FLT] == 31);
+    units_block(tick); assert(chain.row == 1 && TSEL->p[P_ED_FLT] == 31);
     seq_stop(); assert(TSEL->p[P_ED_FLT] == base);
     chain_config.sound[2][1] = CHAIN_SOUNDS; /* missing pool entry: fail before arming */
     assert(chain_prepare_from(0) == 67 && !chain.armed && !song_sounds.mask);
@@ -155,7 +155,7 @@ static void whole_pattern_sound(void)
     assert(!chain_prepare_from(0)); events_block(1);
     for (uint32_t r = 0; r < 4; r++) {
         assert(chain.row == r && t->eng_req == ENGI_PROPHET && t->seq_idx == r * 16u && t->seq_n == 1);
-        for (uint32_t j = 0; j < 16; j++) events_block(step);
+        for (uint32_t j = 0; j < 16; j++) units_block(step);
     }
     assert(chain.row == 4 && t->eng_req == base); seq_stop();
     assert(!chain_prepare_from(2)); events_block(1);
@@ -174,7 +174,7 @@ static void whole_pattern_sound(void)
     for (uint32_t r = 1; r < 4; r++) chain_config.sound[r][1] = 0;
     assert(!project_save(0)); project_load(0); t = &trk[1];
     assert(!chain_prepare_from(0)); events_block(1);
-    for (uint32_t r = 0; r < 4; r++) { assert(t->eng_req == ENGI_PROPHET); for (uint32_t j = 0; j < 16; j++) events_block(step); }
+    for (uint32_t r = 0; r < 4; r++) { assert(t->eng_req == ENGI_PROPHET); for (uint32_t j = 0; j < 16; j++) units_block(step); }
     assert(t->eng_req == base); seq_stop();
     puts("Song presets: all 64 steps, continued notes, middle selection/start, independent occurrences, resize, undo and legacy inheritance passed");
 }
@@ -199,9 +199,9 @@ static void pattern_presets(void)
     uint32_t tick = seq_div_samples(TSEL->p[P_SDIV]);
     assert(!pattern_request(TSEL, 0)); seq_start(); events_block(1);
     assert(TSEL->eng_req == ENGI_CZ);
-    assert(!pattern_request(TSEL, 1)); events_block(tick);
+    assert(!pattern_request(TSEL, 1)); units_block(tick);
     assert(TSEL->pattern == 1 && TSEL->eng_req == ENGI_FM6);
-    assert(!pattern_request(TSEL, 2)); for (uint32_t j = 0; j < 64u; j++) events_block(tick);
+    assert(!pattern_request(TSEL, 2)); for (uint32_t j = 0; j < 64u; j++) units_block(tick);
     assert(TSEL->pattern == 2 && TSEL->eng_req == def);
     seq_stop(); assert(TSEL->eng_req == def);
     assert(!pattern_request(TSEL, 1)); seq_start(); events_block(1);
@@ -210,9 +210,9 @@ static void pattern_presets(void)
     chain_patterns[0][0] = 0; chain_patterns[1][0] = 1; chain_patterns[2][0] = 1; chain_patterns[3][0] = 2;
     for (uint32_t r = 0; r < 4; r++) chain_config.row[r].slot = chain_patterns[r][0];
     assert(!chain_prepare_from(0)); events_block(1); assert(TSEL->eng_req == ENGI_CZ);
-    events_block(tick); assert(chain.row == 1 && TSEL->eng_req == ENGI_PROPHET);
-    for (uint32_t j = 0; j < (uint32_t)pattern_timing(0, 1, 0); j++) events_block(tick); assert(chain.row == 2 && TSEL->eng_req == ENGI_FM6);
-    for (uint32_t j = 0; j < (uint32_t)pattern_timing(0, 1, 0); j++) events_block(tick); assert(chain.row == 3 && TSEL->eng_req == def);
+    units_block(tick); assert(chain.row == 1 && TSEL->eng_req == ENGI_PROPHET);
+    for (uint32_t j = 0; j < (uint32_t)pattern_timing(0, 1, 0); j++) units_block(tick); assert(chain.row == 2 && TSEL->eng_req == ENGI_FM6);
+    for (uint32_t j = 0; j < (uint32_t)pattern_timing(0, 1, 0); j++) units_block(tick); assert(chain.row == 3 && TSEL->eng_req == def);
     seq_stop(); assert(TSEL->eng_req == def);
     assert(!chain_prepare_from(2)); events_block(1); assert(TSEL->eng_req == ENGI_FM6); seq_stop();
     assert(!pattern_copy(TSEL, 0, 3) && pattern_sound[0][3] == a);

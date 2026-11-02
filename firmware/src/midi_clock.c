@@ -10,19 +10,10 @@ static struct {
     uint8_t mode, selected, have_pulse, tempo_valid, tempo_n, tempo_count, count_valid;
 } midi_clock;
 
-/* Preserve fractional sequencer/ARP phase when external transport takes over. */
+/* (Sequencer and ARP phase carry over: every clock counts the same units.) */
 static void midi_clock_mode(uint32_t mode)
 {
-    uint32_t old = seq_beat_samples();
     midi_sync_active = (uint8_t)mode;
-    uint32_t next = seq_beat_samples();
-    for (uint32_t i = 0; i < NTRK; i++) {
-        track_t *t = &trk[i];
-        if (t->seq_pos < 0x7FFFFFFFu) t->seq_pos = (uint32_t)((uint64_t)t->seq_pos * next / old);
-        if (t->arp_pos < 0xFFFFFFFu) t->arp_pos = (uint32_t)((uint64_t)t->arp_pos * next / old);
-        t->arp_off = (uint32_t)((uint64_t)t->arp_off * next / old);
-    }
-    beat_pos = (uint32_t)((uint64_t)beat_pos * next / old);
     midi_clock.mode = (uint8_t)mode;
 }
 
@@ -154,17 +145,17 @@ static uint32_t midi_clock_advance(uint32_t now)
 }
 
 /* CLK INT: this unit is the master, on USB and BLE. Pulses run while stopped too, so a follower has the tempo before
- * Start. Six pulses are exactly one 1/16 step, whose period is rounded down from the beat: counted from the beat, a long
- * song would slide against the follower. The first pulse after Start is step 0, a block later (so is its sound). */
+ * Start. They count the sequencer's own units, so no division, recording or ARP can slide against a follower.
+ * The first pulse after Start is step 0, a block later (so is its sound). */
 static struct {
     uint32_t pos;
     uint8_t running;
 } midi_sync_out;
 
-static void midi_sync_out_block(uint32_t n)
+static void midi_sync_out_block(uint32_t units)
 {
 #if MELODEE_CLOCK_OUT
-    uint32_t start = seq_started, step = div_samples(2u);
+    uint32_t start = seq_started;
     seq_started = 0;
     if (midi_sync_out.running && (start || !song.playing || song.g[G_CLOCK])) {
         midi_sync_emit(0xFCu);
@@ -175,17 +166,16 @@ static void midi_sync_out_block(uint32_t n)
     if (start && song.playing) {
         midi_sync_emit(0xFAu);
         midi_sync_out.running = 1;
-        midi_sync_out.pos = step;
+        /* the units after step 0 in this block (the end of a count-in) */
+        midi_sync_out.pos = MIDI_BEAT_UNITS / 24u + (!chain.running && trk[0].seq_pos < MIDI_BEAT_UNITS / 24u ? trk[0].seq_pos : 0u);
         return;
     }
-    midi_sync_out.pos += n * 6u;
-    if (midi_sync_out.pos >= step) {
-        midi_sync_out.pos -= step;
-        if (midi_sync_out.pos >= step)
-            midi_sync_out.pos = 0;                      /* the tempo just jumped up */
+    midi_sync_out.pos += units;
+    if (midi_sync_out.pos >= MIDI_BEAT_UNITS / 24u) {
+        midi_sync_out.pos -= MIDI_BEAT_UNITS / 24u;
         midi_sync_emit(0xF8u);
     }
 #else
-    (void)n;
+    (void)units;
 #endif
 }

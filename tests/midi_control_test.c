@@ -212,7 +212,7 @@ static int arp_ext_stop_test(void)
     for (i = 0; i < 4000 && trk[0].arp_note != 72; i++) events_block(CTL);
     off = trk[0].arp_off;
     transport_req = 2; events_block(CTL);
-    bad += check("internal clock: STOP leaves the free-running ARP note to its gate", trk[0].arp_note == 72 && gate_note(&trk[0], 72) && trk[0].arp_off == off - CTL);
+    bad += check("internal clock: STOP leaves the free-running ARP note to its gate", trk[0].arp_note == 72 && gate_note(&trk[0], 72) && trk[0].arp_off < off && off - trk[0].arp_off <= 2u * CTL);
     for (i = 0; i < 4000 && (!trk[0].arp_note || trk[0].arp_note == 72); i++) events_block(CTL);
     bad += check("internal clock: the ARP keeps stepping after STOP", trk[0].arp_note && trk[0].arp_note != 72 && trk[0].nheld == 1u);
     return bad;
