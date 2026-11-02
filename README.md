@@ -57,6 +57,48 @@ to build and attest firmware from the tagged source. See [release verification](
 for the process and the command to check a downloaded package. An attestation establishes
 build provenance; hardware validation is a separate check.
 
+## Bluetooth MIDI (this fork, branch `ble`)
+
+Bluetooth LE MIDI, built into the firmware (no module, no extra flash slot): play Melodee from a
+Bluetooth MIDI keyboard or dongle, or connect it to a computer, phone or tablet without a cable.
+Unofficial: this fork's work (Jacek Mariański), not part of keremimo/melodee releases.
+
+**Switching it on and off.** Menu (hold HOME) > **BLUETOOTH**, KNOB 1 or OCT+; it applies once the
+knob rests (about 0.7 s) and is saved with the settings, so the next start brings it back.
+
+| Setting | What it does |
+| --- | --- |
+| **OFF** | No advertising, no scanning; any link ends. This is how you disconnect |
+| **COMPUTER** | Melodee advertises as **"Melodee XXXX"** (XXXX: the end of its address, the same on every start). Connect from macOS (Audio MIDI Setup > MIDI Studio > Bluetooth), iOS / iPadOS (an app with Bluetooth MIDI), Linux (BlueZ: `bluetoothctl connect`), Windows (an app with BLE MIDI). No pairing |
+| **KEYBOARD** | Melodee connects by itself to the first Bluetooth MIDI keyboard or dongle it hears (tested: NUX NEK-100), and to the one it was connected to before while that one is around. When the link goes (the keyboard switched off, out of range) it tries again every 1.5 s |
+
+- **One link at a time:** a computer or a keyboard, not both. Choosing KEYBOARD ends a computer's link.
+  To move to another keyboard, switch the current one off; there is no device list.
+- **The header's BT tag:** dim while waiting or scanning, in the theme colour while a link carries MIDI.
+  Messages: "BLUETOOTH" with the keyboard's name or CONNECTED, and DISCONNECTED.
+- **Playing:** Bluetooth MIDI is routed like USB and TRS MIDI: GLO > SYSTEM **ROUT** (SEL: the selected
+  track, chosen with ALGORITHM; CH1-4: channel = track). Notes held when a link drops are released.
+  Melodee sends over Bluetooth the same MIDI it sends over USB.
+- **GLO > SYSTEM MIDI = BT:** MIDI Tracks take their input from Bluetooth (play other gear from a Bluetooth
+  keyboard through the FM-1); the column shows OFF / WAIT / ON, RX while MIDI arrives.
+- **GLO > GLOBAL CLK = BT:** tempo, Start and Stop from MIDI clock over Bluetooth.
+- **First start:** the first time it is ON after power-up the radio starts and calibrates itself: about a
+  second of silence. It then stays started until power-off (OFF only stops advertising and scanning).
+- **Memory:** the stack's RAM (about 6 KB) is taken from the top of the audio working memory only when
+  Bluetooth is first ON; with it OFF nothing is used. About 2.5 KB (the radio's DMA buffers) is always
+  reserved. If sounding engines hold that memory, the menu says "BLUETOOTH AT NEXT START": the setting is
+  saved and the radio starts first at the next power-up.
+- **HELD** (instead of the mode): the previous start crashed or hung within 30 s, so Bluetooth stayed off.
+  Choose a mode again to retry, or OFF.
+- The radio runs the FM-1 at its stock 360 MHz (the clock M-VAVE's firmware uses); its calibration uses the
+  factory trims when the flash still holds them, and measures them otherwise.
+
+**Licence.** The whole firmware stays **GPL-3.0-only**. The Bluetooth stack is
+[Optimist](https://github.com/w0ts/optimist)'s (commit `fcdc4881`, "GPL-3.0-only OR MPL-2.0", used here under
+GPL-3.0-only); the radio's start-up values (from M-VAVE's FM-1 firmware, `m-vave/fm1_open`) and its calibration
+(JieLi's, restated by Charles Vestal) are Apache-2.0; the stock clock setting (felucca-bsp, Charles Vestal) is
+MPL-2.0; the glue that joins it to Melodee is new GPL-3.0-only code. Details in [LICENSING.md](LICENSING.md).
+
 ## What's new in 1.5.1
 
 - **Web editor connection hotfix:** fixes “Error: Invalid favorites reply” when connecting to 1.5 firmware.
@@ -1138,11 +1180,15 @@ You can leave a tip with [ko-fi](https://ko-fi.com/keremimo).
   (TRS MIDI, bend, sustain and clock, palettes, favourites, editor display settings: #8, #10, #11, #12),
   [andreahaku](https://github.com/andreahaku) (sample recording and trim, #29; SLICE manual slices and tests, #27, #22),
   [johnskiller](https://github.com/johnskiller) (the SYS clock register findings and the 1.3 clock option, keremimo/melodee#27)
+- Bluetooth MIDI (this fork): [Optimist](https://github.com/w0ts/optimist)'s open BLE stack (GPL-3.0-only OR MPL-2.0);
+  the radio headers and the stock clock from felucca-bsp and [Charles Vestal](https://github.com/charlesvestal);
+  the radio's start-up values from M-VAVE's [fm1_open](https://github.com/m-vave/fm1_open) (Apache-2.0); the Melodee
+  integration by Jacek Mariański ([@jmarianski](https://github.com/jmarianski))
 
 ## Licence
 
-Free software: [GPL-3.0-only](LICENSE). The bundled font and the
-ported DSP keep their own licences ([LICENSES/](LICENSES/)); details in [LICENSING.md](LICENSING.md).
+Free software: [GPL-3.0-only](LICENSE). The bundled font, the
+ported DSP and the Bluetooth stack's parts keep their own licences ([LICENSES/](LICENSES/)); details in [LICENSING.md](LICENSING.md).
 
 "Felucca" and "Hügelton Instruments" are names of Hügelton Instruments. M-VAVE and FM-1 are
 trademarks of their respective owners. Melodee is not affiliated with or endorsed by any of them.
