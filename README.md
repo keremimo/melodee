@@ -69,7 +69,7 @@ knob rests (about 0.7 s) and is saved with the settings, so the next start bring
 | Setting | What it does |
 | --- | --- |
 | **OFF** | No advertising, no scanning; any link ends. This is how you disconnect |
-| **COMPUTER** | Melodee advertises as **"Melodee XXXX"** (XXXX: the end of its address, the same on every start). Connect from macOS (Audio MIDI Setup > MIDI Studio > Bluetooth), iOS / iPadOS (an app with Bluetooth MIDI), Linux (BlueZ: `bluetoothctl connect`), Windows (an app with BLE MIDI). No pairing |
+| **COMPUTER** | Melodee advertises as **"Melodee XXXX"** (XXXX: the end of its address, the same on every start). Connect from macOS (Audio MIDI Setup > MIDI Studio > Bluetooth), iOS / iPadOS (an app with Bluetooth MIDI), Linux (BlueZ: `bluetoothctl connect`), Windows (an app with BLE MIDI). No pairing. Tested: Linux; the others not yet |
 | **KEYBOARD** | Melodee connects by itself to the first Bluetooth MIDI keyboard or dongle it hears (tested: NUX NEK-100), and to the one it was connected to before while that one is around. When the link goes (the keyboard switched off, out of range) it tries again every 1.5 s |
 
 - **One link at a time:** a computer or a keyboard, not both. Choosing KEYBOARD ends a computer's link.
@@ -85,8 +85,8 @@ knob rests (about 0.7 s) and is saved with the settings, so the next start bring
 - **First start:** the first time it is ON after power-up the radio starts and calibrates itself: about a
   second of silence. It then stays started until power-off (OFF only stops advertising and scanning).
 - **Memory:** the stack's RAM (about 6 KB) is taken from the top of the audio working memory only when
-  Bluetooth is first ON; with it OFF nothing is used. About 2.5 KB (the radio's DMA buffers) is always
-  reserved. If sounding engines hold that memory, the menu says "BLUETOOTH AT NEXT START": the setting is
+  Bluetooth is first ON; with it OFF nothing is used. About 3.3 KB (the radio's DMA buffers, the MIDI
+  queues) is always reserved. If sounding engines hold that memory, the menu says "BLUETOOTH AT NEXT START": the setting is
   saved and the radio starts first at the next power-up.
 - **HELD** (instead of the mode): the previous start crashed or hung within 30 s, so Bluetooth stayed off.
   Choose a mode again to retry, or OFF.
