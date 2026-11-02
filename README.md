@@ -34,12 +34,12 @@ For a black-screen device already in ROM UBOOT, use the
 [direct USB recovery tool](BUILDING.md#recover-a-black-screen-fm-1).
 
 Multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. Current stable release:
-**[Melodee 1.5.1](https://github.com/keremimo/melodee/releases/tag/v1.5.1)**
-([release notes](docs/RELEASE_1.5.1.md)).
+**[Melodee 1.6.0](https://github.com/keremimo/melodee/releases/tag/v1.6.0)**
+([release notes](docs/RELEASE_1.6.0.md)).
 
-Four internal synth/MIDI parts plus four dedicated MIDI tracks, USB Host input/output,
-AUTO/AUTO2 harmony, master punch effects and a shared audio rack. Stable is the default
-installer channel. Read the [stable manual](https://keremimo.github.io/melodee/webapp/manual/)
+Four internal synth/MIDI parts plus four dedicated MIDI tracks, 64-section songs with timed
+punch FX, 32 projects, USB Host input/output, Bluetooth MIDI, AUTO/AUTO2 harmony and a shared
+audio rack. Stable is the default installer channel. Read the [stable manual](https://keremimo.github.io/melodee/webapp/manual/)
 or the [nightly guide](https://keremimo.github.io/melodee/webapp/manual/nightly/) for development firmware.
 
 Melodee is a modified version of [Felucca](https://github.com/hugelton/Felucca) by Leo Kuroshita
@@ -57,20 +57,22 @@ to build and attest firmware from the tagged source. See [release verification](
 for the process and the command to check a downloaded package. An attestation establishes
 build provenance; hardware validation is a separate check.
 
-## 1.6 release candidate
+## What's new in 1.6.0
 
-**[Melodee 1.6.0-rc.8](https://github.com/keremimo/melodee/releases/tag/v1.6.0-rc.8)** puts
-the factory sounds into the firmware package, so updates through Firmware Hub
-get their presets too, and the FM-1 asks for another install when they are
-missing. It keeps rc.7's song-playback and key-light fixes, rc.6's CR-78 and FM
-drum kits, a preset for each pattern, note lengths editable while playing, range
-and copy PITCH edits, pattern copy to another track, nearest-degree SNAP for
-microtonal scales, OCTAVE on SELECT, MASTER on the final output and USB HOST for
-audio+MIDI devices and two-chip hubs, with the 16 patterns, shared project
-storage, section presets, timed punch FX and Bluetooth MIDI from earlier
-candidates.
-Stable remains 1.5.1; choose the candidate channel to try the RC. Read the
-[candidate release notes](docs/RELEASE_1.6.0-rc.8.md) for project-format
+- **Longer songs:** 64 sections with a time ruler, per-track rests, blocks that span sections, PLAY from the selected section, and Loop song.
+- **Timed punch FX:** up to four master punches per section, on whole steps, with the 27 punch effects.
+- **A preset for each block or pattern:** a block or pattern can carry its own sound, stored as an independent copy.
+- **16 patterns and 32 projects:** 16 patterns on tracks 1–4, and one shared storage pool where a project takes only what it holds.
+- **CR-78 and FM drum kits**, both on one voice.
+- **Note editing:** length while playing, PITCH, LENGTH and VELOCITY on whole ranges, pattern copy to another track, nearest-degree microtonal SNAP and OCTAVE on SELECT.
+- **Bluetooth MIDI:** one link in either role, VISIBLE for computers and phones, and the radio and last device kept across power-on.
+- **MIDI and USB:** MIDI LEARN (kept until power-off), USB VOLUME apart from MASTER, stereo recording before MASTER, and USB HOST for audio+MIDI devices and two-chip hubs.
+- **Levels:** chords no longer duck a held note, TPDF dither on every cut, and MASTER on the final output.
+
+**Upgrading:** back up on your current firmware first; that backup is your way back, because older firmware
+cannot read 1.6's project storage or restore its backups. Existing projects load, but CZ-1 tracks are 6 dB lower
+and the limiter starts at −2 dBFS, so check your balance. The web installer needs one install; from 1.5.1 or
+earlier through Firmware Hub, install twice. See the [1.6.0 release notes](docs/RELEASE_1.6.0.md) for
 compatibility and hardware-validation limits.
 
 ## What's new in 1.5.1
