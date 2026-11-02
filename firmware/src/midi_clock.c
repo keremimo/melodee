@@ -7,7 +7,8 @@
 static struct {
     uint32_t pos, rendered, last_ms, start_ms, last_time, interval_time, tempo_time, tempo_dt;
     uint16_t pulse_count;
-    uint8_t mode, selected, have_pulse, tempo_valid, tempo_n, tempo_count, count_valid;
+    uint16_t spot;                                  /* Song Position: 1/16 steps from the top */
+    uint8_t mode, selected, have_pulse, tempo_valid, tempo_n, tempo_count, count_valid, spot_valid, seek_wait;
 } midi_clock;
 
 /* An external clock's LFO units: the measured tempo, so pulse jitter cannot modulate it. Past a quarter of a pulse from
@@ -50,9 +51,30 @@ static uint32_t midi_clock_local_start(uint32_t ms)
     return 0;
 }
 
+/* Song Position, stopped only: the next Continue starts there, on its first clock (a master holds that clock until its
+ * song reaches the spot). Every pattern is where it would be after playing from the top; a song's sections stay local. */
+static void midi_clock_position(uint32_t spot)
+{
+    if (song.playing) return;
+    midi_clock.spot = (uint16_t)spot;
+    midi_clock.spot_valid = 1;
+}
+static void midi_clock_seek(void)
+{
+    uint32_t units = midi_clock.spot * (MIDI_BEAT_UNITS / 4u);
+    midi_clock.seek_wait = 0;
+    midi_clock.pos = midi_clock.rendered = 0;
+    midi_clock.have_pulse = 0;
+    seq_seek_units = units;
+    seq_start();
+    beat_pos = units % MIDI_BEAT_UNITS;
+    beat_n = (units / MIDI_BEAT_UNITS) & 3u;
+}
+
 static __attribute__((noinline)) void midi_clock_transport(uint32_t status, uint32_t ms)
 {
     if (status == 0xFAu) {
+        midi_clock.spot_valid = midi_clock.seek_wait = 0;
         midi_clock.pos = midi_clock.rendered = 0;
         lfo_ext.err = 0;
         midi_clock.have_pulse = midi_clock.tempo_valid = 0;
@@ -68,6 +90,11 @@ static __attribute__((noinline)) void midi_clock_transport(uint32_t status, uint
         midi_clock.count_valid = 0;
         midi_clock.interval_time = 0;
         midi_clock.start_ms = ms;
+        if (midi_clock.spot_valid && !song.playing) {
+            midi_clock.spot_valid = 0;
+            midi_clock.seek_wait = 1;
+            return;
+        }
         if (!song.playing) {
             motion_begin();
             song.rec_wait = song.rec;
@@ -75,12 +102,14 @@ static __attribute__((noinline)) void midi_clock_transport(uint32_t status, uint
         }
         song.playing = 1;
     } else if (status == 0xFCu) {
+        midi_clock.seek_wait = 0;
         seq_stop();
     }
 }
 
 static __attribute__((noinline)) void midi_clock_pulse(uint32_t ms, uint32_t time, uint16_t count)
 {
+    if (midi_clock.seek_wait) midi_clock_seek();
     uint32_t pulses = midi_clock.count_valid ? (uint16_t)(count - midi_clock.pulse_count) : 1u;
     if (!pulses || (midi_clock.have_pulse && ms - midi_clock.last_ms > 500u)) pulses = 1u;
     midi_clock.pulse_count = count;

@@ -89,6 +89,9 @@ int main(void)
     ble_app_midi_in(0xF80Fu, 0, 0); mel_ble_drain(); events_block(0);
     assert(midi_rx_pulses[2] == 1);
     mb.overflow = 1; mel_ble_drain(); events_block(0); assert(!song.playing);
+    ble_app_midi_in(0x0005F203u, 0, 0); mel_ble_drain(); events_block(0);
+    assert(midi_clock.spot_valid && midi_clock.spot == 5u);          /* Song Position, stopped */
+    midi_clock.spot_valid = 0;
     puts("BLE adapter: external clock and overflow release passed");
 
     reset_ble();

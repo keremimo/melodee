@@ -405,6 +405,8 @@ static void test_parse(void)
     assert(uh_midi_ok(0x643C9009u) == 0x643C9009u);        /* note on ch0 */
     assert(uh_midi_ok(0x643C9019u) == 0x643C9009u);        /* cable 1 is dropped */
     assert(uh_midi_ok(0x0000F80Fu) == 0x0000F80Fu);        /* clock */
+    assert(uh_midi_ok(0x0201F203u) == 0x0201F203u);        /* Song Position */
+    assert(uh_midi_ok(0x0280F203u) == 0 && uh_midi_ok(0x8001F203u) == 0 && uh_midi_ok(0x0201F303u) == 0);   /* bad data, other common */
     assert(uh_midi_ok(0x0000F70Fu) == 0 && uh_midi_ok(0x4F7DF004u) == 0);   /* SysEx, other realtime */
     assert(uh_midi_ok(0x643C8009u) == 0);                  /* CIN does not match status */
     assert(uh_midi_ok(0x003CC00Cu) == 0x003CC00Cu);        /* program change */

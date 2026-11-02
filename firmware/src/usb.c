@@ -700,6 +700,10 @@ static void midi_in_event(uint32_t pkt)
         midi_enqueue(0xFu | st << 8, 1u);
         return;
     }
+    if (cin == 3u && st == 0xF2u && !(pkt & 0x80800000u)) {   /* Song Position */
+        midi_enqueue(pkt, 1u);
+        return;
+    }
     if (cin >= 8u && cin <= 0xEu && (st >> 4) == cin && !((pkt >> 16) & 0x80u) &&
         ((cin == 0xCu || cin == 0xDu) || !(pkt & 0x80000000u))) {
         midi_enqueue(pkt, 1u);

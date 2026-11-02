@@ -238,6 +238,7 @@ static volatile uint32_t seq_erase_request, seq_erase_generation;
 static uint32_t seq_erase_transport;
 static uint8_t seq_started;                     /* since the last block; audio ISR only (midi_sync_out_block) */
 static uint32_t seq_advanced;                   /* this block's units so far (an external clock's LFO) */
+static uint64_t seq_seek_units;                 /* the next start's place, from the top (midi_clock.c: Song Position) */
 static uint8_t seq_erase_seen[NTRK];
 static volatile uint16_t seq_erase_button;
 static int seq_erase_active(const track_t *t);
@@ -954,7 +955,8 @@ static void seq_start(void)
         if (t->p[P_LTRIG] && t->p[P_LSYNC]) t->lfo_ph = (uint32_t)t->p[P_LPHASE] << 25;
         t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
         t->seq_pos = 0x7FFFFFFF;                   /* step 0 fires on the first block */
-        if (chain.running && chain.seek_samples[i]) {
+        if (!chain.running) chain.seek_samples[i] = seq_seek_units;   /* (a song's are its own: chain_prepare_from) */
+        if (chain.seek_samples[i]) {
             uint32_t period = seq_div_samples((uint32_t)t->p[P_SDIV]), loop = recording_loop(t, period);
             uint32_t phase = 0, idx = 0;
             if (loop) chain_div_samples(chain.seek_samples[i], loop, &phase);
@@ -969,6 +971,7 @@ static void seq_start(void)
         t->rh_n = 0;
         cap_step[i] = 0xFFFFu;                     /* (capture: step 0 is the first) */
     }
+    seq_seek_units = 0;
     cap_from = cap_w;                              /* capture and the jam log: this run */
     cap_track = song.sel;
     jam.n = 0;
@@ -1182,7 +1185,7 @@ static void seq_grid_tick(track_t *t, uint32_t n)
         uint32_t starting = t->seq_pos >= 0x7FFFFFFFu;
         uint32_t punch_in = 0;
         t->seq_pos = starting ? (chain.running ? chain.carry : 0u) : t->seq_pos - cur_len;
-        if (starting && chain.running) {
+        if (starting) {
             t->seq_pos += chain.seek_phase[trk_index(t)]; chain.seek_phase[trk_index(t)] = 0;
         }
         t->seq_idx = (uint16_t)((t->seq_idx + 1u) % (len ? len : 1u));
@@ -1211,7 +1214,7 @@ static void seq_grid_tick(track_t *t, uint32_t n)
         cap_step[trk_index(t)]++;
         if (!t->seq_idx && t == &trk[0] && !chain.running)
             jam_loop();
-        if (starting && chain.running && chain.seek_samples[trk_index(t)] && !chain_rest(t)) {
+        if (starting && chain.seek_samples[trk_index(t)] && !chain_rest(t)) {
             if (chain.seek_chase & (1u << trk_index(t)))
                 for (uint32_t j = 0; j < len; j++) motion_step(t, j, &motion);
             for (uint32_t j = 0; j < t->seq_idx; j++) motion_step(t, j, &motion);
@@ -1236,13 +1239,13 @@ static void seq_grid_tick(track_t *t, uint32_t n)
             }
             if (chain_rest(t) || ((seq_hush >> trk_index(t)) & 1u))
                 s = &SEQ_HUSH_STEP;
-            if (starting && chain.running && chain.seek_samples[trk_index(t)] && s->time == ST_TIE) {
+            if (starting && chain.seek_samples[trk_index(t)] && s->time == ST_TIE) {
                 uint32_t j = t->seq_idx;
                 for (uint32_t count = 0; count < len && seq_steps(t)[j].time == ST_TIE; count++) j = (j + len - 1u) % len;
                 if (seq_steps(t)[j].time == ST_NOTE) seq_step(t, &seq_steps(t)[j], period, skip);
             }
             seq_step(t, s, step_gate(s) ? step_samples(t, period, t->seq_idx) : period, skip);
-            if (starting && chain.running) chain.seek_samples[trk_index(t)] = 0;
+            if (starting) chain.seek_samples[trk_index(t)] = 0;
         }
     }
 }
@@ -1256,7 +1259,7 @@ static void seq_tick(track_t *t, uint32_t n)
     if (!((recording_tracks | song.rec) & (1u << trk_index(t)))) { seq_grid_tick(t, n); return; }
     if (!song.playing) { seq_grid_tick(t, n); return; }
     if (t->seq_pos >= 0x7FFFFFFFu) {
-        uint32_t seek = chain.running && chain.seek_samples[trk_index(t)];   /* (the first step clears it) */
+        uint32_t seek = chain.seek_samples[trk_index(t)] != 0;   /* (the first step clears it) */
         seq_grid_tick(t, n);
         recording_zero(t, seek);
         return;
@@ -1484,7 +1487,9 @@ static void events_block(uint32_t n)
         if (midi_render_timed && (int32_t)(time - midi_render_time) > 0)
             break;
         mi_r++;midi_dispatch_left--;
-        if (status >= 0xF8u) {
+        if (status == 0xF2u) {
+            if (selected_clock == source) midi_clock_position(d1 | d2 << 7);
+        } else if (status >= 0xF8u) {
             if (selected_clock == source) {
                 if (status == 0xFAu || status == 0xFBu || status == 0xFCu) {
                     if (!clock_mode) midi_clock_mode(source);

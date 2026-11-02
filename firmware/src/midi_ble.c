@@ -72,7 +72,7 @@ BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last)
     uint32_t status = (pkt >> 8) & 255u;
     /* Route performance messages and clock only. OTA/editor framing stays USB. */
     if (!mb.on || mb.closing || !((status >= 0x80u && status < 0xF0u) ||
-        status == 0xF8u || status == 0xFAu || status == 0xFBu || status == 0xFCu)) return;
+        status == 0xF2u || status == 0xF8u || status == 0xFAu || status == 0xFBu || status == 0xFCu)) return;
     if (mb.rw - mb.rr >= MBQ) { mb.overflow = 1; return; }
     mb.epoch_ms = fm1_ms;
     uint32_t at = mb.rw % MBQ, back = (last - ts) & 0x1FFFu;
