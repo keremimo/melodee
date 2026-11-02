@@ -31,7 +31,11 @@ int ble_unit_state(void);
 const char *ble_unit_peer(void);
 int ble_midi_ready(void);
 int ble_connected(void);
+#ifndef BLE_RAM_AT                              /* the stack's RAM (app.ld .ble_bss; tests/ble_midi_test.c: its own) */
 extern uint8_t _ble_ram_start[], _ble_ram_end[];
+#define BLE_RAM_AT _ble_ram_start
+#define BLE_RAM_BYTES ((uint32_t)(_ble_ram_end - _ble_ram_start))
+#endif
 enum { BU_OFF, BU_WAITING, BU_LINKED, BU_READY };
 enum { BLE_MODE_OFF, BLE_MODE_COMPUTER, BLE_MODE_KEYBOARD, BLE_MODES };
 static const char *const BLE_MODE_NAME[BLE_MODES] = {"OFF", "COMPUTER", "KEYBOARD"};
@@ -186,7 +190,12 @@ static void ble_midi_drain(void)                /* TIMER5, 2 kHz: BLE in -> the 
 /* ---- the start */
 static int ble_vm_read(uint32_t off, uint8_t *dst, uint32_t n)   /* the factory VM (SPI reads, no XIP decryption) */
 {
+#if MELODEE_FLASH
     return flash_ok ? st_read(off, dst, n) : -1;
+#else
+    (void)off, (void)dst, (void)n;
+    return -1;                                  /* (host tests: no flash) */
+#endif
 }
 
 /* a random static address that is the same at every start: from the flash part's unique ID (FNV-1a), so a computer
@@ -196,9 +205,11 @@ static void ble_addr(uint8_t a[6])
     uint8_t uid[16];
     uint32_t h0 = 2166136261u, h1 = 0x6D2B79F5u, i, f;
     memset(uid, 0, sizeof uid);
+#if MELODEE_FLASH
     f = irq_save();
     FL_FAR(fl_uid_ram)(uid);
     irq_restore(f);
+#endif
     for (i = 0; i < 16u; i++) {
         h0 = (h0 ^ uid[i]) * 16777619u;
         h1 = (h1 ^ uid[15u - i]) * 16777619u;
@@ -216,7 +227,7 @@ static int ble_start(int boot)
     if (ble_up)
         return 1;
     f = pattern_guard();
-    if (!resource_claim(RES_BLE, _ble_ram_start, (uint32_t)(_ble_ram_end - _ble_ram_start))) {
+    if (!resource_claim(RES_BLE, BLE_RAM_AT, BLE_RAM_BYTES)) {
         pattern_unguard(f);
         ble_failed = 1;                         /* sounding engines hold that memory: at the next boot, first */
         return 0;
@@ -258,7 +269,7 @@ static void ble_apply(int boot)                 /* settings_ble into the stack *
 static void ble_midi_claim(void)
 {
     if (settings_ble && !bootguard.failed)
-        (void)resource_claim(RES_BLE, _ble_ram_start, (uint32_t)(_ble_ram_end - _ble_ram_start));
+        (void)resource_claim(RES_BLE, BLE_RAM_AT, BLE_RAM_BYTES);
 }
 
 /* fm1_main: after the audio and USB are set up, IRQs still off */

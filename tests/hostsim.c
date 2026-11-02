@@ -38,6 +38,9 @@ static struct { volatile uint32_t notes, buttons; } fm1_in;
 #define MELODEE_RAM_AUDIO 0
 #endif
 #include "../firmware/src/core.h"
+#if MELODEE_BLE
+#include "../firmware/src/ble_midi.h"                 /* (as melodee.c: tests/ble_midi_test.c) */
+#endif
 #include "../firmware/src/engines.c"
 /* the packed factory banks, unpacked for comparisons (four slots each, so a few can be held at once) */
 static const p5_patch_t *p5_fac(uint32_t k)

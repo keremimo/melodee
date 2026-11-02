@@ -56,6 +56,10 @@
 #                   (usb_audio_test.c); the endpoint driver against a model SIE: SET_INTERFACE, feedback, capture
 #                   packets ready in time, Out / In left out and the replug (usb_audio_driver_test.c); the four
 #                   track stems through the real mixer (usb_audio_tracks_test.c).
+# Bluetooth MIDI (tests/ble_midi_test.c): ble_midi.c with the stack stubbed (Optimist's tests cover it): the
+#                   setting's record, Bluetooth input as router source 3 (time, filter, its own clock count), a full
+#                   router, the notes a lost link leaves, MIDI Track with GLO > SYSTEM MIDI BT, the output queue, the
+#                   arena claim, AT NEXT START, one radio start, the header tag and the boot guard.
 # web (web/test_web.mjs): the editor protocol against its mock device, whose tables must equal the
 #                   firmware's (tests/descdump.c -> build/host/desc.json), the package builder, the updater.
 # PHYS (tests/phys_test.c): stability over the whole parameter and pitch range, the worst-case cost against
@@ -275,6 +279,7 @@ sound && t "SLOOP FX: compact stereo reverb, eight inserts, shared returns and c
 core && t "MIDI inserts: native release tails, timed note repeats, ownership, UI and persistence" midi_insert_test -O1 $FW
 core && t "MIDI Track: USB notes, TRS routing, song/recording, cleanup, silent mixer and persistence" midi_track_test -O1 $FW
 core && t "MIDI Track: host output, reconnect cleanup and USB input loss" midi_track_host_test:midi_track_test -O1 -DMELODEE_USB_HOST=1 $FW
+core && t "Bluetooth MIDI: settings, router input, full router, link loss, MIDI Track BT, output and start" ble_midi_test -O1 -DMELODEE_BLE=1 $FW
 core && t "EQ accelerator: register layout, isolated histories and bounded timeout" eq_hw_test
 core && job web_tests
 sound && [ $TABLES = 1 ] && job dsp_tracks
