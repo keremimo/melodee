@@ -187,7 +187,6 @@ static uint32_t midi_sync_out_position(uint64_t units)
 
 static void midi_sync_out_block(uint32_t units)
 {
-#if MELODEE_CLOCK_OUT
     uint32_t start = seq_started;
     seq_started = 0;
     if (midi_sync_out.running && (start || !song.playing || song.g[G_CLOCK])) {
@@ -212,7 +211,4 @@ static void midi_sync_out_block(uint32_t units)
         midi_sync_out.pos -= (int32_t)(MIDI_BEAT_UNITS / 24u);
         midi_sync_emit(0xF8u);
     }
-#else
-    (void)units;
-#endif
 }

@@ -94,6 +94,11 @@ static volatile uint32_t so_w, so_r;
 /* MIDI rings: 4-byte USB-MIDI event packets */
 #define MQ 64u
 static uint32_t midi_in_q[MQ], midi_out_q[MQ];
+/* Clock, transport and Song Position out: their own ring, sent ahead of notes, so neither ever waits for or crowds out
+ * the other. Four slots are kept from pulses for transport, on a port nobody reads. */
+#define RTQ 16u
+static uint32_t midi_rt_q[RTQ];
+static volatile uint32_t rt_w, rt_r;
 static uint32_t midi_in_ms[MQ];
 static uint32_t midi_in_time[MQ];
 static uint8_t midi_in_source[MQ];                    /* 1 USB, 2 TRS */
@@ -161,18 +166,17 @@ static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
 }
 static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
 
-/* Clock and transport out, from the audio ISR. Each transport admits them alone, so a stalled one costs the other
- * nothing, and a pulse leaves half of each queue to notes: a USB port nobody reads still takes them. */
+/* From the audio ISR. Each transport admits them alone, so a stalled one costs the other nothing. */
 static void midi_sync_send(uint32_t pkt)
 {
     uint32_t pulse = ((pkt >> 8) & 0xFFu) == 0xF8u;
 #if MELODEE_BLE
     uint32_t ie = fm1_icfg(); fm1_irq_off();
-    if (!pulse || mel_ble_half()) (void)mel_ble_emit(pkt);
+    mel_ble_sync(pkt, pulse);
 #endif
-    if (usb_midi_out_ready() && mo_w - mo_r < (pulse ? MQ / 2u : MQ)) {
-        midi_out_q[mo_w % MQ] = pkt;
-        RING_PUBLISH(); mo_w++;
+    if (usb_midi_out_ready() && rt_w - rt_r < (pulse ? RTQ - 4u : RTQ)) {
+        midi_rt_q[rt_w % RTQ] = pkt;
+        RING_PUBLISH(); rt_w++;
     }
 #if MELODEE_BLE
     fm1_icfg_set(ie);
@@ -791,10 +795,10 @@ static void ep1_tx(void)
 {
     uint32_t csr, n = 0;
 #if MELODEE_OTA
-    if (mo_w == mo_r && so_w == so_r)
+    if (mo_w == mo_r && rt_w == rt_r && so_w == so_r)
         return;
 #else
-    if (mo_w == mo_r)
+    if (mo_w == mo_r && rt_w == rt_r)
         return;
 #endif
     sie_wr(S_INDEX, 1);
@@ -813,6 +817,21 @@ static void ep1_tx(void)
         n += 4u;
         so_r++;
     }
+    /* (Real-time bytes may legally split a SysEx, but RtMidi on macOS then appends them to the message.) */
+    while (!sx_busy && so_r == so_w && rt_r != rt_w && n < 64u) {
+#else
+    while (rt_r != rt_w && n < 64u) {
+#endif
+        uint32_t pkt = midi_rt_q[rt_r % RTQ];
+        ep1tx[n] = (uint8_t)pkt;
+        ep1tx[n + 1] = (uint8_t)(pkt >> 8);
+        ep1tx[n + 2] = (uint8_t)(pkt >> 16);
+        ep1tx[n + 3] = (uint8_t)(pkt >> 24);
+        n += 4u;
+        RING_PUBLISH();
+        rt_r++;
+    }
+#if MELODEE_OTA
     while (!sx_busy && so_r == so_w && mo_r != mo_w && n < 64u) {
 #else
     while (mo_r != mo_w && n < 64u) {
@@ -949,6 +968,7 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         usb.config = 0;
         usb.suspended = 0;
         mo_r = mo_w;                                    /* nothing stale for the next host */
+        rt_r = rt_w;
         usb.sx_on = 0;
 #ifdef FM6_RX
         fm6_rx_on = 0;

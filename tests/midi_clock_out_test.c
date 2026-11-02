@@ -2,8 +2,6 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * CLK INT as MIDI master: clock, Start and Stop on the real output queues,
  * against the real sequencer. */
-#undef MELODEE_CLOCK_OUT
-#define MELODEE_CLOCK_OUT 1
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -12,15 +10,14 @@ static uint8_t order[8], order_n;
 
 static void out_drain(void)
 {
-    while (mo_r != mo_w) {
-        uint32_t pkt = midi_out_q[mo_r++ % MQ], st = (pkt >> 8) & 0xFFu;
+    while (rt_r != rt_w) {
+        uint32_t pkt = midi_rt_q[rt_r++ % RTQ], st = (pkt >> 8) & 0xFFu;
         if (st == 0xF2u) {
             if ((pkt & 0xFu) != 3u) { printf("bad Song Position packet %08x\n", pkt); exit(1); }
             position = ((pkt >> 16) & 127u) | ((pkt >> 24) & 127u) << 7;
             if (order_n < sizeof order) order[order_n++] = (uint8_t)st;
             continue;
         }
-        if (st < 0xF8u) continue;                   /* a track's own notes */
         if ((pkt & 0xFu) != 0xFu || pkt >> 16) { printf("bad real-time packet %08x\n", pkt); exit(1); }
         if (st == 0xF8u) pulses++;
         else if (st == 0xFAu) starts++;
@@ -38,7 +35,7 @@ static void out_count_reset(void)
 static void out_setup(int16_t bpm)
 {
     ui_power_on();
-    usb.config = 1; mo_r = mo_w = 0;
+    usb.config = 1; mo_r = mo_w = rt_r = rt_w = 0;
     settings_countin = 0; song.rec = 0;
     memset(&midi_sync_out, 0, sizeof midi_sync_out);
     song.g[G_CLOCK] = 0; song.g[G_BPM] = bpm;
@@ -266,16 +263,18 @@ static int queue_test(void)
 {
     int bad = 0;
     out_setup(240);
+    mo_r = mo_w;
     for (uint32_t i = 0; i < FS * 2u / CTL; i++) events_block(CTL);    /* a port nobody reads */
-    bad += check("pulses keep half the USB queue free", mo_w - mo_r == MQ / 2u);
-    bad += check("notes are still admitted", midi_track_emit(0x9u | 0x90u << 8 | 60u << 16 | 100u << 24) == 1);
+    bad += check("pulses stop short of the clock's ring, keeping room for transport", rt_w - rt_r == RTQ - 4u);
+    bad += check("pulses never touch the note queue", mo_w == mo_r);
+    bad += check("notes are admitted", midi_track_emit(0x9u | 0x90u << 8 | 60u << 16 | 100u << 24) == 1);
     transport_req = 1; events_block(CTL);
-    bad += check("Start is still admitted", ((midi_out_q[(mo_w - 1u) % MQ] >> 8) & 0xFFu) == 0xFAu);
+    bad += check("Start is still admitted", ((midi_rt_q[(rt_w - 1u) % RTQ] >> 8) & 0xFFu) == 0xFAu);
     out_setup(120);
     usb.config = 0;
-    uint32_t w = mo_w;
+    uint32_t w = rt_w;
     out_blocks(FS / CTL);
-    bad += check("no host: nothing queued", mo_w == w);
+    bad += check("no host: nothing queued", rt_w == w);
     return bad;
 }
 

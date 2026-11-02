@@ -91,7 +91,7 @@ PY="${PYTHON:-python3}"                           # (as build.sh: the Python wit
 OUT=build/host
 LOG=$OUT/log
 CC="${CC:-cc} -O1 -ffp-contract=off -Wall -Wno-unused-function"
-FW="-w -Ibuild/gen -Ifirmware/src -DMELODEE_CLOCK_OUT=0"
+FW="-w -Ibuild/gen -Ifirmware/src"
 P5=build/prophet5/Prophet-5+10-Factory-Programs-ReadMe1.03
 SOUND=${SOUND:-1}
 PARALLEL=${PARALLEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
@@ -322,6 +322,7 @@ if core; then
     t "USB audio: routing, clock drift and stream recovery" usb_audio_test
     t "USB audio: endpoint lifecycle and packet ownership" usb_audio_driver_test
     t "USB MIDI host: duplex I/O, enumeration, ACK ownership, back-pressure and recovery" usb_host_test -O1 -fsanitize=address,undefined
+    t "USB MIDI device: the clock ahead of notes, a SysEx never split" usb_host_ota:usb_host_test -DMELODEE_OTA=1 -O1 -fsanitize=address,undefined
     run "USB descriptors: MIDI, CDC and audio configurations" "$PY" tests/usb_audio_desc_test.py
     run "boot audio: packed image, decoder bounds, malformed streams and XIP dependencies" "$PY" tests/boot_audio_test.py
     run "BLE MIDI: protocol, encryption, pairing, radio driver and Melodee integration" "$PY" tests/ble_tests.py

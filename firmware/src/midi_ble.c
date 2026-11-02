@@ -9,9 +9,12 @@
 #include "ble/ble_vm.c"
 
 #define MBQ 64u
+#define MBRT 16u                                /* clock, transport, Song Position (usb.c midi_rt_q) */
 static struct {
     uint32_t rx[MBQ], time[MBQ], tx[MBQ], ms[MBQ];
-    volatile uint32_t rw, rr, tw, tr;
+    volatile uint32_t rw, rr, tw, tr, rt_w, rt_r;
+    uint32_t rt[MBRT], rt_ms[MBRT];
+    uint8_t peeked_rt;
     volatile uint8_t ready, lost, overflow;
     uint8_t on, started, cal, scanning, attempt, was_ready, connected, was_pairing, closing, forgetting;
     uint8_t boot, relink, relink_scan;          /* radio start owed from power-on; looking for the last device */
@@ -47,12 +50,23 @@ static void mb_unlock(void)
 
 BLE_API int ble_app_midi_peek(uint32_t *pkt, uint32_t *ms)
 {
+    mb.peeked_rt = mb.rt_r != mb.rt_w;
+    if (mb.peeked_rt) {
+        RING_PUBLISH();
+        *pkt = mb.rt[mb.rt_r % MBRT]; *ms = mb.rt_ms[mb.rt_r % MBRT];
+        return 1;
+    }
     if (mb.tr == mb.tw) return 0;
     RING_PUBLISH();
     *pkt = mb.tx[mb.tr % MBQ]; *ms = mb.ms[mb.tr % MBQ];
     return 1;
 }
-BLE_API void ble_app_midi_pop(void) { RING_PUBLISH(); mb.tr++; }
+BLE_API void ble_app_midi_pop(void)                 /* (the one peeked: a pulse may have arrived since) */
+{
+    RING_PUBLISH();
+    if (mb.peeked_rt) mb.rt_r++;
+    else mb.tr++;
+}
 BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last)
 {
     uint32_t status = (pkt >> 8) & 255u;
@@ -78,7 +92,7 @@ BLE_API void ble_app_state(void)
     }
     mb.connected = connected;
     mb.ready = ready;
-    if (!ready) mb.tr = mb.tw;
+    if (!ready) { mb.tr = mb.tw; mb.rt_r = mb.rt_w; }
 }
 BLE_API void ble_app_bond(const uint8_t rand[8], uint16_t ediv, const uint8_t ltk[16])
 {
@@ -98,7 +112,12 @@ BLE_API void ble_app_central_keys(const struct ble_keys *k)
 
 static int mel_ble_ready(void) { return mb.ready && mb.on; }
 static int mel_ble_room(void) { return mb.tw - mb.tr < MBQ; }
-static int mel_ble_half(void) { return mb.tw - mb.tr < MBQ / 2u; }
+static void mel_ble_sync(uint32_t pkt, uint32_t pulse)
+{
+    if (!mb.ready || !mb.on || mb.rt_w - mb.rt_r >= (pulse ? MBRT - 4u : MBRT)) return;
+    mb.rt[mb.rt_w % MBRT] = pkt; mb.rt_ms[mb.rt_w % MBRT] = fm1_ms;
+    RING_PUBLISH(); mb.rt_w++;
+}
 static int mel_ble_emit(uint32_t pkt)
 {
     if (!mb.ready || !mb.on) return 0;
@@ -209,7 +228,7 @@ static void mel_ble_visible(int on)
 static void mb_drop(void)
 {
     mb_lock();
-    mb.closing = (uint8_t)ble_connected(); mb.ready = 0; mb.tr = mb.tw;
+    mb.closing = (uint8_t)ble_connected(); mb.ready = 0; mb.tr = mb.tw; mb.rt_r = mb.rt_w;
     if (mb.started) { ble_enable(0); ble_enable(mb.on); }
     mb.attempt = 0; mb.lost = 1;
     mb.failure[0] = 0; mb.generation++;

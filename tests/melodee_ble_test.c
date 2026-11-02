@@ -36,26 +36,32 @@ int main(void)
     mb.tw = mb.tr; mo_r = mo_w;
     puts("BLE adapter: independent and atomic USB/BLE output admission passed");
 
-    /* Clock out: each transport admits it alone, a pulse leaves half of each queue to notes. */
-    uint32_t pulse = 0xFu | 0xF8u << 8, start = 0xFu | 0xFAu << 8;
+    /* Clock out: its own rings, ahead of notes, each transport admitting it alone. */
+    uint32_t pulse = 0xFu | 0xF8u << 8, start = 0xFu | 0xFAu << 8, note = packet(0x90, 61, 90);
+    assert(midi_track_emit(note) && mo_w - mo_r == 1);
     midi_sync_emit(0xF8u);
-    assert(mo_w - mo_r == 1 && midi_out_q[mo_r % MQ] == pulse);
-    assert(ble_app_midi_peek(&out, &ms) && out == pulse); ble_app_midi_pop();
-    mo_r = mo_w;
-    mb.tw = mb.tr + MBQ / 2u;
-    midi_sync_emit(0xF8u); assert(mb.tw - mb.tr == MBQ / 2u && mo_w - mo_r == 1);
-    midi_sync_emit(0xFAu); assert(mb.tw - mb.tr == MBQ / 2u + 1u && mo_w - mo_r == 2);
-    mb.tw = mb.tr + MBQ;
-    midi_sync_emit(0xF8u); assert(mo_w - mo_r == 3);          /* a full BLE ring costs USB no pulse */
-    mb.tw = mb.tr; mo_r = mo_w; mo_w += MQ;                   /* an unread USB port costs BLE no Start */
-    midi_sync_emit(0xFAu); assert(mo_w - mo_r == MQ && ble_app_midi_peek(&out, &ms) && out == start);
-    ble_app_midi_pop(); mo_r = mo_w;
+    assert(rt_w - rt_r == 1 && midi_rt_q[rt_r % RTQ] == pulse && mo_w - mo_r == 1);
+    assert(ble_app_midi_peek(&out, &ms) && out == pulse);     /* ahead of the note queued first */
+    midi_sync_emit(0xFAu);                                    /* arrives between peek and pop: pop still takes the pulse */
+    ble_app_midi_pop();
+    assert(ble_app_midi_peek(&out, &ms) && out == start); ble_app_midi_pop();
+    assert(ble_app_midi_peek(&out, &ms) && out == note); ble_app_midi_pop();
+    assert(!ble_app_midi_peek(&out, &ms));
+    mo_r = mo_w; rt_r = rt_w;
+    for (uint32_t i = 0; i < 2u * MBRT; i++) midi_sync_emit(0xF8u);
+    assert(mb.rt_w - mb.rt_r == MBRT - 4u && rt_w - rt_r == RTQ - 4u);   /* pulses keep room for transport */
+    midi_sync_emit(0xFAu); assert(mb.rt_w - mb.rt_r == MBRT - 3u && rt_w - rt_r == RTQ - 3u);
+    mb.rt_w = mb.rt_r + MBRT; rt_r = rt_w;
+    midi_sync_emit(0xFCu); assert(rt_w - rt_r == 1);           /* a full BLE ring costs USB nothing */
+    mb.rt_r = mb.rt_w; rt_r = rt_w; rt_w += RTQ;
+    midi_sync_emit(0xFAu); assert(ble_app_midi_peek(&out, &ms) && out == start);   /* nor the other way */
+    ble_app_midi_pop(); rt_r = rt_w;
     struct ble_midi_enc air; uint8_t air_buf[8];
     ble_midi_enc_reset(&air); ble_midi_enc_begin(&air, air_buf, sizeof air_buf);
     assert(ble_midi_enc_add(&air, pulse, 5) > 0 && ble_midi_enc_len(&air) == 3 && air_buf[2] == 0xF8u);
     uint32_t position = 0x3u | 0xF2u << 8 | 16u << 16 | 1u << 24;
-    midi_sync_send(position); assert(mo_w - mo_r == 1 && midi_out_q[mo_r % MQ] == position);
-    assert(ble_app_midi_peek(&out, &ms) && out == position); ble_app_midi_pop(); mo_r = mo_w;
+    midi_sync_send(position); assert(rt_w - rt_r == 1 && midi_rt_q[rt_r % RTQ] == position);
+    assert(ble_app_midi_peek(&out, &ms) && out == position); ble_app_midi_pop(); rt_r = rt_w;
     ble_midi_enc_begin(&air, air_buf, sizeof air_buf);
     assert(ble_midi_enc_add(&air, position, 5) > 0 && air_buf[2] == 0xF2u && air_buf[3] == 16u && air_buf[4] == 1u);
     puts("BLE adapter: clock and transport admitted per transport and encoded passed");
