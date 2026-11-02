@@ -143,7 +143,7 @@ static int ble_enqueue(uint32_t pkt, uint32_t t)  /* usb.c midi_enqueue, with th
     midi_in_ms[at] = fm1_ms;
     midi_in_time[at] = t;
     midi_in_source[at] = 3u;                    /* (seq.c: not USB's, so a USB host session ending keeps it) */
-    midi_in_pulse[at] = midi_rx_pulses[0];
+    midi_in_pulse[at] = midi_rx_pulses[2];
     RING_PUBLISH();
     mi_w++;
     return 1;
@@ -156,13 +156,14 @@ static void ble_midi_drain(void)                /* TIMER5, 2 kHz: BLE in -> the 
         RING_PUBLISH();
         pkt = ble_in_q[ble_ir % BLE_IQ];
         if (((pkt >> 8) & 0xFFu) == 0xF8u)
-            midi_rx_pulses[0]++;                /* (counted with USB's: one clock source at a time) */
+            midi_rx_pulses[2]++;                /* (GLO > CLK BT's count) */
         if (!ble_enqueue(pkt, ble_in_t[ble_ir % BLE_IQ])) {
             if (((pkt >> 8) & 0xFFu) == 0xF8u)
-                midi_rx_pulses[0]--;            /* (counted again the next tick) */
+                midi_rx_pulses[2]--;            /* (counted again the next tick) */
             return;                             /* the router's ring is full: the next tick */
         }
         ble_note_seen(pkt);
+        ble_rx_pkts++;
         RING_PUBLISH();
         ble_ir++;
     }
@@ -314,6 +315,13 @@ static const char *ble_midi_value(void)
     if (ble_failed == 2)
         return "HELD";                          /* (the boot guard: switch it OFF, or restart) */
     return BLE_MODE_NAME[settings_ble < BLE_MODES ? settings_ble : 0u];
+}
+
+static const char *ble_midi_status(void)        /* GLO > SYSTEM's MIDI column with BT chosen */
+{
+    if (!ble_up || !settings_ble)
+        return "OFF";
+    return ble_state == BU_READY ? "ON" : "WAIT";
 }
 
 static uint8_t ble_midi_tag(void)

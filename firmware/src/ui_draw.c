@@ -587,24 +587,32 @@ static void sound_name(const track_t *t, char *b)
 #else
 #define MIDI_TRS_STATE "OFF"
 #endif
-/* SYSTEM's MIDI column: input trs (0 USB, 1 TRS) received something in the last 250 ms (synths accept both;
+/* SYSTEM's MIDI column: input in (0 USB, 1 TRS, 2 BT) received something in the last 250 ms (synths accept all;
  * MIDI Track also uses this selection unless its additional TRS input is enabled).
  * Sampled whenever the column draws */
-static int midi_rx_recent(uint32_t trs)
+static int midi_rx_recent(uint32_t in)
 {
-    static uint32_t last[2], at[2];
-    static uint8_t seen[2];
+    static uint32_t last[3], at[3];
+    static uint8_t seen[3];
+    uint32_t n = usb.rx_pkts;
+    in = in < 3u ? in : 0u;
 #if MELODEE_UART
-    uint32_t n = trs ? um.bytes : usb.rx_pkts;
+    if (in == 1u)
+        n = um.bytes;
 #else
-    uint32_t n = trs ? 0u : usb.rx_pkts;
+    if (in == 1u)
+        n = 0;
 #endif
-    if (n != last[trs & 1u]) {
-        last[trs & 1u] = n;
-        at[trs & 1u] = fm1_ms;
-        seen[trs & 1u] = 1;
+#if MELODEE_BLE
+    if (in == 2u)
+        n = ble_rx_pkts;
+#endif
+    if (n != last[in]) {
+        last[in] = n;
+        at[in] = fm1_ms;
+        seen[in] = 1;
     }
-    return seen[trs & 1u] && fm1_ms - at[trs & 1u] < 250u;
+    return seen[in] && fm1_ms - at[in] < 250u;
 }
 
 /* the foot (large type, one row of 28 px under the old pages: NOTES on a drum track, DRUM HIT, CZ TOOLS, the
@@ -865,10 +873,14 @@ static void draw_columns(void)
             continue;
         }
         if (cur_page()->id[c] == G_MIDI && cur_page()->scope == SC_GLOBAL) {   /* KNOB 1: which input's status */
-            uint32_t trs = song.g[G_MIDI] != 0, rx = midi_rx_recent(trs);
-            str_cpy(val, trs ? "TRS" : "USB", 12);
+            uint32_t in = (uint32_t)song.g[G_MIDI], trs = in == 1u, rx = midi_rx_recent(in);
+            str_cpy(val, in == 2u ? "BT" : trs ? "TRS" : "USB", 12);
             unit = rx ? "RX" : trs ? MIDI_TRS_STATE :
                    !usb.up ? "OFF" : usb.config ? "ON" : usb.setups ? "ENUM" : usb.sof_seen ? "BUS" : "WAIT";
+#if MELODEE_BLE
+            if (in == 2u && !rx)
+                unit = ble_midi_status();
+#endif
             draw_column(c, "MIDI", val, unit, rx ? T_ACCENT : T_THEME, -1, ICON_AUTO);
             continue;
         }

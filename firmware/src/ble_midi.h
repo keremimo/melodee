@@ -28,4 +28,6 @@ static inline int ble_midi_out(uint32_t pkt)
 /* the menu's BLUETOOTH row (ui_menu.c; ble_midi.c) */
 static void ble_midi_set(uint8_t mode);
 static const char *ble_midi_value(void);
-static uint8_t ble_midi_tag(void);              /* the header's BT tag: 0 none, 1 waiting, 2 connected */
+static uint8_t ble_midi_tag(void);
+static const char *ble_midi_status(void);       /* GLO > SYSTEM's MIDI column: OFF, WAIT, ON */
+static volatile uint32_t ble_rx_pkts;           /* packets into the router (its RX) */              /* the header's BT tag: 0 none, 1 waiting, 2 connected */

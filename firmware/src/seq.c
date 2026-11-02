@@ -58,7 +58,7 @@ static uint32_t midi_event_source; /* 0: internal/test dispatch, 1 USB, 2 TRS */
 static int midi_track_accept(const track_t *t)
 {
     return !midi_track_only(t) || !midi_event_source ||
-           midi_event_source == (song.g[G_MIDI] ? 2u : 1u) || (midi_event_source == 2u && t->p[P_E1]);
+           midi_event_source == (uint32_t)song.g[G_MIDI] + 1u || (midi_event_source == 2u && t->p[P_E1]);
 }
 
 static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
