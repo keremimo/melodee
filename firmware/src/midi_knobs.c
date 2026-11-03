@@ -64,8 +64,16 @@ static void midi_master_physical(uint32_t q12)
  * any channel and goes the way of the MIDI KNOBS map (its MIDI MODE too); a button is a CC on any channel (64 and up
  * down) or a note on its channel, and closes the panel's button under the scan (hal/fm1_input.h fm1__key), so holds and
  * combos work too. A learned message no longer does what it did. mlearn_row (midi_knobs.h) is saved with the settings:
- * 0 nothing, else the CC, or MLEARN_NOTE + the note. The Settings page: ui_midi_learn.c */
+ * 0 nothing, else the CC, or MLEARN_NOTE + the note. The Settings page: ui_midi_learn.c.
+ * A button row is a matrix id on the FM-1 (fourteen buttons, fourteen ids); the SMK-37's eighteen ids do not fit the
+ * fourteen rows, so there a row is the FM-1 function (B_FX .. B_OCTUP) and presses the matrix button that has it */
 #define MLEARN_NOTE 0x80u
+#if BOARD_SMK37
+static uint32_t mlearn_btn_bit(uint32_t b);              /* row b's matrix button (ui_midi_learn.c) */
+#define MLEARN_BIT(b) mlearn_btn_bit(b)
+#else
+#define MLEARN_BIT(b) (1u << (b))
+#endif
 static volatile uint8_t mlearn_on;                       /* the page is open: nothing learned acts, messages wait */
 static volatile int16_t mlearn_seen = -1;                /* the last message: mlearn_row's value | channel << 8 */
 static int mlearn_valid(void)
@@ -100,8 +108,8 @@ static int mlearn_receive(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
         uint32_t b = k - MLEARN_KNOBS;
         if (!cc && mlearn_note_ch(b) != ch) continue;
         /* the tap bit outlasts a release faster than the scan; the scan's clearing it can lose to this, harmlessly */
-        if (on) { fm1_in.remote |= 1u << b; fm1_in.remote_tap |= 1u << b; }
-        else fm1_in.remote &= ~(1u << b);
+        if (on) { fm1_in.remote |= MLEARN_BIT(b); fm1_in.remote_tap |= MLEARN_BIT(b); }
+        else fm1_in.remote &= ~MLEARN_BIT(b);
         return 1;
     }
     return 0;

@@ -74,17 +74,31 @@ static void mlearn_page_input(uint32_t pressed)
             mlearn_wait = 1;
             panel_moved = 1;
         }
+#if BOARD_SMK37
+    for (uint32_t id = 0; id < FM1_NBTN; id++)        /* (a row is the FM-1 function; the SMK's own four have none) */
+        if (((pressed >> id) & 1u) && panel_btn_of(id) < NB) {
+            mlearn_sel = (uint8_t)(NE + panel_btn_of(id));
+            mlearn_wait = 1;
+        }
+#else
     for (uint32_t id = 0; id < NB; id++)
         if ((pressed >> id) & 1u) {
             mlearn_sel = (uint8_t)(NE + id);
             mlearn_wait = 1;
         }
+#endif
 }
+#if BOARD_SMK37
+static uint32_t mlearn_btn_bit(uint32_t b) { return 1u << panel.btn[b % NB]; }
+#define MLEARN_LABEL(b) B_NAME[(b) % NB]
+#else
+#define MLEARN_LABEL(b) B_NAME[panel_btn_of(b)]
+#endif
 
 static int mlearn_cap(uint32_t r, char *lb, char *v, uint16_t *vc)
 {
     uint32_t src = mlearn_valid() ? mlearn_row[r] : 0u;
-    str_cpy(lb, r < NE ? E_NAME[r] : B_NAME[panel_btn_of(r - NE)], 16);
+    str_cpy(lb, r < NE ? E_NAME[r] : MLEARN_LABEL(r - NE), 16);
     *vc = T_TEXT;
     v[0] = 0;
     if (mlearn_wait && r == mlearn_sel) {

@@ -35,6 +35,8 @@ static uint32_t host_slots[3u * 0x14000u / 4u];          /* USR1..3 (zero: empty
 /* the SMK-37's HAL (hal/smk_input.h) as stubs: its constants and pad maps, a queue the test fills with pad events
  * (smk_pad_take), the pads' colours kept (padled_set), no outer keys, no locks */
 #define FM1_NKEY 37u
+#define FM1_NBTN 18u                                     /* (panel.c would fall back to the FM-1's 14: ids 14..17 unseen) */
+#define FM1_NENC 8u
 #define SMK_KEY_F3 5u
 #define SMK_NPAD 16u
 #define SMK_NLED 19u
@@ -6057,12 +6059,48 @@ static int test_smk_banks(void)
     ui_power_on();
     return bad;
 }
+/* the sweep of 2026-11-03: MIDI LEARN's button rows are the FM-1 functions (the SMK's matrix ids 0..3 had no label,
+ * its FX, SEQ, PLAY and REC, ids 14..17, no row); the pads' pressure leaves a track left with a pad held; a drum pad
+ * whose release the queue lost ends with the pad; the realtime stream reaches the TRS jack's queue; a fader is away
+ * again once its parameter changed under it, and never jumps */
+static int test_smk_sweep(void)
+{
+    int bad = 0, ok = 1;
+    char lb[16], v[16];
+    uint16_t vc;
+    uint32_t k, n;
+    int16_t lv;
+    ui_power_on();
+    go_home(); frame();
+    for (k = 0; k < NB; k++) {
+        mlearn_cap(NE + k, lb, v, &vc);
+        ok &= str_eq(lb, B_NAME[k]);
+    }
+    bad += check("MIDI LEARN: fourteen button rows, each an FM-1 function's name (none past B_NAME)", ok);
+    mlearn_page_open();
+    mlearn_page_input(1u << panel.btn[B_SEQ]);
+    bad += check("  SEQ (matrix id 15) pressed on the page: its row waits", mlearn_sel == NE + B_SEQ && mlearn_wait);
+    mlearn_page_input(1u << SMK_BTN_KNOB_BANK);
+    bad += check("  KNOB BANK (no FM-1 function): no row", mlearn_sel == NE + B_SEQ);
+    mlearn_bind(NE + B_SEQ, MLEARN_NOTE | 60u, 0);
+    mlearn_on = 0; ui.menu = 0; fm1_in.remote = fm1_in.remote_tap = 0;
+    mlearn_receive(0x90, 0, 60, 100);
+    bad += check("  the learned note presses SEQ's matrix button", fm1_in.remote == 1u << panel.btn[B_SEQ]);
+    mlearn_receive(0x80, 0, 60, 0);
+    bad += check("  .. and lets it go", !fm1_in.remote);
+    mlearn_forget();
+    fm1_in.remote_tap = 0;
+    smk_fpick = 0; smk_fbank = BK_LEVELS;
+    ui_power_on();
+    return bad;
+}
 int main(void)
 {
     int bad;
     setvbuf(stdout, NULL, _IONBF, 0);
     bad = test_smk_pads();
     bad += test_smk_banks();
+    bad += test_smk_sweep();
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
     return bad ? 1 : 0;
 }

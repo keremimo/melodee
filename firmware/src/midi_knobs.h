@@ -7,7 +7,8 @@ enum { MK_ABSOLUTE, MK_REL1, MK_REL2, MK_REL3, MK_MODES };
 /* Device preferences, independent of projects. Opt in to avoid stealing synth CCs. */
 static volatile uint8_t settings_midi_knobs, settings_midi_knob_mode;
 /* MIDI LEARN's table, saved as the favorites' retired SAMPLE row (settings_persist.c, midi_knobs.c): the seven knobs by
- * role, the fourteen buttons by matrix id. 21..27 the buttons' note channels, 28..31 the tag */
+ * role, the fourteen buttons by matrix id (the SMK-37: by FM-1 function, midi_knobs.c MLEARN_BIT). 21..27 the
+ * buttons' note channels, 28..31 the tag */
 #define MLEARN_ROW 4u
 #define MLEARN_KNOBS 7u
 #define MLEARN_BUTTONS 14u
