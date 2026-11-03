@@ -264,12 +264,7 @@ static void layer_knob(uint32_t k, int32_t s)
         return;
     }
     if (l == LAYER_GLO) {                 /* T1..T4 (T5..T8) LEVEL (those in use, with a level), recorded as on MIXER */
-        uint32_t t = trk_group() + k;
-        int16_t *vp = &trk[t].p[P_LEVEL];
-        if (t >= trk_n() || midi_track_only(&trk[t]))
-            return;
-        *vp = (int16_t)clamp(*vp + accel(EN_K1 + k, s, TP[P_LEVEL].max - TP[P_LEVEL].min), TP[P_LEVEL].min, TP[P_LEVEL].max);
-        motion_capture(&trk[t], P_LEVEL, *vp);
+        level_knob(k, s);
     } else if (l) {                                     /* the page's knobs, wherever the page is */
         uint8_t h = ui.home, pg = ui.page;
         ui.home = 0;
@@ -452,7 +447,7 @@ static void layer_cards(uint32_t l)
         ui.home = 0;
         ui.page = (uint8_t)page_first(LAYERS[l].fam);
         page_over = l == LAYER_SCL ? &LY_SCL : 0;
-        draw_columns();
+        draw_cards();                                   /* (the page's four; the SMK-37's banks are off in a layer) */
         page_over = 0;
         ui.home = h;
         ui.page = pg;

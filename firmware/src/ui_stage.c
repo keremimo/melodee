@@ -60,14 +60,21 @@ static struct {
 
 static void view_reset(void);                           /* ui_view.c */
 static void stage_knob_touch(void) { stage.knob_ms = fm1_ms | 1u; }   /* (ui_input.c: a knob on Stage) */
-static int stage_knobs_out(void) { return stage.knob_ms && fm1_ms - (stage.knob_ms & ~1u) < ST_KNOB_MS; }
+static int stage_knobs_out(void)
+{
+#if BOARD_SMK37
+    if (smk_faders_out())                               /* (a fader moved: its bank's cards, ui_smk.c) */
+        return 1;
+#endif
+    return stage.knob_ms && fm1_ms - (stage.knob_ms & ~1u) < ST_KNOB_MS;
+}
 
 /* ------------------------------------------------------- the knobs --- */
 /* a knob's label: the panel's, plain words for CZ-1's (its panel says R1, L1 ..) */
-static const char *stage_label(uint32_t k, const param_desc_t *d)
+static const char *stage_label(const page_t *sp, uint32_t k, const param_desc_t *d)
 {
     static const char *const CZ_L[4] = {"WAVE", "DCW", "DETUNE", "VIBRATO"};
-    return stage_pg.scope == SC_CZ1 ? CZ_L[k & 3u] : d->label;
+    return sp == &stage_pg && sp->scope == SC_CZ1 ? CZ_L[k & 3u] : d->label;
 }
 /* a knob's value as Stage shows it: the Prophet's 0..127 panel values in % (the mockup's CUTOFF 62 %) */
 static void stage_value(const page_t *sp, const param_desc_t *d, int32_t v, char *val, const char **unit)
@@ -84,6 +91,22 @@ static void stage_columns(void)
 {
     const page_t *sp = stage_page();
     uint32_t c;
+#if BOARD_SMK37
+    {                                                   /* a bank's cards (ui_smk.c), the faders' with their gauges */
+        uint32_t bk = strip_bank();
+        if (bk == BK_LEVELS) {
+            for (c = 0; c < NPART; c++)
+                card_tc[c] = T_TRK(c);
+            layer_cards(LAYER_GLO);
+            memset(card_tc, 0, sizeof card_tc);
+            if (smk_faders_out())
+                smk_fader_gauges();
+            return;
+        }
+        if (bk != BK_PAGE && bank_page(bk))
+            sp = bank_page(bk);
+    }
+#endif
     for (c = 0; c < 4u; c++) {
         int16_t *vp;
         const char *unit;
@@ -96,9 +119,13 @@ static void stage_columns(void)
             continue;
         }
         stage_value(sp, d, *vp, val, &unit);
-        draw_column(c, stage_label(c, d), val, unit, dim ? T_DIM : VAL(c), d->fmt == F_ENUM && d->max < 2 ? -1 : RATIO(d, *vp),
+        draw_column(c, stage_label(sp, c, d), val, unit, dim ? T_DIM : VAL(c), d->fmt == F_ENUM && d->max < 2 ? -1 : RATIO(d, *vp),
                     ICON_NONE);
     }
+#if BOARD_SMK37
+    if (smk_faders_out())
+        smk_fader_gauges();
+#endif
 }
 
 /* ------------------------------------------------------- the band --- */

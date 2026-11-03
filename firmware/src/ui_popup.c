@@ -18,7 +18,7 @@ typedef struct {
                                                          * SR_RED: no question, red (a destructive act) */
 } sheet_row_t;
 #define SR_RED 0xFFu
-enum { POP_NONE, POP_SHEET, POP_PICK, POP_LIST, POP_PRESET, POP_SONG_PUNCH };
+enum { POP_NONE, POP_SHEET, POP_PICK, POP_LIST, POP_PRESET, POP_SONG_PUNCH, POP_BANK };   /* (POP_BANK: the SMK-37's bank picker, ui_smk.c) */
 #define PAT_AUDITION_MS 2000u
 #define POP_X BOX_X                                     /* a sheet (large type): 236 wide, its title row 34, its rows
                                                          * 32 px, 34 apart (ui_list.c row_draw), five at most shown */
@@ -803,6 +803,9 @@ static void preset_pick_draw(void)
         cv_blit_band(POP_X, Y_GRAPH);
     }
 }
+#if BOARD_SMK37
+static void bank_pick_draw(void);                       /* ui_smk.c */
+#endif
 static void pop_draw(void)
 {
     if (pop.on == POP_SHEET)
@@ -813,4 +816,8 @@ static void pop_draw(void)
         vlist_draw();
     else if (pop.on == POP_PRESET)
         preset_pick_draw();
+#if BOARD_SMK37
+    else if (pop.on == POP_BANK)
+        bank_pick_draw();
+#endif
 }

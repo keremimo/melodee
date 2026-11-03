@@ -4889,7 +4889,7 @@ static int test_stage(void)
         d = home_param(2, &vp);
         bad += check("Stage: CZ-1's KNOB 3 detunes the native tone (DETUNE: its FINE)", stage_page()->scope == SC_CZ1 &&
                      d && vp && *vp != was && memcmp(raw, cz_patch_of(song.sel)->raw, CZ_BYTES) &&
-                     str_eq(stage_label(2, d), "DETUNE"));
+                     str_eq(stage_label(stage_page(), 2, d), "DETUNE"));
     }
     ui_power_on();
     stop_transport();

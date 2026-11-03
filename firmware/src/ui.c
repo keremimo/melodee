@@ -771,7 +771,7 @@ static void momentary_restore(void)
 static const page_t *stage_page(void);
 static void momentary_take(uint32_t slot)
 {
-    const page_t *pg=ui.home?stage_page():cur_page();int16_t *vp;const param_desc_t *d;   /* (HOME: Stage's knobs) */
+    const page_t *pg=page_over?page_over:ui.home?stage_page():cur_page();int16_t *vp;const param_desc_t *d;   /* (HOME: Stage's knobs; a bank's: ui_smk.c) */
     if(!(fm1_in.buttons&(1u<<panel.btn[B_LFO])) || pg->graph==GR_FMSTORE || pg->graph==GR_CZTOOLS)return;
     d=page_desc(pg,slot,&vp);
     if(!d || !vp || d->max==d->min)return;

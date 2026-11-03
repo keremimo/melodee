@@ -157,17 +157,13 @@ static void smk_grid(void)
     smk_pad_grid = (uint8_t)(pattern_keys_on() || grid_on() || (name_on() && !ui.menu) || (l && l != LAYER_SCL));
 }
 
-/* the SMK-37's 4 faders, by FADER BANK (ui_input.c smk_fbank):
- *   A LEVEL     the levels of tracks 1..4
- *   B FILTER    the selected track: PROPHET its CUTOFF, RESONANCE, filter ENV AMOUNT, filter DECAY (the panel's
- *               own values); CZ-1 its HOME knobs (line 1's wave and DCW peak, detune, vibrato: the tone's own
- *               values); any other engine its four HOME knobs (the engine's own choice of live controls)
- *   C ENVELOPE  the selected track's amp ATTACK, DECAY, SUSTAIN, RELEASE (PROPHET: its amp envelope; CZ, FM6 and
- *               PHASE have envelopes of their own: no effect there)
- *   D FX        the selected track's FX rack: the MIX of slots 1, 2, 3 and its SEND to the shared FX
- * A fader takes over only once it moves (also after a bank or track change), so nothing jumps. Track parameters
- * go through motion_capture as a knob's do. With NOTE REPEAT (the FM-1's LFO) held a fader's edit is momentary,
- * as a knob's is (ui.c momentary_take): released, the value before comes back, and motion does not record it. */
+/* the SMK-37's 4 faders (ui_smk.c: FADER BANK, smk_fbank): each fader its bank's parameter (LEVELS: track i's
+ * level; PAGE: the page's four, as the knobs'). A fader is away after a bank, track or sound change until it crosses
+ * the value, or comes next to it (no jumps): then it follows, as a MIDI knob's absolute value does (smk_fader_set).
+ * A move brings the bank's cards into the strip for ST_KNOB_MS with a pickup gauge under each (smk_fader_ms). With
+ * NOTE REPEAT (the FM-1's LFO) held a fader's edit is momentary, as a knob's is (ui.c momentary_take): released, the
+ * value before comes back, and motion does not record it. LEVELS works everywhere; the other banks where the page has
+ * a strip (bank_knobs_on). */
 /* id: the selected track's parameter the fader sets (P_COUNT: none); native: 2 CZ-1, 3 PROPHET (the whole sound).
  * As ui.c momentary_take: the store keeps parameter ids of the captured track and one native patch */
 static void smk_fader_momentary(uint32_t id, uint32_t native)
@@ -204,89 +200,39 @@ static void smk_fader_momentary(uint32_t id, uint32_t native)
     }
     ui.pg_down &= (ui_btnmask_t)~(1u << panel.btn[B_LFO]);   /* (the release opens no LFO page) */
 }
-static void smk_fader_param(track_t *t, uint32_t id, uint32_t v)
-{
-    const param_desc_t *d = track_desc(t, id);
-    uint32_t own = t == TSEL;                           /* (momentary edits: the selected track's, as a knob's) */
-    if (own)
-        smk_fader_momentary(id, 0);
-    t->p[id] = (int16_t)(d->min + ((int32_t)d->max - d->min) * (int32_t)v / 127);
-    if (!(own && momentary.active))
-        (void)motion_capture(t, id, t->p[id]);
-}
-/* CZ-1: fader `slot` sets HOME's knob `slot` (ui.c stage_page), written into the tone as the knob does (ui_input.c) */
-static void smk_fader_cz(uint32_t slot, uint32_t v)
-{
-    const page_t *pg = stage_page();
-    int16_t *vp;
-    const param_desc_t *d = page_desc(pg, slot, &vp);
-    uint8_t raw[CZ_BYTES], old[MO_NATIVE_N];
-    uint32_t tr = song.sel % NTRK, f;
-    if (!d || !vp || d->max == d->min)
-        return;
-    smk_fader_momentary(P_COUNT, 2);
-    *vp = (int16_t)(d->min + ((int32_t)d->max - d->min) * (int32_t)v / 127);
-    f = motion_guard();
-    motion_native_peek(TSEL, old);
-    if (cz_ed_put(tr, pg->id[slot], (uint32_t)*vp, raw)) {
-        if (!momentary.active)
-            cz_compare_take(tr);
-        memcpy(cz_patch_of(tr)->raw, raw, 128u);
-        native_motion(old);
-    }
-    motion_unguard(f);
-}
 static void smk_faders(void)
 {
-    static const uint8_t P5_FLT[4] = {P5_CUTOFF, P5_RESONANCE, P5_ENV_FILTER, P5_DECAY_FILTER};
-    static const uint8_t P5_AMP[4] = {P5_ATTACK_AMP, P5_DECAY_AMP, P5_SUSTAIN_AMP, P5_RELEASE_AMP};
-    static const uint8_t ENV[4] = {P_ATK, P_DEC, P_SUS, P_REL}, SENDS[4] = {P_FXMIX, P_FX2MIX, P_FX3MIX, P_FXSEND};
-    static uint8_t last[4] = {0xFF, 0xFF, 0xFF, 0xFF}, sel = 0xFF;
+    static uint8_t last[4] = {0xFF, 0xFF, 0xFF, 0xFF}, sel = 0xFF, eng = 0xFF;
     uint32_t i;
-    if (smk_fbank_new || sel != song.sel) {               /* a new bank or track: wait for each fader to move */
+    if (smk_fbank_new || sel != song.sel || eng != TSEL->eng_req) {   /* a new bank, track or sound: every fader away */
         smk_fbank_new = 0;
         sel = (uint8_t)song.sel;
-        for (i = 0; i < 4u; i++)
-            last[i] = 0xFF;
+        eng = TSEL->eng_req;
+        smk_fpick = 0;
     }
     for (i = 0; i < 4u; i++) {
-        uint32_t v = fm1_in.fader[i];
-        track_t *t = TSEL;
-        const engine_t *e = ENGINES[eng_idx(t->eng_req)];
-        int p5 = t->eng_req == ENGI_PROPHET, cz = eng_idx(t->eng_req) == ENGI_CZ;
+        int32_t v = fm1_in.fader[i], cur, prev;
         if (last[i] == 0xFF || fm1_in.frames < 200u) {   /* (the first readings settle) */
             last[i] = (uint8_t)v;
             continue;
         }
         if (v == last[i])
             continue;
+        prev = last[i];
         last[i] = (uint8_t)v;
-        switch (smk_fbank) {
-        case 1:
-            if (p5) {
-                smk_fader_momentary(P_COUNT, 3);
-                p5_edit_value(t, P5_FLT[i], (int32_t)v);
-            } else if (cz)
-                smk_fader_cz(i, v);
-            else
-                smk_fader_param(t, e->knob[i], v);
-            break;
-        case 2:
-            if (p5) {
-                smk_fader_momentary(P_COUNT, 3);
-                p5_edit_value(t, P5_AMP[i], (int32_t)v);
-            } else if (!e->ownenv)
-                smk_fader_param(t, ENV[i], v);
-            break;
-        case 3:
-            smk_fader_param(t, SENDS[i], v);
-            break;
-        default:
-            if (i < NTRK)
-                smk_fader_param(&trk[i], P_LEVEL, v);
-            break;
+        smk_fader_ms = fm1_ms | 1u;
+        smk_last_fader = 1;
+        if (smk_fbank != BK_LEVELS && !bank_knobs_on())
+            continue;
+        cur = smk_fader_value(i);
+        if (cur < 0)
+            continue;
+        if (!((smk_fpick >> i) & 1u)) {                 /* away: crossing the value, or next to it, takes over */
+            if ((prev - cur) * (v - cur) > 0 && v - cur != 1 && cur - v != 1)
+                continue;
+            smk_fpick |= (uint8_t)(1u << i);
         }
-        ui.force = 1;
+        smk_fader_set(i, v);
     }
 }
 #endif

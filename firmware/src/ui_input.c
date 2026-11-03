@@ -10,7 +10,6 @@ static int pattern_keys_on(void);
 /* The LED picture is built off-line and copied one byte per column: clearing
  * and relighting would let the 10 kHz scan catch the dark gap and flicker. */
 #if BOARD_SMK37
-static uint8_t smk_fbank, smk_fbank_new;           /* FADER BANK: A level, B filter, C envelope, D FX (main.c) */
 /* SMK-37: one flag per id. Ids 0..18 are the button LEDs (smk_input.h); the note keys (no LEDs of
  * their own) take LED_KEY(k); ui_leds shows the white keys F3..G5 on the 16 RGB pads. */
 #define LED_BUF 64u
@@ -474,10 +473,11 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
     uint32_t c, on = 0, ph = 0xFFu, blink = ((fm1_ms / 250u) & 1u) == 0u, br = (fm1_ms / 125u) & 7u;
     for (c = 0; c < SMK_NLED; c++)
         fm1_led[c] = (uint8_t)(nl[c] || (nw[c] && blink));
-    if (panel_btn_of(SMK_BTN_FADER_BANK) == NB)
-        fm1_led[SMK_BTN_FADER_BANK] = smk_fbank != 0;   /* FADER BANK lit off bank A */
+    if (panel_btn_of(SMK_BTN_FADER_BANK) == NB)         /* FADER BANK lit off LEVELS, KNOB BANK off PAGE; blinking
+                                                         * while held (its picker up, ui_smk.c) */
+        fm1_led[SMK_BTN_FADER_BANK] = (uint8_t)(pop.on == POP_BANK && pop.col == 1u ? blink : smk_fbank != BK_LEVELS);
     if (panel_btn_of(SMK_BTN_KNOB_BANK) == NB)
-        fm1_led[SMK_BTN_KNOB_BANK] = ui.menu != 0;      /* KNOB BANK lit while the menu is up */
+        fm1_led[SMK_BTN_KNOB_BANK] = (uint8_t)(pop.on == POP_BANK && pop.col == 0u ? blink : smk_kbank != BK_PAGE);
     if (padled_hold_until && (int32_t)(fm1_ms - padled_hold_until) >= 0)
         padled_hold_until = 0;                          /* (0: no hold, also after 24.8 days up) */
     if (padled_hold_until)
@@ -1934,6 +1934,18 @@ static int fx_rack_back(void)
     return 1;
 }
 
+/* T1..T4 (T5..T8) LEVEL on KNOB k (those in use, with a level), recorded as on MIXER: the GLO layer's knobs, the
+ * SMK-37's LEVELS bank */
+static void level_knob(uint32_t k, int32_t s)
+{
+    uint32_t t = trk_group() + k;
+    int16_t *vp = &trk[t].p[P_LEVEL];
+    if (t >= trk_n() || midi_track_only(&trk[t]))
+        return;
+    *vp = (int16_t)clamp(*vp + accel(EN_K1 + k, s, TP[P_LEVEL].max - TP[P_LEVEL].min), TP[P_LEVEL].min, TP[P_LEVEL].max);
+    motion_capture(&trk[t], P_LEVEL, *vp);
+}
+
 /* KNOB k turned s on the page shown (the sound designer's pages too): what it edits there, its card hot */
 static void page_knob_edit(uint32_t k, int32_t s)
 {
@@ -1946,6 +1958,28 @@ static void page_knob_edit(uint32_t k, int32_t s)
         ui.hot_col = (uint8_t)k;
         ui.hot_t = 40;
     }
+#if BOARD_SMK37
+    if (pop.on == POP_BANK) {                           /* a BANK button held: K1 walks its picker (ui_smk.c) */
+        if (!k) bank_pick_step(s > 0 ? 1 : -1);
+        return;
+    }
+    smk_last_fader = 0;                                 /* (the strip shows the knobs' bank again) */
+    if (smk_kbank != BK_PAGE && bank_knobs_on()) {      /* the knobs' bank: its page in place of the page's own */
+        const page_t *bp = smk_kbank == BK_LEVELS ? 0 : bank_page(smk_kbank);
+        ui.hot_col = (uint8_t)k;
+        ui.hot_t = 40;
+        if (ui.home) stage_knob_touch();
+        if (smk_kbank == BK_LEVELS) { level_knob(k, s); return; }
+        if (bp) {
+            page_over = bp;
+            momentary_take(k);
+            edit_param(k, s);
+            if (!ui.home) pick_touch(k);
+            page_over = 0;
+            return;
+        }
+    }
+#endif
     if (list_on()) {                                    /* a list page: KNOB 2 the row, KNOB 1 its value (ui_list.c) */
         list_knob(k, s);
         return;
@@ -2184,22 +2218,16 @@ static void ui_input(void)
         momentary.active=momentary.count=momentary.native=0;pressed&=~(1u<<panel.btn[B_OCTUP]);ui_message("KEPT");
     }
 #if BOARD_SMK37
-    /* the SMK's own buttons, unless HARDWARE CALIBRATION gave them an FM-1 label: < > one detent of SELECT
-     * (pages, patterns, the note in the roll: whatever SELECT does there); FADER BANK what the faders set;
-     * KNOB BANK what holding HOME does (the menu, or leave it: below) */
-    uint32_t smk_kb = ((pressed >> SMK_BTN_KNOB_BANK) & 1u) && panel_btn_of(SMK_BTN_KNOB_BANK) == NB;
-    for (id = SMK_BTN_LEFT; id <= SMK_BTN_RIGHT; id++)
-        if (((pressed >> id) & 1u) && panel_btn_of(id) == NB) {
-            uint32_t l = fm1__lock();
-            fm1_in.enc_steps[panel.enc[EN_SELECT]] += (int16_t)((id == SMK_BTN_RIGHT ? 1 : -1) * panel.dir[EN_SELECT]);
-            fm1__unlock(l);
-        }
-    if (((pressed >> SMK_BTN_FADER_BANK) & 1u) && panel_btn_of(SMK_BTN_FADER_BANK) == NB) {
-        static const char *const FB[4] = {"A  LEVEL", "B  FILTER", "C  ENVELOPE", "D  FX"};
-        smk_fbank = (uint8_t)((smk_fbank + 1u) % 4u);
-        smk_fbank_new = 1;
-        ui_say("FADER BANK ", FB[smk_fbank]);
-    }
+    /* the SMK's own buttons, unless HARDWARE CALIBRATION gave them an FM-1 label: KNOB BANK and FADER BANK (ui_smk.c:
+     * tapped the next bank, held the picker, < > meanwhile its banks); else < > one detent of SELECT (pages,
+     * patterns, the note in the roll: whatever SELECT does there) */
+    if (!smk_bank_buttons(pressed, now))
+        for (id = SMK_BTN_LEFT; id <= SMK_BTN_RIGHT; id++)
+            if (((pressed >> id) & 1u) && panel_btn_of(id) == NB) {
+                uint32_t l = fm1__lock();
+                fm1_in.enc_steps[panel.enc[EN_SELECT]] += (int16_t)((id == SMK_BTN_RIGHT ? 1 : -1) * panel.dir[EN_SELECT]);
+                fm1__unlock(l);
+            }
 #endif
     uint32_t bank_notes = notes;
     uint32_t home = btn_hold(&ui.home_t0, B_HOME, now, 1);
@@ -2320,10 +2348,6 @@ static void ui_input(void)
     if(bulk.on && (ui.home || slot_kind()==SK_PROJECT || bulk.track!=song.sel || bulk.pattern!=TSEL->pattern || bulk.engine!=library_engine() ||
        (!slot_kind() && (cur_page()->graph!=GR_ROLL || (bulk.on==1u?bulk.generation!=TSEL->pattern_gen:bulk.generation!=recording_generation)))))bulk_clear();
     step_history_sync();                                /* (seq_undo.c: a change from elsewhere: a fresh history) */
-#if BOARD_SMK37
-    if (smk_kb && !lay && home == BT_NONE && !ui.home_t0)
-        home = BT_HOLD;                                 /* SMK-37 KNOB BANK: as HOME held */
-#endif
     if (home == BT_HOLD) {                              /* HOME held: open the menu, or leave it */
         if (ui.menu) {
         momentary_restore();

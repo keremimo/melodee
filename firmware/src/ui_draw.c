@@ -13,6 +13,17 @@ static int name_on(void);                              /* NAME (ui_name.c) */
 static void name_draw(void);
 static int new_on(void);                               /* NEW SONG (ui_new.c) */
 static void new_draw(void);
+#if BOARD_SMK37
+/* the SMK-37's banks (ui_smk.c): what the strip shows and the faders reach */
+enum { BK_PAGE, BK_SOUND, BK_FILTER, BK_ENV, BK_LFO, BK_FX, BK_ARP, BK_LEVELS, BK_N };
+static uint32_t strip_bank(void);
+static const page_t *bank_page(uint32_t bank);
+static void smk_fader_gauges(void);
+static int smk_faders_out(void);
+static const char *smk_head_tag(void);
+static void smk_strip_poll(void);
+static void layer_cards(uint32_t l);                    /* ui_layer.c */
+#endif
 
 /* --------------------------------------------------------- drawing --- */
 #define COL_W CARD_W                                  /* a knob's cell: 57 x 48 at x 2 + 60 c, y 32 */
@@ -288,6 +299,9 @@ static void draw_head(void)
 #if MELODEE_USB_HOST
     sig += uh.on ? (1u + uh.run) * 6151u : 0u;          /* the HOST tag: waiting, or a controller connected */
 #endif
+#if BOARD_SMK37
+    sig += str_hash(0x51u, smk_head_tag());             /* the bank's tag */
+#endif
     if (bpm != ui.roll_bpm) {
         char a[8];
         fmt_int(a, ui.roll_bpm);
@@ -340,6 +354,9 @@ static void draw_head(void)
 #endif
 #if MELODEE_BLE
         if (mb.on) tag = tag[0] ? "HOST BLE" : "BLE";
+#endif
+#if BOARD_SMK37
+        if (smk_head_tag()[0]) tag = smk_head_tag();    /* the knobs' bank, FADERS (ui_smk.c) */
 #endif
         int32_t hw = tag[0] ? text_w(TY_LB, tag) + 10 : 0;
 
@@ -724,10 +741,36 @@ static void draw_foot(void)
 #include "ui_browser.c"                                 /* SAVE > PRESETS, the sound browser */
 #include "ui_patterns.c"                                /* SEQ > PATTERNS, SEQ > SONG */
 static int own_screen(void);
+static void draw_cards(void);                           /* the page's four (below) */
 static void draw_columns(void)
 {
     if (own_screen() && col_style != CS_CAPTURE)         /* own screens have no cards; lists still need their values */
         return;
+#if BOARD_SMK37
+    if (!page_over && !ui.home && col_style != CS_CAPTURE && (strip_bank() != BK_PAGE || smk_faders_out())) {
+        uint32_t bk = strip_bank();                      /* a bank's cards in place of the page's (ui_smk.c), the
+                                                          * faders' with their pickup gauges; Stage: stage_columns */
+        const page_t *bp = bk == BK_PAGE || bk == BK_LEVELS ? 0 : bank_page(bk);
+        if (bk == BK_LEVELS) {
+            uint32_t c;
+            for (c = 0; c < NPART; c++)
+                card_tc[c] = T_TRK(c);
+            layer_cards(LAYER_GLO);
+            memset(card_tc, 0, sizeof card_tc);
+        } else {
+            page_over = bp ? bp : cur_page();
+            draw_cards();
+            page_over = 0;
+        }
+        if (smk_faders_out())
+            smk_fader_gauges();
+        return;
+    }
+#endif
+    draw_cards();
+}
+static void draw_cards(void)
+{
     if (ui.home)                                        /* Stage: its knobs drop in when turned (ui_stage.c stage_knobs);
                                                          * the page left (DRUM SOUND ..) draws none under them */
         return;
@@ -1192,6 +1235,7 @@ static void draw_confirm(void)
 #include "ui_motion.c"                                  /* MOTION: its lanes */
 #include "ui_scales.c"                                  /* SCALES: a screen of its own */
 #include "ui_designer.c"                                /* guided native sound creation */
+#include "ui_smk.c"                                     /* the SMK-37's banks: knobs, faders, their picker */
 static int own_screen(void)                             /* a page drawn whole by its own code, no cards or footer */
 {
     uint32_t g = cur_page()->graph;
@@ -1340,6 +1384,9 @@ static void ui_draw_frame(void)
         return;
     }
     pick_poll();
+#if BOARD_SMK37
+    smk_strip_poll();
+#endif
     if (song_punch_on()) {
         song_punch_draw();
         draw_toast();
@@ -1358,7 +1405,7 @@ static void ui_draw_frame(void)
                                                          * over it as it is (it comes with every turn of a list knob:
                                                          * dimming sent the whole screen twice, ~150 ms on the SPI) */
         if (ui.force) {
-            cv_dim = pop.on != POP_PICK && pop.on != POP_PRESET;
+            cv_dim = pop.on != POP_PICK && pop.on != POP_PRESET && pop.on != POP_BANK;
             cv_under = 1;
             draw_page();
             cv_dim = cv_under = 0;
