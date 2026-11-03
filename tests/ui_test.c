@@ -32,8 +32,8 @@
 static uint32_t host_slots[3u * 0x14000u / 4u];          /* USR1..3 (zero: empty), as the flash at 0xA0000 */
 #define SMP_USER_XIP(k) ((const uint8_t *)host_slots + (k) * SMP_USER_SIZE)
 #if BOARD_SMK37
-/* the SMK-37's HAL (hal/smk_input.h) as stubs: its constants and pad maps, a queue the test fills with pad events
- * (smk_pad_take), the pads' colours kept (padled_set), no outer keys, no locks */
+/* the SMK-37's HAL (hal/smk_input.h) as stubs: its constants and pad maps, queues the test fills with pad and outer key
+ * events (smk_pad_take, smk_extkey_take), the pads' colours kept (padled_set), no locks */
 #define FM1_NKEY 37u
 #define FM1_NBTN 18u                                     /* (panel.c would fall back to the FM-1's 14: ids 14..17 unseen) */
 #define FM1_NENC 8u
@@ -51,7 +51,9 @@ static uint32_t host_ticks;
 static uint32_t fm1_ticks(void) { return host_ticks; }
 static uint32_t fm1__lock(void) { return 0; }
 static void fm1__unlock(uint32_t k) { (void)k; }
-static int32_t smk_extkey_take(void) { return -1; }
+static uint16_t host_extq[8];
+static uint32_t host_extq_r, host_extq_w;
+static int32_t smk_extkey_take(void) { return host_extq_r == host_extq_w ? -1 : host_extq[host_extq_r++ % 8u]; }
 static uint16_t host_padq[32];
 static uint32_t host_padq_r, host_padq_w;
 static int32_t smk_pad_take(void) { return host_padq_r == host_padq_w ? -1 : host_padq[host_padq_r++ % 32u]; }
