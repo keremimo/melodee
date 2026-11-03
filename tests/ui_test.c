@@ -6090,6 +6090,16 @@ static int test_smk_sweep(void)
     bad += check("  .. and lets it go", !fm1_in.remote);
     mlearn_forget();
     fm1_in.remote_tap = 0;
+    /* the pads' pressure */
+    song.ntrk = 4;
+    track_select(0); go_home(); frame();
+    fm1_in.pad_st[3] = 0x80; fm1_in.pad_press[3] = 90; frame();
+    bad += check("a pad pressed in KEYS: the track's aftertouch", smk_pad_now == PM_KEYS && TSEL->at == 90u);
+    turn(EN_ALGO, 1);
+    bad += check("  another track selected with the pad held: the old one's pressure off, the new one's on",
+                 song.sel == 1u && trk[0].at == 0u && trk[1].at == 90u);
+    fm1_in.pad_st[3] = 0; fm1_in.pad_press[3] = 0; frame();
+    bad += check("  let go: off", trk[1].at == 0u);
     /* a drum pad whose release was lost */
     track_select(3); go_home(); frame();
     bad += check("a DRUM track on Stage: the pads are its drums", drum_track(TSEL) && smk_pad_now == PM_DRUM);

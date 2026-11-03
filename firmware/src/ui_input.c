@@ -1043,6 +1043,7 @@ static uint32_t pad_mode_now(void)
 }
 static uint8_t smk_pad_hold, smk_pad_hold_at;            /* STEPS: a pad held (+1) and its step: held on, cleared */
 static uint32_t smk_pad_hold_ms, smk_pad_at;             /* .. since; the pads' pressure sent last (+1, 0 none) */
+static uint8_t smk_at_trk;                               /* .. the track it went to */
 static uint8_t smk_pad_trk[SMK_NPAD], smk_pad_playing[SMK_NPAD];   /* DRUM: the track and note a pad started (+1) */
 /* PATTERNS (docs/SMK37_UX.md 2.2): the pads are the FM-1's pattern map, the keys never (pattern_keys_on). The top row
  * the track keys 1..8, the bottom row the patterns of the page the PATTERNS screen shows (elsewhere: the page of the
@@ -1095,9 +1096,15 @@ static void smk_pads_sync(void)
             if ((fm1_in.pad_st[c] & 0x80u) && fm1_in.pad_press[c] + 1u > at)
                 at = fm1_in.pad_press[c] + 1u;
     }
+    if (smk_pad_at && smk_at_trk != song.sel) {         /* another track selected with a pad held: the pressure leaves
+                                                         * the track it was on (else it would stay there) */
+        trk[smk_at_trk % NTRK].at = 0;
+        smk_pad_at = 0;
+    }
     if (at != smk_pad_at) {                             /* (as a MIDI controller's channel aftertouch) */
         if (at || smk_pad_at) TSEL->at = (uint8_t)(at ? at - 1u : 0u);
         smk_pad_at = at;
+        smk_at_trk = (uint8_t)song.sel;
     }
 }
 /* a pad of STEPS tapped: a step, with the tap's velocity. A synth track: an empty step gets the last note played
