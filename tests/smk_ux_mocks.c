@@ -7,6 +7,7 @@
  *   smk_ux_mocks OUTDIR      -> OUTDIR/ppm/NIGHT_<scene>.ppm (tools/smk_ux_mocks.py: PNGs beside the pad maps)
  * Built by tools/smk_ux_mocks.py as tests/ble_ui_render.c is (ui_render.c with UI_RENDER_NO_MAIN). */
 #define UI_RENDER_NO_MAIN 1
+#define PAT_DLG_WORD "Breathing"                        /* (the SMK-37's pattern dialog: its two pads breathe) */
 #include "ui_render.c"
 
 /* ------------------------------------------------------------ the additions --- */
@@ -93,12 +94,12 @@ static void mk_picker(const char *const *name, int32_t n, int32_t now)
 static const char *const BANK[8] = {"Page", "Sound", "Filter", "Env", "LFO", "FX", "Arp", "Levels"};
 
 /* ------------------------------------------------------------------ scenes --- */
-enum { M_STAGE_KEYS, M_STAGE_DRUM, M_NOTES_STEPS, M_DRUM_STEPS, M_PATTERNS, M_SEQ_HELD, M_BANK_FILTER_NOTES,
-       M_BANK_ENV_STAGE, M_FADERS_PAGE_ENV, M_FADERS_LEVELS, M_PICK_KNOBS, M_PICK_FADERS, M_LAYER_GLO, M_LAYER_SCL,
-       M_PADS_OVERRIDE, M_NAME, M_COUNT };
+enum { M_STAGE_KEYS, M_STAGE_DRUM, M_NOTES_STEPS, M_DRUM_STEPS, M_PATTERNS, M_SEQ_HELD, M_PAT_DIALOG,
+       M_BANK_FILTER_NOTES, M_BANK_ENV_STAGE, M_FADERS_PAGE_ENV, M_FADERS_LEVELS, M_PICK_KNOBS, M_PICK_FADERS,
+       M_LAYER_GLO, M_LAYER_SCL, M_PADS_OVERRIDE, M_NAME, M_COUNT };
 static const char *const M_NAME_OF[M_COUNT] = {"stage_keys", "stage_drum", "notes_steps", "drum_steps", "patterns",
-    "seq_held", "bank_filter_notes", "bank_env_stage", "faders_page_env", "faders_levels", "pick_knobs", "pick_faders",
-    "layer_glo", "layer_scl", "pads_override", "name"};
+    "seq_held", "pattern_dialog", "bank_filter_notes", "bank_env_stage", "faders_page_env", "faders_levels",
+    "pick_knobs", "pick_faders", "layer_glo", "layer_scl", "pads_override", "name"};
 
 static void mk_scene(int m)
 {
@@ -123,6 +124,10 @@ static void mk_scene(int m)
         break;
     case M_PATTERNS:                                     /* PATTERNS: the pads mirror the selected track's row */
         setup(S_PATGRID); song.sel = 1; pal(0); draw(S_PATGRID);
+        break;
+    case M_PAT_DIALOG:                                   /* a pattern pad held: its dialog over Stage (pattern 3 of
+                                                         * track 1, as SEQ + a white key held opens it on the FM-1) */
+        setup(S_PAT_DIALOG); pal(0); draw(S_PAT_DIALOG);
         break;
     case M_BANK_FILTER_NOTES: {                          /* NOTES, knob bank FILTER: the Prophet's filter on K1..K4 */
         static const char *const L[4] = {"CUTOFF", "RESO", "ENV AMT", "DECAY"};

@@ -1024,6 +1024,14 @@ static void draw_uboot(void)
 #define DLG_W 224
 #define DLG_H 168
 #define CF_DETAIL 64                                    /* confirm_text's b: its longest detail and the 0 */
+/* SEQ's pattern dialog: how its half / double keys show (the FM-1's C# D# blink; the SMK-37's two pads breathe) */
+#ifndef PAT_DLG_WORD
+#if BOARD_SMK37
+#define PAT_DLG_WORD "Breathing"
+#else
+#define PAT_DLG_WORD "Blinking"
+#endif
+#endif
 static void confirm_text(char *a, char *b)
 {
     uint32_t k = ui.confirm_trk;
@@ -1134,8 +1142,8 @@ static void confirm_text(char *a, char *b)
         str_cpy(a, "REPLACE OLD TEMPLATE?", 24);
         str_cpy(b, "Old settings/template replaced", 32);
         break;
-    case CF_PAT_KEY: {                                  /* SEQ + a white key held: its length, what its keys do now
-                                                         * (b: CF_DETAIL) */
+    case CF_PAT_KEY: {                                  /* SEQ + a white key held (the SMK-37: a pattern pad): its
+                                                         * length, what its keys do now (b: CF_DETAIL) */
         uint32_t p = ui.pat_dlg % NPAT, n;
         n = (uint32_t)clamp(pattern_timing(k % NTRK, p, 0), 1, NSTEP);
         str_cpy(a, "PATTERN ", 24);
@@ -1143,7 +1151,7 @@ static void confirm_text(char *a, char *b)
         str_cpy(a + str_len(a), " \xB7 ", 4);
         fmt_int(a + str_len(a), (int32_t)n);
         str_cpy(a + str_len(a), n == 1u ? " STEP" : " STEPS", 7);
-        str_cpy(b, "Again: delete \xB7 other: copy\nBlinking: half \xB7 double", CF_DETAIL);
+        str_cpy(b, "Again: delete \xB7 other: copy\n" PAT_DLG_WORD ": half \xB7 double", CF_DETAIL);
         break;
     }
     case CF_DEL_TRACK:                                  /* Stage's sheet: the tracks after it move down a place */

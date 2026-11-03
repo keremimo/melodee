@@ -3,6 +3,7 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Melodee UI input: LEDs, knobs and buttons, SEQ step entry, panel setup. */
 static int pattern_keys_on(void);
+static int pat_keys_silent(void);
 #include "ui_name.c"                                    /* NAME: naming user presets and projects */
 #include "ui_new.c"                                     /* NEW SONG: key, tempo, roles */
 #include "ui_midi_knobs.c"
@@ -138,15 +139,48 @@ static const uint8_t LEN_KEY[2] = {8, 10};              /* (its dialog: half, do
 #define PAT_DTAP_MS 300u
 static int pattern_keys_on(void)
 {
+#if BOARD_SMK37
+    return 0;                                           /* the SMK-37's keys only ever play notes: its pads are the
+                                                         * pattern keys (pads_patterns_on, smk_pads_input) */
+#else
     return !ui.menu && !ui.confirm && !name_on() && !ui.ly && !ui.uboot &&
         ((fm1_in.buttons & (1u << panel.btn[B_SEQ])) ||
-         (!ui.home && cur_page()->graph == GR_PATGRID && !live_rec_sel() && !preset_pick_on())
-#if BOARD_SMK37
-         || (smk_pad_now == PM_PATTERNS && smk_pad_ctx == SPC_MODE && !live_rec_sel())   /* (the pads' mode: the keys
-                                                                                            * too, as SEQ held) */
+         (!ui.home && cur_page()->graph == GR_PATGRID && !live_rec_sel() && !preset_pick_on()));
 #endif
-        );
 }
+/* the keys are SEQ's, silent: the pattern map, its dialog (keys_mode, the lights); never on the SMK-37 */
+static int pat_keys_silent(void)
+{
+#if BOARD_SMK37
+    return 0;
+#else
+    return ui.confirm == CF_PAT_KEY || pattern_keys_on();
+#endif
+}
+/* the keys are the pattern map's this frame (one held past the map too): not the grid's, not a step's */
+static int pat_keys_taken(void)
+{
+#if BOARD_SMK37
+    return 0;
+#else
+    return pattern_keys_on() || ui.pat_key;
+#endif
+}
+/* what drives the pattern gestures (pattern_keys, pattern_key_dialog): the FM-1's note keys; the SMK-37's PATTERNS
+ * pads as the same key bits (smk_pads_input: the top row the track keys, the bottom row the page's pattern keys, the
+ * dialog's first two top-row pads LEN_KEY), so one state machine serves both */
+#if BOARD_SMK37
+static int pads_patterns_on(void);
+static uint32_t smk_pat_bit(uint32_t c);
+static uint32_t smk_pat_held, smk_pat_edges;            /* the pattern pads down, pressed this pass (key bits) */
+#define PK_ON() pads_patterns_on()
+#define PK_HELD() smk_pat_held
+#define PK_EDGES smk_pat_edges
+#else
+#define PK_ON() pattern_keys_on()
+#define PK_HELD() fm1_in.notes
+#define PK_EDGES bank_notes
+#endif
 /* the pattern keys, as the keys show things everywhere: bright the pattern playing (and the one held to copy),
  * dim the others that hold something, breathing the one waiting for the bar; the empty ones dark. The track keys: the
  * selected one bright, the others in use dim, an armed one breathing. Its dialog: no track keys, half and double
@@ -304,7 +338,7 @@ static void rec_toggle(uint32_t latch);
 /* Finish a released key before reading a new press: both can arrive in one UI frame. */
 static void pattern_key_release(void)
 {
-    if (ui.pat_key && (!pattern_keys_on() || !(fm1_in.notes & (1u << PAT_KEY[ui.pat_key - 1u])))) {
+    if (ui.pat_key && (!PK_ON() || !(PK_HELD() & (1u << PAT_KEY[ui.pat_key - 1u])))) {
         if (!ui.pat_copy) {
             uint32_t bank = ui.pat_key - 1u, armed = 0;
             if (pattern_request(TSEL, bank)) ui_message("STOP SONG TO SWITCH");
@@ -326,7 +360,7 @@ static void pattern_key_release(void)
 static void pattern_keys(uint32_t notes)
 {
     uint32_t b;
-    if (pattern_keys_on())
+    if (PK_ON())
         for (b = 0; b < NELEM(TRK_KEY); b++) if (notes & (1u << TRK_KEY[b])) {   /* a track key: its absolute track */
             ui.seq_t0 |= 2u;
             if (b >= trk_n() && !ui.home && cur_page()->graph == GR_PATGRID)
@@ -336,7 +370,7 @@ static void pattern_keys(uint32_t notes)
         }
     if (ui.pat_key && ui.pat_track != song.sel) ui.pat_key = ui.pat_copy = 0;
     pattern_key_release();
-    if (pattern_keys_on()) {
+    if (PK_ON()) {
         for (b = 0; b < trk_npat(song.sel); b++) if (notes & (1u << PAT_KEY[b])) {
             ui.seq_t0 |= 2u;
             if (!ui.pat_key) {
@@ -348,7 +382,7 @@ static void pattern_keys(uint32_t notes)
                 ui.pat_tap = 0;
             }
         }
-        if (ui.pat_key && !ui.pat_copy && (fm1_in.notes & (1u << PAT_KEY[ui.pat_key - 1u])) &&
+        if (ui.pat_key && !ui.pat_copy && (PK_HELD() & (1u << PAT_KEY[ui.pat_key - 1u])) &&
             fm1_ms - ui.pat_ms >= PAT_HOLD_MS) {        /* held alone: its dialog */
             ui.pat_dlg = (uint8_t)(ui.pat_key - 1u);
             ui.pat_key = ui.pat_copy = ui.pat_did = 0;
@@ -497,7 +531,7 @@ static uint32_t smk_key_state(const uint8_t *nl, const uint8_t *nd, const uint8_
 }
 static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb, const uint8_t *nw)
 {
-    uint32_t c, blink = ((fm1_ms / 250u) & 1u) == 0u, sel = song.sel, len, ph = 0xFFu, base;
+    uint32_t c, blink = ((fm1_ms / 250u) & 1u) == 0u, sel = song.sel, len, ph = 0xFFu, base, pl = 0, pd = 0, pw = 0;
     const track_t *t = TSEL;
     const int8_t *map = smk_pad_key;
     for (c = 0; c < SMK_NLED; c++)
@@ -515,11 +549,23 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
     base = ui.bank * 16u;
     if (song.playing && t->seq_idx < len && t->seq_idx / 16u == ui.bank)
         ph = t->seq_idx % 16u;
+    if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS)
+        pl = pattern_leds(&pd, &pw);                    /* (the FM-1's key planes: the pads' map is the same) */
     for (c = 0; c < SMK_NPAD; c++) {
         uint32_t st = PS_NONE, hue = sel, mpc = c < 8u ? c + 8u : c - 8u;
         if (smk_pad_ctx == SPC_BANK) {                  /* a BANK button held: the banks, then the pads' modes */
             if (c < BK_N) st = c == pop.sel ? PS_ACTIVE : bank_has(c) ? PS_ON : PS_OFF;
             else if (c - 8u < PM_N) st = c - 8u == smk_pmode ? PS_ACTIVE : PS_ON;
+        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS) {   /* the tracks in their hues (the one
+                                                         * selected FILLED, armed WAITING), the page's patterns (playing
+                                                         * or held to copy ACTIVE, waiting for the bar WAITING, holding
+                                                         * something ON); its dialog: half and double WAITING */
+            uint32_t b = smk_pat_bit(c), m = 1u << b;
+            if (b < 27u) {
+                if (c < 8u) hue = c;
+                st = ui.confirm == CF_PAT_KEY && c < 2u ? PS_WAIT : (smk_pat_held & m) ? PS_ACTIVE :
+                     (pl & m) ? (c < 8u ? PS_FILLED : PS_ACTIVE) : (pw & m) ? PS_WAIT : (pd & m) ? PS_ON : PS_OFF;
+            }
         } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_DRUM) {   /* the kit's drums (drum_mpc_note's
                                                                              * layout), the one edited brighter,
                                                                              * white while it hits */
@@ -539,9 +585,7 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
         } else if (map[c] >= 0) {                       /* a key: its light (the planes), the tracks' own hues */
             uint32_t k = (uint32_t)map[c], id = LED_KEY(k);
             st = smk_key_state(nl, nd, nb, nw, id);
-            if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS && c < 8u)
-                hue = c;
-            else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_KEYS && st == PS_ON) {   /* the scale's root */
+            if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_KEYS && st == PS_ON) {   /* the scale's root */
                 uint32_t n = kb_map(t, k);
                 if (n < 128u && (n + 120u - (uint32_t)t->p[P_ROOT]) % 12u == 0u) st = PS_FILLED;
             }
@@ -583,8 +627,8 @@ static void ui_leds(void)
     led_put(nl, panel.btn[B_OCTDN], (int)(k & 1u));
     led_put(nl, panel.btn[B_OCTUP], (int)(k >> 1));
     uint32_t song_fx = song_punch_on() && !ui.menu && !ui.confirm;
-    play = !song_fx && !pattern_keys_on() && ui.confirm != CF_PAT_KEY && !(name_on() && !ui.menu) && !ui.layer && !grid_on();
-    c = song_fx ? song_punch_leds() : pattern_keys_on() || ui.confirm == CF_PAT_KEY ? pattern_leds(&pdim, &pbr) : name_on() && !ui.menu ? name_leds() :
+    play = !song_fx && !pat_keys_silent() && !(name_on() && !ui.menu) && !ui.layer && !grid_on();
+    c = song_fx ? song_punch_leds() : pat_keys_silent() ? pattern_leds(&pdim, &pbr) : name_on() && !ui.menu ? name_leds() :
         ui.layer ? layer_leds() : grid_on() ? grid_leds() : fm1_in.notes & ~kb_layer;   /* the patterns (SEQ held, its
                                                          * dialog), NAME's keys, the map, the grid, the keys held */
 #if MELODEE_SLICE
@@ -967,8 +1011,8 @@ static void drum_hit_key(uint32_t accent);
 #if BOARD_SMK37
 /* ------------------------------------------------------------ the pads --- */
 /* the mode AUTO picks (docs/SMK37_UX.md 2.4): where you play the pads play (KEYS, a DRUM track's drums), NOTES and
- * the drum grid their steps, PATTERNS (and SEQ held) the tracks and patterns (the keys are pattern keys there too, so
- * no other page: PATTERN and MOTION keep playing) */
+ * the drum grid their steps, PATTERNS the tracks and patterns (no other page: PATTERN and MOTION keep playing). SEQ
+ * held: PATTERNS wherever, over a mode picked by hand too (pad_mode_now) */
 static uint32_t pad_mode_auto(void)
 {
     uint32_t g = ui.home ? GR_NONE : cur_page()->graph;
@@ -985,15 +1029,38 @@ static uint32_t pad_mode_auto(void)
 static const int8_t SMK_PK_GLO[SMK_NPAD] = {1, 3, 5, 8, -1, -1, -1, -1, 0, 2, 4, 6, -1, -1, 7, 12};
 static uint32_t pad_mode_now(void)
 {
-    uint32_t m = smk_pmode ? smk_pmode : pad_mode_auto();
+    uint32_t m = (fm1_in.buttons & (1u << panel.btn[B_SEQ])) ? PM_PATTERNS : smk_pmode ? smk_pmode : pad_mode_auto();
     if (m == PM_DRUM && !drum_track(TSEL))
         m = PM_KEYS;
     return m;
 }
-static int8_t smk_pk_pat[SMK_NPAD];                     /* PATTERNS: the tracks on the top row, the page's patterns */
 static uint8_t smk_pad_hold, smk_pad_hold_at;            /* STEPS: a pad held (+1) and its step: held on, cleared */
 static uint32_t smk_pad_hold_ms, smk_pad_at;             /* .. since; the pads' pressure sent last (+1, 0 none) */
 static uint8_t smk_pad_trk[SMK_NPAD], smk_pad_playing[SMK_NPAD];   /* DRUM: the track and note a pad started (+1) */
+/* PATTERNS (docs/SMK37_UX.md 2.2): the pads are the FM-1's pattern map, the keys never (pattern_keys_on). The top row
+ * the track keys 1..8, the bottom row the patterns of the page the PATTERNS screen shows (elsewhere: the page of the
+ * pattern playing or waiting; SELECT or < > with SEQ held walk it), each tap, hold and double hit as the FM-1's key
+ * (pattern_keys: switch at the bar, an empty one arms REC, hit again at once REC, held its dialog). Its dialog: the
+ * first two top-row pads halve and double (LEN_KEY), a bottom-row pad deletes (the one held) or copies there */
+static uint8_t smk_pat_pad[SMK_NPAD];                   /* the key bit (+1) a pad pressed: its release ends that one */
+static int pads_patterns_on(void)
+{
+    return smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS && !ui.menu && !ui.confirm && !name_on() && !ui.ly &&
+           !ui.uboot;
+}
+static uint32_t smk_pat_page(void)
+{
+    uint32_t f = TSEL->pattern_next < NPAT ? TSEL->pattern_next : TSEL->pattern;
+    return !ui.home && cur_page()->graph == GR_PATGRID ? pt_page() : f / 8u;
+}
+static uint32_t smk_pat_bit(uint32_t c)                 /* pad c's key in the map (27: none) */
+{
+    uint32_t b;
+    if (c < 8u)
+        return ui.confirm == CF_PAT_KEY ? (c < 2u ? LEN_KEY[c] : 27u) : TRK_KEY[c];
+    b = smk_pat_page() * 8u + c - 8u;
+    return b < trk_npat(song.sel) ? PAT_KEY[b] : 27u;
+}
 /* each frame (main.c, before the UI reads the pads): what the pads are and the HAL's map for it; the pads' pressure
  * as the track's aftertouch in KEYS and DRUM (the MOD matrix's AT source) */
 static void smk_pads_sync(void)
@@ -1008,14 +1075,8 @@ static void smk_pads_sync(void)
     } else if (l && !ui.menu && !ui.confirm) {
         ctx = SPC_LAYER;
         map = l == LAYER_SCL ? SMK_PK_PIANO : l == LAYER_GLO ? SMK_PK_GLO : SMK_PK_GRID;
-    } else if (m == PM_PATTERNS || ui.confirm == CF_PAT_KEY) {   /* (its dialog keeps the map: its two pads) */
-        uint32_t page = !ui.home && cur_page()->graph == GR_PATGRID ? pt_page() : TSEL->pattern / 8u;
+    } else if (m == PM_PATTERNS || ui.confirm == CF_PAT_KEY) {   /* (the UI's: smk_pat_bit; its dialog keeps them) */
         m = PM_PATTERNS;
-        for (c = 0; c < 8u; c++) {
-            smk_pk_pat[c] = (int8_t)TRK_KEY[c];
-            smk_pk_pat[8u + c] = page * 8u + c < trk_npat(song.sel) ? (int8_t)PAT_KEY[page * 8u + c] : -1;
-        }
-        map = smk_pk_pat;
     } else if (m == PM_KEYS) {
         map = SMK_PK_KEYS;
     }
@@ -1061,10 +1122,12 @@ static void smk_pad_step(uint32_t c, uint32_t down)
         notes_place();
     ui.force = 1;
 }
-/* the pads the UI has (the HAL's map says none for them): the bank picker's, the drums, the steps */
+/* the pads the UI has (the HAL's map says none for them): the bank picker's, the drums, the steps, the patterns (once
+ * a pass: smk_pat_edges are this pass's presses) */
 static void smk_pads_input(void)
 {
     int32_t e;
+    smk_pat_edges = 0;
     while ((e = smk_pad_take()) >= 0) {
         uint32_t c = (uint32_t)e >> 8, v = (uint32_t)e & 0xFFu, mpc = c < 8u ? c + 8u : c - 8u;
         if (c >= SMK_NPAD)
@@ -1077,7 +1140,21 @@ static void smk_pads_input(void)
             smk_pad_playing[c] = 0;
             continue;
         }
-        if (smk_pad_ctx == SPC_BANK) {                  /* the top row a bank, the bottom row the pads' mode */
+        if (smk_pat_pad[c]) {                           /* (a pattern pad let go: its key up, whatever the pads are) */
+            if (v) continue;
+            smk_pat_held &= ~(1u << (smk_pat_pad[c] - 1u));
+            smk_pat_pad[c] = 0;
+            continue;
+        }
+        if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS) {   /* a pattern pad down: its key's press (a
+                                                         * question, the menu: nothing, as the FM-1's keys) */
+            uint32_t b = smk_pat_bit(c);
+            if (v && b < 27u && (pads_patterns_on() || ui.confirm == CF_PAT_KEY)) {
+                smk_pat_pad[c] = (uint8_t)(b + 1u);
+                smk_pat_held |= 1u << b;
+                smk_pat_edges |= 1u << b;
+            }
+        } else if (smk_pad_ctx == SPC_BANK) {           /* the top row a bank, the bottom row the pads' mode */
             if (!v) continue;
             if (c < BK_N) {
                 if (bank_has(c)) { pop.sel = (uint8_t)c; pop.sig = 0; bank_apply(pop.col, c); }
@@ -2405,6 +2482,10 @@ static void ui_input(void)
     if (song_punch_on() && (song_punch_epoch != pattern_epoch || song_punch.row >= chain_config.count))
         pop_close();
     if (scr_input(pressed, notes)) return;
+#if BOARD_SMK37
+    smk_pads_input();                                   /* the pads the UI has (drums, steps, patterns, the bank
+                                                         * picker's), every pass: none waits out a menu or a dialog */
+#endif
     if (designer_on() && !name_on() && !ui.confirm && designer_input(pressed, notes)) return;
     preset_pick_poll();                              /* restore key selection before handling new edges */
     if (notes)
@@ -2629,7 +2710,7 @@ static void ui_input(void)
     }
     if (ui.confirm) {                                   /* OCT- cancels, OCT+ does it; nothing else reacts (SEQ's
                                                          * pattern dialog: the white keys, C# D# too) */
-        if (ui.confirm == CF_PAT_KEY && pattern_key_dialog(bank_notes)) {
+        if (ui.confirm == CF_PAT_KEY && pattern_key_dialog(PK_EDGES)) {
         } else if (oct & 2u) {
             ui_confirm_accept();
         } else if (oct & 1u) {
@@ -2637,7 +2718,7 @@ static void ui_input(void)
             ui.force = 1;
         }
         if (ui.confirm == CF_PAT_KEY && ui.pat_did && !(fm1_in.buttons & (1u << panel.btn[B_SEQ])) &&
-            !(fm1_in.notes & (1u << PAT_KEY[ui.pat_dlg % NPAT]))) {
+            !(PK_HELD() & (1u << PAT_KEY[ui.pat_dlg % NPAT]))) {
             ui.confirm = 0;                             /* resized: close once both the pattern key and SEQ are up */
             ui.force = 1;
         }
@@ -2850,12 +2931,9 @@ static void ui_input(void)
     if (notes && slice_page_on())                       /* SLICES: a key picks the slice it plays */
         slice_keys_pick(notes);
 #endif
-#if BOARD_SMK37
-    smk_pads_input();                                   /* the pads the UI has: drums, steps, the bank picker's */
-#endif
-    pattern_keys(bank_notes);
+    pattern_keys(PK_EDGES);
     song.grid = (uint8_t)keys_mode();                 /* a pattern key can arm REC: play from this frame */
-    if (pattern_keys_on() || ui.pat_key) {
+    if (pat_keys_taken()) {
         seq_midi_events(0);
     } else if (song.grid) {
         if (!seq_erase_active(TSEL)) grid_keys(notes);
@@ -2915,7 +2993,7 @@ static void ui_input(void)
     if (!glo_select_layer && (s = panel_enc(EN_SELECT)) != 0) { /* SELECT: pages; with SEQ / a step key / ENV / SCL: below */
         step_edit_combo();
         if(song_range_jog(s) || bulk_jog(s)) {
-        } else if (pattern_keys_on() && (fm1_in.buttons & (1u << panel.btn[B_SEQ]))) {
+        } else if (PK_ON() && (fm1_in.buttons & (1u << panel.btn[B_SEQ]))) {
             ui.seq_t0 |= 2u;
             uint32_t from = TSEL->pattern_next < NPAT ? TSEL->pattern_next : TSEL->pattern;
             if (pattern_request(TSEL, (uint32_t)clamp((int32_t)from + s, 0, (int32_t)trk_npat(song.sel) - 1))) ui_message("STOP SONG TO SWITCH");

@@ -31,6 +31,36 @@
 #include <stdint.h>
 static uint32_t host_slots[3u * 0x14000u / 4u];          /* USR1..3 (zero: empty), as the flash at 0xA0000 */
 #define SMP_USER_XIP(k) ((const uint8_t *)host_slots + (k) * SMP_USER_SIZE)
+#if BOARD_SMK37
+/* the SMK-37's HAL (hal/smk_input.h) as stubs: its constants and pad maps, a queue the test fills with pad events
+ * (smk_pad_take), the pads' colours kept (padled_set), no outer keys, no locks */
+#define FM1_NKEY 37u
+#define SMK_KEY_F3 5u
+#define SMK_NPAD 16u
+#define SMK_NLED 19u
+enum { SMK_BTN_KNOB_BANK = 0, SMK_BTN_FADER_BANK = 1, SMK_BTN_LEFT = 2, SMK_BTN_RIGHT = 3 };
+static const int8_t SMK_PK_KEYS[SMK_NPAD] = {14, 16, 18, 19, 21, 23, 24, 26, 0, 2, 4, 6, 7, 9, 11, 12};
+static const int8_t SMK_PK_GRID[SMK_NPAD] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
+static const int8_t SMK_PK_PIANO[SMK_NPAD] = {7, 9, 11, 12, 14, 16, 18, 19, 8, 10, -1, 13, 15, 17, -1, 20};
+static const int8_t SMK_PK_NONE[SMK_NPAD] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+static const int8_t *volatile smk_pad_key = SMK_PK_KEYS;
+static uint8_t smk_vel_curve;
+static uint32_t host_ticks;
+static uint32_t fm1_ticks(void) { return host_ticks; }
+static uint32_t fm1__lock(void) { return 0; }
+static void fm1__unlock(uint32_t k) { (void)k; }
+static int32_t smk_extkey_take(void) { return -1; }
+static uint16_t host_padq[32];
+static uint32_t host_padq_r, host_padq_w;
+static int32_t smk_pad_take(void) { return host_padq_r == host_padq_w ? -1 : host_padq[host_padq_r++ % 32u]; }
+static uint32_t host_pad_rgb[SMK_NPAD];              /* the pads' colours as lit last (r << 16 | g << 8 | b) */
+static void padled_set(uint32_t pad, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (pad < SMK_NPAD)
+        host_pad_rgb[pad] = (uint32_t)r << 16 | (uint32_t)g << 8 | b;
+}
+static uint32_t padled_hold_until;
+#endif
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
@@ -38,14 +68,22 @@ static uint32_t host_slots[3u * 0x14000u / 4u];          /* USR1..3 (zero: empty
 /* ------------------------------------------------------------ HAL stubs --- */
 #define FM1_NCOL 11u
 static const int8_t FM1_KEYMAP[6][FM1_NCOL];
+#if BOARD_SMK37
+static uint8_t fm1_led[SMK_NLED];
+static uint8_t led_pos[41];                        /* (the FM-1's key LED positions: nothing on the SMK-37) */
+#else
 static uint8_t fm1_led[FM1_NCOL];
+#endif
 static uint8_t fm1_led_dim[3][FM1_NCOL], fm1_led_dim_mask[3];   /* (hal/fm1_input.h: the dim planes) */
 #if !MELODEE_BLE
 #define FM1_TICKS_PER_US 1u
 #endif
-static uint32_t host_ticks, host_pressed, host_notes;
+#if !BOARD_SMK37
+static uint32_t host_ticks;
+#endif
+static uint32_t host_pressed, host_notes;
 static int32_t host_enc[7];
-#if !MELODEE_BLE
+#if !MELODEE_BLE && !BOARD_SMK37
 static uint32_t fm1_ticks(void) { return host_ticks; }
 #endif
 static uint32_t fm1_input_edges(int x) { uint32_t p = host_pressed; (void)x; host_pressed = 0; return p; }
@@ -239,7 +277,14 @@ static void frame(void)
 {
     host_ticks += 16000u;
     fm1_ms += 16u;
+#if BOARD_SMK37
+    smk_pads_sync();                              /* (main.c: the pads' map and mode before the UI reads them, and
+                                                   * again after each pass) */
+#endif
     ui_input();
+#if BOARD_SMK37
+    smk_pads_sync();
+#endif
     ui_draw();
 }
 static void press(uint32_t label)                 /* a tap: down, a frame, up, a frame */
@@ -5795,6 +5840,135 @@ static int test_select_octave(void)
     ui_power_on();
     return bad;
 }
+#if BOARD_SMK37
+/* the SMK-37 (docs/SMK37_UX.md 2.2): the keys only ever play notes; the 16 pads carry the FM-1's pattern map (SEQ
+ * held anywhere, the PATTERNS page): the top row the tracks, the bottom row the page's patterns: tap, hit again, hold
+ * for the dialog, the dialog's half / double on the first two top-row pads, copy and delete on the bottom row; the
+ * lights; SEQ held over a mode picked by hand */
+static void pad_down(uint32_t c, uint32_t v) { host_padq[host_padq_w++ % 32u] = (uint16_t)(c << 8 | v); fm1_in.pad_st[c] = 0x80; }
+static void pad_up(uint32_t c) { host_padq[host_padq_w++ % 32u] = (uint16_t)(c << 8); fm1_in.pad_st[c] = 0; }
+static void tap_pad(uint32_t c) { pad_down(c, 100); frame(); pad_up(c); frame(); }
+static int pad_is_wait(uint32_t c) { uint32_t x = host_pad_rgb[c]; return (x >> 16) > ((x >> 8) & 255u) && !(x & 255u) && (x >> 16) > 80u; }
+static int pad_is_active(uint32_t c) { return host_pad_rgb[c] == ((uint32_t)PAD_ACT[0] << 16 | (uint32_t)PAD_ACT[1] << 8 | PAD_ACT[2]); }
+static int test_smk_pads(void)
+{
+    int bad = 0;
+    uint32_t w2 = PAT_KEY[1], w3 = PAT_KEY[2];
+    ui_power_on();
+    memset(fm1_in.key_vel, 100, sizeof fm1_in.key_vel);
+    song.ntrk = 3;
+    stop_transport();
+    go_home(); frame();
+    btn_down(B_SEQ); frame();
+    bad += check("SEQ held: the pads are the patterns, the keys play (no pattern keys on the SMK-37)",
+                 smk_pad_now == PM_PATTERNS && smk_pad_ctx == SPC_MODE && song.grid == 0u && !pattern_keys_on());
+    key_down(w2); frame();
+    bad += check("  white key 2 with SEQ held: a note, pattern 1 stays, REC off, no gesture",
+                 gates() > 0u && TSEL->pattern == 0u && !song.rec && !ui.pat_key);
+    key_up(w2); frame();
+    key_down(TRK_KEY[1]); frame();
+    bad += check("  black key 2: a note, track 1 still selected", gates() > 0u && song.sel == 0u);
+    key_up(TRK_KEY[1]); frame();
+    tap_pad(1);
+    bad += check("  pad T2 tapped: track 2, Stage stays, silent", song.sel == 1u && ui.home && !gates());
+    tap_pad(3);
+    bad += check("  pad T4 (a track not in use): nothing", song.sel == 1u);
+    tap_pad(0);
+    bad += check("  pad T1: track 1", song.sel == 0u);
+    my_steps(TSEL); pattern_switch(TSEL, 2); my_steps(TSEL); pattern_switch(TSEL, 0);
+    tap_pad(9);
+    bad += check("  pad P2 tapped, an empty pattern: pattern 2, REC armed with it, silent",
+                 TSEL->pattern == 1u && song.rec == 1u && !gates());
+    song.rec = 0;
+    my_steps(TSEL);
+    fm1_ms += 400u;
+    tap_pad(9);
+    bad += check("  .. now with notes: tapped, REC as it was", TSEL->pattern == 1u && !song.rec);
+    tap_pad(9);
+    bad += check("  .. hit again at once: REC armed for one pass, still pattern 2",
+                 (song.rec & 1u) && !(song.rec_latch & 1u) && TSEL->pattern == 1u);
+    fm1_ms += 400u;
+    tap_pad(9); fm1_ms += 400u; tap_pad(9);
+    bad += check("  two slow taps: REC as it was", (song.rec & 1u) != 0u);
+    tap_pad(9);
+    bad += check("  .. hit twice again: REC off (REC's tap)", !song.rec);
+    fm1_ms += 400u;
+    pad_down(10, 100);
+    frames(1100u);
+    bad += check("  pad P3 held 1 s: its dialog, the keys still play, nothing switched",
+                 ui.confirm == CF_PAT_KEY && ui.pat_dlg == 2u && song.grid == 0u && TSEL->pattern == 1u);
+    key_down(w3); frame();
+    bad += check("  .. a white key in the dialog: a note, the dialog stays", gates() > 0u && ui.confirm == CF_PAT_KEY);
+    key_up(w3); frame();
+    tap_pad(0);
+    bad += check("  .. the first top-row pad: pattern 3 halved, the dialog stays, its length in the title",
+                 ui.confirm == CF_PAT_KEY && pattern_at(0, 2)->timing[0] == 16 && msg_is("PATTERN HALVED") && ui.pat_did);
+    tap_pad(1);
+    bad += check("  .. the second: doubled, 32 steps, still up", ui.confirm == CF_PAT_KEY &&
+                 pattern_at(0, 2)->timing[0] == 32 && msg_is("PATTERN DOUBLED"));
+    fm1_ms += 500u - fm1_ms % 500u;
+    ui_leds();
+    bad += check("  .. the lights: half and double waiting (orange), P3 held white, the other track pads dark",
+                 pad_is_wait(0) && pad_is_wait(1) && pad_is_active(10) && !pad_is_wait(2) && !pad_is_active(2));
+    tap_pad(2);
+    bad += check("  .. a third top-row pad: nothing (no track keys under the dialog)", ui.confirm == CF_PAT_KEY && song.sel == 0u);
+    pad_up(10); frame();
+    bad += check("  .. P3 let go, SEQ still held: the dialog stays", ui.confirm == CF_PAT_KEY);
+    btn_up(B_SEQ); frame();
+    bad += check("  .. SEQ let go: closed, 32 steps, Stage stays, the pads play keys again",
+                 !ui.confirm && pattern_at(0, 2)->timing[0] == 32 && ui.home && smk_pad_now == PM_KEYS);
+    btn_down(B_SEQ); frame();
+    pad_down(10, 100); frames(1100u); pad_up(10); frame();
+    bad += check("  P3 held and let go, nothing changed: the dialog stays", ui.confirm == CF_PAT_KEY && ui.pat_dlg == 2u);
+    tap_pad(11);
+    bad += check("  .. P4 tapped: pattern 3 copied there, closed", !ui.confirm && pattern_used(0, 3) && msg_is("PATTERN COPIED"));
+    pad_down(11, 100); frames(1100u); pad_up(11); frame();
+    tap_pad(11);
+    bad += check("  P4 held, then tapped again: deleted, closed", !ui.confirm && !pattern_used(0, 3) && msg_is("PATTERN DELETED"));
+    btn_up(B_SEQ); frame();
+    bad += check("SEQ let go: the pads play keys", smk_pad_now == PM_KEYS && smk_pad_ctx == SPC_MODE);
+    hold(B_SEQ);
+    bad += check("PATTERNS (SEQ held past its hold): the pads are the patterns after release, the keys play",
+                 cur_page()->graph == GR_PATGRID && smk_pad_now == PM_PATTERNS && !pattern_keys_on() && song.grid == 0u && !fm1_in.buttons);
+    key_down(w3); frame();
+    bad += check("  a white key on PATTERNS: a note, pattern 2 stays", gates() > 0u && TSEL->pattern == 1u);
+    key_up(w3); frame();
+    tap_pad(8);
+    bad += check("  pad P1 tapped: pattern 1", TSEL->pattern == 0u);
+    pattern_switch(TSEL, 9); frame();
+    bad += check("  pattern 10 playing: the pads show the second page", smk_pat_page() == 1u);
+    tap_pad(10);
+    bad += check("  .. pad 3 of it: pattern 11", TSEL->pattern == 10u);
+    tap_pad(1);
+    bad += check("  pad T2: track 2 (its own page, pattern 1)", song.sel == 1u && smk_pat_page() == 0u);
+    tap_pad(0);
+    pads_set(PM_KEYS); frame();
+    bad += check("KEYS picked by hand on PATTERNS: the pads play, a tap on a pad is no pattern", smk_pad_now == PM_KEYS);
+    pattern_switch(TSEL, 0); frame();
+    btn_down(B_SEQ); frame();
+    bad += check("  SEQ held: the patterns anyway (momentary), no tag", smk_pad_now == PM_PATTERNS && !smk_head_tag()[0]);
+    tap_pad(9);
+    bad += check("  .. P2 tapped: pattern 2", TSEL->pattern == 1u);
+    btn_up(B_SEQ); frame();
+    bad += check("  SEQ let go: KEYS again, its tag", smk_pad_now == PM_KEYS && str_eq(smk_head_tag(), "KEYS"));
+    pads_set(PM_AUTO); frame();
+    bad += check("AUTO again: PATTERNS", smk_pad_now == PM_PATTERNS && !smk_head_tag()[0]);
+    ui.menu = 1; frame();
+    tap_pad(10);
+    ui.menu = 0; frame();
+    bad += check("a pattern pad under the menu: nothing, then or after", TSEL->pattern == 1u);
+    ui_power_on();
+    return bad;
+}
+int main(void)
+{
+    int bad;
+    setvbuf(stdout, NULL, _IONBF, 0);
+    bad = test_smk_pads();
+    printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
+    return bad ? 1 : 0;
+}
+#else
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -5876,4 +6050,5 @@ int main(void)
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
     return bad ? 1 : 0;
 }
+#endif
 #endif

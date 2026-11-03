@@ -81,7 +81,11 @@ static void layer_masks(void)
 {
     uint32_t m = !layer_allowed() || (ui.ly && (ui.ly_t0 & LY_DEAD)) ? 0u
                : ui.ly ? ly_bit(ui.ly) : layer_bits() & ~fm1_in.buttons;
+#if BOARD_SMK37
+    kb_mask = m;                                        /* (SEQ held: the keys play on; the pads are the patterns) */
+#else
     kb_mask = m | (layer_allowed() && !ui.ly ? 1u << panel.btn[B_SEQ] : 0u);
+#endif
 
     kb_lock = m && ui.lock ? 1u : 0u;
     punch_panel_mask = (m & ly_bit(LAYER_FX));

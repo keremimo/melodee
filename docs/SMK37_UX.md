@@ -6,8 +6,12 @@ as "Melodee Pro / Elite". The FM-1 build is untouched by any of it.
 
 Status (2026-11-03): phases 1-3 of section 9 are built on this branch, behind `BOARD_SMK37`, untested on hardware:
 the banks (`firmware/src/ui_smk.c`, the faders in `main.c`), the pad modes and their lights, taps and maps
-(`ui_input.c` smk_pads_*, `hal/smk_input.h` smk_pad_key), the GLO and SCALE maps. Where the build differs from the
-first proposal below, the text says so in place. The open questions (section 8) stand, answered for now by the
+(`ui_input.c` smk_pads_*, `hal/smk_input.h` smk_pad_key), the GLO and SCALE maps. Later the same day: the keys never
+choose a pattern or a track on the SMK (Kerem: only the pads trigger, arm and record sequences); the PATTERNS pads
+carry the FM-1's whole pattern-key gesture set (`ui_input.c` pads_patterns_on, smk_pat_bit: the one state machine,
+`pattern_keys`, fed by the pads instead of the keys), SEQ held puts them on the pads everywhere, and the keys go on
+playing (and recording, armed) with SEQ held, on PATTERNS and under the pattern dialog. Where the build differs from
+the first proposal below, the text says so in place. The open questions (section 8) stand, answered for now by the
 build's defaults.
 
 Mocks: `docs/smk37-ux/<scene>.png` is the screen as the firmware draws it (`tests/smk_ux_mocks.c` on
@@ -86,15 +90,21 @@ row, 9-16 below, the step playing ACTIVE.
 - While the transport runs and the pads are not in STEPS, nothing changes: STEPS is a mode, not the playing display
   (today's build shows the steps on any page while playing; that goes, the mode replaces it).
 
-**PATTERNS** (`patterns.png`, `seq_held.png`): what the FM-1 puts on the keys with SEQ held or on the PATTERNS page.
-Top row: tracks 1-8, each in its colour: in use ON, selected FILLED, armed WAITING, not in use OFF (a tap on one adds
-the missing tracks through it, as the FM-1's track keys do). Bottom row: the selected track's patterns, eight at a time,
-the page the PATTERNS screen shows (its dots; `<` `>` or SELECT turn it, 1-8 / 9-16): playing ACTIVE, waiting for the
-bar WAITING, holding something ON, empty OFF, the one held to copy ACTIVE. Gestures as the FM-1's pattern keys: tap =
-switch at the bar (an empty one arms REC with it, a tap on the one playing again at once toggles REC); hold = the
-pattern's dialog (delete, copy to another pad, half / double on the two dialog pads); OCT- leaves. The sheet (OCT+)
-and Copy to.. stay on the screen as they are. Why this split instead of 16 patterns of one track: it mirrors the PATTERNS
-screen exactly (a row of eight, two pages) and keeps the FM-1's "tracks and patterns in one layout".
+**PATTERNS** (`patterns.png`, `seq_held.png`, `pattern_dialog.png`): what the FM-1 puts on the keys with SEQ held or
+on the PATTERNS page, and here the only way a pattern is triggered, armed or recorded: the keys never choose a pattern
+or a track on the SMK; they play notes (and record them, armed) with SEQ held, on the PATTERNS page and under the
+pattern dialog alike. Top row: tracks 1-8, each in its colour: in use ON, selected FILLED, armed WAITING, not in use
+OFF (a tap on one adds the missing tracks through it, as the FM-1's track keys do), a pad held ACTIVE. Bottom row: the
+selected track's patterns, eight at a time, the page the PATTERNS screen shows (its dots; elsewhere the page of the
+pattern playing or waiting: SELECT or `<` `>` with SEQ held walk the patterns and the page follows, 1-8 / 9-16):
+playing ACTIVE, waiting for the bar WAITING, holding something ON, empty OFF, the one held to copy ACTIVE. Gestures as
+the FM-1's pattern keys, one state machine (`pattern_keys`): tap = switch at the bar (an empty one arms REC with it,
+the one playing hit again at once toggles REC, as REC's tap); hold a second = the pattern's dialog: the pad again
+deletes it, another bottom-row pad copies it there, the first two top-row pads halve and double it (WAITING, as the
+FM-1's C# D# blinked; the other top-row pads are dark, as its track keys go), the dialog stays while the pad or SEQ is
+held and closes with them once the length changed, OCT- leaves. The sheet (OCT+) and Copy to.. stay on the screen as
+they are. Why this split instead of 16 patterns of one track: it mirrors the PATTERNS screen exactly (a row of eight,
+two pages) and keeps the FM-1's "tracks and patterns in one layout".
 
 ### 2.3 Momentary maps
 
@@ -102,14 +112,14 @@ These take the pads for as long as they last, whatever the mode, and give them b
 
 | While | Pads | Screen |
 |---|---|---|
-| SEQ held | PATTERNS (above) | unchanged (`seq_held.png`) |
+| SEQ held | PATTERNS (above), over a mode picked by hand too; the keys play on | unchanged (`seq_held.png`) |
 | GLO held (SET) | top row MUTE 1-4: FILLED while the track sounds, ON when muted or soloed out; bottom row SOLO 1-4 while held (ACTIVE), **All** unmutes, **Tap** taps (ON; dim with an outside clock) | the GLO map as it is (`layer_glo.png`) |
 | SCALE held (SET) | a piano: top row C4 .. C5, bottom row the black keys between (the two gaps OFF); the root FILLED, the scale's notes ON, the rest OFF; a tap makes that note the root | the SCL map as it is (`layer_scl.png`) |
 | FX held (punch) | the 16 white keys' punches as today, each ON in its family's colour, the one held ACTIVE | the punch layer as it is |
 | EDIT held | the FM-1's white-key map on the grid layout: the sections on the pads; Init, Fav, Undo, Store stay on the black keys (built so; a map of their own is a later step) | the sections map as it is |
 | NAME | the letters on the 16 pads as today, the cycling pad ACTIVE; the black keys their functions | unchanged (`name.png`) |
 | KNOB BANK / FADER BANK held | top row the eight banks (the current ACTIVE, one the engine lacks OFF), bottom row AUTO, KEYS, DRUM, STEPS, PATTERNS (the current ACTIVE); a tap picks and the button may be let go | the bank picker (section 3) |
-| a question, the menu | the pads keep their mode; KEYS and DRUM still play, STEPS and PATTERNS taps do nothing (as the FM-1's pattern keys under a dialog) | - |
+| a question, the menu | the pads keep their mode; KEYS and DRUM still play, STEPS and PATTERNS taps do nothing (as the FM-1's pattern keys under a dialog), the pattern dialog's own pads excepted | - |
 
 ### 2.4 AUTO: which mode the page picks
 
@@ -121,8 +131,9 @@ These take the pads for as long as they last, whatever the mode, and give them b
 | PATTERNS; SEQ held anywhere | PATTERNS | PATTERNS |
 | DRUM SOUND, DRUM MIX | - | DRUM |
 
-Built so: PATTERNS makes the keys pattern keys too (as SEQ held does), so AUTO picks it on the PATTERNS page only;
-on SONG, PATTERN and MOTION the keys and pads keep playing (the first proposal had PATTERNS there).
+Built so: AUTO picks PATTERNS on the PATTERNS page only; on SONG, PATTERN and MOTION the pads keep playing (the
+first proposal had PATTERNS there). The keys are never pattern keys on the SMK, whatever the pads show; SEQ held puts
+PATTERNS on the pads everywhere, over a mode picked by hand as well.
 
 The rule: where you play, the pads play; where you edit steps, they are steps; where you arrange, they are patterns.
 A track change re-evaluates it (DRUM selected: drums at once).
@@ -135,7 +146,8 @@ until AUTO is picked again. While it differs from what AUTO would show, the head
 DRUM, STEPS, PATTERNS; `pads_override.png`): state, not a message, by the README's status-indicator rules (left of the
 page name, the label face, the theme colour; the octave pill gives way; a bank's tag comes first). AUTO shows no tag.
 KEYS on a DRUM track plays the kit's GM map on the white keys (as the FM-1's keys do); DRUM on a synth track falls
-back to KEYS (built so: no message). PATTERNS by hand makes the keys pattern keys as well, everywhere.
+back to KEYS (built so: no message). PATTERNS by hand puts the pattern map on the pads everywhere; the keys go on
+playing.
 
 ### 2.6 What leaves the keys
 
@@ -145,15 +157,16 @@ The keys have no lights. Everything the FM-1 showed on them has a new home:
 |---|---|
 | the layout (scale notes dim, held bright, a kit's map) | KEYS / DRUM pads (section 2.2) |
 | SEQ held: patterns on the white keys, tracks on the black | PATTERNS pads, SEQ held momentary |
-| PATTERNS page unarmed: the same map | PATTERNS pads |
-| the pattern dialog's half / double keys (C# D#) | two bottom-row pads while the dialog is up (WAITING, as the keys blinked) |
+| PATTERNS page (unarmed): the same map | PATTERNS pads, armed or not (the keys play and record) |
+| the pattern keys' tap, double hit and hold (switch at the bar, REC, the dialog) | the same gestures on the bottom-row pads; never the keys |
+| the pattern dialog's half / double keys (C# D#) | the first two top-row pads while the dialog is up (WAITING, as the keys blinked); the bottom row stays delete / copy |
 | the drum grid: steps on the whites, lane / ACC / page on the blacks | STEPS pads; the black keys keep lane / ACC / page without lights (the grid shows them) |
 | NAME: letters on the whites, functions on the blacks | as today (pads letters, black keys functions) |
 | GLO SET: mutes on the blacks, solos / All / Tap on the whites | GLO's pad map |
 | SCL SET: root lit, scale blinking | the piano pads |
 | FX held: the punch keys | the punch pads (as today) |
 | EDIT held: sections on the whites, Init / Fav / Undo / Store on the blacks | the EDIT pad map |
-| SEQ held + black keys 1-8: track select | PATTERNS' top row |
+| SEQ held + black keys 1-8: track select | PATTERNS' top row; the keys play on under SEQ |
 | the 10 outer keys | notes only, in every map (no function without lights) |
 
 ## 3. Knob banks
@@ -276,9 +289,11 @@ before it is merged.
 `tools/smk_ux_mocks.py`. No firmware change.
 
 Built 2026-11-03 (measured on the Elite build, image bytes over the 566,144 B baseline): phase 1 +2,720 B (RAM
-+48 B), phases 2 and 3 together +2,808 B (RAM +96 B): 571,672 B in all, 680 B of data RAM left. The host suite's UI
-tests and render lint pass for the FM-1 build; the SMK build is not host-tested (no host stub of `hal/smk_input.h`
-yet) and has not run on the Elite.
++48 B), phases 2 and 3 together +2,808 B (RAM +96 B): 571,672 B in all, 680 B of data RAM left. The pads as the only
+pattern keys (later that day): 572,092 B, 664 B of data RAM left. The host suite's UI tests and render lint
+pass for the FM-1 build; the SMK UI is host-tested through `tests/ui_test.c` built with `BOARD_SMK37` (a stub of
+`hal/smk_input.h` in it: the pad queue, the pads' colours), the keys-play-pads-switch gestures and lights; nothing
+has run on the Elite.
 
 **Phase 1: banks (knobs and faders), ~2.0 KB flash, ~16 B RAM.**
 - `firmware/src/ui.c`: `bank_page(bank)` building a `page_t` per engine (as `stage_page`), the shared table; the knob

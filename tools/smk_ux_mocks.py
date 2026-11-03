@@ -67,14 +67,26 @@ def steps(hue, filled, play, dim=()):
     return (rows[:8], rows[8:])
 
 
-def tracks_patterns(sel, used_tracks, playing, waiting, used, armed=()):
+def tracks_patterns(sel, used_tracks, playing, waiting, used, armed=(), held=None):
     top = []
     for t in range(8):
-        st = "wait" if t in armed else "active" if t == sel else "on" if t in used_tracks else "none"
+        st = "wait" if t in armed else "filled" if t == sel else "on" if t in used_tracks else "off"
         top.append((st, "T%d" % (t + 1), t % 4))
     bot = []
     for p in range(8):
-        st = "active" if p == playing else "wait" if p == waiting else "on" if p in used else "off"
+        st = "active" if p in (playing, held) else "wait" if p == waiting else "on" if p in used else "off"
+        bot.append((st, "P%d" % (p + 1), sel % 4))
+    return (top, bot)
+
+
+def pattern_dialog(sel, playing, held, used):
+    """a pattern pad held past a second: its dialog. The top row loses the tracks (as the FM-1's black keys go dark):
+    its first two pads halve and double the pattern, breathing; the bottom row stays the patterns: the one held
+    (tap again: delete) and the one playing white, the others copy targets"""
+    top = [("wait", "half", sel % 4), ("wait", "double", sel % 4)] + [("none", "", sel % 4)] * 6
+    bot = []
+    for p in range(8):
+        st = "active" if p in (playing, held) else "on" if p in used else "off"
         bot.append((st, "P%d" % (p + 1), sel % 4))
     return (top, bot)
 
@@ -149,13 +161,19 @@ SCENES = [
      "black keys still pick the lane and ACC (as on the FM-1), K2 too."),
     ("patterns", "PATTERNS page", "PATTERNS",
      tracks_patterns(1, (0, 1, 2, 3), playing=0, waiting=4, used=()), (0, 0, 0),
-     "Top row: tracks 1-8 in their colours (selected white, armed breathing, unused dark). Bottom row: the selected "
+     "Top row: tracks 1-8 in their colours (selected bright, armed breathing, unused dark). Bottom row: the selected "
      "track's patterns, eight at a time as the screen shows them (< > the page): playing white, waiting orange, "
-     "holding something lit, empty dark. Tap: switch at the bar; hold: the pattern's dialog; hold + another pad: copy."),
+     "holding something lit, empty dark. Tap: switch at the bar (an empty one arms REC); hit again at once: REC; "
+     "hold: the pattern's dialog. The keys only play notes, here and everywhere."),
     ("seq_held", "SEQ held on Stage", "PATTERNS (momentary)",
      tracks_patterns(1, (0, 1, 2, 3), playing=1, waiting=2, used=()), (0, 0, 1),
-     "SEQ held anywhere shows the same tracks and patterns on the pads for as long as it is held (the FM-1's SEQ "
-     "held), the screen as it was."),
+     "SEQ held anywhere shows the same tracks and patterns on the pads for as long as it is held, over a mode picked "
+     "by hand too; the screen as it was. The keys go on playing (the FM-1 made them pattern keys)."),
+    ("pattern_dialog", "A pattern pad held: its dialog", "PATTERNS (dialog)",
+     pattern_dialog(0, playing=0, held=2, used=(1, 5)), (0, 0, 1),
+     "A bottom-row pad held a second: the pattern's dialog (the FM-1's SEQ + white key held). The pad again deletes "
+     "it, another bottom-row pad copies it there; the first two top-row pads halve and double it, breathing. It stays "
+     "while the pad or SEQ is held; OCT- leaves."),
     ("bank_filter_notes", "NOTES, knob bank FILTER", "STEPS",
      NOTES_STEPS, (1, 0, 0),
      "KNOB BANK tapped to FILTER: the strip shows the bank's four cards (the Prophet's filter) in place of the page's, "
