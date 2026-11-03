@@ -76,8 +76,8 @@ is for the connected model.
 ## Going back to the stock firmware
 
 Install the manufacturer's firmware package for your model with the manufacturer's updater. It works directly, because
-the installed package keeps the keyboard's model name. `tools/fm1_install.py` can also install the stock SMK-37 Pro
-V016 package.
+the installed package keeps the keyboard's model name. `tools/fm1_install.py` and the web installer can also install
+the stock SMK-37 Pro V016 package; an SMK-37 Elite or an MKE-P37 goes back through the manufacturer's updater only.
 
 ## Safety
 

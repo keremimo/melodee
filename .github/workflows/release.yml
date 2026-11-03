@@ -78,10 +78,15 @@ jobs:
         test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
         version=$(python3 tools/fm1_recover.py --version | awk '{print $NF}')
         if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
+        # The SMK-37 beta, one package per model; the FM-1 build last, the tests use its files (SMK37.md).
+        for model in pro elite mke; do
+          BOARD=smk37 MODEL="$model" ./build.sh --release "$version"
+        done
         ./build.sh --release "$version"
         cp "build/melodee-$version.fwsc" build/melodee.fwsc
         mkdir -p build/release-assets
         cp "build/release-$version/"*.fwsc "build/release-$version/"*-app.bin build/release-assets/
+        cp build/release-melodee-smk37*"-$version/"*.fwsc build/release-melodee-smk37*"-$version/"*-app.bin build/release-assets/
         # the resource region the installer writes after the firmware (firmware/src/res.c)
         cp build/melodee-res.bin "build/release-assets/melodee-$version-res.bin"
       test: |
