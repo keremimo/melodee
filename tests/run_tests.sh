@@ -537,6 +537,10 @@ if sound && [ $TABLES = 1 ]; then
         "$OUT/drum_kits_test" build/drum_kits_demo
     t "DRUM STUDIO/BOOM/TIGHT: decoder vs encoder, overlaps, choke, takes, length, knobs, levels, corners" drum_real_test -O2 $FW -- \
         "$OUT/drum_real_test" build/drum_real_demo
+    t "USER KITS: pool record == built-in STUDIO, sector edges, empty/rewritten/deleted silent, refused records, boot scan" \
+        user_kit_test -O2 $FW
+    t "RECORD KIT: USB take trigger/end, device encoder == tools/drum_codec.c, 22/44 kHz, cymbal loop, 11 pads fit, clear" \
+        kit_take_test -O2 -DMELODEE_USB_AUDIO=1 $FW -- "$OUT/kit_take_test" build/kit_take_demo
     t "NOISE: colour slopes, key-tracked filter and clock, META period, DC, clipping, retrigger, cost, demos" noise_test \
         -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -- "$OUT/noise_test" build/noise_demo
     t "FM6: the DX7's algorithms, pitch, levels, envelopes, modulation; DC, clipping, macros, patches, voices, cost, demos" \

@@ -16,7 +16,8 @@ enum { DVT_PUNCH, DVT_ROUND, DVT_SNARE, DVT_CLAP, DVT_HATC, DVT_HATO, DVT_TOM, D
 #include "drum_808.c"
 #include "x0x/drum909.c"
 
-enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_STUDIO = 9, DK_BOOM = 10, DK_TIGHT = 11 }; /* Retain the stored value of existing 808 patches. */
+enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_STUDIO = 9, DK_BOOM = 10, DK_TIGHT = 11,
+       DK_USER0 = 12 }; /* Retain the stored value of existing 808 patches. */
 #ifndef MELODEE_REAL_KITS
 #if BOARD_SMK37
 #define MELODEE_REAL_KITS 0                      /* the recordings need ~31 KB of the resource region; the SMK-37 has 11 KB */
@@ -24,9 +25,20 @@ enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_STUDIO = 9
 #define MELODEE_REAL_KITS 1
 #endif
 #endif
+#ifndef MELODEE_USER_KITS
+#define MELODEE_USER_KITS MELODEE_REAL_KITS      /* the user's kits (kit_store.c): KIT 12..19, played by drum_real.c */
+#endif
+/* Record kit (kit_rec_ui.c): the device itself, with USB audio and flash; host builds of the UI never show it */
+#if defined(FM1_IRQ_TARGET) && MELODEE_USER_KITS && MELODEE_USB_AUDIO && MELODEE_FLASH
+#define KIT_REC 1
+#else
+#define KIT_REC 0
+#endif
+#define DK_NUSER 8u
 #define DK_REAL0 DK_STUDIO
 #define DK_REAL_MAX DK_TIGHT
-#define DK_LAST (MELODEE_REAL_KITS ? DK_REAL_MAX : DK_FM)
+#define DK_KIT_MAX (MELODEE_USER_KITS ? DK_USER0 + (int)DK_NUSER - 1 : DK_REAL_MAX)
+#define DK_LAST (MELODEE_REAL_KITS ? DK_KIT_MAX : DK_FM)
 static const uint8_t DV_TYPE_LANE[DVT_COUNT] = {
     DV_KICK, DV_KICK, DV_SNARE, DV_CLAP, DV_HATC, DV_HATO, DV_TOM, DV_TOM, DV_RIM, DV_RIM, DV_BELL, DV_BELL,
 };
@@ -57,7 +69,8 @@ static int drum_issid(const track_t *t) { return t->p[P_E0] == DK_SID; }
 static int drum_iscr(const track_t *t) { return t->p[P_E0] == DK_CR78; }
 static int drum_isfm(const track_t *t) { return t->p[P_E0] == DK_FM; }
 static int drum_islane(const track_t *t) { return t->p[P_E0] == DK_CR78 || t->p[P_E0] == DK_FM; }   /* the lane kits (drum_lanes.c) */
-static int drum_isreal(const track_t *t) { return MELODEE_REAL_KITS && t->p[P_E0] >= DK_REAL0 && t->p[P_E0] <= DK_REAL_MAX; }   /* the recorded kits (drum_real.c) */
+static int drum_isreal(const track_t *t) { return MELODEE_REAL_KITS && t->p[P_E0] >= DK_REAL0 && t->p[P_E0] <= DK_KIT_MAX; }   /* the recorded kits (drum_real.c), the user's too */
+static int drum_isuser(const track_t *t) { return MELODEE_USER_KITS && t->p[P_E0] >= DK_USER0; }    /* the user's (kit_store.c) */
 static int drum_map11(const track_t *t) { return drum_is909(t) || drum_isreal(t); }   /* the 909's eleven drums, a real ride and crash */
 static int drum_isone(const track_t *t) { return t->p[P_E0] >= DK_SID; }      /* a whole kit on one voice */
 typedef struct dsk_part dsk_part_t;
@@ -187,6 +200,9 @@ static void drum_block(track_t *t)
 static const char *const N_DRUM_KIT[] = {"808", "808", "808", "808", "808", "909", "SID", "CR78", "FM"
 #if MELODEE_REAL_KITS
     , "STUDIO", "BOOM", "TIGHT"
+#endif
+#if MELODEE_USER_KITS                          /* (the card shows a user kit's own name: drk_user_name) */
+    , "KIT 1", "KIT 2", "KIT 3", "KIT 4", "KIT 5", "KIT 6", "KIT 7", "KIT 8"
 #endif
 };
 static const char *const N_DRUM_KICK[] = {"PUNCH", "ROUND"};
@@ -538,10 +554,11 @@ static const param_desc_t DRUM_SID_RES = {"RES", F_PCT, 0, 127, 0, 0, 0};
 /* the recorded kits: KICK the kit's own, or the other's */
 static const char *const N_DRUM_REAL_KICK[] = {"KIT", "SWAP"};
 static const param_desc_t DRUM_REAL_KICK = {"KICK", F_ENUM, 0, 1, 0, N_DRUM_REAL_KICK, 0};
+static const param_desc_t DRUM_USER_KICK = {"KICK", F_ENUM, 0, 0, 0, N_DRUM_REAL_KICK, 0};   /* a user kit: its one kick */
 static const param_desc_t *drum_desc(const track_t *t, uint32_t k)
 {
     if (drum_isreal(t))
-        return k == 6u ? &DRUM_REAL_KICK : 0;
+        return k == 6u ? drum_isuser(t) ? &DRUM_USER_KICK : &DRUM_REAL_KICK : 0;
     if (drum_iscr(t))
         return k == 6u ? &DRUM_CR_HATS : 0;
     return !drum_issid(t) ? 0 : k == 6u ? &DRUM_SID_DIGI : k == 7u ? &DRUM_SID_RES : 0;

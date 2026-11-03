@@ -1,15 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* KIT STUDIO, BOOM, TIGHT: recorded drums (CC0: assets/drums/SOURCES.txt), mixed offline by tools/drum_kit_make.py and
- * played from the resource region in place. A whole kit on the drum track's one voice, as the lane kits are, but a
- * channel is a hit, not a lane: toms overlap, a crash rings under a ride, a drum struck again rings out for 15 ms
- * under its next hit. A closed hat chokes the open one; closed hats alternate between two takes.
+ * played from the resource region in place. KIT 1..8 (values 12..19): the user's kits, pool records (kit_store.c)
+ * played from their flash sectors in place, the same way. A whole kit on the drum track's one voice, as the lane kits
+ * are, but a channel is a hit, not a lane: toms overlap, a crash rings under a ride, a drum struck again rings out for
+ * 15 ms under its next hit. A closed hat chokes the open one; closed hats alternate between two takes.
  * A stream is a 4-tap sign-LMS predictor after QOA with a bit depth per slice: two 32-bit words, [2 mode][4 scale]
  * then residuals, top bits first; tools/drum_codec.c holds the encoder. Cymbals and the open hat loop their tail
  * (the predictor restored from the table) and die on the hit's envelope, darkening as they go.
  * TUNE every drum (Hermite at the output rate); TONE a one-pole cut below 64, a one-pole boost above, around each
  * drum's pivot; velocity darkens with level; DECY the envelope; SNAP the front of the hit; KICK SWAP the other kit's
- * kick. No resources (res.c), no sound: the tables are not there to read. */
+ * kick. No resources (res.c), no built-in sound: the tables are not there to read. An empty user slot: no sound. */
 typedef struct {
     uint16_t at, n;                              /* its first slice (8 bytes each), samples */
     uint16_t loop_at, loop_slice;                /* the sample its tail loops back to (0: one shot), that sample's slice */
@@ -17,11 +18,50 @@ typedef struct {
     uint8_t dark, st;                            /* a looped tail's darkening per block (Q12); index into DRK_LOOPS */
 } drk_sample_t;
 typedef struct {
-    uint8_t sample, alt;                         /* the take, the other (a closed hat's alternate, the swapped kick) */
-    int8_t st, tone;                             /* semitones; TONE's offset, as a knob's */
-    uint16_t out, ms, pivot;                     /* level (Q12); -40 dB (ms, DECY 64); TONE's Hz */
+    uint8_t sample, alt;                         /* the take (0xFF: none, a user kit's empty pad), the other (a closed */
+    int8_t st, tone;                             /* hat's alternate, the swapped kick; 0xFF none); semitones; TONE's */
+    uint16_t out, ms, pivot;                     /* offset, as a knob's; level (Q12); -40 dB (ms, DECY 64); TONE's Hz */
 } drk_map_t;
 #include "melodee_drum_kits.h"                   /* tools/gen_drum_kits.py: DRK_SLICES, DRK_SAMPLES, DRK_LOOPS, DRK_MAP */
+
+/* A user kit's record (kit_store.c writes it, any host checks it with drk_kit_check before it plays): this header at
+ * the start of the first sector's payload, then the slices, two little-endian 32-bit words each, the high one first.
+ * Slice k of the payload is at payload byte 8 k: a sector's 3,808 payload bytes hold 476 slices, so none straddles. */
+#define DRK_KIT_MAGIC 0x3154494Bu               /* KIT1 */
+#define DRK_NDRUM 11u                            /* the 909's eleven drums (D9_*) */
+#define DRK_NAMELEN 5u                              /* the card's value: a name never cut short */
+#define DRK_KSEC 7u                              /* a kit's sectors at most: 26,656 bytes */
+#define DRK_SECBYTES 3808u                       /* a pool sector's payload (storage.c ST_POOL_PAYLOAD_MAX) */
+#define DRK_SECOFF 32u                           /* where it starts (ST_POOL_PAYLOAD_OFF) */
+#define DRK_SECSLICES (DRK_SECBYTES / 8u)
+typedef struct {
+    uint32_t magic;
+    uint16_t bytes;                              /* this header's bytes: the slices begin there (a multiple of 8) */
+    uint8_t nsmp, ndrum;                         /* takes, drums (DRK_NDRUM) */
+    char name[12];                               /* DRK_NAMELEN characters at most, zeros after */
+    drk_map_t map[DRK_NDRUM];
+    drk_sample_t smp[DRK_NDRUM];                 /* .at counts slices from the payload's start */
+    int32_t loops[DRK_NDRUM][8];                 /* a looped take's predictor at its loop (h, w): .st indexes it */
+} drk_kit_t;
+_Static_assert(sizeof(drk_map_t) == 10u && sizeof(drk_sample_t) == 12u && sizeof(drk_kit_t) == 616u &&
+               __builtin_offsetof(drk_kit_t, map) == 20u && __builtin_offsetof(drk_kit_t, smp) == 130u &&
+               __builtin_offsetof(drk_kit_t, loops) == 264u, "the user kit header: the record's own layout");
+#define DRK_KIT_BYTES ((uint32_t)(sizeof(drk_kit_t) + 7u) & ~7u)
+#define DRK_KIT_MAX (DRK_KSEC * DRK_SECBYTES)
+
+/* Each user slot's sectors (4 KB numbers; n 0: empty), set by kit_store.c in the main loop. drk_user_gen is odd
+ * while it changes them: the audio side then plays nothing, and a part that took a slot under an older number
+ * stops reading its sectors before a later save can erase them (kit_store.c waits two blocks). */
+static struct { uint8_t n, sec[DRK_KSEC]; } drk_user[DK_NUSER];
+static volatile uint32_t drk_user_gen;
+#ifndef DRK_XIP
+#ifdef FM1_IRQ_TARGET
+#include "fm1_xip.h"
+#define DRK_XIP(off) fm1_xip_ptr(off)            /* the data flash reads plain (fl_plain_window_init) */
+#else
+#define DRK_XIP(off) ((const uint8_t *)0)        /* (host builds without a flash image: no user kits) */
+#endif
+#endif
 
 #define DRK_NCH 8u
 #define DRK_RING DR_MS(15)                       /* a drum struck again: the old hit's fade */
@@ -31,7 +71,10 @@ typedef struct {
 #define DRK_LPMIN 3000                           /* a tail's darkening stops here: ~1.4 kHz */
 
 typedef struct {
-    const uint32_t *src;                         /* the next slice */
+    const uint32_t *src, *end;                   /* the next slice; a user kit's sector end (0: one run, built in) */
+    const uint32_t *const *secs;                 /* a user kit's sectors (its part's), 0: built in */
+    const drk_sample_t *s;                       /* the take */
+    const int32_t *loop;                         /* its predictor at the loop */
     uint32_t hi, lo;                             /* this slice's bits, top first */
     const int8_t *lv;                            /* its levels (Q2) */
     int32_t sc;                                  /* its scale */
@@ -45,11 +88,14 @@ typedef struct {
     int32_t snap, att;                           /* SNAP (Q15, +- 1); its envelope (Q15) */
     int32_t lp, lk, hs, hk, hv;                  /* TONE: cut (state, Q14), boost (state, Q14, amount Q6) */
     dre_t e;
-    uint8_t bits, nleft, map, sample, sound, lane, level, on;
+    uint8_t bits, nleft, map, sec, sound, lane, level, on;
 } drk_ch_t;
 struct drk_part {                                /* (drk_part_t: eng_drum.c) */
     drk_ch_t ch[DRK_NCH];
+    const drk_kit_t *H;                          /* a user kit's header (flash); 0: built in, or an empty slot */
+    const uint32_t *sec[DRK_KSEC];               /* its sectors' payloads (flash) */
     int32_t nst;
+    uint32_t gen;                                /* drk_user_gen when the part took its slot */
     uint8_t ready, kit, take;
 };
 _Static_assert(((sizeof(drk_part_t) + 3u) & ~3u) != ((sizeof(dlk_part_t) + 3u) & ~3u) &&
@@ -59,16 +105,38 @@ _Static_assert(((sizeof(drk_part_t) + 3u) & ~3u) != ((sizeof(dlk_part_t) + 3u) &
                "the sampled kits' state: its own size in the DRUM pool (resource_get keys on it)");
 static drk_part_t *drk_part(uint32_t part);      /* engines.c: the part's runtime pool */
 static uint32_t drk_bytes(void) { return sizeof(drk_part_t); }
+static int drk_userkit(uint32_t kit) { return MELODEE_USER_KITS && kit >= (uint32_t)DK_USER0; }
+
+/* a user slot's sectors into the part, if the table stands still meanwhile; else (or empty) the part stays silent */
+static void drk_user_take(drk_part_t *K, uint32_t u, uint32_t g)
+{
+    const uint32_t *sec[DRK_KSEC];
+    uint32_t n = u < DK_NUSER && !(g & 1u) ? drk_user[u].n : 0u;
+    if (n > DRK_KSEC)
+        n = 0;
+    for (uint32_t k = 0; k < n; k++)
+        sec[k] = (const uint32_t *)DRK_XIP(drk_user[u].sec[k] * 4096u + DRK_SECOFF);
+    __asm__ volatile("" ::: "memory");
+    if (!n || drk_user_gen != g)
+        return;
+    for (uint32_t k = 0; k < n; k++)
+        K->sec[k] = sec[k];
+    K->H = (const drk_kit_t *)sec[0];
+}
 
 static drk_part_t *drk_of(const track_t *t)
 {
     drk_part_t *K = drk_part((uint32_t)(t - trk));
-    if (K && (!K->ready || K->kit != t->p[P_E0])) {
+    uint32_t g = drk_user_gen;
+    if (K && (!K->ready || K->kit != t->p[P_E0] || (drk_userkit(K->kit) && K->gen != g))) {
         __typeof__(&memset) volatile clear = memset;
         clear(K, 0, sizeof *K);
         K->nst = 0x2F6E2B1;
         K->kit = (uint8_t)t->p[P_E0];
+        K->gen = g;
         K->ready = 1;
+        if (drk_userkit(K->kit))
+            drk_user_take(K, K->kit - (uint32_t)DK_USER0, g);
     }
     return K;
 }
@@ -87,6 +155,20 @@ static drk_ch_t *drk_channel(drk_part_t *K)
     return b;
 }
 
+/* the stream from slice: the built-in table in one run, a user kit's sector by sector */
+static void drk_seek(drk_ch_t *c, uint32_t slice)
+{
+    if (!c->secs) {
+        c->src = DRK_SLICES + 2u * slice;
+        c->end = 0;
+        return;
+    }
+    uint32_t k = slice / DRK_SECSLICES;
+    c->sec = (uint8_t)k;
+    c->src = c->secs[k] + 2u * (slice % DRK_SECSLICES);
+    c->end = c->secs[k] + 2u * DRK_SECSLICES;
+}
+
 static void drk_stream_start(drk_ch_t *c, const drk_sample_t *s)
 {
     for (uint32_t k = 0; k < 4u; k++)
@@ -94,7 +176,7 @@ static void drk_stream_start(drk_ch_t *c, const drk_sample_t *s)
     c->w[0] = c->w[1] = 0;
     c->w[2] = -(1 << 13);
     c->w[3] = 1 << 14;
-    c->src = DRK_SLICES + 2u * s->at;
+    drk_seek(c, s->at);
     c->nleft = 0;
     c->idx = 0;
     c->n = s->n;
@@ -105,16 +187,18 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
 {
     drk_part_t *K = drk_of(t);
     int16_t q[8];
-    if (!K || !RES_OK() || K->kit < DK_REAL0 || K->kit > DK_REAL_MAX)
+    if (!K || K->kit < DK_REAL0 || K->kit > DK_KIT_MAX || (drk_userkit(K->kit) ? !K->H : !RES_OK()))
         return;
     uint32_t sound = drum909_ins(note) & 15u, lane = drum_lane(note);
     const int8_t *pc = drum_patch_of(t - trk)->c[sound];
-    const drk_map_t *m = &DRK_MAP[K->kit - DK_REAL0][sound];
+    const drk_map_t *m = K->H ? &K->H->map[sound] : &DRK_MAP[K->kit - DK_REAL0][sound];
     uint32_t take = m->sample;
+    if (take == 0xFFu)                           /* a user kit's pad with nothing recorded */
+        return;
     dlk_values(t->p, pc, sound, q);
-    if (sound == D9_BD ? q[6] != 0 : sound == D9_CH && m->alt != 0xFFu && ((K->take ^= 1u) != 0u))
+    if (m->alt != 0xFFu && (sound == D9_BD ? q[6] != 0 : sound == D9_CH && ((K->take ^= 1u) != 0u)))
         take = m->alt;
-    const drk_sample_t *s = &DRK_SAMPLES[take];
+    const drk_sample_t *s = K->H ? &K->H->smp[take] : &DRK_SAMPLES[take];
     for (uint32_t k = 0; k < DRK_NCH; k++) {
         drk_ch_t *o = &K->ch[k];
         if (!o->on || o->fade)
@@ -129,6 +213,9 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
     int32_t tune = clamp((m->st + pc[0] + drum_event_pitch) * 16 + (q[1] - 64) * 3, -576, 576);
     c->inc = (uint32_t)((float)s->inc * 2.0f * dlk_exp2((float)tune / 192.0f));
     c->ph = 0;
+    c->secs = K->H ? K->sec : 0;
+    c->s = s;
+    c->loop = K->H ? K->H->loops[s->st] : DRK_LOOPS[s->st];
     drk_stream_start(c, s);
     /* a harder hit is brighter as well as louder (a recording of one velocity: the player's own touch) */
     int32_t dark = vel < 80u ? (int32_t)(80u - vel) / 2 : 0, v = clamp(q[2] - 64 + m->tone - dark, -64, 63);
@@ -146,15 +233,22 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
     c->fade = c->flen = 0;
     c->a = -1;
     c->t = 0;
-    c->sample = (uint8_t)take;
     c->sound = (uint8_t)sound;
     c->on = 1;
+}
+
+/* the part may sound: built in with the resources there, a user kit taken under the table's current number */
+static int drk_live(const drk_part_t *K, const int16_t *p)
+{
+    if (!K || !K->ready || K->kit != p[P_E0])
+        return 0;
+    return drk_userkit(K->kit) ? K->H && K->gen == drk_user_gen : RES_OK();   /* (a resource install erasing what it plays) */
 }
 
 static int drk_tick(track_t *t)
 {
     drk_part_t *K = drk_part((uint32_t)(t - trk));
-    if (!K || !K->ready || K->kit != t->p[P_E0] || !RES_OK())   /* (a resource install erasing what it plays) */
+    if (!drk_live(K, t->p))
         return 0;
     for (uint32_t k = 0; k < DRK_NCH; k++)
         if (K->ch[k].on || K->ch[k].ease)
@@ -176,6 +270,11 @@ static inline __attribute__((always_inline)) int32_t drk_next(drk_ch_t *restrict
 {
     uint32_t hi = c->hi, lo = c->lo, b = c->bits;
     if (!c->nleft) {
+        if (c->src == c->end) {                  /* a user kit's next sector */
+            uint32_t k = ++c->sec;
+            c->src = c->secs[k];
+            c->end = c->src + 2u * DRK_SECSLICES;
+        }
         hi = c->src[0];
         lo = c->src[1];
         c->src += 2;
@@ -210,7 +309,7 @@ static inline __attribute__((always_inline)) int32_t drk_next(drk_ch_t *restrict
 /* the channel's stream at its pitch, one block into x; 0 once a one-shot has ended */
 static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, uint32_t n)
 {
-    const drk_sample_t *s = &DRK_SAMPLES[c->sample];
+    const drk_sample_t *s = c->s;
     uint32_t ph = c->ph, inc = c->inc;
     int live = c->idx < c->n + 4u;
     for (uint32_t i = 0; i < n; i++) {
@@ -219,12 +318,12 @@ static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, u
             int32_t v = 0;
             ph -= 65536u;
             if (c->idx >= c->n && s->loop_at) {       /* the tail again: the predictor as it stood there */
-                const int32_t *st = DRK_LOOPS[s->st];
+                const int32_t *st = c->loop;
                 for (uint32_t k = 0; k < 4u; k++) {
                     c->h[k] = st[k];
                     c->w[k] = st[4u + k];
                 }
-                c->src = DRK_SLICES + 2u * s->at + 2u * s->loop_slice;
+                drk_seek(c, (uint32_t)s->at + s->loop_slice);
                 c->nleft = 0;
                 c->idx = s->loop_at;
             }
@@ -246,7 +345,7 @@ static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, u
 
 static inline __attribute__((always_inline)) void drk_tone(drk_ch_t *restrict c, int32_t *x, uint32_t n)
 {
-    const drk_sample_t *s = &DRK_SAMPLES[c->sample];
+    const drk_sample_t *s = c->s;
     if (s->dark && c->idx >= s->loop_at && c->lk > DRK_LPMIN)
         c->lk -= (c->lk * s->dark) >> 12;
     if (c->lk < DRK_LPOFF) {
@@ -272,7 +371,7 @@ static __attribute__((noinline)) void drk_render(track_t *t, int32_t *out, uint3
 {
     drk_part_t *K = drk_part((uint32_t)(t - trk) % NPART);
     int32_t y[CTL] = {0}, x[CTL];
-    if (!K || !K->ready || K->kit != p[P_E0] || !RES_OK())
+    if (!drk_live(K, p))
         return;
     for (uint32_t k = 0; k < DRK_NCH; k++) {
         drk_ch_t *c = &K->ch[k];
@@ -315,4 +414,75 @@ static __attribute__((noinline)) void drk_render(track_t *t, int32_t *out, uint3
         c->last = c->on ? s : 0;
     }
     dlk_out(y, out, n, m, p);
+}
+
+/* ------------------------------------------------------------ a user kit's record --- */
+/* slice k's first word, sector by sector (0 past the payload) */
+static const uint32_t *drk_slice_at(const uint32_t *const *secs, uint32_t nsec, uint32_t k)
+{
+    return k / DRK_SECSLICES < nsec ? secs[k / DRK_SECSLICES] + 2u * (k % DRK_SECSLICES) : 0;
+}
+/* a take's slices, walked by their modes (a checked record) */
+static uint32_t drk_take_slices(const uint32_t *const *secs, uint32_t nsec, const drk_sample_t *s)
+{
+    uint32_t k = s->at, idx = 0;
+    while (idx < s->n) idx += DRK_NS[drk_slice_at(secs, nsec, k++)[0] >> 30];
+    return k - s->at;
+}
+/* everything the player trusts in a record of len payload bytes in nsec sectors: the header's fields and every
+ * take's slices (walked by their modes) inside the payload, each loop where its slice starts. 0: playable */
+static int drk_kit_check(const uint32_t *const *secs, uint32_t nsec, uint32_t len)
+{
+    const drk_kit_t *H = (const drk_kit_t *)secs[0];
+    if (!nsec || nsec > DRK_KSEC || len < DRK_KIT_BYTES || len > nsec * DRK_SECBYTES || len > DRK_KIT_MAX)
+        return 1;
+    if (H->magic != DRK_KIT_MAGIC || H->bytes != DRK_KIT_BYTES || H->ndrum != DRK_NDRUM || H->nsmp > DRK_NDRUM)
+        return 2;
+    for (uint32_t i = 0, end = 0; i < sizeof H->name; i++) {
+        char ch = H->name[i];
+        if (end ? ch != 0 : ch == 0 ? (end = 1, i == 0) : (ch < ' ' || ch > '~' || i >= DRK_NAMELEN))
+            return 3;
+    }
+    for (uint32_t d = 0; d < DRK_NDRUM; d++) {
+        const drk_map_t *m = &H->map[d];
+        if ((m->sample != 0xFFu && m->sample >= H->nsmp) || (m->alt != 0xFFu && m->alt >= H->nsmp) ||
+            m->st < -24 || m->st > 24 || m->tone < -64 || m->tone > 63 || m->out > 16384u || !m->ms || m->ms > 30000u ||
+            m->pivot < 20u || m->pivot > 20000u)
+            return 4;
+    }
+    uint32_t slices = len / 8u;
+    for (uint32_t i = 0; i < H->nsmp; i++) {
+        const drk_sample_t *s = &H->smp[i];
+        if (s->at < DRK_KIT_BYTES / 8u || !s->n || s->inc < 4096u || s->inc > 32768u || s->st >= H->nsmp ||
+            (s->loop_at ? s->loop_at >= s->n : s->loop_slice != 0))
+            return 5;
+        uint32_t k = s->at, idx = 0, looped = !s->loop_at;
+        while (idx < s->n) {
+            const uint32_t *w = k < slices ? drk_slice_at(secs, nsec, k) : 0;
+            if (!w)
+                return 6;
+            if (s->loop_at && k == (uint32_t)s->at + s->loop_slice)
+                looped = idx == s->loop_at;
+            idx += DRK_NS[w[0] >> 30];
+            k++;
+        }
+        if (!looped)
+            return 7;
+    }
+    return 0;
+}
+/* a user slot's name for the KIT card (b: 6 bytes): EMPTY when there is none */
+static void drk_user_name(uint32_t u, char *b)
+{
+    uint32_t g = drk_user_gen;
+    str_cpy(b, "EMPTY", 6);
+    if (u >= DK_NUSER || (g & 1u) || !drk_user[u].n)
+        return;
+    const drk_kit_t *H = (const drk_kit_t *)DRK_XIP(drk_user[u].sec[0] * 4096u + DRK_SECOFF);
+    char t[DRK_NAMELEN + 1u];
+    for (uint32_t i = 0; i < DRK_NAMELEN; i++)
+        t[i] = H->name[i];
+    t[DRK_NAMELEN] = 0;
+    if (drk_user_gen == g)
+        str_cpy(b, t, 6);
 }
