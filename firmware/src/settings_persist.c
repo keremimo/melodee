@@ -50,6 +50,10 @@ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KE
  * Untagged records take UA_VOLUME_DEFAULT. */
 #define USB_VOLUME_ROW 8u
 #define USB_VOLUME_BYTE 4u
+/* SMK-37 VELOCITY (smk_input.h smk_vel_curve): row 8 byte 26 = 0xB4 | curve; 0 / unknown: NORMAL */
+#define SMK_VEL_ROW 8u
+#define SMK_VEL_BYTE 26u
+#define SMK_VEL_TAG 0xB4u
 /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
  * Melodee builds along with the other favorites; no layout or magic change. */
 static const uint8_t SETTINGS_OWNER[4] = {'M', 'D', 'S', 1};
@@ -91,6 +95,10 @@ static int settings_import(persist_t *p, int n)
                              ? hz : A4_DEFAULT);
     }
     memcpy(settings_glo, p->ext.glo, sizeof settings_glo);
+#if BOARD_SMK37
+    smk_vel_curve = (uint8_t)((p->favorites.factory[SMK_VEL_ROW][SMK_VEL_BYTE] & 0xFCu) == SMK_VEL_TAG
+                              ? p->favorites.factory[SMK_VEL_ROW][SMK_VEL_BYTE] & 3u : 0u);
+#endif
 #if MELODEE_USB_AUDIO
     uint8_t tracks = p->favorites.factory[15][26] == 0xA1u;
     if (usb.up) ua_tracks_set(tracks, fm1_ms);    /* live backup restore: re-enumerate before changing stride */
@@ -196,6 +204,9 @@ static void settings_export(persist_t *p)
     p->ext.lights = settings_lights == LIGHTS_MID ? 0u : settings_lights + 1u;
     p->ext.spare[1] = tuning_a4 == A4_DEFAULT ? 0u : A4_TAG | (uint32_t)tuning_a4;
     memcpy(p->ext.glo, settings_glo, sizeof settings_glo);
+#if BOARD_SMK37
+    p->favorites.factory[SMK_VEL_ROW][SMK_VEL_BYTE] = (uint8_t)(smk_vel_curve ? SMK_VEL_TAG | (smk_vel_curve & 3u) : 0u);
+#endif
     {
         uint8_t *w = p->favorites.factory[VOICE_PREF_ROW] + VOICE_PREF_BYTE;
         uint32_t custom = settings_safety;

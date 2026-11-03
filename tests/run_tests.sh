@@ -198,6 +198,9 @@ smk_packages() {                                  # SMK-37 layout packages of th
         "$PY" tools/fm1pkg_make.py --board smk37 "$OUT/smk_old_app.bin" build/loader/ota.bin "$OUT/smk_old.fwsc" >/dev/null
 }
 smk_tests() {                                     # the SMK-37 (SMK37.md): flash map and store, package, update entry, loader
+    build smk_keys_test smk_keys_test &&
+        step "SMK-37 velocity keybed: two contacts, bounces, strikes before a full lift, fast repeats, the outer keys' queue, pads, the factory curves, VELOCITY" \
+            "$OUT/smk_keys_test"
     build smk_midi_out_test smk_midi_out_test &&
         step "SMK-37 TRS MIDI OUT: USB-MIDI packets to bytes, the ring, one byte a tick, OFF, no UART: no stall" \
             "$OUT/smk_midi_out_test"
