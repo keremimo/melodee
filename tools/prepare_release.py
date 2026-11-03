@@ -9,16 +9,34 @@ from pathlib import Path
 import subprocess
 import zipfile
 
-from fm1_recover import APP_LO, Package, VERSION, sha256
-from fm1pkg_make import release_product, sfc
+from fm1_recover import APP_HI, APP_LO, Package, VERSION, sha256
+from fm1pkg_make import BOARDS, MODELS, release_product, sfc
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ("windows-x64", "macos-arm64", "macos-x64", "linux-x64")
+SMK_STEMS = {"pro": "melodee-smk37", "elite": "melodee-smk37-elite", "mke": "melodee-smk37-mke"}   # build.py, per model
 # Build switches the release workflow sets (release.yml, firmware job); unlisted ones keep their defaults.
 BUILD_FLAGS = {"MELODEE_DUAL_CORE": 1, "MELODEE_CORE1_FALLBACK": 0, "MELODEE_RAM_AUDIO": 1, "MELODEE_CACHE_RAM": 1,
                **{f"MELODEE_{name}": 1 for name in ("MOD_CACHE", "CONTROL_FAST", "MIX_FAST", "FX_DORMANT",
                   "RECORD_INDEX", "PROPHET_FAST", "PANEL_FAST", "FM6_FAST", "CZ_FAST", "DRUM_FAST", "SID_FAST",
                   "CAPTURE_FAST")}}
+
+
+def check_firmware(out, version, stem, model, app_hi):
+    """A package and its application binary: the model's identity, the same application bytes."""
+    name = f"{stem}-{version}.fwsc"
+    package = Package(out / name, model, app_hi)
+    if package.product != release_product(version, model):
+        raise RuntimeError(f"Wrong package identity: {name}")
+    app = out / f"{stem}-{version}-app.bin"
+    if not app.is_file():
+        raise RuntimeError(f"Missing application binary: {app}")
+    decoded = bytearray(package.flash[APP_LO:])
+    sfc(decoded, 0, len(decoded), 0, package.key)
+    app_data = app.read_bytes()
+    if decoded[0x120:0x120 + len(app_data)] != app_data:
+        raise RuntimeError(f"Application binary differs from package: {app}")
+    return name, {**BUILD_FLAGS, "sha256": package.digest}
 
 
 def main():
@@ -33,20 +51,8 @@ def main():
     expected = release_product(args.version)
     if list(out.glob("*-1core*")):
         raise RuntimeError("Single-core release assets are retired")
-    packages = {}
-    name = f"melodee-{args.version}.fwsc"
-    package = Package(out / name)
-    if package.product != expected:
-        raise RuntimeError(f"Wrong package identity: {name}")
-    app = out / f"melodee-{args.version}-app.bin"
-    if not app.is_file():
-        raise RuntimeError(f"Missing application binary: {app}")
-    decoded = bytearray(package.flash[APP_LO:])
-    sfc(decoded, 0, len(decoded), 0, package.key)
-    app_data = app.read_bytes()
-    if decoded[0x120:0x120 + len(app_data)] != app_data:
-        raise RuntimeError(f"Application binary differs from package: {app}")
-    packages[name] = {**BUILD_FLAGS, "sha256": package.digest}
+    packages = dict([check_firmware(out, args.version, "melodee", "FM-1", APP_HI)])
+    smk = dict(check_firmware(out, args.version, stem, MODELS[model], BOARDS["smk37"][0]) for model, stem in SMK_STEMS.items())
     recovery = {}
     for target in TARGETS:
         name = f"fm1-recover-{VERSION}-{target}.zip"
@@ -64,7 +70,8 @@ def main():
         for file in (ROOT / "LICENSE", ROOT / "LICENSING.md", *(ROOT / "LICENSES").glob("*.txt")):
             archive.write(file, str(file.relative_to(ROOT)))
     info = {"version": VERSION, "product": expected, "branch": "next" if "-" in VERSION else "main", "commit": commit,
-            "builtAt": datetime.now(timezone.utc).isoformat(), "core_builds": packages, "recovery_builds": recovery}
+            "builtAt": datetime.now(timezone.utc).isoformat(), "core_builds": packages, "smk_builds": smk,
+            "recovery_builds": recovery}
     (out / "BUILD_INFO.json").write_text(json.dumps(info, indent=2) + "\n")
     (out / "SHA256SUMS").write_text("".join(f"{sha256(p.read_bytes())}  {p.name}\n"
                                              for p in sorted(out.iterdir()) if p.is_file() and p.name != "SHA256SUMS"))

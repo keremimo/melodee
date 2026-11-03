@@ -16,8 +16,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import prepare_release as A
-from fm1_recover import APP_LO, Package, sha256
-from fm1pkg_make import release_product, sfc, ufw
+from fm1_recover import APP_LO, Package, RecoveryError, sha256
+from fm1pkg_make import BOARDS, MODELS, release_product, sfc, ufw
 from recovery_test import make_package
 
 MAJOR, MINOR, PATCH = A.VERSION.split("-", 1)[0].split(".")
@@ -46,6 +46,10 @@ class ReleaseTests(unittest.TestCase):
         decoded = bytearray(obj.flash[APP_LO:])
         sfc(decoded, 0, len(decoded), 0, obj.key)
         (self.folder / f"melodee-{A.VERSION}-app.bin").write_bytes(decoded[0x120:0x121])
+        smk_flash = bytes(obj.flash) + bytes(BOARDS["smk37"][0] - len(obj.flash))
+        for model, stem in A.SMK_STEMS.items():
+            (self.folder / f"{stem}-{A.VERSION}.fwsc").write_bytes(ufw(smk_flash, b"loader", release_product(A.VERSION, MODELS[model])))
+            (self.folder / f"{stem}-{A.VERSION}-app.bin").write_bytes(decoded[0x120:0x121])
         for target in A.TARGETS:
             self.write_archive(target)
 
@@ -72,6 +76,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(info["recovery_builds"]), 4)
         self.assertEqual(set(info["core_builds"]), {f"melodee-{A.VERSION}.fwsc"})
         self.assertEqual(info["core_builds"][f"melodee-{A.VERSION}.fwsc"]["MELODEE_DUAL_CORE"], 1)
+        self.assertEqual(set(info["smk_builds"]), {f"{stem}-{A.VERSION}.fwsc" for stem in A.SMK_STEMS.values()})
         for line in (self.folder / "SHA256SUMS").read_text().splitlines():
             digest, name = line.split("  ", 1)
             self.assertEqual(sha256((self.folder / name).read_bytes()), digest)
@@ -83,6 +88,22 @@ class ReleaseTests(unittest.TestCase):
 
     def test_application_mismatch_is_rejected(self):
         (self.folder / f"melodee-{A.VERSION}-app.bin").write_bytes(b"wrong app")
+        with self.assertRaisesRegex(RuntimeError, "differs from package"):
+            self.prepare()
+
+    def test_smk_package_missing_is_rejected(self):
+        (self.folder / f"melodee-smk37-elite-{A.VERSION}.fwsc").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_smk_package_of_another_model_is_rejected(self):
+        pro = (self.folder / f"melodee-smk37-{A.VERSION}.fwsc").read_bytes()
+        (self.folder / f"melodee-smk37-mke-{A.VERSION}.fwsc").write_bytes(pro)
+        with self.assertRaisesRegex(RecoveryError, "not for an MKE-P37"):
+            self.prepare()
+
+    def test_smk_application_mismatch_is_rejected(self):
+        (self.folder / f"melodee-smk37-{A.VERSION}-app.bin").write_bytes(b"wrong app")
         with self.assertRaisesRegex(RuntimeError, "differs from package"):
             self.prepare()
 

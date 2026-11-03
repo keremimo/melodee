@@ -61,11 +61,11 @@ def sha256(data):
 
 
 class Package:
-    def __init__(self, path):
+    def __init__(self, path, model="FM-1", app_hi=APP_HI):   # (another model: prepare_release.py checks the SMK-37 packages)
         self.path = Path(path).resolve()
         raw = self.path.read_bytes()
         self.product = product_of(raw)
-        require(re.fullmatch(r"FM-1_\d+", self.product), "Package is not for an FM-1")
+        require(re.fullmatch(re.escape(model) + r"_\d+", self.product), f"Package is not for an {model}")
         self.digest = sha256(raw)
         self.stock_v15 = self.product == "FM-1_015"
         if self.stock_v15:
@@ -100,8 +100,8 @@ class Package:
             if not self.stock_v15 or kind in (0, 100):
                 require(crc16(data) == check, "Bad package data checksum")
             if kind == 0:
-                require(self.flash is None and size == APP_HI and entry[64:].split(b"\0", 1)[0] == b"flash.bin",
-                        "Expected one flash.bin with application boundary 0x93000")
+                require(self.flash is None and size == app_hi and entry[64:].split(b"\0", 1)[0] == b"flash.bin",
+                        f"Expected one flash.bin with application boundary {app_hi:#x}")
                 self.flash = data
         require(self.flash is not None, "Package has no flash.bin")
         self.key = None
