@@ -82,7 +82,7 @@ static uint8_t fm1_led_dim[3][FM1_NCOL], fm1_led_dim_mask[3];   /* (hal/fm1_inpu
 static uint32_t host_ticks;
 #endif
 static uint32_t host_pressed, host_notes;
-static int32_t host_enc[7];
+static int32_t host_enc[8];                       /* (the SMK-37 has eight: K6..K8 are 5..7, so PRESETS is 7) */
 #if !MELODEE_BLE && !BOARD_SMK37
 static uint32_t fm1_ticks(void) { return host_ticks; }
 #endif
@@ -90,7 +90,7 @@ static uint32_t fm1_input_edges(int x) { uint32_t p = host_pressed; (void)x; hos
 static uint32_t fm1_input_note_edges(void) { uint32_t n = host_notes; host_notes = 0; return n; }
 static int32_t fm1_enc_take(uint32_t e)
 {
-    e %= 7u;
+    e %= 8u;
     int32_t s = host_enc[e]; host_enc[e] = 0;
 #ifdef UI_ENC_TAKE_HOOK
     UI_ENC_TAKE_HOOK(e);                           /* a scan interrupt can publish another detent immediately */
@@ -5960,11 +5960,87 @@ static int test_smk_pads(void)
     ui_power_on();
     return bad;
 }
+/* the knob banks and the pages that are not the track's sound (Kerem, 2026-11-03: with KNOB BANK on SOUND, GLO's
+ * GLOBAL and SYSTEM showed CUT RES ENV REL, the voice BUDGET and the MIDI settings out of reach): there the strip is
+ * the page's own four, the knobs edit them, no tag; the bank is back on a sound page; the menu lists GLO SELECT and
+ * the MIDI entries; KNOB BANK held does not draw its picker over the menu */
+static void bank_btn(uint32_t id, uint32_t on)
+{
+    if (on) { fm1_in.buttons |= 1u << id; host_pressed |= 1u << id; }
+    else fm1_in.buttons &= ~(1u << id);
+    frame();
+}
+static int test_smk_banks(void)
+{
+    int bad = 0;
+    int16_t *vp, budget, chan;
+    const char *dir = getenv("UI_SCREEN_DIR");
+    uint8_t cut;
+    ui_power_on();
+    go_home(); frame();
+    bad += check("SMK: KNOB BANK and FADER BANK are the SMK's own, the knobs' bank PAGE",
+                 panel_btn_of(SMK_BTN_KNOB_BANK) == NB && panel_btn_of(SMK_BTN_FADER_BANK) == NB && smk_kbank == BK_PAGE);
+    fm1_ms += 320u; bank_btn(SMK_BTN_KNOB_BANK, 1); bank_btn(SMK_BTN_KNOB_BANK, 0);
+    bad += check("  KNOB BANK tapped on Stage: SOUND, its tag, the strip its cards",
+                 smk_kbank == BK_SOUND && str_eq(smk_head_tag(), "SOUND") && strip_bank() == BK_SOUND);
+    press(B_GLO); press(B_GLO);
+    bad += check("  GLO twice: GLOBAL", !ui.home && str_eq(cur_page()->title, "GLOBAL"));
+    if (dir) screen_save(dir, "smk-global-sound-bank");
+    bad += check("  GLOBAL: the strip is the page's own (A4 BUDGET CLK TUNE), no bank page, no tag",
+                 strip_bank() == BK_PAGE && !knob_bank_page() && !smk_head_tag()[0] &&
+                 page_desc(cur_page(), 1, &vp) && str_eq(page_desc(cur_page(), 1, &vp)->label, "BUDGET"));
+    budget = settings_budget;
+    cut = p5_patch_of(TSEL)->raw[P5_CUTOFF];
+    turn(EN_K2, budget < VOICE_BUDGET_DEFAULT ? 1 : -1);
+    bad += check("  .. KNOB 2 edits the BUDGET, not the Prophet's resonance",
+                 settings_budget != budget && p5_patch_of(TSEL)->raw[P5_CUTOFF] == cut);
+    turn(EN_K2, budget < VOICE_BUDGET_DEFAULT ? -1 : 1);
+    press(B_GLO);
+    bad += check("  SYSTEM: its own too (MIDI DRUM ROUTE INFO)",
+                 str_eq(cur_page()->title, "SYSTEM") && strip_bank() == BK_PAGE && !knob_bank_page() &&
+                 page_desc(cur_page(), 0, &vp) && str_eq(page_desc(cur_page(), 0, &vp)->label, "MIDI"));
+    chan = song.g[G_ROUTE];
+    turn(EN_K3, chan ? -1 : 1);
+    bad += check("  .. KNOB 3 edits ROUTE (its picker opens), the cutoff stays",
+                 song.g[G_ROUTE] != chan && pop.on == POP_PICK && p5_patch_of(TSEL)->raw[P5_CUTOFF] == cut);
+    song.g[G_ROUTE] = chan;
+    pop_close(); frame();
+    press(B_GLO); press(B_GLO); press(B_GLO);
+    bad += check("  MIXER: the page's own", cur_page()->graph == GR_TRK && strip_bank() == BK_PAGE && !smk_head_tag()[0]);
+    go_title("PATTERN"); frame();
+    bad += check("  SEQ > PATTERN: the page's own (LEN DIV SWING GATE)", strip_bank() == BK_PAGE && !knob_bank_page());
+    press(B_ENV);
+    bad += check("  ENV (the Prophet's P5 FLT ENV, a sound page): the SOUND bank again, its tag",
+                 cur_page()->fam == FAM_EDIT && strip_bank() == BK_SOUND && knob_bank_page() == stage_page() && str_eq(smk_head_tag(), "SOUND"));
+    cut = p5_patch_of(TSEL)->raw[P5_CUTOFF];
+    turn(EN_K1, cut < P5_PANEL[P5_CUTOFF].max ? 1 : -1);
+    bad += check("  .. KNOB 1 edits the cutoff there", p5_patch_of(TSEL)->raw[P5_CUTOFF] != cut);
+    go_home(); frame();
+    bad += check("  Stage: SOUND", strip_bank() == BK_SOUND);
+    hold(B_HOME);
+    bad += check("  HOME held: the menu, listing GLO SELECT, MIDI KNOBS, MIDI LEARN, TRS MIDI OUT, VELOCITY",
+                 ui.menu == 1 && str_eq(MI_NAME[MI_GLO_SEL], "GLO SELECT") && str_eq(MI_NAME[MI_MIDI_KNOBS], "MIDI KNOBS") &&
+                 str_eq(MI_NAME[MI_MIDI_LEARN], "MIDI LEARN") && str_eq(MI_NAME[MI_TRS], "TRS MIDI OUT") &&
+                 str_eq(MI_NAME[MI_VELOCITY], "VELOCITY") && strip_bank() == BK_PAGE && !smk_head_tag()[0]);
+    pop.sig = 0;
+    fm1_ms += 320u; bank_btn(SMK_BTN_KNOB_BANK, 1); frames(700u);
+    bad += check("  .. KNOB BANK held under the menu: the menu stays, its picker not drawn over it",
+                 ui.menu == 1 && !pop.sig);
+    if (dir) screen_save(dir, "smk-menu-knob-bank-held");
+    bank_btn(SMK_BTN_KNOB_BANK, 0);
+    bad += check("  .. let go: the menu still, no picker", ui.menu == 1 && pop.on != POP_BANK);
+    hold(B_HOME);
+    bad += check("  the menu closed: Stage, the bank kept", !ui.menu && ui.home && smk_kbank != BK_PAGE);
+    bank_apply(0, BK_PAGE);
+    ui_power_on();
+    return bad;
+}
 int main(void)
 {
     int bad;
     setvbuf(stdout, NULL, _IONBF, 0);
     bad = test_smk_pads();
+    bad += test_smk_banks();
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
     return bad ? 1 : 0;
 }
