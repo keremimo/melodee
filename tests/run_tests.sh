@@ -193,7 +193,11 @@ old_to_new() {                                    # a package of another app (th
         "$OUT/ldr_test" "$OUT/old.fwsc" build/melodee.fwsc
 }
 smk_packages() {                                  # SMK-37 layout packages of this build's binaries (BOARD_SMK37 tests)
-    "$PY" tools/fm1pkg_make.py --board smk37 --res build/melodee-res.bin build/melodee.bin build/loader/ota.bin "$OUT/smk_new.fwsc" >/dev/null &&
+    # (NEW with an app area tail from 0x93000 of 0xA000 - 100 pseudo-random bytes: firmware/src/smkx.c)
+    "$PY" -c "import random, sys; r = random.Random(37); sys.stdout.buffer.write(bytes(r.randrange(256) for _ in range(0xA000 - 100)))" \
+        > "$OUT/smk_tail.bin" &&
+        "$PY" tools/fm1pkg_make.py --board smk37 --res build/melodee-res.bin --tail "$OUT/smk_tail.bin" build/melodee.bin \
+            build/loader/ota.bin "$OUT/smk_new.fwsc" >/dev/null &&
         head -c 200000 build/melodee.bin > "$OUT/smk_old_app.bin" &&
         "$PY" tools/fm1pkg_make.py --board smk37 "$OUT/smk_old_app.bin" build/loader/ota.bin "$OUT/smk_old.fwsc" >/dev/null
 }
@@ -220,15 +224,15 @@ smk_tests() {                                     # the SMK-37 (SMK37.md): flash
         step "SMK-37 flash map and store: never the head, BTIF/USRTRIM, USR, key_mac; the stock marker only released" \
             "$OUT/smk_flash_test"
     smk_packages || { fail "SMK-37 packages (fm1pkg_make.py --board smk37)"; return; }
-    step "SMK-37 package layout (fm1pkg_make --board smk37): PRCT 0x9D000, stock region table" \
-        "$PY" tests/smk_pkg_test.py "$OUT/smk_new.fwsc"
+    step "SMK-37 package layout (fm1pkg_make --board smk37): PRCT 0x9D000, stock region table, the app area tail" \
+        "$PY" tests/smk_pkg_test.py "$OUT/smk_new.fwsc" --tail "$OUT/smk_tail.bin"
     for m in 0 1 2; do                            # the pro, elite and mke builds of ota.c
         build ota_test_smk$m ota_test -DBOARD_SMK37=1 -DT_MODEL=$m &&
             step "M-UPGRADE entry, SMK-37 build $m (staging 0xBB000, the model's parm identity, the board check)" \
                 "$OUT/ota_test_smk$m" "$OUT/smk_new.fwsc"
     done
     build ldr_test_smk ldr_test -DBOARD_SMK37=1 &&
-        step "update loader, SMK-37: app area 0x4000-0x9CFFF, the store and the protected ranges untouched" \
+        step "update loader, SMK-37: app area 0x4000-0x9CFFF (the tail before the marker), the store and the protected ranges untouched" \
             "$OUT/ldr_test_smk" "$OUT/smk_old.fwsc" "$OUT/smk_new.fwsc"
     build boot_stub_test_smk boot_stub_test -O2 -DBOARD_SMK37=1 &&
         step "boot stub, SMK-37 build: staged loader at 0xBB000, the model's record" "$OUT/boot_stub_test_smk"
@@ -236,7 +240,7 @@ smk_tests() {                                     # the SMK-37 (SMK37.md): flash
         [ -f "$f" ] || continue                   # the packages BOARD=smk37 MODEL=... ./build.sh made
         id="SMK-37 Pro_900"
         case $f in *-elite.fwsc) id="SMK-37 Elite_900" ;; *-mke.fwsc) id="MKE-P37_900" ;; esac
-        step "SMK-37 package $f: identity $id, stock region table" "$PY" tests/smk_pkg_test.py "$f" "$id"
+        step "SMK-37 package $f: identity $id, stock region table, the tail its app wants" "$PY" tests/smk_pkg_test.py "$f" "$id"
     done
 }
 powercut_tests() {

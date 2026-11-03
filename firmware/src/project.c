@@ -1451,6 +1451,8 @@ static void persist_boot(void)                    /* before settings_init / pane
     fl_plain_window_init();                        /* flash above 0x93000 (SMK 0x9D000) reads as plaintext through XIP
                                                     * (user sample sets are played from there) */
 #if BOARD_SMK37
+    smkx_check();                                  /* the app area tail (below that window: decrypted) this build's?
+                                                    * (whatever window the SPL left; nothing has drawn an icon yet) */
     if (st_owner_check() < 0) {                    /* never parse another ported firmware's store (storage.c): */
         flash_ok = 0;                              /* not cleared, so RAM-only until the next boot */
         st_foreign = 1;

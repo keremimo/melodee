@@ -24,7 +24,8 @@
 #if BOARD_SMK37
 /* ---- SMK-37 flash map (the stock v016 region table) ----
  *   0x00000-0x03FFF  head (SPL, isd_config)         NEVER
- *   0x04000-0x9CFFF  app area (stock PRCT end)      update loader only (FL_APP)
+ *   0x04000-0x9CFFF  app area (stock PRCT end)      update loader only (FL_APP); the body ends below the marker
+ *                    (0x91000) as on the FM-1, 0x93000.. is the app area tail: read-only app data (src/smkx.c)
  *   0x9D000-0xBAFFF  VM: Melodee store A (the settings pair, the resource region FL_RES, the store owner tag,
  *                    the first pool sectors; storage.c)                           FL_DATA
  *   0xBB000-0xBFFFF  VM: M-UPGRADE loader staging + update record (ota.c)          FL_OTA

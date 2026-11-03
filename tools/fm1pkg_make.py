@@ -18,6 +18,8 @@ material in it:
   res.bin    the resource region (firmware/src/res.c), padded to whole sectors: the
              loader writes it after the app, so every host that serves the package
              (web, CLI, Firmware Hub) installs it
+  SMK-37: flash.bin's app area runs to 0x9D000; its tail from 0x93000 (--tail, firmware/src/smkx.c) holds
+             read-only data of the app, SFC-encrypted like the rest of the app area
 
 The layout values (offsets, flags, descriptor addresses, header fields) are
 facts of the FM-1 flash layout and the SDK file formats.
@@ -27,10 +29,12 @@ ship LICENSES/Apache-2.0.txt with every package (LICENSING.md; make_site.py and
 build.py --release do).
 
   fm1pkg_make.py APP.bin OTA.bin OUT.fwsc [--board fm1|smk37] [--product FM-1_9XY] [--key 0x980F] [--res RES.bin]
+                [--tail TAIL.bin]
 
 --board smk37 (SMK-37, same AC791N, SPL and loader) selects the SMK flash layout: PRCT 0x9D000 and the stock
 v016 region table (VM, BTIF, USRTRIM, USRFLASH, USR). app.bin's slot, the stub and the marker stay at the FM-1's
-places, so the stub's layout is the same on both boards.
+places, so the stub's layout is the same on both boards. --tail (smk37 only): the app's data for the app area
+from 0x93000 (build/melodee-tail.bin), at most 0xA000 B.
 """
 import argparse
 import os
@@ -60,6 +64,10 @@ REGIONS = {
 # per board: (FLASH_SIZE = PRCT = the end of what the update loader writes, the identity's model text)
 BOARDS = {"fm1": (0x93000, "FM-1"),
           "smk37": (0x9D000, "SMK-37 Pro")}
+# the app area's tail: on a board whose PRCT runs past the FM-1's, the sectors from there up hold the app's read-only
+# data (firmware/src/smkx.c, app.ld .smkx), encrypted as the app area and written with it, before the commit marker
+TAIL_LO = BOARDS["fm1"][0]
+TAIL_WANT = 0x54575853                                 # "SXWT": the app's smkx_want: the tail's length and CRC-32
 # smk37: one hardware under three model names; each build carries its model's name (identity, loader, record)
 MODELS = {"pro": "SMK-37 Pro", "elite": "SMK-37 Elite", "mke": "MKE-P37"}
 
@@ -166,6 +174,16 @@ def sdk_file(rel):
         raise SystemExit(f"fm1pkg_make: {path}: {e.strerror}. Set AC79_SDK to a JieLi AC79 SDK checkout.")
 
 
+def tail_wants(app):
+    """(length, CRC-32) after every "SXWT" in app.bin: its smkx_want, the tail it was built with (the check's own
+    literal of the marker can give one more, meaningless pair); none: an app from before the tail"""
+    m, out, i = struct.pack("<I", TAIL_WANT), [], app.find(struct.pack("<I", TAIL_WANT))
+    while 0 <= i <= len(app) - 12:
+        out.append(struct.unpack_from("<II", app, i + 4))
+        i = app.find(m, i + 1)
+    return out
+
+
 def has_stub(app):
     return len(app) >= STUB_LEN and app[8:8 + len(STUB_SIG)] == STUB_SIG
 
@@ -234,7 +252,7 @@ def commit(app, marker_of=marker):
     return bytes(a)
 
 
-def flash_image(app, key, marker_of=marker):
+def flash_image(app, key, marker_of=marker, tail=b""):
     spl = sdk_file("uboot.boot")                         # SDK SPL, BANKCB-encoded as in the SDK
     cfg_tool = sdk_file("cfg_tool.bin")
     eq = sdk_file("cfg/eq_cfg_hw.bin")
@@ -276,8 +294,14 @@ def flash_image(app, key, marker_of=marker):
     cfg = entry(crc16(cfg_body), 0x20, 0x20 + len(cfg_body), 0x83, 0xFF, 1, "cfg") + cfg_body
     region = bytearray(area + cfg)
     sfc(region, 0, len(region), 0, key)
-    assert 0x4000 + len(region) <= FLASH_SIZE, "the app area overruns its partition (the Prophet banks above it)"
+    assert 0x4000 + len(region) <= TAIL_LO, "the app area overruns its partition (the Prophet banks above it)"
     f[0x4000:0x4000 + len(region)] = region
+    if tail:                                            # the app area's tail: SFC by its offset in the app area
+        if len(tail) > FLASH_SIZE - TAIL_LO:
+            raise SystemExit(f"fm1pkg_make: the tail is {len(tail)} B, board {BOARD} has "
+                             f"{FLASH_SIZE - TAIL_LO} B from {TAIL_LO:#x}")
+        f[TAIL_LO:TAIL_LO + len(tail)] = tail
+        sfc(f, TAIL_LO, len(tail), 0x4000, key)
     return bytes(f)
 
 
@@ -333,13 +357,14 @@ def main():
     ap.add_argument("--key", type=lambda s: int(s, 0), default=KEY)
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     ap.add_argument("--res", type=Path, help="the build's resource region (build/melodee-res.bin)")
+    ap.add_argument("--tail", type=Path, help="smk37: the app area's tail from 0x93000 (build/melodee-tail.bin)")
     a = ap.parse_args()
     global SDK
     SDK = a.sdk
     set_board(a.board)
     a.product = a.product or BOARDS[a.board][1] + "_900"
-    pkg = ufw(flash_image(a.app.read_bytes(), a.key), a.ota.read_bytes(), a.product,
-              a.res.read_bytes() if a.res else None)
+    pkg = ufw(flash_image(a.app.read_bytes(), a.key, tail=a.tail.read_bytes() if a.tail else b""), a.ota.read_bytes(),
+              a.product, a.res.read_bytes() if a.res else None)
     a.out.write_bytes(pkg)
     print(f"package {a.out}: {len(pkg)} B, identity {a.product}, chip key {a.key:#06x}")
 

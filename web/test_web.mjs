@@ -19,6 +19,7 @@ import vm from "node:vm";
 import {mockInstallSession,strip} from "./installer_test_helpers.mjs";
 import { blockCount, logicalImage, productOf, validateStockPackage } from "./fm1pkg.js";
 import { MELODEE_LOADER, STOCK_LOADER, Updater, melodeeLoader, pack7, unpack7 } from "./fm1ota.js";
+import { progressModel } from "./install/progress.js";
 
 let failed = 0;
 const ok = (cond, what) => { console.log(`${what.padEnd(64)} ${cond ? "ok" : "FAIL"}`); if (!cond) failed++; };
@@ -1502,6 +1503,19 @@ from fm1_install import product_of
 print(product_of(open(sys.argv[1], "rb").read()), end="")`, pkg).toString();
   ok(/^FM-1_9\d{2,4}$/.test(productOf(raw)) && productOf(raw) === product,
     "fm1pkg.js productOf == Python (development and release identities)");
+  /* an SMK-37 build: the bar counts its flash.bin whole, the app area tail (0x93000..0x9CFFF, smkx.c) included */
+  const smk = join(HERE, "../build/melodee-smk37.fwsc");
+  if (existsSync(smk)) {
+    const [fl, res] = py(`import struct, sys; sys.path.insert(0, "tools")
+import fm1_install as I
+img = I.deinterleave(open(sys.argv[1], "rb").read())[0]
+n = struct.unpack_from("<H", I._dec(img[:0x40]), 8)[0]
+ents = {struct.unpack_from("<H", e)[0]: struct.unpack_from("<I", e, 12)[0] for e in (I._dec(img[0x40 + 0x50 * k:0x90 + 0x50 * k]) for k in range(n))}
+print(ents[0], ents.get(101, 0), end="")`, smk).toString().split(" ").map(Number);
+    const m = progressModel(logicalImage(readFileSync(smk)));
+    ok(fl === 0x9D000 && m.write === 0x420 + fl + (fl - 0x4000) + (res ? res + 0x200 : 0),
+      "progress.js: an SMK-37 package's bar counts flash.bin to 0x9D000 (its app area tail too)");
+  }
 }
 
 /* ------------------------------------------------- update protocol (fm1ota.js) --- */
