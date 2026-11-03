@@ -54,6 +54,12 @@ BLE_API void ble_sig_audio(int on);
 #if BLE_LL_ENC
 /* the key the link layer may use (LTK least significant octet first, for Rand and EDIV) */
 BLE_API void ble_host_set_key(const uint8_t rand[8], uint16_t ediv, const uint8_t ltk[16]);
+/* 1 once after a central asked to encrypt with a key we do not know (it was refused Key Missing): forget us on it */
+BLE_API int ble_host_key_refused(void);
+#if BLE_SMP_LEGACY
+/* a key to hand out in a pairing, good from now on when that peer connects to us: EDIV (2), Rand (8), LTK cut to size */
+BLE_API void ble_host_new_key(uint8_t size, uint8_t ediv_rand[10], uint8_t ltk[16]);
+#endif
 #endif
 
 /* ble_smp.c: an SMP PDU from the central; a new connection / none */

@@ -1109,6 +1109,7 @@ static void test_smp(void)
     uint16_t ediv;
     const uint8_t *r;
     int n, i;
+    memset(&bhs_key, 0, sizeof bhs_key);       /* (no secret yet: test_encryption's key is gone) */
     check("reconnect", connect(24, 300));
     c_events(2);
     c_l2cap(6, preq, 7);
@@ -1147,9 +1148,13 @@ static void test_smp(void)
     check("SMP: Master Identification (EDIV, Rand)", r && n == 11 && r[0] == 0x07);
     ediv = r ? (uint16_t)(r[1] | r[2] << 8) : 0;
     memcpy(rand, r ? r + 3 : zero16, 8);
-    check("SMP: the bond handed to the firmware (ble_app_bond: Rand, EDIV, LTK as sent)",
-          bond.n == 1 && bond.ediv == ediv && !memcmp(bond.rand, rand, 8) && !memcmp(bond.ltk, ltk, 16) &&
-              bsmp.st == S_KEYS && bsmp.theirs == 0x07);
+    check("SMP: the secret handed to the firmware once, never the key on air (ble_app_bond)",
+          bond.n == 1 && memcmp(bond.ltk, ltk, 16) && bsmp.st == S_KEYS && bsmp.theirs == 0x07);
+    {
+        uint8_t back[16];
+        check("SMP: the key as sent is found again from its EDIV and Rand",
+              ble_host_ltk(rand, ediv, back) && !memcmp(back, ltk, 16));
+    }
     r = c_frame(6, &n);
     check("SMP: our Identity Information (an IRK), after the EncKey", r && n == 17 && r[0] == 0x08 &&
           memcmp(r + 1, zero16, 16));

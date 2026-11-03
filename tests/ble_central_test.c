@@ -151,6 +151,7 @@ static struct {
     struct ble_ccm ctx, crx;
     uint8_t ltk[16], rand[8], irk[16];          /* its bond as handed out, and its IRK */
     uint8_t our_irk[16];                        /* the IRK we (the master) sent it */
+    uint8_t our_ltk[16], our_edrand[10];        /* the key we sent it: what it asks for when it connects to us */
     uint16_t ediv;
     uint8_t preq[7], pres[7], mconf[16], srand[16], stk[16];
     int smp_st, paired, keys_from_master;
@@ -414,6 +415,10 @@ static void p_smp(const uint8_t *p, int n)
         return;
     case 0x06: case 0x07: case 0x08: case 0x09:   /* the master's keys (phase 3) */
         P.keys_from_master++;
+        if (p[0] == 0x06)
+            memcpy(P.our_ltk, p + 1, 16);
+        if (p[0] == 0x07)
+            memcpy(P.our_edrand, p + 1, 10);
         if (p[0] == 0x08)
             memcpy(P.our_irk, p + 1, 16);
         if (p[0] == 0x09) {
@@ -801,6 +806,29 @@ static void test_pairing(void)
         smp_own_irk(irk);
         check("pairing: our IRK is our own fixed one (from our address, not the random generator): a Mac that "
               "bonded once refuses a new IRK for the same identity address", !memcmp(P.our_irk, irk, 16));
+    }
+    {
+        /* the iPad, 2026-11-03: paired with Melodee connecting out, then Mode VISIBLE: it connects to us and asks for
+         * the key we gave it. Thrown away, that was Key Missing and iOS dropped the link */
+        uint8_t k[16], first_ltk[16], first[10], other[16] = {0};
+        memcpy(first, P.our_edrand, 10), memcpy(first_ltk, P.our_ltk, 16);
+        check("pairing: the key we handed out as initiator is known when that peer connects to us (its EDIV, Rand)",
+              ble_host_ltk(first + 2, (uint16_t)(first[0] | first[1] << 8), k) && !memcmp(k, first_ltk, 16) &&
+                  memcmp(first_ltk, other, 16) && !ble_host_key_refused());
+        uint8_t second[10], second_ltk[16];
+        ble_host_new_key(16, second, second_ltk);
+        check("pairing: a second peer's key is good, and the first peer's still is",
+              memcmp(second_ltk, first_ltk, 16) && ble_host_ltk(second + 2, (uint16_t)(second[0] | second[1] << 8), k) &&
+                  !memcmp(k, second_ltk, 16) && ble_host_ltk(first + 2, (uint16_t)(first[0] | first[1] << 8), k) &&
+                  !memcmp(k, first_ltk, 16));
+        ble_host_new_key(7, second, second_ltk);
+        check("pairing: a short key comes back cut as it was handed out",
+              !second_ltk[7] && !second_ltk[15] && ble_host_ltk(second + 2, (uint16_t)(second[0] | second[1] << 8), k) &&
+                  !memcmp(k, second_ltk, 16));
+        first[5]++;                             /* (one nonce octet of Rand: not a key of ours any more) */
+        check("pairing: a key we did not hand out is refused, and that is told once",
+              !ble_host_ltk(first + 2, (uint16_t)(first[0] | first[1] << 8), k) && ble_host_key_refused() &&
+                  !ble_host_key_refused());
     }
     check("pairing: the CCCD written again once paired: ready", ble_central_state() == BLE_CS_READY && P.cccd == 1 &&
           ble_dgc.gc_retries >= 1);

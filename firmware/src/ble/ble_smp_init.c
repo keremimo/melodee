@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+/* Melodee integration changes Copyright (C) 2026 Kerem Kilic (Ellic Studio).
+ * Retains Optimist code from w0ts/optimist at 498a3ae47c4f01a6c0cc891c794f8cd2ed78cd66.
+ * Provenance and local changes: docs/BLE_MIDI.md. */
 /* The Security Manager as initiator (BLE_CENTRAL 1, BLE_CEN_PAIR: we are the master of the link; Core Specification Vol 3 Part H),
  * part of ble_smp.c (included there: it shares bsmp, smp_send, smp_c1, smp_cut). LE legacy pairing with bonding, and
  * only when the peripheral asks (a Security Request, Insufficient Authentication / Encryption: ble_central.c). Our
@@ -16,8 +19,8 @@
  *   -> its Sconfirm (with a passkey: once its user typed it) -> our Mrand -> its Srand, checked against Sconfirm ->
  *   STK = s1(TK, Srand, Mrand) cut to the key size -> the LL encryption with the STK started by us (EDIV 0, Rand 0) ->
  *   phase 3: the responder's keys first (its LTK, EDIV, Rand: the bond; its IRK and identity address: finding it again
- *   behind a resolvable private address), then ours (an LTK, EDIV and Rand we never use: a peripheral cannot start
- *   encryption; our IRK (smp_own_irk) and our static identity address) -> the keys to the firmware (ble_app_central_keys, with
+ *   behind a resolvable private address), then ours (an LTK, EDIV and Rand it asks for when it connects to us, Mode VISIBLE:
+ *   ble_host_new_key; our IRK (smp_own_irk) and our static identity address) -> the keys to the firmware (ble_app_central_keys, with
  *   BLE_KEYS_AUTH after a passkey) and the host told (ble_central_*).
  * The 30 s SMP timeout (3.4, from our last command: the user types within it) ends the link. A Pairing Failed either
  * way ends the pairing (the host decides). Context: the BLE interrupts' (the passkey is read by the main loop). */
@@ -143,17 +146,14 @@ static void smp_init_random(const uint8_t *p)
     ble_ll_start_enc(bsmp.stk, zero, 0);
 }
 
-/* phase 3, after theirs: our keys as agreed (none of them is ever used by us: a peripheral cannot start encryption,
- * and we never use a private address), then done */
+/* phase 3, after theirs: our keys as agreed, then done */
 static void smp_init_our_keys(void)
 {
     uint8_t e[17], m[11];
     if (bsmp.ours & SMP_KD_ENC) {
         e[0] = SMP_ENC_INFO;
-        ble_hw_rand(e + 1, 16);
-        smp_cut(e + 1);
         m[0] = SMP_MASTER_ID;
-        ble_hw_rand(m + 1, 10);
+        ble_host_new_key(bsmp.key_size, m + 1, e + 1);
         smp_send(e, 17);
         smp_send(m, 11);
         BLE_DG(ble_dgc.si_keys_tx += 2);

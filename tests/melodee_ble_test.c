@@ -5,6 +5,7 @@
 #include "ui_test.c"
 #include <assert.h>
 
+static const uint8_t zero_rand_for_stk[8];
 static uint32_t packet(uint32_t st, uint32_t note, uint32_t vel)
 { return (st >> 4) | st << 8 | note << 16 | vel << 24; }
 static void reset_ble(void)
@@ -109,6 +110,39 @@ int main(void)
     ble_app_central_keys(&(struct ble_keys){.has=BLE_KEYS_LTK}); assert(!mb.keys_new);
     mb.closing=0;
     puts("BLE adapter: passkey lifecycle, missing calibration and forget isolation passed");
+
+    /* A peer we paired with connects to us (Mode VISIBLE): its key known, saved with the settings, ended by Forget;
+     * a key we do not know says so in the header until a peer comes in. */
+    reset_ble(); mb.cal = 1; mb_saved.flags = MB_VISIBLE; ble_enable(1); ble_ll_advertise(1);
+    uint8_t edr[10], given[16], back[16];
+    ble_host_new_key(16, edr, given);
+    assert(mb_saved.bond[0] == 0xB5 && mb_saved.bond[1] == 1 && memcmp(mb_saved.bond + 12, given, 16));
+    assert(ble_host_ltk(edr + 2, ble_rd16(edr), back) && !memcmp(back, given, 16));
+    uint8_t kept[28]; memcpy(kept, mb_saved.bond, 28);
+    memset(&bhs_key, 0, sizeof bhs_key);       /* a power-off: the firmware gives the secret back */
+    ble_host_set_key(kept + 2, ble_rd16(kept + 10), kept + 12);
+    assert(ble_host_ltk(edr + 2, ble_rd16(edr), back) && !memcmp(back, given, 16));
+    uint8_t edr2[10], given2[16];
+    ble_host_new_key(16, edr2, given2);
+    assert(!memcmp(mb_saved.bond, kept, 28));  /* (a second peer: nothing more to save) */
+    assert(ble_host_ltk(edr + 2, ble_rd16(edr), back) && !memcmp(back, given, 16));
+    edr[2]++;
+    assert(!ble_host_ltk(edr + 2, ble_rd16(edr), back));
+    edr[2]--;
+    assert(!strcmp(mel_ble_status(), "VISIBLE 0201"));
+    mel_ble_poll();
+    assert(!strcmp(mel_ble_status(), "FORGET ON PEER"));
+    ble_head_text(text); assert(!strcmp(text, "FORGET ON PEER"));
+    mel_ble_poll(); assert(!strcmp(mel_ble_status(), "FORGET ON PEER"));   /* (told once, shown until it is over) */
+    mb.ready = 1; mel_ble_poll(); mb.ready = 0;
+    assert(!strcmp(mel_ble_status(), "VISIBLE 0201"));
+    assert(!ble_host_ltk(zero_rand_for_stk, 0, back));
+    assert(ble_host_key_refused());
+    mel_ble_set(0); mel_ble_set(1); assert(!mb.failure[0]);
+    mel_ble_forget();
+    assert(!mb_saved.bond[0] && !ble_host_ltk(edr + 2, ble_rd16(edr), back));
+    ble_host_key_refused();
+    puts("BLE adapter: every peer's key known when it connects to us, Forget ends them, a refusal shown passed");
 
     /* Mode: VISIBLE advertises and never scans; CONNECT OUT is quiet until the page scans. Both saved. */
     reset_ble(); mb.cal = 1; ble_enable(1); assert(bll.state == LL_ADV);   /* (the stack's default before a mode applies) */

@@ -197,6 +197,7 @@ static int mel_ble_set(int on)
     if (f != mb_saved.flags) { mb_saved.flags = f; mb_dirty(); }
     mb_lock();
     mb.on = (uint8_t)!!on;
+    mb.failure[0] = 0;
     if (!on) { mb.scanning = mb.attempt = 0; mb.lost = 1; }
     if (mb.started) ble_enable(on);
     mb_unlock(); mb.generation++;
@@ -330,6 +331,8 @@ static void mel_ble_poll(void)
         ble_scan_add(&mb.found, pdu, n, rssi, fm1_ms);
     if (fm1_ms - mb.aged >= 1000u) { mb.aged = fm1_ms; ble_scan_age(&mb.found, fm1_ms); }
     mb.count = (uint8_t)ble_scan_list(&mb.found, mb.idx);
+    if (ble_host_key_refused()) { str_cpy(mb.failure, "FORGET ON PEER", sizeof mb.failure); mb.generation++; }
+    else if (mb.ready) mb.failure[0] = 0;       /* (a peer came in: a refusal shown for an earlier one is over) */
     if (mb.attempt) {
         uint8_t state = ble_central_state(), pairing = (uint8_t)ble_central_pairing();
         if (pairing != mb.was_pairing) { mb.was_pairing = pairing; mb.deadline = fm1_ms; }

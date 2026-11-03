@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+/* Melodee integration changes Copyright (C) 2026 Kerem Kilic (Ellic Studio).
+ * Retains Optimist code from w0ts/optimist at 498a3ae47c4f01a6c0cc891c794f8cd2ed78cd66.
+ * Provenance and local changes: docs/BLE_MIDI.md. */
 /* The host below ATT (Core Specification Vol 3):
  *   - GAP: the advertisement (flags, the BLE-MIDI service UUID) and the scan response (the name), Part C 11;
  *   - L2CAP on LE: basic frames over the fixed channels, reassembled from the link layer's fragments; the LE
@@ -13,6 +16,9 @@
 #include "ble_hw.h"
 #include "ble_util.h"
 #include "ble_diag.h"
+#if BLE_SMP_LEGACY
+#include "ble_aes.h"
+#endif
 
 static struct {
     uint8_t rx[4 + BLE_ATT_MTU_MAX];           /* one L2CAP frame being reassembled */
@@ -287,12 +293,13 @@ BLE_API void ble_host_event(void)
 }
 
 #if BLE_LL_ENC
-/* one key slot: the bond SMP made (ble_smp.c), or the one the firmware kept across a power-off (ble_host_set_key at
- * start-up); in RAM here */
+/* one key slot, the firmware's to keep across a power-off (ble_host_set_key at start-up); in RAM here. Its LTK is also
+ * the secret every key we hand out is made from (ble_host_new_key) */
 static struct {
     uint8_t valid, rand[8], ltk[16];
     uint16_t ediv;
 } bhs_key;
+static volatile uint8_t bhs_key_refused;       /* a central came with a key we do not know */
 
 BLE_API void ble_host_set_key(const uint8_t rand[8], uint16_t ediv, const uint8_t ltk[16])
 {
@@ -306,15 +313,69 @@ BLE_API void ble_host_set_key(const uint8_t rand[8], uint16_t ediv, const uint8_
 BLE_API void ble_host_encrypted(void) {}
 #endif
 
+BLE_API int ble_host_key_refused(void)
+{
+    int r = bhs_key_refused;
+    bhs_key_refused = 0;
+    return r;
+}
+
+#if BLE_SMP_LEGACY
+/* Melodee: a peer keeps the key we hand out in a pairing, in either role, and asks for it when it connects to us
+ * (Mode VISIBLE; a phone we connected out to, which a key of ours thrown away dropped: Key Missing, 2026-11-03). Each is
+ * made from the slot's secret, so every peer's stays good with nothing stored for it, and a new secret (Forget pairings)
+ * ends them all. Rand: a nonce (3), the key size, a check (4) telling ours from a stranger's: that one gets Key Missing,
+ * which a phone understands, rather than a MIC failure */
+static void bhs_key_from(const uint8_t rand[8], uint16_t ediv, uint8_t what, uint8_t out[16])
+{
+    uint8_t in[16];
+    ble_zero(in, 16);
+    ble_cpy(in, rand, 4);
+    ble_wr16(in + 4, ediv);
+    in[6] = what;                              /* 0 the LTK, 1 the check */
+    ble_aes128(bhs_key.ltk, in, out);
+}
+
+BLE_API void ble_host_new_key(uint8_t size, uint8_t ediv_rand[10], uint8_t ltk[16])
+{
+    uint8_t *rand = ediv_rand + 2, d[2], check[16];
+    if (!bhs_key.valid) {                      /* the first pairing: the secret, for the firmware to keep */
+        ble_hw_rand(bhs_key.rand, 8);
+        ble_hw_rand(d, 2);
+        ble_hw_rand(bhs_key.ltk, 16);
+        bhs_key.ediv = ble_rd16(d);
+        bhs_key.valid = 1;
+        ble_app_bond(bhs_key.rand, bhs_key.ediv, bhs_key.ltk);
+    }
+    ble_hw_rand(ediv_rand, 5);                 /* EDIV (2), the nonce (3) */
+    rand[3] = size;
+    bhs_key_from(rand, ble_rd16(ediv_rand), 1, check);
+    ble_cpy(rand + 4, check, 4);
+    bhs_key_from(rand, ble_rd16(ediv_rand), 0, ltk);
+    ble_zero(ltk + size, 16u - size);
+}
+#endif
+
 BLE_API int ble_host_ltk(const uint8_t rand[8], uint16_t ediv, uint8_t ltk[16])
 {
 #if BLE_SMP_LEGACY
+    uint8_t check[16];
     if (ble_smp_stk(rand, ediv, ltk))           /* a pairing's short-term key first */
         return 1;
+    if (bhs_key.valid && rand[3] >= 7u && rand[3] <= 16u) {
+        bhs_key_from(rand, ediv, 1, check);
+        if (ble_eq(rand + 4, check, 4)) {
+            bhs_key_from(rand, ediv, 0, ltk);
+            ble_zero(ltk + rand[3], 16u - rand[3]);
+            return 1;
+        }
+    }
 #endif
-    if (!bhs_key.valid || ediv != bhs_key.ediv || !ble_eq(rand, bhs_key.rand, 8))
+    if (!bhs_key.valid || ediv != bhs_key.ediv || !ble_eq(rand, bhs_key.rand, 8)) {
+        bhs_key_refused = 1;
         return 0;
-    ble_cpy(ltk, bhs_key.ltk, 16);
+    }
+    ble_cpy(ltk, bhs_key.ltk, 16);              /* (the one bond of a firmware before ble_host_new_key) */
     return 1;
 }
 #endif
