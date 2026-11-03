@@ -159,7 +159,7 @@ static int stage_notes(int32_t x1, int32_t cy)
 {
     uint32_t bits[4], i, n = 0, pcs = 0, root = 0, bass, held = 0, k = song.sel % NTRK;
     uint8_t note[8];
-    char b[48];
+    char b[NOTES_FIT_B];
     const char *q;
     uint16_t c, cn;
     int32_t x = 10;

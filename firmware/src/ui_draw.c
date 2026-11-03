@@ -854,13 +854,14 @@ static void draw_cards(void)
         uint32_t chosen = notes_selected(TSEL), start = notes_manual_start(TSEL);
         const step_t *st = start < NSTEP ? &TSEL->step[start] : 0;
         int selected = chosen < RECORD_MAX || (st && st->n);
-        char sn[12], u[12];
+        char sn[12], u[12], cents[6];
+        const char *pl;
         fmt_int(sn, (int32_t)ui.cursor + 1); u[0] = '/'; fmt_int(u + 1, TSEL->p[P_SLEN]);
         draw_column(0, ui.note_copy?"COPY":bulk.on||ui.note_move?"MOVE":"STEP", sn, bulk.on||ui.note_move?"":u, VAL(0u), -1, ICON_AUTO);
         uint32_t pitch = chosen < RECORD_MAX ? recorded_note(&recording[chosen]) : st && st->n ? st->note[notes_manual_slot(st)] : last_note;
-        note_name(sn, pitch);
+        pl = note_card(sn, cents, pitch, "PITCH");
         if(chosen<RECORD_MAX && drum_track(TSEL))fmt_int(sn,recording[chosen].pitch);
-        draw_column(1, "PITCH", sn, chosen<RECORD_MAX && drum_track(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
+        draw_column(1, pl, sn, chosen<RECORD_MAX && drum_track(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
         if (chosen < RECORD_MAX) {
             uint32_t hundredths = ((uint32_t)recording[chosen].duration * (1u << (recorded_exponent(&recording[chosen]))) * 100u + RECORD_UNIT / 2u) / RECORD_UNIT;
             if (!hundredths) str_cpy(sn, "<.01", sizeof sn);
@@ -901,7 +902,8 @@ static void draw_cards(void)
     if (cur_page()->scope == SC_STEP) {
         static const char *const TIME_N[3] = {"NOTE", "TIE", "REST"};
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        char u[8];
+        char u[8], cents[6];
+        const char *nl = "NOTE";
         uint32_t cnt = st->n, first = st->note[0], l;
         for (l = NLANE; l-- > 0;)                         /* (lane hits count as their notes) */
             if ((st->hit >> l) & 1u) {
@@ -910,7 +912,7 @@ static void draw_cards(void)
                     first = DRUM_LANE_NOTE[l];
             }
         if (cnt) {
-            note_name(val, first);
+            nl = note_card(val, cents, first, nl);
             u[0] = 0;
             if (cnt > 1) {
                 str_cpy(u, "+", 8);
@@ -927,7 +929,7 @@ static void draw_cards(void)
             str_cpy(sl, "/", 8);
             fmt_int(sl + 1, TSEL->p[P_SLEN]);
             draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-            draw_column(1, "NOTE", val, u, step_on(st) ? VAL(1u) : T_DIM, -1, ICON_AUTO);
+            draw_column(1, nl, val, u, step_on(st) ? VAL(1u) : T_DIM, -1, ICON_AUTO);
             draw_column(2, "TIME", TIME_N[st->time % 3u], "", VAL(2u), -1, ICON_AUTO);
             draw_column(3, "FLAG", FLAG_N[(st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u)], "",
                         VAL(3u), -1, ICON_AUTO);

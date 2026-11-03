@@ -141,9 +141,70 @@ static void frequency(void)
         assert(error < 0.6);
     }
 }
+/* What a note reads: the semitone it sounds nearest and the cents off it. Its identity stays the degree. */
+static const char *name_of(uint32_t note)
+{
+    static char b[12];
+    memset(b, 'x', sizeof b);
+    note_name(b, note);
+    assert(strlen(b) <= 7);                               /* (what the callers' buffers hold) */
+    return b;
+}
+static void names(void)
+{
+    char val[12], cents[6];
+    track_t *t = setup("JI-MAJ");
+    assert(!strcmp(name_of(60), "C4"));
+    assert(!strcmp(name_of(62), "E4-14") && t->p[P_SCALE] == (int16_t)scale_id("JI-MAJ"));   /* 5/4: 386 cents */
+    assert(!strcmp(name_of(64), "G4+2"));                 /* 3/2: 702 */
+    assert(!strcmp(name_of(67), "C5"));                   /* the next period */
+    assert(!strcmp(name_of(53), "C3"));                   /* the one below */
+    t = setup("24EDO");
+    assert(!strcmp(name_of(61), "C#4-50"));               /* a tie: up to the next semitone, as iOS */
+    assert(!strcmp(name_of(59), "C4-50"));
+    assert(!strcmp(name_of(62), "C#4"));
+    t->p[P_ROOT] = 3; t->p[P_TRANS] = -5;
+    assert(!strcmp(name_of(60), "A#3"));                  /* ROOT and TRN move what it sounds */
+    t->p[P_ROOT] = 0; t->p[P_TRANS] = -36;
+    assert(!strcmp(name_of(12), "C-1"));
+    assert(!strcmp(name_of(13), "C#-1-50"));              /* the widest */
+    assert(!strcmp(note_card(val, cents, 13, "PITCH"), "-50c") && !strcmp(val, "C#-1"));
+    assert(!strcmp(note_card(val, cents, 12, "PITCH"), "PITCH") && !strcmp(val, "C-1"));
+    t = setup("5EDO");
+    assert(!strcmp(name_of(0), "C-1") && !strcmp(name_of(127), "G9"));   /* past MIDI's range: what it sounds, held there */
+    t = setup("31EDO"); t->p[P_ROOT] = 1;
+    assert(!strcmp(name_of(63), "D4+16") && view_pc(63) == 2u);          /* the wheel lights what the name says */
+    assert(!strcmp(note_card(val, cents, 63, "PITCH"), "+16c") && !strcmp(val, "D4"));
+    assert(!strcmp(note_card(val, cents, 62, "NOTE"), "-23c") && !strcmp(val, "D4"));
+    for (uint32_t s = SCALE_LEGACY; s < SCALE_MICRO_END; s++)
+        for (int32_t root = 0; root < 12; root += 5) {
+            t->p[P_SCALE] = (int16_t)s; t->p[P_ROOT] = (int16_t)root;
+            for (uint32_t note = 0; note < 128; note++) {
+                int32_t pitch = micro_pitch(t, (int32_t)note);
+                pitch = pitch < 0 ? 0 : pitch > 1270000 ? 1270000 : pitch;
+                long nearest = lround(pitch / 10000.0), off = lround(pitch / 100.0 - nearest * 100.0);
+                char want[12], joined[12];
+                snprintf(want, sizeof want, "%s%ld", N_NOTE[nearest % 12], nearest / 12 - 1);
+                if (off) snprintf(want + strlen(want), sizeof want - strlen(want), "%+ld", off);
+                assert(!strcmp(name_of(note), want));
+                const char *label = note_card(val, cents, note, "L");
+                snprintf(joined, sizeof joined, "%s%s", val, label == cents ? cents : "");
+                if (label == cents) joined[strlen(joined) - 1] = 0;   /* (its "c") */
+                assert(!strcmp(joined, want) && (label != cents || off));
+            }
+        }
+    t->p[P_ROOT] = 0;
+    t->p[P_SCALE] = (int16_t)scale_id("24EDO"); t->p[P_QUANT] = Q_OFF;
+    assert(!strcmp(name_of(61), "C#4"));                  /* QNT OFF: the plain twelve */
+    t->p[P_QUANT] = Q_ALL; t->eng_req = 10;
+    assert(!strcmp(name_of(61), "C#4"));                  /* a kit's */
+    t->eng_req = 0; t->p[P_SCALE] = 1;
+    assert(!strcmp(name_of(64), "E4"));
+    puts("microtonal: names by the nearest semitone and cents, every catalogue note, cards, the wheel");
+}
 int main(void)
 {
-    mapping(); lifecycle(); frequency();
+    mapping(); lifecycle(); frequency(); names();
     puts("microtonal tests passed");
     return 0;
 }

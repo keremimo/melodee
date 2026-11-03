@@ -536,7 +536,7 @@ static void pv_arp(int32_t h)
     uint8_t base[16], seq[16];
     uint32_t nb = t->nheld ? t->nheld : 3u, n = 0, o, i, j, oct = (uint32_t)clamp(t->p[P_AOCT], 1, 4), mode = (uint32_t)t->p[P_AMODE];
     int32_t lo = 127, hi = 0, w;
-    char b[32];
+    char b[NOTES_FIT_B], tail[12] = " \xB7 ";
     if (nb > 16u) nb = 16u;
     for (i = 0; i < nb; i++) base[i] = t->nheld ? t->held[i] : DEF[i];
     if (mode != 5u)                                     /* (ORD: as played; the others from the lowest) */
@@ -557,14 +557,10 @@ static void pv_arp(int32_t h)
         cv_rrect(16 + (int32_t)i * w, y, w - 4 < 18 ? w - 4 : 18, 7, 2, mode ? T_KNOB((uint32_t)(seq[i] - lo) / 12u) : T_DIM,
                  T_PANEL);                              /* (each octave a colour) */
     }
-    b[0] = 0;
-    for (i = 0; i < nb && i < 4u; i++) {
-        note_name(b + str_len(b), base[i]);
-        str_cpy(b + str_len(b), " ", 2);
-    }
-    str_cpy(b + str_len(b), "\xB7 ", 4);
-    fmt_int(b + str_len(b), (int32_t)oct);
-    str_cpy(b + str_len(b), " oct", 5);
+    fmt_int(tail + str_len(tail), (int32_t)oct);
+    str_cpy(tail + str_len(tail), " oct", 5);
+    notes_fit(b, base, nb < 4u ? nb : 4u, TY_LB, PV_PANEL_W - 24 - text_w(TY_LB, tail));
+    str_cpy(b + str_len(b), tail, sizeof tail);
     cv_free_text(12, 6, TY_LB, b, T_MID, T_PANEL, PV_PANEL_W - 24);
 }
 /* PATTERN (mock/r6_pages PATTERN): the 64 steps as dots, four rows of 16: a note or a hit the track's colour, a rest
