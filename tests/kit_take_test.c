@@ -100,7 +100,7 @@ static void kit_on(uint32_t u)
     host_tracks_init();
     for (uint32_t p = 0; p < NPART; p++) memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, 6);
+    host_preset(&trk[0], ENGI_DRUM, 0);   /* (808 KIT: on both boards) */
     trk[0].p[P_E0] = (int16_t)(DK_USER0 + u);
 }
 static int32_t run(int32_t *buf, uint32_t nb)
@@ -124,6 +124,8 @@ int main(int argc, char **argv)
     static int16_t y[FS * 2u], z[FS * 2u];
     static uint32_t words[FS];
     memset(nor, 0xFF, sizeof nor);
+    check("KIT 1..8 are 9..16, straight after FM", DK_USER0 == DK_FM + 1 && DK_KIT_MAX == 16 &&
+          ENG_DRUM.edit[0].max == DK_KIT_MAX && !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && !strcmp(N_DRUM_KIT[DK_KIT_MAX], "KIT 8"));
 
     {   /* the capture */
         uint32_t n = hit(0, src, 1.0f), got = record(src, n);

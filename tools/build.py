@@ -139,7 +139,6 @@ def generate():
             [tools / "gen_tables.py", GEN / "melodee_tables.h"],
             [tools / "gen_fm6_patches.py", GEN / "melodee_fm6.h"],
             [tools / "gen_cz1_factory.py", GEN / "melodee_cz1.h"],
-            [tools / "gen_drum_kits.py", GEN / "melodee_drum_kits.h"],
             [tools / "gen_prophet_factory.py", GEN / "melodee_prophet_factory.h", "--web", "check"]]
     procs = [subprocess.Popen([sys.executable, *map(str, c)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True) for c in cmds]
@@ -312,6 +311,10 @@ def build_app(stub):
         raise SystemExit("resident audio requires MELODEE_SIZE=1 for the verified IR placement pass")
     elf = OUT / "melodee.elf"
     extra_ld = ["--defsym=AUDIO_RESIDENT=1"] if os.environ.get("MELODEE_RAM_AUDIO") == "1" else []
+    # The SRAM sections' load addresses after .text are their raw sizes; the packager stores them compressed from
+    # _rt_load and enforces the body limit itself. On the SMK-37 the raw extent reaches the resource region's (.mres)
+    # load addresses, an overlap no flash ever holds: no section check (.text stays bounded by the XIP region).
+    extra_ld.append("--no-check-sections")
     tc("pi32v2/bin/ld", "--gc-sections", *extra_ld, "-T", linker_script(), OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o",
        OUT / "melodee.o", "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin", "dsptext.bin", "dsptables.bin", "audiotext.bin"):

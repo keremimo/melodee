@@ -1,8 +1,0 @@
-The recorded kits (firmware/src/drum_real.c, tools/drum_kit_make.py). Every recording is CC0 1.0:
-
-Big Rusty Drums, Karoryfer Samples        github.com/sfzinstruments/karoryfer.big-rusty-drums   CC0-1.0
-  kick_24, kick_24_nodamp, snare_14 center and sidestick, hihat_14 tc and qo, tom_18, crash_17, ride_22
-Frankensnare, Karoryfer Samples           github.com/sfzinstruments/karoryfer.frankensnare      CC0-1.0
-  13b_basic, 12_basic, xtra_claps
-
-Top velocity layers, mics blended and processed; assets/drums/kits.bin holds the coded result.

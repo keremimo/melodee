@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The sampled kits' encoder (tools/drum_kit_make.py runs it; firmware/src/drum_real.c decodes). A 4-tap sign-LMS
+/* The drum kits' reference encoder (firmware/src/drum_enc.c is its fast twin on the device; drum_real.c decodes;
+ * tests/kit_take_test.c holds the device's within 1.5 dB of this). A 4-tap sign-LMS
  * predictor after QOA (qoaformat.org, its specification is CC0), with a bit depth per slice:
  *   64-bit slice, big end first: [2 mode][4 scale][58 residuals]; mode 0: 58 x 1 bit, 1: 29 x 2, 2: 19 x 3, 3: 14 x 4
  * Each slice takes the fewest bits that keep the coding noise snr_db below that slice's own level.
