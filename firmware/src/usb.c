@@ -173,6 +173,9 @@ static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
 static void midi_sync_send(uint32_t pkt)
 {
     uint32_t pulse = ((pkt >> 8) & 0xFFu) == 0xF8u;
+#if BOARD_SMK37 && defined(SMO_RING)
+    smo_put(pkt);                                   /* the TRS jack follows the clock too (one byte a message) */
+#endif
 #if MELODEE_BLE
     uint32_t ie = fm1_icfg(); fm1_irq_off();
     mel_ble_sync(pkt, pulse);

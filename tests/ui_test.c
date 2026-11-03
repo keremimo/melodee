@@ -62,6 +62,10 @@ static void padled_set(uint32_t pad, uint8_t r, uint8_t g, uint8_t b)
         host_pad_rgb[pad] = (uint32_t)r << 16 | (uint32_t)g << 8 | b;
 }
 static uint32_t padled_hold_until;
+/* TRS MIDI OUT's queue (firmware/src/smk_midi_out.h) on a UART that is always done: what usb.c hands it */
+#define SMO_TX_DONE() 1u
+#define SMO_TX_PUT(b) ((void)(b))
+#include "../firmware/src/smk_midi_out.h"
 #endif
 #define main hostsim_main
 #include "hostsim.c"
@@ -6108,6 +6112,10 @@ static int test_smk_sweep(void)
     bad += check("  a pad down: its drum held", smk_pad_playing[0] == n + 1u && gates() > 0u);
     fm1_in.pad_st[0] = 0; frame();                      /* (the HAL says up; the queue lost the release) */
     bad += check("  up in the HAL with its release lost: let go anyway", !smk_pad_playing[0] && !gates());
+    /* the realtime stream to the TRS jack */
+    memset(&smo, 0, sizeof smo); trs_out = 1;
+    midi_sync_emit(0xF8u); midi_sync_emit(0xFAu);
+    bad += check("MIDI clock and Start: queued for TRS MIDI OUT", smo.w == 2u && smo.ring[0] == 0xF8u && smo.ring[1] == 0xFAu);
     smk_fpick = 0; smk_fbank = BK_LEVELS;
     ui_power_on();
     return bad;

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * SMK-37 Pro port: Copyright (C) 2026 M. Geisler (genkigenki/makkuro) */
 /* SMK-37: TRS MIDI OUT, the same stream as USB MIDI out (usb.c midi_out_event hands every packet here, with or
- * without a computer). A USB-MIDI packet becomes its MIDI bytes (no running status: every message whole), a whole
+ * without a computer; midi_sync_send the realtime stream: clock, Start, Stop, Song Position). A USB-MIDI packet becomes its MIDI bytes (no running status: every message whole), a whole
  * message or nothing goes into a 256-byte ring (producer: the audio ISR, and the main loop with the IRQs off, as
  * midi_out_event), and the TIMER5 tick (main.c, 10 kHz, nested in the render too) sends one byte whenever the UART
  * has finished the last: ~0.4 ms a byte, never waiting. A byte the UART does not finish within SMO_TIMEOUT ticks is
