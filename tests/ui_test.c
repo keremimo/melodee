@@ -62,6 +62,7 @@ static void padled_set(uint32_t pad, uint8_t r, uint8_t g, uint8_t b)
         host_pad_rgb[pad] = (uint32_t)r << 16 | (uint32_t)g << 8 | b;
 }
 static uint32_t padled_hold_until;
+static void smk_fader_momentary(uint32_t id, uint32_t native) { (void)id; (void)native; }   /* (main.c: NOTE REPEAT held) */
 /* TRS MIDI OUT's queue (firmware/src/smk_midi_out.h) on a UART that is always done: what usb.c hands it */
 #define SMO_TX_DONE() 1u
 #define SMO_TX_PUT(b) ((void)(b))
@@ -6116,6 +6117,24 @@ static int test_smk_sweep(void)
     memset(&smo, 0, sizeof smo); trs_out = 1;
     midi_sync_emit(0xF8u); midi_sync_emit(0xFAu);
     bad += check("MIDI clock and Start: queued for TRS MIDI OUT", smo.w == 2u && smo.ring[0] == 0xF8u && smo.ring[1] == 0xFAu);
+    /* the faders' pickup */
+    track_select(0); go_home(); frame();
+    smk_fbank = BK_LEVELS; smk_fpick = 0;
+    trk[0].p[P_LEVEL] = 64; lv = 64;
+    smk_fader_poll(0, 10, 9, 1);
+    bad += check("fader 1 (LEVELS) moved far below T1's level: away, the level untouched",
+                 trk[0].p[P_LEVEL] == lv && !(smk_fpick & 1u));
+    smk_fader_poll(0, 70, 10, 1);
+    bad += check("  .. moved across it: taken over, the level follows", (smk_fpick & 1u) && trk[0].p[P_LEVEL] == 70);
+    smk_fader_poll(0, 71, 70, 1);
+    bad += check("  .. and follows on", trk[0].p[P_LEVEL] == 71);
+    trk[0].p[P_LEVEL] = 20;                             /* (a load, a knob: the value moved under the fader) */
+    smk_fader_poll(0, 71, 71, 0);
+    bad += check("  the level changed under it: away again", !(smk_fpick & 1u));
+    smk_fader_poll(0, 72, 71, 1);
+    bad += check("  .. a step up: nothing (no jump)", trk[0].p[P_LEVEL] == 20 && !(smk_fpick & 1u));
+    smk_fader_poll(0, 19, 72, 1);
+    bad += check("  .. across it: taken over again", (smk_fpick & 1u) && trk[0].p[P_LEVEL] == 19);
     smk_fpick = 0; smk_fbank = BK_LEVELS;
     ui_power_on();
     return bad;

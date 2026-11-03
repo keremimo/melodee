@@ -230,6 +230,28 @@ static void smk_fader_set(uint32_t i, int32_t v)
     midi_edit_value = -1;
     page_over = 0;
 }
+/* fader i read at v this pass (prev: its last reading, moved: it changed): its parameter set once it has taken over.
+ * A fader is away after a bank, track or sound change (main.c smk_faders) and whenever its parameter changed under
+ * it (a load, a knob, the page changing under PAGE, motion): it takes over crossing the value, or next to it, never
+ * jumping to where it stands. The value under each fader is watched here (smk_fader_seen) */
+static int32_t smk_fader_seen[4] = {-1, -1, -1, -1};
+static void smk_fader_poll(uint32_t i, int32_t v, int32_t prev, int moved)
+{
+    int32_t cur = bank_trk(smk_fbank) == P_COUNT && !bank_knobs_on() ? -1 : smk_fader_value(i);
+    if (cur != smk_fader_seen[i]) {                     /* changed under the fader: away until it crosses it */
+        smk_fader_seen[i] = cur;
+        smk_fpick &= (uint8_t)~(1u << i);
+    }
+    if (!moved || cur < 0)
+        return;
+    if (!((smk_fpick >> i) & 1u)) {
+        if ((prev - cur) * (v - cur) > 0 && v - cur != 1 && cur - v != 1)
+            return;
+        smk_fpick |= (uint8_t)(1u << i);
+    }
+    smk_fader_set(i, v);
+    smk_fader_seen[i] = smk_fader_value(i);
+}
 /* under each card of the faders' bank: the value's bar in the knob's colour (MID while the fader is away), a tick
  * where the fader stands */
 static void smk_fader_gauges(void)

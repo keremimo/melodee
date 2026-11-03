@@ -151,8 +151,9 @@ static void smo_sync(void)
 }
 
 /* the SMK-37's 4 faders (ui_smk.c: FADER BANK, smk_fbank): each fader its bank's parameter (LEVELS: track i's
- * level; PAGE: the page's four, as the knobs'). A fader is away after a bank, track or sound change until it crosses
- * the value, or comes next to it (no jumps): then it follows, as a MIDI knob's absolute value does (smk_fader_set).
+ * level; PAGE: the page's four, as the knobs'). A fader is away after a bank, track or sound change, and whenever
+ * its parameter changed under it, until it crosses the value, or comes next to it (no jumps): then it follows, as a
+ * MIDI knob's absolute value does (ui_smk.c smk_fader_poll, smk_fader_set).
  * A move brings the bank's cards into the strip for ST_KNOB_MS with a pickup gauge under each (smk_fader_ms). With
  * NOTE REPEAT (the FM-1's LFO) held a fader's edit is momentary, as a knob's is (ui.c momentary_take): released, the
  * value before comes back, and motion does not record it. LEVELS works everywhere; the other banks where the page has
@@ -204,28 +205,20 @@ static void smk_faders(void)
         smk_fpick = 0;
     }
     for (i = 0; i < 4u; i++) {
-        int32_t v = fm1_in.fader[i], cur, prev;
+        int32_t v = fm1_in.fader[i], prev;
+        int moved;
         if (last[i] == 0xFF || fm1_in.frames < 200u) {   /* (the first readings settle) */
             last[i] = (uint8_t)v;
             continue;
         }
-        if (v == last[i])
-            continue;
         prev = last[i];
+        moved = v != prev;
         last[i] = (uint8_t)v;
-        smk_fader_ms = fm1_ms | 1u;
-        smk_last_fader = 1;
-        if (bank_trk(smk_fbank) == P_COUNT && !bank_knobs_on())
-            continue;
-        cur = smk_fader_value(i);
-        if (cur < 0)
-            continue;
-        if (!((smk_fpick >> i) & 1u)) {                 /* away: crossing the value, or next to it, takes over */
-            if ((prev - cur) * (v - cur) > 0 && v - cur != 1 && cur - v != 1)
-                continue;
-            smk_fpick |= (uint8_t)(1u << i);
+        if (moved) {
+            smk_fader_ms = fm1_ms | 1u;
+            smk_last_fader = 1;
         }
-        smk_fader_set(i, v);
+        smk_fader_poll(i, v, prev, moved);
     }
 }
 #endif
