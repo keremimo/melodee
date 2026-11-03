@@ -96,14 +96,22 @@ enum { SMK_ADC_PADA = 1, SMK_ADC_PADB = 8, SMK_ADC_MUXC = 2 };
  * grid, the drum sounds and every layer's tiles land on them, low notes at the bottom: the bottom row
  * (hardware pads 8..15, mux B; padtest on a unit, 2026-10-10) white keys 0..7, the top row (pads 0..7, mux A) 8..15 */
 static const uint8_t SMK_WHITE_NOTE[SMK_NPAD] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
-static volatile uint8_t smk_pad_grid;   /* set by the UI: pads as a step grid, white key w on pad w (1-8 top row) */
-#define SMK_PAD_OF_WHITE(w) (smk_pad_grid ? (w) : (w) < 8u ? (w) + 8u : (w) - 8u)   /* white key 0..15 -> hardware pad */
-/* the piano layout (the UI sets smk_pad_piano, e.g. for SCALE): top row C4 D4 E4 F4 G4 A4 B4 C5, bottom row the
- * black keys between them (C#4 D#4 - F#4 G#4 A#4 - C#5); note-key index (0 = F3) by hardware pad, -1 = none */
-static const int8_t SMK_PIANO_NOTE[SMK_NPAD] = {7, 9, 11, 12, 14, 16, 18, 19, 8, 10, -1, 13, 15, 17, -1, 20};
-static volatile uint8_t smk_pad_piano;
-static uint8_t smk_pad_note[SMK_NPAD];   /* the note key a pad pressed (+1; 0 = none): its release ends that one */
-#define SMK_WHITE_OF_PAD(p) (smk_pad_grid ? (p) : (p) < 8u ? (p) + 8u : (p) - 8u)
+/* the pads' key map, set by the UI each frame (ui_input.c smk_pads_sync): the note key (0 = F3 .. 26 = G5) a
+ * hardware pad presses (0..7 the top row, 8..15 the bottom, left to right), -1 none: the pad's press and release go
+ * to the UI's queue instead (smk_pad_take: pad << 8 | velocity, 0 = release; drums, steps, the bank picker). The
+ * layouts here: KEYS the 16 white keys, low notes on the bottom row; GRID the same as steps 1-8 on the top row and
+ * 9-16 below (the FM-1's grids: patterns, NAME, the layers); PIANO C4 .. C5 whites on top, the black keys between
+ * them below (C#4 D#4 - F#4 G#4 A#4 - C#5; SCALE held); NONE every pad the UI's */
+static const int8_t SMK_PK_KEYS[SMK_NPAD] = {14, 16, 18, 19, 21, 23, 24, 26, 0, 2, 4, 6, 7, 9, 11, 12};
+static const int8_t SMK_PK_GRID[SMK_NPAD] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
+static const int8_t SMK_PK_PIANO[SMK_NPAD] = {7, 9, 11, 12, 14, 16, 18, 19, 8, 10, -1, 13, 15, 17, -1, 20};
+static const int8_t SMK_PK_NONE[SMK_NPAD] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+static const int8_t *volatile smk_pad_key = SMK_PK_KEYS;
+static uint8_t smk_pad_note[SMK_NPAD];   /* the note key a pad pressed (+1; 0 = none; 0xFF: the UI's queue): its
+                                          * release ends that one, whatever the map is then */
+#define SMK_PADQ 16u
+static volatile uint16_t smk_padq[SMK_PADQ];
+static volatile uint8_t smk_padq_w, smk_padq_r;
 
 #define SMK_TRIM_FLASH 0xC1000u   /* USRTRIM: the factory calibration record ("trimdat"), never written here */
 /* 5-point velocity curves (trimdata, flash 0xC1000: +0x08 16 pads x 5 u16, +0xA8 37 keys x 5 u16) */
@@ -442,18 +450,36 @@ static void fm1__frame(void)
 #define SMK_PAD_OFF 12u           /* below base + this: released */
 #define SMK_PAD_PEAKN 3u          /* samples (2.4 ms apart) for the peak */
 
-static void smk__padq(uint32_t pad, uint32_t vel)     /* a pad hit (vel) or release (0): its white key */
+static void smk__padq_ui(uint32_t pad, uint32_t vel)  /* .. to the UI's queue (a full queue drops a press, never a release) */
 {
-    int32_t n0 = smk_pad_piano ? SMK_PIANO_NOTE[pad] : (int32_t)SMK_WHITE_NOTE[SMK_WHITE_OF_PAD(pad)];
+    uint8_t w = smk_padq_w;
+    if ((uint8_t)(w + 1u) % SMK_PADQ == smk_padq_r) {
+        if (vel) return;
+        smk_padq_r = (uint8_t)((smk_padq_r + 1u) % SMK_PADQ);
+    }
+    smk_padq[w] = (uint16_t)(pad << 8 | vel);
+    smk_padq_w = (uint8_t)((w + 1u) % SMK_PADQ);
+}
+static void smk__padq(uint32_t pad, uint32_t vel)     /* a pad hit (vel) or release (0): its key, or the UI's queue */
+{
+    int32_t n0 = smk_pad_key[pad];
     uint32_t n, bit;
     if (vel) {
-        if (n0 < 0)
-            return;                                   /* (a gap of the piano layout) */
+        if (n0 < 0) {
+            smk_pad_note[pad] = 0xFF;
+            smk__padq_ui(pad, vel);
+            return;
+        }
         smk_pad_note[pad] = (uint8_t)(n0 + 1);
     } else {
         if (!smk_pad_note[pad])
             return;
-        n0 = smk_pad_note[pad] - 1;                    /* the key it pressed, whatever the layout is now */
+        if (smk_pad_note[pad] == 0xFF) {
+            smk_pad_note[pad] = 0;
+            smk__padq_ui(pad, 0);
+            return;
+        }
+        n0 = smk_pad_note[pad] - 1;                    /* the key it pressed, whatever the map is now */
         smk_pad_note[pad] = 0;
     }
     n = (uint32_t)n0;
@@ -639,6 +665,16 @@ static uint32_t fm1_input_note_edges(void)
     return p;
 }
 
+/* the next pad event of the UI's (pad << 8 | velocity, 0 = release), -1 if none */
+static int32_t smk_pad_take(void)
+{
+    int32_t v = -1;
+    if (smk_padq_r != smk_padq_w) {
+        v = smk_padq[smk_padq_r];
+        smk_padq_r = (uint8_t)((smk_padq_r + 1u) % SMK_PADQ);
+    }
+    return v;
+}
 /* the next outer-key event (keybed key << 8 | velocity, 0 = release), -1 if none */
 static int32_t smk_extkey_take(void)
 {

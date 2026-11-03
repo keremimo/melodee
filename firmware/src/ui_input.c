@@ -140,7 +140,12 @@ static int pattern_keys_on(void)
 {
     return !ui.menu && !ui.confirm && !name_on() && !ui.ly && !ui.uboot &&
         ((fm1_in.buttons & (1u << panel.btn[B_SEQ])) ||
-         (!ui.home && cur_page()->graph == GR_PATGRID && !live_rec_sel() && !preset_pick_on()));
+         (!ui.home && cur_page()->graph == GR_PATGRID && !live_rec_sel() && !preset_pick_on())
+#if BOARD_SMK37
+         || (smk_pad_now == PM_PATTERNS && smk_pad_ctx == SPC_MODE && !live_rec_sel())   /* (the pads' mode: the keys
+                                                                                            * too, as SEQ held) */
+#endif
+        );
 }
 /* the pattern keys, as the keys show things everywhere: bright the pattern playing (and the one held to copy),
  * dim the others that hold something, breathing the one waiting for the bar; the empty ones dark. The track keys: the
@@ -460,17 +465,41 @@ static uint32_t breath_on(void) { return BREATH[(fm1_ms / 125u) & 7u] != 0xFFu; 
  * held, the step playing). Waiting (the breathing plane: a pattern for the bar) pulses in orange. While the transport
  * runs, the pads show the selected track's steps on the page that plays. The button LEDs are on / off: the breathing
  * ones (PLAY counting in, REC armed) blink. */
-static const uint8_t SMK_OFF[3] = {110, 38, 0}, SMK_ON[3] = {40, 120, 210}, SMK_FILLED[3] = {70, 170, 255},
-                     SMK_ACT[3] = {190, 230, 255};
-static const uint8_t PAD_WAIT[3] = {255, 110, 0};
+/* The pads' grammar (docs/SMK37_UX.md 2.1): one hue, the track's screen colour, five states: OFF dark ember (nothing
+ * there, silent), ON the hue dim (something there), FILLED the hue (holding something, the one picked), ACTIVE
+ * white-blue (happening now), WAITING orange breathing (for the bar, armed); NONE darker still (no function) */
+enum { PS_OFF, PS_ON, PS_FILLED, PS_ACTIVE, PS_WAIT, PS_NONE };
+static const uint8_t PAD_WAIT[3] = {255, 110, 0}, PAD_ACT[3] = {190, 230, 255};
 static const uint8_t SMK_LV_BREATH[8] = {255, 176, 128, 100, 92, 100, 128, 176};   /* (BREATH's steps) */
-static void smk_pad(uint32_t c, const uint8_t *col, uint32_t lv)
+static void smk_pad(uint32_t c, uint32_t st, uint32_t trk)
 {
-    padled_set(c, (uint8_t)(col[0] * lv >> 8), (uint8_t)(col[1] * lv >> 8), (uint8_t)(col[2] * lv >> 8));
+    uint16_t h = T_TRK(trk & 3u);
+    uint32_t r = (h >> 11) * 255u / 31u, g = ((h >> 5) & 63u) * 255u / 63u, b = (h & 31u) * 255u / 31u;
+    switch (st) {
+    case PS_ON: r = 70u + r * 2u / 5u; g = 20u + g * 2u / 5u; b = b * 2u / 5u; break;
+    case PS_FILLED: break;
+    case PS_ACTIVE: r = PAD_ACT[0]; g = PAD_ACT[1]; b = PAD_ACT[2]; break;
+    case PS_WAIT: {
+        uint32_t lv = SMK_LV_BREATH[(fm1_ms / 125u) & 7u];
+        r = PAD_WAIT[0] * lv >> 8; g = PAD_WAIT[1] * lv >> 8; b = PAD_WAIT[2] * lv >> 8;
+        break;
+    }
+    case PS_NONE: r = 30; g = 9; b = 0; break;
+    default: r = 100; g = 34; b = 0; break;
+    }
+    padled_set(c, (uint8_t)r, (uint8_t)g, (uint8_t)b);
 }
-static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb, const uint8_t *nw, uint32_t steps)
+static int l_glo(uint32_t k) { return (ui.layer ? ui.layer : ui.ly) == LAYER_GLO && k < 27u; }
+/* a key id's state from the lights' planes (ui_leds): lit ACTIVE, breathing WAITING, dim or the buttons' plane ON */
+static uint32_t smk_key_state(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb, const uint8_t *nw, uint32_t id)
 {
-    uint32_t c, on = 0, ph = 0xFFu, blink = ((fm1_ms / 250u) & 1u) == 0u, br = (fm1_ms / 125u) & 7u;
+    return nl[id] ? PS_ACTIVE : nw[id] ? PS_WAIT : nd[id] || nb[id] ? PS_ON : PS_OFF;
+}
+static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb, const uint8_t *nw)
+{
+    uint32_t c, blink = ((fm1_ms / 250u) & 1u) == 0u, sel = song.sel, len, ph = 0xFFu, base;
+    const track_t *t = TSEL;
+    const int8_t *map = smk_pad_key;
     for (c = 0; c < SMK_NLED; c++)
         fm1_led[c] = (uint8_t)(nl[c] || (nw[c] && blink));
     if (panel_btn_of(SMK_BTN_FADER_BANK) == NB)         /* FADER BANK lit off LEVELS, KNOB BANK off PAGE; blinking
@@ -482,25 +511,48 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
         padled_hold_until = 0;                          /* (0: no hold, also after 24.8 days up) */
     if (padled_hold_until)
         return;                                         /* (console padtest) */
-    if (steps) {                                        /* playing: the selected track's steps on the page that plays */
-        const track_t *t = TSEL;
-        uint32_t len = (uint32_t)t->p[P_SLEN], b0 = t->seq_idx / 16u * 16u;
-        for (c = 0; c < 16u && b0 + c < len; c++) {
-            const step_t *st = &seq_steps(t)[b0 + c];
-            on |= (uint32_t)(st->hit || (st->n && st->time != ST_REST)) << c;
+    len = (uint32_t)t->p[P_SLEN];
+    base = ui.bank * 16u;
+    if (song.playing && t->seq_idx < len && t->seq_idx / 16u == ui.bank)
+        ph = t->seq_idx % 16u;
+    for (c = 0; c < SMK_NPAD; c++) {
+        uint32_t st = PS_NONE, hue = sel, mpc = c < 8u ? c + 8u : c - 8u;
+        if (smk_pad_ctx == SPC_BANK) {                  /* a BANK button held: the banks, then the pads' modes */
+            if (c < BK_N) st = c == pop.sel ? PS_ACTIVE : bank_has(c) ? PS_ON : PS_OFF;
+            else if (c - 8u < PM_N) st = c - 8u == smk_pmode ? PS_ACTIVE : PS_ON;
+        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_DRUM) {   /* the kit's drums (drum_mpc_note's
+                                                                             * layout), the one edited brighter,
+                                                                             * white while it hits */
+            uint32_t n = drum_mpc_note(t, mpc), lane = drum_lane(n);
+            st = (fm1_in.pad_st[c] & 0x80u) || (ui.home && lane < NLANE && stage.hit_t[lane]) ? PS_ACTIVE :
+                 n == drum_sound_note(t, ui.drum_sound % drum_sound_count(t)) ? PS_FILLED : PS_ON;
+        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_STEPS) {   /* the page's 16 steps */
+            uint32_t i = base + c;
+            if (i < len) {
+                const step_t *s = &seq_steps(t)[i];
+                if (c == ph) st = PS_ACTIVE;
+                else if (drum_track(t)) {               /* the lane's hits (ACC held: its accents), the others' dim */
+                    uint32_t m = black_held(GK_ACC) ? step_accents(s) : step_lanes(s);
+                    st = (m >> ui.lane) & 1u ? PS_FILLED : m ? PS_ON : PS_OFF;
+                } else st = step_on(s) ? PS_FILLED : PS_OFF;
+            }
+        } else if (map[c] >= 0) {                       /* a key: its light (the planes), the tracks' own hues */
+            uint32_t k = (uint32_t)map[c], id = LED_KEY(k);
+            st = smk_key_state(nl, nd, nb, nw, id);
+            if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS && c < 8u)
+                hue = c;
+            else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_KEYS && st == PS_ON) {   /* the scale's root */
+                uint32_t n = kb_map(t, k);
+                if (n < 128u && (n + 120u - (uint32_t)t->p[P_ROOT]) % 12u == 0u) st = PS_FILLED;
+            }
+            if (smk_pad_ctx == SPC_LAYER && l_glo(k)) {   /* GLO: a mute lit while its track sounds, a solo white
+                                                           * while held, each in its track's hue; All and Tap steady */
+                uint32_t p = key_place(k);
+                if (p < NPART) hue = p;
+                st = key_black(k) ? (nl[id] ? PS_FILLED : PS_ON) : p < NPART ? (nl[id] ? PS_ACTIVE : PS_ON) : PS_ON;
+            }
         }
-        ph = t->seq_idx < len ? t->seq_idx % 16u : 0xFFu;
-    }
-    for (c = 0; c < SMK_NPAD; c++) {                    /* pad c: its white key's light, step c (1-8 top row) */
-        uint32_t id = LED_KEY(SMK_WHITE_NOTE[SMK_WHITE_OF_PAD(c)]);
-        if (nl[id] || c == ph)
-            smk_pad(c, SMK_ACT, 256u);
-        else if (nw[id])
-            smk_pad(c, PAD_WAIT, SMK_LV_BREATH[br]);
-        else if (steps)
-            smk_pad(c, (on >> c) & 1u ? SMK_FILLED : SMK_OFF, 256u);
-        else
-            smk_pad(c, nb[id] ? SMK_FILLED : nd[id] ? SMK_ON : SMK_OFF, 256u);
+        smk_pad(c, st, hue);
     }
 }
 #endif
@@ -550,7 +602,8 @@ static void ui_leds(void)
     for (k = 0; lights != LIGHTS_OFF && k < NB; k++)   /* the buttons glow when idle (one breathing: not under it) */
         led_put(nb, panel.btn[k], !led_get(nw, panel.btn[k]));
 #if BOARD_SMK37
-    smk_leds_out(nl, nd, nb, nw, play && song.playing);
+    (void)play;
+    smk_leds_out(nl, nd, nb, nw);
 #else
     fm1_led_dim_mask[0] = LIGHTS_MASK[lights];
     fm1_led_dim_mask[1] = BTN_DIM_MASK;
@@ -911,6 +964,150 @@ static void grid_edit(uint32_t slot, int32_t steps)
 /* the keys on the grid (presses): a white key toggles the selected lane at its step of the page (its accent
  * while ACC is held) and puts the cursor there; a lane key selects the lane (seq.c plays it); the page keys */
 static void drum_hit_key(uint32_t accent);
+#if BOARD_SMK37
+/* ------------------------------------------------------------ the pads --- */
+/* the mode AUTO picks (docs/SMK37_UX.md 2.4): where you play the pads play (KEYS, a DRUM track's drums), NOTES and
+ * the drum grid their steps, PATTERNS (and SEQ held) the tracks and patterns (the keys are pattern keys there too, so
+ * no other page: PATTERN and MOTION keep playing) */
+static uint32_t pad_mode_auto(void)
+{
+    uint32_t g = ui.home ? GR_NONE : cur_page()->graph;
+    if (fm1_in.buttons & (1u << panel.btn[B_SEQ]))
+        return PM_PATTERNS;
+    if (!ui.home && (g == GR_ROLL || g == GR_DRUMHIT))
+        return PM_STEPS;
+    if (!ui.home && g == GR_PATGRID)
+        return PM_PATTERNS;
+    return drum_track(TSEL) ? PM_DRUM : PM_KEYS;
+}
+/* GLO held (ui_layer.c): the mutes of tracks 1..4 (the black keys F#3 G#3 A#3 C#4) on the top row, the solos (F3 G3
+ * A3 B3), All (C4) and Tap (F4) on the bottom */
+static const int8_t SMK_PK_GLO[SMK_NPAD] = {1, 3, 5, 8, -1, -1, -1, -1, 0, 2, 4, 6, -1, -1, 7, 12};
+static uint32_t pad_mode_now(void)
+{
+    uint32_t m = smk_pmode ? smk_pmode : pad_mode_auto();
+    if (m == PM_DRUM && !drum_track(TSEL))
+        m = PM_KEYS;
+    return m;
+}
+static int8_t smk_pk_pat[SMK_NPAD];                     /* PATTERNS: the tracks on the top row, the page's patterns */
+static uint8_t smk_pad_hold, smk_pad_hold_at;            /* STEPS: a pad held (+1) and its step: held on, cleared */
+static uint32_t smk_pad_hold_ms, smk_pad_at;             /* .. since; the pads' pressure sent last (+1, 0 none) */
+static uint8_t smk_pad_trk[SMK_NPAD], smk_pad_playing[SMK_NPAD];   /* DRUM: the track and note a pad started (+1) */
+/* each frame (main.c, before the UI reads the pads): what the pads are and the HAL's map for it; the pads' pressure
+ * as the track's aftertouch in KEYS and DRUM (the MOD matrix's AT source) */
+static void smk_pads_sync(void)
+{
+    uint32_t l = ui.layer ? ui.layer : ui.ly, m = pad_mode_now(), ctx = SPC_MODE, c, at = 0;
+    const int8_t *map = SMK_PK_NONE;
+    if (pop.on == POP_BANK) {
+        ctx = SPC_BANK;
+    } else if (name_on() && !ui.menu) {
+        ctx = SPC_NAME;
+        map = SMK_PK_GRID;
+    } else if (l && !ui.menu && !ui.confirm) {
+        ctx = SPC_LAYER;
+        map = l == LAYER_SCL ? SMK_PK_PIANO : l == LAYER_GLO ? SMK_PK_GLO : SMK_PK_GRID;
+    } else if (m == PM_PATTERNS || ui.confirm == CF_PAT_KEY) {   /* (its dialog keeps the map: its two pads) */
+        uint32_t page = !ui.home && cur_page()->graph == GR_PATGRID ? pt_page() : TSEL->pattern / 8u;
+        m = PM_PATTERNS;
+        for (c = 0; c < 8u; c++) {
+            smk_pk_pat[c] = (int8_t)TRK_KEY[c];
+            smk_pk_pat[8u + c] = page * 8u + c < trk_npat(song.sel) ? (int8_t)PAT_KEY[page * 8u + c] : -1;
+        }
+        map = smk_pk_pat;
+    } else if (m == PM_KEYS) {
+        map = SMK_PK_KEYS;
+    }
+    smk_pad_key = map;
+    smk_pad_now = (uint8_t)m;
+    smk_pad_ctx = (uint8_t)ctx;
+    if (ctx == SPC_MODE && (m == PM_KEYS || m == PM_DRUM)) {
+        for (c = 0; c < SMK_NPAD; c++)
+            if ((fm1_in.pad_st[c] & 0x80u) && fm1_in.pad_press[c] + 1u > at)
+                at = fm1_in.pad_press[c] + 1u;
+    }
+    if (at != smk_pad_at) {                             /* (as a MIDI controller's channel aftertouch) */
+        if (at || smk_pad_at) TSEL->at = (uint8_t)(at ? at - 1u : 0u);
+        smk_pad_at = at;
+    }
+}
+/* a pad of STEPS tapped: a step. A synth track: an empty step gets the last note played (notes_place), a step with
+ * notes becomes the cursor (K2..K4 edit it); held PAT_HOLD_MS: cleared. The drum grid: the lane's hit toggled (ACC
+ * held: its accent), DRUM HIT its hit */
+static void smk_pad_step(uint32_t c, uint32_t down)
+{
+    uint32_t i = ui.bank * 16u + c, len = (uint32_t)TSEL->p[P_SLEN];
+    if (!down) {
+        if (smk_pad_hold == c + 1u) smk_pad_hold = 0;
+        return;
+    }
+    if (ui.menu || ui.confirm || i >= len)
+        return;
+    if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
+    smk_pad_hold = (uint8_t)(c + 1u);
+    smk_pad_hold_at = (uint8_t)i;
+    smk_pad_hold_ms = fm1_ms;
+    if (drum_track(TSEL)) {
+        if (!ui.home && cur_page()->scope == SC_DRUMHIT) { cursor_set((int32_t)i); drum_hit_key(black_held(GK_ACC)); return; }
+        if (black_held(GK_ACC)) grid_acc(TSEL, i, ui.lane, 2);
+        else grid_hit(TSEL, i, ui.lane, 2);
+        cursor_set((int32_t)i);
+        smk_pad_hold = 0;                               /* (a hit toggles: nothing to clear by holding) */
+        return;
+    }
+    cursor_set((int32_t)i);
+    if (!TSEL->step[i].n && !(TSEL->step[i].flags & SF_RECORDED))
+        notes_place();
+    ui.force = 1;
+}
+/* the pads the UI has (the HAL's map says none for them): the bank picker's, the drums, the steps */
+static void smk_pads_input(void)
+{
+    int32_t e;
+    while ((e = smk_pad_take()) >= 0) {
+        uint32_t c = (uint32_t)e >> 8, v = (uint32_t)e & 0xFFu, mpc = c < 8u ? c + 8u : c - 8u;
+        if (c >= SMK_NPAD)
+            continue;
+        if (smk_pad_playing[c]) {                       /* (a drum a pad started ends on its release, whatever the pads
+                                                         * are now) */
+            if (v) continue;
+            input_off(&trk[smk_pad_trk[c] % NTRK], smk_pad_playing[c] - 1u);
+            midi_out_event(0x08u | (0x80u | trk_midi_ch(smk_pad_trk[c] % NTRK)) << 8 | (uint32_t)(smk_pad_playing[c] - 1u) << 16);
+            smk_pad_playing[c] = 0;
+            continue;
+        }
+        if (smk_pad_ctx == SPC_BANK) {                  /* the top row a bank, the bottom row the pads' mode */
+            if (!v) continue;
+            if (c < BK_N) {
+                if (bank_has(c)) { pop.sel = (uint8_t)c; pop.sig = 0; bank_apply(pop.col, c); }
+            } else if (c - 8u < PM_N) {
+                pads_set(c - 8u);
+            }
+        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_DRUM) {
+            uint32_t n = drum_mpc_note(TSEL, mpc), mc = trk_midi_ch(song.sel);
+            if (!v || kb_asleep || ui.confirm || name_on())
+                continue;
+            smk_pad_trk[c] = (uint8_t)song.sel;
+            smk_pad_playing[c] = (uint8_t)(n + 1u);
+            input_on(TSEL, n, v);
+            midi_out_event(0x09u | (0x90u | mc) << 8 | n << 16 | v << 24);
+        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_STEPS) {
+            smk_pad_step(c, v);
+        }
+    }
+    if (smk_pad_hold && (!(fm1_in.pad_st[smk_pad_hold - 1u] & 0x80u) || smk_pad_now != PM_STEPS || smk_pad_ctx != SPC_MODE)) {
+        smk_pad_hold = 0;
+    } else if (smk_pad_hold && fm1_ms - smk_pad_hold_ms >= PAT_HOLD_MS) {   /* held: the step cleared (EDIT undoes) */
+        smk_pad_hold = 0;
+        if (!drum_track(TSEL) && !chain_busy() && !live_rec_sel()) {
+            cursor_set((int32_t)smk_pad_hold_at);
+            step_delete_edit();
+            ui_message("STEP CLEARED");
+        }
+    }
+}
+#endif
 static void grid_keys(uint32_t pressed)
 {
     uint32_t k, len = (uint32_t)TSEL->p[P_SLEN];
@@ -2652,6 +2849,9 @@ static void ui_input(void)
 #if MELODEE_SLICE
     if (notes && slice_page_on())                       /* SLICES: a key picks the slice it plays */
         slice_keys_pick(notes);
+#endif
+#if BOARD_SMK37
+    smk_pads_input();                                   /* the pads the UI has: drums, steps, the bank picker's */
 #endif
     pattern_keys(bank_notes);
     song.grid = (uint8_t)keys_mode();                 /* a pattern key can arm REC: play from this frame */

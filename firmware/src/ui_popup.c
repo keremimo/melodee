@@ -127,10 +127,19 @@ static void ps_trk_v(char *b, uint32_t k, int none)
 }
 static void ps_add_v(char *b) { ps_trk_v(b, trk_n(), trk_n() >= NTRK); }
 static void ps_remove_v(char *b) { ps_trk_v(b, song.sel, trk_n() < 2u); }
+#if BOARD_SMK37
+static void ps_pads_v(char *b);                         /* the pads' mode (ui_smk.c) */
+static void ps_pads_turn(int32_t s);
+static void ps_pads(void);
+#endif
 static const sheet_row_t SHEET_STAGE[] = {
     {"Init sound", 0, 0, 0, CF_INIT_SOUND}, {"Save as user\x85", 0, 0, ps_save, 0}, {"Favourite", ps_fav_v, 0, ps_fav, 0},
     {"Undo last load", 0, 0, ps_undo, 0}, {"Sound designer", 0, 0, designer_open, 0},
-    {"Add track", ps_add_v, 0, track_add, 0}, {"Remove track", ps_remove_v, 0, 0, CF_DEL_TRACK}};
+    {"Add track", ps_add_v, 0, track_add, 0}, {"Remove track", ps_remove_v, 0, 0, CF_DEL_TRACK},
+#if BOARD_SMK37
+    {"Pads", ps_pads_v, ps_pads_turn, ps_pads, 0},
+#endif
+};
 /* the song's (SONG) */
 static int ps_song_free(void)
 {

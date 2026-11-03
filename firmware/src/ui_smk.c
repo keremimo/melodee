@@ -24,6 +24,26 @@ static uint8_t smk_last_fader;                          /* the faders moved afte
 static uint8_t smk_strip_last;                          /* the bank the strip showed last (a change: a redraw) */
 static uint32_t smk_bank_t0[2];                         /* KNOB BANK, FADER BANK press times (smk_hold) */
 static page_t smk_bank_pg;
+/* the pads' modes (docs/SMK37_UX.md section 2): what the 16 pads are. AUTO follows the page and the track (ui_input.c
+ * pad_mode_auto); a mode picked by hand (a BANK button held + a bottom-row pad, Stage's sheet) stays until AUTO is
+ * picked again, and the header carries its name while it differs from AUTO's choice */
+enum { PM_AUTO, PM_KEYS, PM_DRUM, PM_STEPS, PM_PATTERNS, PM_N };
+static const char *const PM_NAME[PM_N] = {"AUTO", "KEYS", "DRUM", "STEPS", "PATTERNS"};
+static uint8_t smk_pmode;                               /* the pick */
+static uint8_t smk_pad_now;                             /* the mode this frame (PM_KEYS ..; ui_input.c smk_pads_sync) */
+static uint8_t smk_pad_ctx;                             /* .. or what has the pads: SPC_* */
+enum { SPC_MODE, SPC_NAME, SPC_LAYER, SPC_BANK };
+static uint32_t pad_mode_auto(void);                    /* ui_input.c */
+static void pads_set(uint32_t m)
+{
+    smk_pmode = (uint8_t)(m % PM_N);
+    ui_say("PADS ", PM_NAME[smk_pmode]);
+    ui.force = 1;
+}
+/* Stage's sheet: the Pads row (ui_popup.c SHEET_STAGE) */
+static void ps_pads_v(char *b) { list_words(b, PM_NAME[smk_pmode % PM_N], 12); }
+static void ps_pads_turn(int32_t s) { pads_set((uint32_t)clamp((int32_t)smk_pmode + (s > 0 ? 1 : -1), 0, PM_N - 1)); }
+static void ps_pads(void) { pads_set((smk_pmode + 1u) % PM_N); }
 
 /* page t, where the engine has it (0: none; ui_list.c page_titled) */
 static const page_t *bank_titled(const char *t)
@@ -106,14 +126,19 @@ static const page_t *knob_bank_page(void)
 {
     return smk_kbank != BK_PAGE && smk_kbank != BK_LEVELS && bank_knobs_on() ? bank_page(smk_kbank) : 0;
 }
-/* the header's tag: FADERS while the faders' cards are up, the knobs' bank, nothing for PAGE */
+/* the header's tag: FADERS while the faders' cards are up, the knobs' bank (nothing for PAGE), else the pads' mode
+ * while picked by hand and not what AUTO would show */
 static const char *smk_head_tag(void)
 {
-    if (!bank_knobs_on())
-        return "";
-    if (smk_faders_out())
-        return "FADERS";
-    return smk_kbank == BK_PAGE ? "" : BK_NAME[smk_kbank];
+    if (bank_knobs_on()) {
+        if (smk_faders_out())
+            return "FADERS";
+        if (smk_kbank != BK_PAGE)
+            return BK_NAME[smk_kbank];
+    }
+    if (smk_pmode != PM_AUTO && smk_pad_ctx == SPC_MODE && smk_pad_now != pad_mode_auto() && !ui.menu)
+        return PM_NAME[smk_pad_now];
+    return "";
 }
 /* each frame before the page: the strip changing what it shows redraws it whole */
 static void smk_strip_poll(void)

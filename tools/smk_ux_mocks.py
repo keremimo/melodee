@@ -79,8 +79,9 @@ def tracks_patterns(sel, used_tracks, playing, waiting, used, armed=()):
     return (top, bot)
 
 
-DRUM_TOP = ["LT", "MT", "HT", "LC", "MC", "HC", "CL", "MA"]
-DRUM_BOT = ["BD", "SD", "CP", "CH", "OH", "TM", "RS", "CB"]
+# the kit's drums as drum_mpc_note lays them (eng_drum.c: the main beat under the fingers, MIDI's MPC pads too)
+DRUM_TOP = ["LT", "MT", "HT", "MA", "LC", "MC", "HC", "CL"]
+DRUM_BOT = ["BD", "SD", "CP", "RS", "CH", "OH", "CB", "CY"]
 
 
 def drums(hue, hitting=(), selected=None):
@@ -135,8 +136,9 @@ SCENES = [
      "brighter, the keys held white. The keys themselves have no lights: the band shows what sounds."),
     ("stage_drum", "Stage, DRUM track", "DRUM",
      drums(3, hitting=("BD", "CH", "TM"), selected="SD"), (0, 0, 0),
-     "The kit's 16 drums: the eight lanes on the bottom row in the grid's order, the rest above. A drum lights white "
-     "as it hits; the one DRUM SOUND edits is brighter. Velocity and pressure go to the drum."),
+     "The kit's 16 drums in the MPC pads' layout (the beat under the fingers: BD SD CP RS CH OH bell cymbal, the "
+     "toms, maracas, congas and clave above). A drum lights white as it hits; the one DRUM SOUND edits is brighter. "
+     "Velocity goes to the drum, pressure to the track's aftertouch."),
     ("notes_steps", "NOTES page", "STEPS",
      NOTES_STEPS, (0, 0, 0),
      "The page's 16 steps (1-8 top, 9-16 bottom): a step holding a note lit, the step playing white. Tap: a note on an "

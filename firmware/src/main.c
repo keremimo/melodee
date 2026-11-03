@@ -150,13 +150,6 @@ static void smo_sync(void)
         smo_on(on);
 }
 
-/* pads as a step grid (1-8 top row): SEQ held (patterns), the DRUM grid, NAME, the layers' tiles (not SCL: notes) */
-static void smk_grid(void)
-{
-    uint32_t l = ui.layer ? ui.layer : ui.ly;
-    smk_pad_grid = (uint8_t)(pattern_keys_on() || grid_on() || (name_on() && !ui.menu) || (l && l != LAYER_SCL));
-}
-
 /* the SMK-37's 4 faders (ui_smk.c: FADER BANK, smk_fbank): each fader its bank's parameter (LEVELS: track i's
  * level; PAGE: the page's four, as the knobs'). A fader is away after a bank, track or sound change until it crosses
  * the value, or comes next to it (no jumps): then it follows, as a MIDI knob's absolute value does (smk_fader_set).
@@ -591,7 +584,7 @@ static void fm1_main(void)
         settings_poll();                              /* queued settings save: only while stopped */
         melodee_dbg.stage = 2;
 #if BOARD_SMK37
-        smk_grid();
+        smk_pads_sync();                                /* the pads' map and mode (ui_input.c) */
         smo_sync();
 #endif
         ui_leds();
@@ -606,7 +599,7 @@ static void fm1_main(void)
             ui_input();
 #if BOARD_SMK37
             smk_wheels();                       /* (bends follow the wheel, not the screen) */
-            smk_grid();
+            smk_pads_sync();                                /* the pads' map and mode (ui_input.c) */
 #endif
 #if MELODEE_OTA
             ed_service();                       /* editor replies without waiting for the next frame */

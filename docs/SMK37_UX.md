@@ -2,8 +2,13 @@
 
 A design for the SMK-37 build (`BOARD_SMK37`, [SMK37.md](../SMK37.md)): what the 16 RGB pads, the knob and fader
 banks, the four faders and the two wheels do, so the extra controls carry real functionality before the build ships
-as "Melodee Pro / Elite". Nothing here is built yet: this document and the mocks under `docs/smk37-ux/` are for
-picking a direction. The FM-1 build is untouched by any of it.
+as "Melodee Pro / Elite". The FM-1 build is untouched by any of it.
+
+Status (2026-11-03): phases 1-3 of section 9 are built on this branch, behind `BOARD_SMK37`, untested on hardware:
+the banks (`firmware/src/ui_smk.c`, the faders in `main.c`), the pad modes and their lights, taps and maps
+(`ui_input.c` smk_pads_*, `hal/smk_input.h` smk_pad_key), the GLO and SCALE maps. Where the build differs from the
+first proposal below, the text says so in place. The open questions (section 8) stand, answered for now by the
+build's defaults.
 
 Mocks: `docs/smk37-ux/<scene>.png` is the screen as the firmware draws it (`tests/smk_ux_mocks.c` on
 `tests/ui_render.c`'s scenes; the parts the design adds are drawn over the real page with the same primitives)
@@ -62,12 +67,12 @@ note sounding (a key, MIDI) ACTIVE. This is the only feedback the scale has left
 band on Stage shows the notes and the chord as before. Pressure: channel aftertouch to the track (the MOD matrix's AT
 source), as a MIDI controller's would.
 
-**DRUM** (`stage_drum.png`): on a DRUM track the pads are the kit's 16 drums with velocity: the eight lanes BD SD CP CH
-OH TM RS CB on the bottom row in the grid's order (the Stage band's chips, the STEP grid's rows), the rest above in
-`DRUM_ORDER_808` order (toms low to high, congas, clave, maracas; the 909's and CR-78's names by kit). Lights: every
-drum ON, the one DRUM SOUND / DRUM MIX edits FILLED, a drum ACTIVE while it hits (the lane flash Stage already keeps).
-Taps record into the pattern as the keys do (the drum's GM note). Pressure: the hit's aftertouch (nothing yet; see open
-questions).
+**DRUM** (`stage_drum.png`): on a DRUM track the pads are the kit's 16 drums with velocity, in the layout MIDI's MPC
+pads already use (`eng_drum.c` drum_mpc_note: the beat under the fingers): bottom row BD SD CP RS CH OH bell cymbal,
+top row the toms low to high, maracas, the congas, clave (the 909's and CR-78's names by kit). Lights: every drum ON,
+the one DRUM SOUND / DRUM MIX edits FILLED, a drum ACTIVE while its pad is down or, on Stage, while its lane flashes.
+Taps play and record as the keys do (the drum's GM note, velocity); pressure is the track's aftertouch (the MOD
+matrix's AT source), as in KEYS.
 
 **STEPS** (`notes_steps.png`, `drum_steps.png`, `pads_override.png`): 16 steps of the selected track's pattern, the
 page the screen shows (NOTES' and the grid's pages: SELECT or `<` `>` turn them, the pads follow), steps 1-8 on the top
@@ -101,7 +106,7 @@ These take the pads for as long as they last, whatever the mode, and give them b
 | GLO held (SET) | top row MUTE 1-4: FILLED while the track sounds, ON when muted or soloed out; bottom row SOLO 1-4 while held (ACTIVE), **All** unmutes, **Tap** taps (ON; dim with an outside clock) | the GLO map as it is (`layer_glo.png`) |
 | SCALE held (SET) | a piano: top row C4 .. C5, bottom row the black keys between (the two gaps OFF); the root FILLED, the scale's notes ON, the rest OFF; a tap makes that note the root | the SCL map as it is (`layer_scl.png`) |
 | FX held (punch) | the 16 white keys' punches as today, each ON in its family's colour, the one held ACTIVE | the punch layer as it is |
-| EDIT held | top row the engine's first eight sections (the one open FILLED), bottom row Init, Fav, Undo, Store (ON); FM6: the operators are the map's rows, not pads | the sections map as it is |
+| EDIT held | the FM-1's white-key map on the grid layout: the sections on the pads; Init, Fav, Undo, Store stay on the black keys (built so; a map of their own is a later step) | the sections map as it is |
 | NAME | the letters on the 16 pads as today, the cycling pad ACTIVE; the black keys their functions | unchanged (`name.png`) |
 | KNOB BANK / FADER BANK held | top row the eight banks (the current ACTIVE, one the engine lacks OFF), bottom row AUTO, KEYS, DRUM, STEPS, PATTERNS (the current ACTIVE); a tap picks and the button may be let go | the bank picker (section 3) |
 | a question, the menu | the pads keep their mode; KEYS and DRUM still play, STEPS and PATTERNS taps do nothing (as the FM-1's pattern keys under a dialog) | - |
@@ -110,10 +115,14 @@ These take the pads for as long as they last, whatever the mode, and give them b
 
 | Where | Synth / MIDI track | DRUM track |
 |---|---|---|
-| Stage, the sound pages (EDIT, ENV, LFO, FX, ARP, SCL, VOICE ..), MIXER, the browser, SETTINGS | KEYS | DRUM |
+| Stage, the sound pages (EDIT, ENV, LFO, FX, ARP, SCL, VOICE ..), MIXER, the browser, SETTINGS, SONG, PATTERN, MOTION, TEMPO | KEYS | DRUM |
 | NOTES | STEPS | STEPS (the grid) |
-| PATTERNS, SONG, PATTERN, MOTION, TEMPO | PATTERNS | PATTERNS |
-| DRUM SOUND, DRUM MIX, DRUM HIT | - | DRUM |
+| DRUM HIT | - | STEPS |
+| PATTERNS; SEQ held anywhere | PATTERNS | PATTERNS |
+| DRUM SOUND, DRUM MIX | - | DRUM |
+
+Built so: PATTERNS makes the keys pattern keys too (as SEQ held does), so AUTO picks it on the PATTERNS page only;
+on SONG, PATTERN and MOTION the keys and pads keep playing (the first proposal had PATTERNS there).
 
 The rule: where you play, the pads play; where you edit steps, they are steps; where you arrange, they are patterns.
 A track change re-evaluates it (DRUM selected: drums at once).
@@ -124,9 +133,9 @@ A BANK button held + a bottom-row pad (AUTO, KEYS, DRUM, STEPS, PATTERNS), or St
 same values (a picker row, as Routing on SHARED's sheet). A mode picked by hand stays through page and track changes
 until AUTO is picked again. While it differs from what AUTO would show, the header carries its name as a tag (KEYS,
 DRUM, STEPS, PATTERNS; `pads_override.png`): state, not a message, by the README's status-indicator rules (left of the
-page name, the label face, the theme colour; the octave pill gives way). AUTO shows no tag. KEYS on a DRUM track plays
-the kit's GM map on the white keys (as the FM-1's keys do); DRUM on a synth track is refused (the pad stays OFF, the
-header says NOT A DRUM TRACK briefly).
+page name, the label face, the theme colour; the octave pill gives way; a bank's tag comes first). AUTO shows no tag.
+KEYS on a DRUM track plays the kit's GM map on the white keys (as the FM-1's keys do); DRUM on a synth track falls
+back to KEYS (built so: no message). PATTERNS by hand makes the keys pattern keys as well, everywhere.
 
 ### 2.6 What leaves the keys
 
@@ -265,6 +274,11 @@ before it is merged.
 
 **Phase 0 (this): design and mocks.** `docs/SMK37_UX.md`, `docs/smk37-ux/`, `tests/smk_ux_mocks.c`,
 `tools/smk_ux_mocks.py`. No firmware change.
+
+Built 2026-11-03 (measured on the Elite build, image bytes over the 566,144 B baseline): phase 1 +2,720 B (RAM
++48 B), phases 2 and 3 together +2,664 B (RAM +96 B): 571,528 B in all, 680 B of data RAM left. The host suite's UI
+tests and render lint pass for the FM-1 build; the SMK build is not host-tested (no host stub of `hal/smk_input.h`
+yet) and has not run on the Elite.
 
 **Phase 1: banks (knobs and faders), ~2.0 KB flash, ~16 B RAM.**
 - `firmware/src/ui.c`: `bank_page(bank)` building a `page_t` per engine (as `stage_page`), the shared table; the knob
