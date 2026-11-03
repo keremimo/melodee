@@ -997,12 +997,17 @@ unmatched general records remain accessible. All new objects use the existing CR
 
 ### Microtonal SCL selections
 
-Track parameter 26 (SCL) now has 70 names (IDs 0–69); the original 0–15 retain their meanings.
-DESC replies carry up to 96 enum names within the existing 1024-byte response buffer. Consumers
-should read the names present in the reply, allowing older firmware's shorter descriptors.
-With a new scale and QNT enabled, note addresses are scale degrees around address 60 = ROOT at
-C4 + TRN. Recordings and STEP/NOTES keep these 7-bit addresses. MIDI OUT does not send tuning
-messages. See [the catalogue](../assets/scales/README.md) for mapping and register limits.
+Track parameter 26 (SCL) now has 76 names (IDs 0–75); the original 0–15 retain their meanings.
+IDs 16–69 are pitch tables, 70–75 are 12-tone maqam scales. DESC replies carry up to 96 enum names
+within the existing 1024-byte response buffer. Consumers should read the names present in the reply,
+allowing older firmware's shorter descriptors. A device whose list has `BAYAT-D` has tunings: leave
+its retired entries out of a picker unless selected (the catalogue says which).
+Track parameter 47 (TUNING) is the tuning, 0 Equal: an enum on firmware that has it, an empty label
+on older firmware. Like SCL it is shared across tracks, and setting SCL to a maqam also sets it, reported as a change.
+It is not a sound's: preset loads leave it, and motion ignores it.
+With a pitch-table scale and QNT enabled, note addresses are scale degrees around address 60 = ROOT at
+C4 + TRN. Recordings and STEP/NOTES keep these 7-bit addresses. MIDI OUT sends the nearest semitone,
+without tuning messages. See [the catalogue](../assets/scales/README.md) for mapping and register limits.
 
 
 ### Prophet native programs (engine 19)
