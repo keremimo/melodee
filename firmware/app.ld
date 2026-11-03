@@ -73,6 +73,8 @@ SECTIONS
     /* Never part of .bss or startup zeroing: use only after HAL self-test. */
     _resource_cache_start = ORIGIN(CACHE);
     _resource_cache_end = ORIGIN(CACHE) + LENGTH(CACHE);
+    ASSERT(_audio_start - _pool_start >= SIZEOF(.dsp_tables) + SIZEOF(.data) + SIZEOF(.ram_text) + SIZEOF(.dsp_text),
+           "the boot images unpack through the tail of .pool (main.c boot_images)")
     ASSERT(_resource_low_start <= _resource_low_end, "RAM code overlaps startup STATUS")
     ASSERT(_resource_data_start <= _resource_data_end, "data overlaps resource pool")
     ASSERT(_resource_retained_start <= _resource_retained_end, "retained state overlaps boot records")

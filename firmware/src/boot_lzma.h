@@ -1,15 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Copyright (C) 2026 Charles Vestal */
-/* Bounded raw-LZMA1 decoder for the boot load images (tools/boot_audio.py: lc 1, lp 1, pb 1, with the end marker),
- * after Igor Pavlov's LZMA specification (LzmaSpec.cpp, public domain). Boot only: no heap, globals, libc, or calls
- * into the SRAM being initialized; the caller lends the probability tables (BOOT_LZMA_PROBS uint16_t). Strict: the
- * output exactly size bytes, then the end marker, every input byte used and the range coder finished at zero. */
+/* Bounded raw-LZMA1 decoder for the boot load image (tools/boot_audio.py: lc 3, lp 1, pb 1, with the end marker),
+ * after Igor Pavlov's LZMA specification (LzmaSpec.cpp, public domain), and the packager's two filters undone. Boot
+ * only: no heap, globals, libc, or calls into the SRAM being initialized; the caller lends the probability tables
+ * (BOOT_LZMA_PROBS uint16_t). Strict: the output exactly size bytes, then the end marker, every input byte used and
+ * the range coder finished at zero. */
 #ifndef MELODEE_BOOT_LZMA_H
 #define MELODEE_BOOT_LZMA_H
 #include <stdint.h>
-#define BOOT_LZMA_MAGIC 0x31414D4Cu  /* LMA1 */
-#define BOOT_LZMA_LC 1u
+#define BOOT_LZMA_MAGIC 0x32414D4Cu  /* LMA2 */
+#define BOOT_LZMA_LC 3u
 #define BOOT_LZMA_LP 1u
 #define BOOT_LZMA_PB 1u
 #define BL_STATES 12u
@@ -37,7 +38,8 @@ static inline void boot_rc_norm(boot_rc_t *r)
         r->range<<=8;r->code=(r->code<<8)|*r->at++;
     }
 }
-static inline uint32_t boot_rc_bit(boot_rc_t *r,volatile uint16_t *p)
+/* (one copy: inlined into every caller it costs about 1 KB, for about 40% fewer instructions per bit) */
+static __attribute__((noinline)) uint32_t boot_rc_bit(boot_rc_t *r,volatile uint16_t *p)
 {
     uint32_t v=*p,bound=(r->range>>11)*v,b;
     if(r->code<bound){r->range=bound;*p=(uint16_t)(v+((2048u-v)>>5));b=0;}
@@ -133,6 +135,33 @@ static __attribute__((noinline)) int boot_lzma(uint8_t *out,uint32_t size,const 
         len+=2u;
         if(r.bad||rep0>=pos||len>size-pos)return 0;
         while(len--){o[pos]=o[pos-rep0-1u];pos++;}
+    }
+}
+/* words from .. to start .. end; the next source. Volatile, as in boot_lzma: never a call to memcpy */
+static __attribute__((noinline)) const uint32_t *boot_take(uint32_t *start,uint32_t *end,const uint32_t *from)
+{
+    volatile uint32_t *d=start,*e=end;const volatile uint32_t *s=from;
+    while(d<e)*d++=*s++;
+    return from+(end-start);
+}
+/* the tables, stored as second differences of their words (smooth curves: float tanh and 2^x): summed twice */
+static __attribute__((noinline)) void boot_undelta(uint32_t *start,uint32_t *end)
+{
+    volatile uint32_t *d=start,*e=end;uint32_t a=0,b=0;
+    while(d<e){a+=*d;b+=a;*d++=b;}
+}
+/* the code, its call targets stored absolute (a call is [80..BF] EA LL HH: 22 bits of halfwords after that first
+ * byte's two top bits, low bytes last): calls to one function then look alike wherever they are. The packager scans
+ * the same way (a hit skips its four bytes), so any bytes that look like a call come back too */
+static __attribute__((noinline)) void boot_uncall(uint8_t *code,uint32_t n)
+{
+    volatile uint8_t *p=code;
+    for(uint32_t i=0;n>=4u&&i<=n-4u;){
+        uint32_t b=p[i];
+        if(p[i+1u]==0xEAu&&b>=0x80u&&b<=0xBFu){
+            uint32_t d=((b&0x3Fu)<<16|(uint32_t)p[i+3u]<<8|p[i+2u])-(i>>1);
+            p[i]=(uint8_t)(0x80u|((d>>16)&0x3Fu));p[i+2u]=(uint8_t)d;p[i+3u]=(uint8_t)(d>>8);i+=4u;
+        }else i+=2u;
     }
 }
 #endif

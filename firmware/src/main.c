@@ -617,18 +617,32 @@ static void fm1_main(void)
     }
 }
 
-/* one boot-compressed load image at rec (tools/boot_audio.py: MAGIC, packed bytes, raw bytes, 0, the stream) into
- * start .. end; the next record. The decoder's tables borrow the audio working arena, unused until resources_init. */
-static __attribute__((noinline)) const uint32_t *boot_image(const uint32_t *rec, uint32_t *start, uint32_t *end)
+/* the SRAM load images, one boot-compressed stream at _rt_load (tools/boot_audio.py: MAGIC, packed bytes, raw bytes, 0,
+ * the stream: .dsp_tables, .data, .ram_text, .dsp_text, .audio_text). It unpacks up to _audio_end, so .audio_text lands
+ * in place and the rest in the tail of .pool (zeroed after this; app.ld checks the room), copied out from there. The
+ * decoder's tables borrow the audio working arena, unused until resources_init. Anything not exact: update mode */
+static __attribute__((noinline)) void boot_images(void)
 {
-    uint32_t bytes = (uint32_t)((uintptr_t)end - (uintptr_t)start), packed;
+    const uint32_t *rec = _rt_load;
+    uint32_t audio = (uint32_t)((uintptr_t)_audio_end - (uintptr_t)_audio_start);
+    uint32_t bytes = audio + (uint32_t)((uintptr_t)_dt_end - (uintptr_t)_dt_start) +
+                     (uint32_t)((uintptr_t)_data_end - (uintptr_t)_data_start) +
+                     (uint32_t)((uintptr_t)_rt_end - (uintptr_t)_rt_start) +
+                     (uint32_t)((uintptr_t)_dsp_end - (uintptr_t)_dsp_start), packed;
+    uint32_t *unpack = _audio_end - bytes / 4u;
+    const uint32_t *at = unpack;
     if ((uintptr_t)(rec + 4) > (uintptr_t)_app_xip_end || rec[0] != BOOT_LZMA_MAGIC || rec[2] != bytes || rec[3] != 0)
         fm1_enter_uboot();
     packed = rec[1];
     if (packed > (uintptr_t)_app_xip_end - (uintptr_t)(rec + 4) ||
-        !boot_lzma((uint8_t *)start, bytes, (const uint8_t *)(rec + 4), packed, (uint16_t *)_resource_start))
+        !boot_lzma((uint8_t *)unpack, bytes, (const uint8_t *)(rec + 4), packed, (uint16_t *)_resource_start))
         fm1_enter_uboot();
-    return rec + 4 + (packed + 3u) / 4u;
+    at = boot_take(_dt_start, _dt_end, at);
+    boot_undelta(_dt_start, _dt_end);
+    at = boot_take(_data_start, _data_end, at);
+    at = boot_take(_rt_start, _rt_end, at);
+    (void)boot_take(_dsp_start, _dsp_end, at);
+    boot_uncall((uint8_t *)_audio_start, audio);
 }
 _Static_assert(BOOT_LZMA_PROBS * 2u <= 49152u, "boot decoder tables fit the audio working arena's minimum");
 
@@ -664,17 +678,8 @@ void fm1_cstart(void)
     }
     for (d = _bss_start; d < _bss_end; d++)
         *d = 0;
-    for (d = _pool_start; d < _pool_end; d++)
-        *d = 0;
     if (_rt_load[0] == BOOT_LZMA_MAGIC) {
-        /* the SRAM load images boot-compressed (tools/boot_audio.py), one after another in their load order; one
-         * that does not unpack exactly: update mode */
-        const uint32_t *at = _rt_load;
-        at = boot_image(at, _rt_start, _rt_end);
-        at = boot_image(at, _dsp_start, _dsp_end);
-        at = boot_image(at, _dt_start, _dt_end);
-        at = boot_image(at, _data_start, _data_end);
-        (void)boot_image(at, _audio_start, _audio_end);
+        boot_images();
     } else {                                    /* MELODEE_COMPRESS_AUDIO=0: the raw-copy reference profile */
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++)
         *d = *s;
@@ -687,6 +692,8 @@ void fm1_cstart(void)
     for (s = _audio_load, d = _audio_start; d < _audio_end; s++, d++)
         *d = *s;
     }
+    for (d = _pool_start; d < _pool_end; d++)   /* (after the images: they unpack through its tail) */
+        *d = 0;
     fm1_code_sync();
     fm1_mailbox_clear();
     fm1_power_ready = (uint8_t)fm1_power_init(); /* stock V15 supplies before cache, peripherals or CPU1 */
