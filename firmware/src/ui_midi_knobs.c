@@ -22,6 +22,19 @@ static int32_t midi_knob_relative(uint32_t value, uint32_t mode)
     if (mode == MK_REL2) return value < 64u ? (int32_t)value : (int32_t)value - 128;
     return (int32_t)value - 16;                 /* Arturia Relative 3: 15 down, 17 up */
 }
+/* a learned button a controller never lets go of (a latching switch, a pulled cable): up again after 10 s */
+#define MLEARN_HOLD_MS 10000u
+static void mlearn_poll(void)
+{
+    static uint32_t down, since;
+    if (fm1_in.remote != down) {
+        down = fm1_in.remote;
+        since = fm1_ms;
+    } else if (down && fm1_ms - since > MLEARN_HOLD_MS) {
+        fm1_irq_off(); fm1_in.remote = 0; fm1_irq_on();
+        down = 0;
+    }
+}
 static void midi_knobs_poll(void)
 {
     static const uint8_t roles[7] = {EN_SELECT,EN_PRESET,EN_ALGO,EN_K1,EN_K2,EN_K3,EN_K4};

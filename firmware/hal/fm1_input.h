@@ -93,6 +93,7 @@ static volatile struct {
     uint32_t notes;              /* debounced: bit n = note key n (0 = F3 .. 26 = G5) */
     uint32_t buttons;            /* debounced: bit i = button i (0..13) */
     uint32_t pressed, released;  /* button edges since the last fm1_input_edges() */
+    uint32_t remote, remote_tap; /* MIDI LEARN: buttons a controller holds; pressed, not yet seen down by the debounce */
     uint32_t notes_pressed;      /* note-key press edges since the last fm1_input_note_edges() */
     uint8_t raw[FM1_NCOL];       /* last frame, packed rows, 1 = closed */
     uint8_t cnt[FM1_NKEY];       /* frames in a row against the debounced state */
@@ -242,6 +243,11 @@ static void fm1__key(uint32_t id, uint32_t closed)
     volatile uint8_t *c = &fm1_in.cnt[id];
     uint32_t note = id >= 14u, bit = note ? 1u << (id - 14u) : 1u << id;
     uint32_t on = ((note ? fm1_in.notes : fm1_in.buttons) & bit) != 0u;
+    if (!note && ((fm1_in.remote | fm1_in.remote_tap) & bit)) {   /* a button a controller presses: closed */
+        if (on)
+            fm1_in.remote_tap &= ~bit;
+        closed = 1;
+    }
     if (closed == on) {                            /* agrees with the state: start over */
         *c = 0;
         return;

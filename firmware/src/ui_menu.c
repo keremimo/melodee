@@ -10,7 +10,7 @@
  * Stage and MIXER keep a greyed "Add track" row for each place not in use; HIDE: the tracks in use only, ui.c
  * stage_rows),
  * CALIBRATION (the setup screen: HARDWARE CALIBRATION), ABOUT.
- * PRESETS scrolls from ABOUT through all credits. ui.menu: 1 list, 2 information. */
+ * PRESETS scrolls from ABOUT through all credits. ui.menu: 1 list, 2 information, 3 Bluetooth, 4 MIDI LEARN. */
 /* ------------------------------------------------------------ menu --- */
 #define MENU_HEAD H_HEAD                 /* the menu's own title strip */
 enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
@@ -23,7 +23,7 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #if MELODEE_BLE
        MI_BLE,
 #endif
-       MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN,
+       MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN, MI_MIDI_FORGET,
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
 static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
@@ -36,7 +36,7 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #if MELODEE_BLE
                                               "BLUETOOTH",
 #endif
-                                              "MIDI KNOBS", "MIDI MODE", "MIDI LEARN",
+                                              "MIDI KNOBS", "MIDI MODE", "MIDI LEARN", "FORGET LEARNED",
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
                                               "AUTOSAVE", "PICKER POPUPS", "KNOB ACCEL", "HOME SELECT", "GLO SELECT", "UNUSED TRACKS", "SCREEN OFF", "CALIBRATION", "ABOUT", "SOUND DESIGNER", "BACK"};
 #if MELODEE_USB_AUDIO
@@ -214,8 +214,8 @@ static void menu_head(void)
 #endif
         ) { draw_head(); return; }
     cv_begin(240, MENU_HEAD, T_BG);
-    cv_text(8, ty_y(MENU_HEAD / 2, TY_TX), TY_TX, ui.menu == 2 ? "About" : "Settings", T_THEME);
-    if (ui.menu >= 2) {                               /* the way back at the right, the REC mark before it (then */
+    cv_text(8, ty_y(MENU_HEAD / 2, TY_TX), TY_TX, ui.menu == 2 ? "About" : ui.menu == 4 ? "Touch a control" : "Settings", T_THEME);
+    if (ui.menu == 2) {                               /* the way back at the right, the REC mark before it (then */
         cv_icon_mid(218, MENU_HEAD / 2, 16, ICON_X_UNDO, T_MID, T_BG);   /* (OCT-) */
         draw_rec_mark(196, T_BG);
     } else {
@@ -254,11 +254,13 @@ static void menu_words(char *d, const char *s, uint32_t n)
         if (!first && d[i] >= 'A' && d[i] <= 'Z') d[i] = (char)(d[i] + 32);
     }
 }
+#include "ui_midi_learn.c"
 static void draw_menu(void)
 {
 #if MELODEE_BLE
     if (ui.menu == 3) { draw_ble_page(); return; }
 #endif
+    if (ui.menu == 4) { draw_mlearn_page(); return; }
     uint32_t i, pass, sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
                             settings_hold * 3511u + settings_lights * 6151u + settings_autosave * 15485863u +
                             settings_midi_knobs * 997u + settings_midi_knob_mode * 10007u +
@@ -314,12 +316,11 @@ static void draw_menu(void)
                 if (i == MI_ACCEL) value = PREF_BITS & PREF_ACCEL_OFF ? "OFF" : "ON";
                 if (i == MI_MIDI_KNOBS) value = MI_MIDI_KNOB_NAME[settings_midi_knobs % MK_PROFILES];
                 if (i == MI_MIDI_MODE) value = MI_MIDI_MODE_NAME[settings_midi_knob_mode % MK_MODES];
-                if (i == MI_MIDI_LEARN) {                   /* how many CCs are learned */
-                    uint32_t n = 0;
-                    for (uint32_t k = 0; k < MLEARN_N; k++) n += mlearn[k].cc != 0u;
-                    fmt_int(v, n);
-                    str_cpy(v + str_len(v), n == 1u ? " CC" : " CCs", 5);
-                    value = n ? v : "NONE";
+                if (i == MI_MIDI_LEARN) {                   /* how many controls are learned */
+                    uint32_t n = mlearn_count();
+                    fmt_int(b, n);
+                    str_cpy(b + str_len(b), " LEARNED", 9);
+                    value = n ? b : "NONE";
                 }
                 if (i == MI_PICKER) value = PREF_BITS & PREF_PICK_OFF ? "OFF" : "ON";
                 if (i == MI_FONT) value = TY_PIXEL ? "PIXEL" : "RUBIK";
@@ -383,6 +384,7 @@ static void menu_close(void)
 #endif
     settings_save();                                   /* palette / panel table, if changed */
     ui.menu = 0;
+    mlearn_on = 0;                                     /* (MIDI LEARN's page ends with the menu) */
     ui.force = 1;
     go_home();
 }
@@ -395,7 +397,6 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
 #endif
     int32_t s;
     uint32_t ok = (oct >> 1) & 1u, back = oct & 1u;
-    mlearn_on = 0;                                      /* (the menu ends MIDI LEARN) */
     if (back) {
         if (ui.menu >= 2)
             ui.menu = 1, ui.force = 1;
@@ -420,18 +421,15 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         memset(midi_panel_delta, 0, sizeof midi_panel_delta);
         midi_panel_mask = 0;
     }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_MIDI_LEARN) {
-        /* KNOB 1 right or OCT+: learn (the menu closes; a knob, then a CC, as often as wanted; the menu again ends it);
-         * KNOB 1 left forgets them all */
-        if (s < 0) {
-            fm1_irq_off(); memset(mlearn, 0, sizeof mlearn); mlearn_dirty = 0; fm1_irq_on();
-        } else {
-            mlearn_on = 1;
-            mlearn_want.cc = 0;
-            menu_close();
-            ui_say("LEARN: ", "TURN A KNOB");
+    if ((s > 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_MIDI_LEARN) {   /* KNOB 1 right or OCT+: its page */
+        mlearn_page_open();
+        return;
+    }
+    if (ok && ui.menu == 1 && ui.menu_sel == MI_MIDI_FORGET) {
+        if (mlearn_count()) {
+            ui.menu = 0;
+            confirm_open(CF_MLEARN_FORGET, 0);
         }
-        ui.force = 1; ok = 0;
         return;
     }
     if (s != 0 && ui.menu == 1 && ui.menu_sel == MI_COLOR) {

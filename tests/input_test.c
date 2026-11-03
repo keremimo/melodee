@@ -343,6 +343,27 @@ int main(void)
         check("a one-frame glitch at rest: no step", fm1_in.enc_steps[0] == 0);
     }
 
+    /* a button a MIDI controller presses (MIDI LEARN): closed under the debounce, as long as the controller says; a
+     * release faster than the scan still presses */
+    {
+        uint32_t id = 8u, bit = 1u << id, i;
+        reset();
+        fm1_in.remote = fm1_in.remote_tap = bit;
+        for (i = 0; i < 3u * FM1_NCOL; i++) tick();
+        check("MIDI button: down and one press edge within 3 frames", state_of(id) && fm1_in.pressed == bit && !fm1_in.remote_tap);
+        for (i = 0; i < 40u * FM1_NCOL; i++) tick();
+        check("MIDI button: down as long as it is held", state_of(id) && !fm1_in.released);
+        fm1_in.remote = 0;
+        for (i = 0; i < 10u * FM1_NCOL; i++) tick();
+        check("MIDI button: its release counts as a button's", !state_of(id) && fm1_in.released == bit);
+        reset();
+        fm1_in.remote_tap = bit;
+        for (i = 0; i < 3u * FM1_NCOL; i++) tick();
+        check("MIDI button: a release before the scan saw it still presses", state_of(id) && fm1_in.pressed == bit);
+        for (i = 0; i < 10u * FM1_NCOL; i++) tick();
+        check("MIDI button: ... and lets go", !state_of(id) && fm1_in.released == bit);
+    }
+
     if (fails) {
         printf("INPUT TEST FAILED (%d)\n", fails);
         return 1;

@@ -1046,6 +1046,10 @@ static void confirm_text(char *a, char *b)
         str_cpy(b, "Forget Melodee on the peer too", 32);
         break;
 #endif
+    case CF_MLEARN_FORGET:
+        str_cpy(a, "FORGET ALL LEARNED?", 24);
+        str_cpy(b, "Every MIDI learn control", 32);
+        break;
     case CF_CLEAR_SHARED:                               /* SHARED's sheet */
         str_cpy(a, "CLEAR SHARED FX?", 24);
         str_cpy(b, "All tracks \xB7 three slots off", 32);

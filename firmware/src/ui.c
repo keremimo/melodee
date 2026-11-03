@@ -243,7 +243,7 @@ static void (*designer_quit)(int discard);   /* designer_close while it is open 
 enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER,
        CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_TAKE_JAM, CF_NEW_SONG, CF_ERASE_PROJ,
        CF_DEL_PAT, CF_PASTE_PAT, CF_DISCARD_DESIGN, CF_IMPORT, CF_BULK_ERASE, CF_OLD_SETTINGS, CF_OLD_TEMPLATE,
-       CF_DEL_TRACK, CF_PAT_KEY, CF_CLEAR_SHARED, CF_BLE_FORGET };   /* ui.confirm: REC held on SEQ / ARP, on TRACKS; SAVE over a used slot; a
+       CF_DEL_TRACK, CF_PAT_KEY, CF_CLEAR_SHARED, CF_BLE_FORGET, CF_MLEARN_FORGET };   /* ui.confirm: REC held on SEQ / ARP, on TRACKS; SAVE over a used slot; a
                                       * pattern over the user's steps; USER ERASE; PATTERNS: Delete pattern, Copy to
                                       * over a pattern in use; SEQ + a white key held: its pattern (ui_input.c) */
 

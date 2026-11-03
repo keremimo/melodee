@@ -185,9 +185,146 @@ static int page_and_local_controls(void)
     return bad;
 }
 
+/* MIDI LEARN: the page, a learned knob and button as the panel's own on every page, the record, FORGET */
+static void learn_knob(uint32_t role, uint32_t cc)
+{
+    host_enc[panel.enc[role]] += panel.dir[role]; ui_input();
+    route_input(1, 0xB0, cc, 0); ui_input();
+}
+static void learn_button(uint32_t label, uint32_t st, uint32_t d1)
+{
+    host_pressed |= 1u << panel.btn[label]; ui_input();
+    route_input(1, st, d1, 127); ui_input();
+}
+static void scanned(void)                       /* what the scan makes of a controller's buttons (tests/input_test.c) */
+{
+    uint32_t now = fm1_in.remote | fm1_in.remote_tap;
+    host_pressed |= now & ~fm1_in.buttons;
+    fm1_in.buttons = now; fm1_in.remote_tap = 0;
+    frame();
+}
+static int learn_test(void)
+{
+    int bad = 0;
+    uint32_t home = 1u << panel.btn[B_HOME];
+    knob_reset(MK_OFF, MK_ABSOLUTE);
+    memset(mlearn_row, 0, sizeof mlearn_row);
+    fm1_in.remote = fm1_in.remote_tap = fm1_in.buttons = 0;
+    ui.menu = 1; ui.menu_sel = MI_MIDI_FORGET; menu_input(2);
+    bad += check("nothing learned: nothing to forget", ui.menu == 1 && !ui.confirm);
+    ui.menu_sel = MI_MIDI_LEARN; menu_input(2);
+    bad += check("MIDI LEARN opens its page", ui.menu == 4 && mlearn_on);
+    int32_t bpm = song.g[G_BPM];
+    host_enc[panel.enc[EN_SELECT]] += panel.dir[EN_SELECT]; ui_input();
+    bad += check("a knob turned on the page waits and edits nothing", mlearn_wait && mlearn_sel == EN_SELECT && song.g[G_BPM] == bpm);
+    route_input(1, 0x90, 60, 100); ui_input();
+    bad += check("a knob takes no note, and the note stays silent", mlearn_wait && !mlearn_count() && !gate_note(TSEL, 60));
+    route_input(1, 0x80, 60, 0);
+    route_input(1, 0xB0, 1, 64); ui_input();
+    bad += check("the CCs with a meaning of their own are not learned", mlearn_wait && !mlearn_count());
+    route_input(1, 0xB5, 20, 3); ui_input();
+    bad += check("a CC on any channel binds the waiting knob", !mlearn_wait && mlearn_row[EN_SELECT] == 20 && mlearn_count() == 1);
+    learn_knob(EN_K1, 21);
+    learn_knob(EN_K2, 22);
+    learn_knob(EN_K3, 21);
+    bad += check("a CC leaves the knob it had", mlearn_row[EN_K3] == 21 && !mlearn_row[EN_K1]);
+    learn_knob(EN_K1, 21);
+    bad += check("... and comes back", mlearn_row[EN_K1] == 21 && !mlearn_row[EN_K3]);
+    learn_button(B_HOME, 0xB0, 30);
+    learn_button(B_SEQ, 0x99, 36);
+    uint32_t seq_row = NE + panel.btn[B_SEQ];
+    bad += check("a button takes a CC or a note with its channel",
+                 mlearn_row[NE + panel.btn[B_HOME]] == 30 && mlearn_row[seq_row] == (MLEARN_NOTE | 36u) && mlearn_note_ch(seq_row - NE) == 9u);
+    learn_button(B_OCTUP, 0xB0, 31);
+    learn_button(B_OCTDN, 0xB0, 33);
+    bad += check("OCT- and OCT+ are learned too and do not leave the page", ui.menu == 4 && mlearn_row[NE + panel.btn[B_OCTDN]] == 33);
+    route_input(1, 0xB0, 30, 127); ui_input();
+    bad += check("on the page a learned message presses nothing and shows its control", !fm1_in.remote && mlearn_sel == NE + panel.btn[B_HOME]);
+    route_input(1, 0xB0, 30, 0); ui_input();
+    route_input(1, 0x90, 60, 100);             /* (a note sounding from before: below) */
+    bad += check("no sound on the page", !gate_note(TSEL, 60));
+    route_input(1, 0x80, 60, 0);
+    hold(B_HOME);
+    bad += check("HOME held leaves the page", !ui.menu && !mlearn_on && mlearn_row[NE + panel.btn[B_HOME]] == 30);
+
+    /* the knobs: what they are */
+    set_engine_of(TSEL, ENGI_PROPHET); apply_preset_to(TSEL, 0); ui.home = 1;
+    knob_cc(1, 21, 64); knob_cc(1, 21, 127);
+    bad += check("a learned KNOB 1 turns the page's first knob", p5_patch_of(TSEL)->raw[P5_CUTOFF] == 127);
+    knob_cc(1, 21, 0);
+    bad += check("... with its absolute range", p5_patch_of(TSEL)->raw[P5_CUTOFF] == 0);
+    uint8_t cut = p5_patch_of(TSEL)->raw[P5_CUTOFF];
+    ui.menu = 1; ui.menu_sel = 3;
+    knob_cc(1, 22, 64); knob_cc(1, 22, 66);
+    bad += check("the same KNOB 2 moves the Settings row: it is the knob, not a parameter", ui.menu_sel == 5 && p5_patch_of(TSEL)->raw[P5_CUTOFF] == cut);
+    ui.menu = 0; ui.force = 1;
+    knob_reset(MK_OFF, MK_REL1);
+    bpm = song.g[G_BPM]; knob_cc(1, 20, 65);
+    bad += check("a learned knob follows MIDI MODE (and SELECT is its own)", song.g[G_BPM] == bpm + 1);
+    knob_reset(MK_OFF, MK_ABSOLUTE);
+
+    /* the buttons: what they are */
+    ui.home = 1;
+    route_input(1, 0x99, 36, 100); scanned();
+    bad += check("a learned note closes its button, no sound", (fm1_in.buttons >> panel.btn[B_SEQ]) & 1u && !gate_note(&trk[3], 36));
+    route_input(1, 0x89, 36, 0); scanned();
+    bad += check("its release lets go: SEQ's page", !fm1_in.buttons && !ui.home);
+    route_input(1, 0xB0, 30, 127);
+    bad += check("a learned CC closes its button", fm1_in.remote == home && fm1_in.remote_tap == home);
+    route_input(1, 0xB0, 30, 0);
+    bad += check("a release lets go; the press still reaches the scan", !fm1_in.remote && fm1_in.remote_tap == home);
+    scanned(); scanned();
+    bad += check("HOME tapped from another controller goes HOME", ui.home && !ui.menu);
+    route_input(1, 0xB0, 30, 127); scanned();
+    frames(800);
+    bad += check("HOME held from another controller opens the menu", ui.menu == 1);
+    route_input(1, 0xB0, 30, 0); scanned(); scanned();
+    menu_close();
+    route_input(1, 0x90, 36, 100);
+    bad += check("the same note on another channel still plays", !fm1_in.remote && gate_note(&trk[0], 36) );
+    route_input(1, 0x80, 36, 0);
+    route_input(1, 0xB0, 30, 127); ui_input();
+    fm1_ms += MLEARN_HOLD_MS + 1u; ui_input();
+    bad += check("a button never let go is up again after 10 s", !fm1_in.remote);
+    fm1_in.remote_tap = 0;
+    route_input(1, 0x90, 60, 100);
+    bad += check("a note sounding", gate_note(&trk[0], 60));
+    ui.menu = 1; ui.menu_sel = MI_MIDI_LEARN; menu_input(2);
+    learn_button(B_FX, 0x90, 60);
+    menu_close();
+    route_input(1, 0x80, 60, 0);
+    bad += check("... ends though it was learned meanwhile", !gate_note(&trk[0], 60) && !fm1_in.remote);
+
+    /* kept with the settings, FORGET LEARNED */
+    persist_t p;
+    uint8_t kept[sizeof mlearn_row];
+    memset(&p, 0, sizeof p);
+    memcpy(kept, mlearn_row, sizeof kept);
+    settings_export(&p);
+    bad += check("the settings record holds the table", !memcmp(p.favorites.factory[MLEARN_ROW], kept, sizeof kept));
+    memset(mlearn_row, 0, sizeof mlearn_row);
+    settings_import(&p, sizeof p);
+    bad += check("... and power-on restores it", !memcmp(mlearn_row, kept, sizeof kept));
+    ui.home = 1; ui.menu = 1; ui.menu_sel = MI_MIDI_FORGET; menu_input(2);
+    bad += check("FORGET LEARNED asks first", ui.confirm == CF_MLEARN_FORGET && mlearn_count() && !ui.menu);
+    press(B_OCTDN);
+    bad += check("OCT- keeps them", !ui.confirm && mlearn_count());
+    ui.menu = 1; ui.menu_sel = MI_MIDI_FORGET; menu_input(2);
+    press(B_OCTUP);
+    bad += check("OCT+ forgets them all", !ui.confirm && !mlearn_count() && !mlearn_row[28]);
+    uint32_t w = midi_knob_w;
+    route_input(1, 0xB0, 21, 64); route_input(1, 0xB0, 30, 127);
+    bad += check("forgotten: the messages do nothing here", midi_knob_w == w && !fm1_in.remote);
+    memset(mlearn_row, 0, sizeof mlearn_row); mlearn_row[EN_K1] = 21;   /* (Felucca 1.0's stars, no tag) */
+    route_input(1, 0xB0, 21, 64);
+    bad += check("old stars in the row are no table", midi_knob_w == w && !mlearn_count());
+    memset(mlearn_row, 0, sizeof mlearn_row);
+    return bad;
+}
+
 int main(void)
 {
-    int bad = panel_controls() + encoder_modes() + isolation_and_overflow() + page_and_local_controls();
+    int bad = panel_controls() + encoder_modes() + isolation_and_overflow() + page_and_local_controls() + learn_test();
     printf("%s\n", bad ? "MIDI KNOB TEST FAILED" : "MIDI knob integration tests passed");
     return bad != 0;
 }

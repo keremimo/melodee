@@ -94,6 +94,7 @@ static void reset(void)
     memset(&settings, 0, sizeof settings);
     memset(&ui, 0, sizeof ui);
     memset(&favorites, 0, sizeof favorites);
+    memset(mlearn_row, 0, sizeof mlearn_row);
     panel = PANEL_DEFAULT;
     host_tracks_init();
     fm1_ms = 0;
@@ -178,6 +179,7 @@ int main(void)
     persist_saved.bold = 1;                       /* (an earlier firmware's font weight: kept as saved) */
     favorites.factory[8][0] = 1;
     favorites.user = 1u << 31;
+    mlearn_row[3] = 21; mlearn_row[28] = 'M'; mlearn_row[29] = 'L'; mlearn_row[30] = 1;   /* (MIDI LEARN: KNOB 1 = CC 21) */
     song.playing = 1;
     settings_save();
     bad += check("playing: settings queued, no erase, runtime kept", persist_pending && !erases &&
@@ -197,6 +199,7 @@ int main(void)
                   st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p && p.palette == palette_to_stored(2) &&
                   p.lowcut == 0u && p.zoom == 1u && p.bold == 1u &&
                   p.favorites.factory[8][0] == 1 && p.favorites.user == (1u << 31) &&
+                  !memcmp(p.favorites.factory[MLEARN_ROW], mlearn_row, sizeof mlearn_row) && mlearn_row[3] == 21 &&
                   !memcmp(&p.panel, &panel, sizeof panel));
     settings_save();
     bad += check("unchanged settings do not erase", !persist_pending && erases == 1u);

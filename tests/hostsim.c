@@ -31,7 +31,7 @@
 #undef __attribute__                                  /* the RAM tables the firmware fills at boot (fm1_main) */
 __attribute__((constructor)) static void host_dsp_tables(void) { dsp_tables_init(); }
 #define __attribute__(x)
-static struct { volatile uint32_t notes, buttons; } fm1_in;
+static struct { volatile uint32_t notes, buttons, remote, remote_tap; } fm1_in;
 /* Serial host fixtures retain their established admission policy. Dedicated
  * resident/dual-core tests select the target policy explicitly. */
 #ifndef MELODEE_RAM_AUDIO
