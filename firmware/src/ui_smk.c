@@ -120,17 +120,27 @@ static int smk_faders_out(void)
 {
     return smk_fader_ms && smk_last_fader && fm1_ms - (smk_fader_ms & ~1u) < ST_KNOB_MS;
 }
+/* the knobs' bank where the page is the track's sound (Stage, ENV, LFO, SCL, EDIT, ARP, FX): a bank is four of the
+ * engine's parameters. The sequencer's, the global settings', MIXER and SAVE keep their own four for the knobs, as
+ * the FM-1's, whatever bank is picked (BK_PAGE there, no tag; the pick stays for the sound pages). The faders are
+ * independent of the page, so theirs is not gated here (main.c smk_faders) */
+static uint32_t knob_bank(void)
+{
+    uint32_t f = ui.home ? FAM_HOME : PAGES[ui.page].fam;
+    return f == FAM_GLO || f == FAM_SEQ || f == FAM_TRK || f == FAM_SAVE ? BK_PAGE : smk_kbank;
+}
 /* the bank whose cards the strip shows (BK_PAGE: the page's own): the faders' while theirs are up, else the knobs' */
 static uint32_t strip_bank(void)
 {
     if (!bank_knobs_on())
         return BK_PAGE;
-    return smk_faders_out() ? smk_fbank : smk_kbank;
+    return smk_faders_out() ? smk_fbank : knob_bank();
 }
 /* the knobs' bank page while they edit (0: the page's own) */
 static const page_t *knob_bank_page(void)
 {
-    return smk_kbank != BK_PAGE && bank_trk(smk_kbank) == P_COUNT && bank_knobs_on() ? bank_page(smk_kbank) : 0;
+    uint32_t b = knob_bank();
+    return b != BK_PAGE && bank_trk(b) == P_COUNT && bank_knobs_on() ? bank_page(b) : 0;
 }
 /* the header's tag: FADERS while the faders' cards are up, the knobs' bank (nothing for PAGE), else the pads' mode
  * while picked by hand and not what AUTO would show */
@@ -139,8 +149,8 @@ static const char *smk_head_tag(void)
     if (bank_knobs_on()) {
         if (smk_faders_out())
             return "FADERS";
-        if (smk_kbank != BK_PAGE)
-            return BK_NAME[smk_kbank];
+        if (knob_bank() != BK_PAGE)
+            return BK_NAME[knob_bank()];
     }
     if (smk_pmode != PM_AUTO && smk_pad_ctx == SPC_MODE && smk_pad_now != pad_mode_auto() && !ui.menu)
         return PM_NAME[smk_pad_now];

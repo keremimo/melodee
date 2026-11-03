@@ -2255,9 +2255,10 @@ static void page_knob_edit(uint32_t k, int32_t s)
         return;
     }
     smk_last_fader = 0;                                 /* (the strip shows the knobs' bank again) */
-    if (smk_kbank != BK_PAGE && bank_knobs_on()) {      /* the knobs' bank: its page in place of the page's own */
-        uint32_t tid = bank_trk(smk_kbank);
-        const page_t *bp = tid < P_COUNT ? 0 : bank_page(smk_kbank);
+    if (knob_bank() != BK_PAGE && bank_knobs_on()) {    /* the knobs' bank: its page in place of the page's own (not
+                                                         * on the settings', the sequencer's .. pages: ui_smk.c) */
+        uint32_t kb = knob_bank(), tid = bank_trk(kb);
+        const page_t *bp = tid < P_COUNT ? 0 : bank_page(kb);
         ui.hot_col = (uint8_t)k;
         ui.hot_t = 40;
         if (ui.home) stage_knob_touch();
