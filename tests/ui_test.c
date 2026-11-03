@@ -6090,6 +6090,14 @@ static int test_smk_sweep(void)
     bad += check("  .. and lets it go", !fm1_in.remote);
     mlearn_forget();
     fm1_in.remote_tap = 0;
+    /* a drum pad whose release was lost */
+    track_select(3); go_home(); frame();
+    bad += check("a DRUM track on Stage: the pads are its drums", drum_track(TSEL) && smk_pad_now == PM_DRUM);
+    n = drum_mpc_note(TSEL, 8);
+    pad_down(0, 100); frame();
+    bad += check("  a pad down: its drum held", smk_pad_playing[0] == n + 1u && gates() > 0u);
+    fm1_in.pad_st[0] = 0; frame();                      /* (the HAL says up; the queue lost the release) */
+    bad += check("  up in the HAL with its release lost: let go anyway", !smk_pad_playing[0] && !gates());
     smk_fpick = 0; smk_fbank = BK_LEVELS;
     ui_power_on();
     return bad;

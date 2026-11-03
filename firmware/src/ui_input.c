@@ -1138,28 +1138,44 @@ static void smk_pad_step(uint32_t c, uint32_t v)
     }
     ui.force = 1;
 }
+/* the drum a pad started ends (the note, its MIDI note off), whatever the pads are now. The sequencer's note paths
+ * and MIDI OUT's queue are the audio ISR's: the IRQs are off meanwhile, as for every note the main loop plays */
+static void smk_drum_pad_off(uint32_t c)
+{
+    uint32_t t = smk_pad_trk[c] % NTRK, n = smk_pad_playing[c] - 1u;
+    fm1_irq_off();
+    input_off(&trk[t], n);
+    midi_out_event(0x08u | (0x80u | trk_midi_ch(t)) << 8 | n << 16);
+    fm1_irq_on();
+    smk_pad_playing[c] = 0;
+}
+static void smk_pat_pad_off(uint32_t c)                 /* a pattern pad let go: its key up, whatever the pads are */
+{
+    smk_pat_held &= ~(1u << (smk_pat_pad[c] - 1u));
+    smk_pat_pad[c] = 0;
+}
 /* the pads the UI has (the HAL's map says none for them): the bank picker's, the drums, the steps, the patterns (once
- * a pass: smk_pat_edges are this pass's presses) */
+ * a pass: smk_pat_edges are this pass's presses). A pad the HAL holds up whose release never arrived (the queue was
+ * full) is let go here, so no drum or pattern key hangs */
 static void smk_pads_input(void)
 {
     int32_t e;
+    uint32_t c;
     smk_pat_edges = 0;
     while ((e = smk_pad_take()) >= 0) {
-        uint32_t c = (uint32_t)e >> 8, v = (uint32_t)e & 0xFFu, mpc = c < 8u ? c + 8u : c - 8u;
+        uint32_t v = (uint32_t)e & 0xFFu, mpc;
+        c = (uint32_t)e >> 8;
+        mpc = c < 8u ? c + 8u : c - 8u;
         if (c >= SMK_NPAD)
             continue;
-        if (smk_pad_playing[c]) {                       /* (a drum a pad started ends on its release, whatever the pads
-                                                         * are now) */
+        if (smk_pad_playing[c]) {
             if (v) continue;
-            input_off(&trk[smk_pad_trk[c] % NTRK], smk_pad_playing[c] - 1u);
-            midi_out_event(0x08u | (0x80u | trk_midi_ch(smk_pad_trk[c] % NTRK)) << 8 | (uint32_t)(smk_pad_playing[c] - 1u) << 16);
-            smk_pad_playing[c] = 0;
+            smk_drum_pad_off(c);
             continue;
         }
-        if (smk_pat_pad[c]) {                           /* (a pattern pad let go: its key up, whatever the pads are) */
+        if (smk_pat_pad[c]) {
             if (v) continue;
-            smk_pat_held &= ~(1u << (smk_pat_pad[c] - 1u));
-            smk_pat_pad[c] = 0;
+            smk_pat_pad_off(c);
             continue;
         }
         if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS) {   /* a pattern pad down: its key's press (a
@@ -1183,12 +1199,19 @@ static void smk_pads_input(void)
                 continue;
             smk_pad_trk[c] = (uint8_t)song.sel;
             smk_pad_playing[c] = (uint8_t)(n + 1u);
+            fm1_irq_off();                              /* (as smk_drum_pad_off: the ISR's paths) */
             input_on(TSEL, n, v);
             midi_out_event(0x09u | (0x90u | mc) << 8 | n << 16 | v << 24);
+            fm1_irq_on();
         } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_STEPS) {
             smk_pad_step(c, v);
         }
     }
+    for (c = 0; c < SMK_NPAD; c++)
+        if (!(fm1_in.pad_st[c] & 0x80u)) {              /* (up in the HAL, its release lost: let go) */
+            if (smk_pad_playing[c]) smk_drum_pad_off(c);
+            if (smk_pat_pad[c]) smk_pat_pad_off(c);
+        }
     if (smk_pad_hold && (!(fm1_in.pad_st[smk_pad_hold - 1u] & 0x80u) || smk_pad_now != PM_STEPS || smk_pad_ctx != SPC_MODE)) {
         smk_pad_hold = 0;
     } else if (smk_pad_hold && fm1_ms - smk_pad_hold_ms >= PAT_HOLD_MS) {   /* held: the step cleared (EDIT undoes) */
