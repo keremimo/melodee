@@ -666,7 +666,7 @@ static int seq_is_empty(const track_t *t)
 }
 
 /* UNDO of loads. A sound load (a factory or user preset, an engine jump, TOOLS INIT, the editor's PRESET / G_ENGSEL /
- * UP_LOAD) changes the sound only; a Capture changes the steps and the pattern
+ * UP_LOAD) changes the sound only; a pattern load changes the steps and the pattern
  * parameters only. Each first copies the track as it was into a level; EDIT held swaps back what the latest level's
  * loads changed (held again: the level before, EDIT + OCT+ redoes), so steps recorded after a sound load, or a sound
  * edited after a pattern load, stay as they are. Loads in a row on one track with nothing changed in between (the

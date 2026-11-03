@@ -826,7 +826,8 @@ static void qsave_poll(void)
 /* Capture. What the selected track played in its last bars while no track was recording (seq.c cap_ev) into
  * its pattern, as recorded notes (timing, velocity and length as played): an empty pattern takes 1, 2 or 4 bars (16, 32
  * or 64 steps), as many as the notes span, its LEN set to it; a pattern with notes the last LEN steps, over them. The
- * bars end at the bar playing when a note in it was played, else at its start. EDIT held undoes it, the notes with
+ * bars end at the bar playing when a note in it was played, else at its start. Stopped: a free take makes the loop and
+ * the tempo (capture_free_place). EDIT held undoes it, the notes with
  * the steps (recording_undo.c, as a live take); repeating a take that adds nothing leaves that undo alone */
 /* a step it wrote to: the view of its recorded notes, and what the pattern already played there still plays */
 static void capture_rebuild(track_t *t, uint32_t i)
@@ -844,12 +845,61 @@ static void capture_rebuild(track_t *t, uint32_t i)
         if (q == st->n && st->n < 4u) st->note[st->n++] = was.note[m];
     }
 }
+/* A free take (seq.c cap_free) as if the transport had played it: REC pressed on the "1" after its last bar, press
+ * minus first note = span (the press ends it, not the hold). The span sets the tempo: 1, 2 or 4 bars at whichever
+ * tempo is nearest the one set; within 3 % that one stays. Notes on another track, a press long after the last note
+ * or a span no tempo fits: the tempo stays and the notes keep their times. The events become steps from 0 in place;
+ * returns the steps of the loop (0: no note in the span) */
+#define CAP_LOOP_BPM_MS(w, div) ((((w) * (div) / 96u) * 15000u) / 64u)   /* w steps: their ms x their BPM */
+static uint32_t capture_free_place(track_t *t, cap_ev_t *ev, uint32_t from, uint32_t until, uint32_t span, uint32_t *bpm)
+{
+    uint32_t k = trk_index(t), cur = (uint32_t)song.g[G_BPM], div = seq_div_samples((uint32_t)t->p[P_SDIV]);
+    uint32_t w = 0, best = 0, gap = 0xFFFFFFFFu, last = 0, n = 0, i, press;
+    int keep = 0;
+    if (span - 1u >= 0x7FFFFFFFu) return 0;             /* (first played during the hold) */
+    press = span = span > 65535u ? 65535u : span;
+    for (i = 0; i < trk_n(); i++)
+        keep |= &trk[i] != t && (!seq_is_empty(&trk[i]) || notes_have_recording(&trk[i]));
+    for (i = from; i != until; i++)
+        if (ev[i % CAP_N].step < press) {
+            n++;
+            if (ev[i % CAP_N].step > last) last = ev[i % CAP_N].step;
+        }
+    if (!n || press - last > CAP_FREE_REST_MS) return 0;
+    if (!keep && n > 1u && press - last <= press / 4u * 3u)
+        for (uint32_t c = 16u; c <= 64u; c *= 2u) {
+            uint32_t b = (CAP_LOOP_BPM_MS(c, div) + press / 2u) / press, d = b > cur ? b - cur : cur - b;
+            if (b >= (uint32_t)GP[G_BPM].min && b <= (uint32_t)GP[G_BPM].max && d < gap) {
+                gap = d;
+                best = b;
+                w = c;
+            }
+        }
+    if (w) {
+        *bpm = gap * 100u <= cur * 3u ? cur : best;
+    } else {
+        for (w = 16u; w < 64u && CAP_LOOP_BPM_MS(w, div) / cur <= last; w *= 2u)
+            ;
+        span = CAP_LOOP_BPM_MS(w, div) / cur;
+        *bpm = cur;
+    }
+    for (i = from; i != until; i++) {
+        cap_ev_t *e = &ev[i % CAP_N];
+        uint32_t at = e->step, pos = at * w * 256u / span;
+        uint32_t len = ((e->tr & 128u) ? (press > at ? press - at : 1u) : e->dur) * w * 256u / span;
+        e->step = (uint16_t)(pos >> 8);
+        e->on = (uint8_t)pos;
+        e->dur = (uint16_t)(len > 65535u ? 65535u : len);
+        e->tr = at < press && at < span ? (uint8_t)k : 255u;
+    }
+    return w;
+}
 static void capture_take(void)
 {
     track_t *t = TSEL;
-    uint32_t k = song.sel, n = 0, i, now, first = 0xFFFFu, last = 0, end, w, start, put = 0, full = 0, j = 0, from;
+    uint32_t k = song.sel, n = 0, i, now, first = 0xFFFFu, last = 0, end, w, start, put = 0, full = 0, j = 0, from, bpm = 0, t0;
     uint64_t touched = 0;
-    int empty;
+    int empty, free_take;
     cap_ev_t captured[CAP_N];
     uint32_t until;
     if (chain_busy()) { ui_message("STOP SONG TO CAPTURE"); return; }
@@ -860,22 +910,31 @@ static void capture_take(void)
     from = cap_w - cap_from > CAP_N ? cap_w - CAP_N : cap_from;
     until = cap_w;
     memcpy(captured, cap_ev, sizeof captured);
+    free_take = cap_free;
+    t0 = cap_free_t0;
     fm1_irq_on();
-    for (i = from; i != until; i++) {
-        const cap_ev_t *e = &captured[i % CAP_N];
-        uint32_t back = (uint16_t)((now >> 8) - e->step);
-        if ((e->tr & 127u) != k || back >= 64u)
-            continue;
-        n++;
-        if (back > last) last = back;
-        if (back < first) first = back;
-    }
-    if (!n) { ui_message("NOTHING TO CAPTURE"); return; }
-    {   /* (16-bit step counts: they wrap) */
+    empty = seq_is_empty(t) && !notes_have_recording(t);
+    if (free_take) {
+        uint32_t age = ui.rec_t0 ? (fm1_ticks() - (ui.rec_t0 & ~3u)) / (1000u * FM1_TICKS_PER_US) : 0u;
+        w = empty ? capture_free_place(t, captured, from, until, fm1_ms - age - t0, &bpm) : 0u;
+        if (!w) { ui_message("NOTHING TO CAPTURE"); return; }
+        start = 0;
+        now = w << 8;
+    } else {
+        for (i = from; i != until; i++) {
+            const cap_ev_t *e = &captured[i % CAP_N];
+            uint32_t back = (uint16_t)((now >> 8) - e->step);
+            if ((e->tr & 127u) != k || back >= 64u)
+                continue;
+            n++;
+            if (back > last) last = back;
+            if (back < first) first = back;
+        }
+        if (!n) { ui_message("NOTHING TO CAPTURE"); return; }
+        /* (16-bit step counts: they wrap) */
         uint32_t cur = (now >> 8) & 0xFFFFu, pos = cur & 15u, span;
         end = (uint16_t)(cur - pos + (first <= pos ? 16u : 0u));     /* a bar's start */
         span = (uint16_t)(end - (uint16_t)(cur - last));
-        empty = seq_is_empty(t) && !notes_have_recording(t);
         w = empty ? (span <= 16u ? 16u : span <= 32u ? 32u : 64u) : (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP);
         start = (uint16_t)(end - w);
     }
@@ -935,10 +994,19 @@ static void capture_take(void)
     fm1_irq_off();
     recording_undo_finish(t);
     fm1_irq_on();
+    if (free_take) {
+        song.g[G_BPM] = (int16_t)bpm;
+        transport_req = 1;                              /* (the loop, at once) */
+    }
     {
         char b[16];
         fmt_int(b, (int32_t)(w % 16u ? w : w / 16u));
         str_cpy(b + str_len(b), w % 16u ? " STEPS" : w > 16u ? " BARS" : " BAR", 8);
+        if (free_take) {
+            str_cpy(b + str_len(b), " ", 2);
+            fmt_int(b + str_len(b), (int32_t)bpm);
+            str_cpy(b + str_len(b), " BPM", 5);
+        }
         ui_say(full ? "FULL: " : "CAPTURED ", b);
     }
     ui.force = 1;

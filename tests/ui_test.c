@@ -178,6 +178,7 @@ static int check(const char *what, int ok)
 static void ui_power_on(void)
 {
     uint32_t i;
+    cap_free = 0;
     midi_insert_init();
     memset(midi_output, 0, sizeof midi_output);
     punch_reset(); punch_panel_mask=punch_panel_lock=0;
@@ -6206,6 +6207,113 @@ static int test_capture_undo(void)
     ui_power_on();
     return bad;
 }
+/* #65: a free take. Stopped, an empty pattern: notes played in their own time; REC pressed on the "1" after the last
+ * bar and held makes the loop and the tempo. hold() presses 336 ms on from where it starts */
+static void free_take_start(int16_t bpm)
+{
+    ui_power_on();
+    recording_reset();
+    stop_transport();
+    transport_req = 0;
+    song.rec = 0;
+    for (uint32_t k = 0; k < NPART; k++) track_defaults_steps(&trk[k]);
+    track_select(0);
+    song.g[G_BPM] = bpm;
+}
+static void free_take_play(uint32_t notes, uint32_t every, uint32_t keep_last)
+{
+    for (uint32_t i = 0; i < notes; i++) {
+        input_on(TSEL, 60u + i, 100);
+        fm1_ms += every / 2u;
+        if (!keep_last || i + 1u < notes) input_off(TSEL, 60u + i);
+        fm1_ms += every - every / 2u;
+    }
+    fm1_ms -= 336u;
+}
+static const recorded_note_t *free_take_note(uint32_t note)
+{
+    for (uint32_t i = 0; i < RECORD_MAX; i++)
+        if (recording_active(TSEL, i) && recorded_note(&recording[i]) == note) return &recording[i];
+    static const recorded_note_t none;
+    return &none;
+}
+static uint32_t free_take_len(const recorded_note_t *r)   /* its length, RECORD_UNIT a step */
+{
+    return (uint32_t)r->duration << recorded_exponent(r);
+}
+static int test_free_take(void)
+{
+    int bad = 0;
+    free_take_start(100);
+    free_take_play(8, 500, 0);                          /* 4 s: 2 bars at 120 is nearest 100 (1 bar: 60, 4: 240) */
+    hold(B_REC);
+    bad += check("free take: 4 s from 100 BPM makes 2 bars at 120, and plays", msg_is("CAPTURED 2 BARS 120 BPM") &&
+                 song.g[G_BPM] == 120 && TSEL->p[P_SLEN] == 32 && transport_req == 1u && !song.rec);
+    bad += check("  every note on its place, the first on the 1", capture_undo_active(60) == 1u && capture_undo_active(67) == 1u &&
+                 recorded_step(free_take_note(60)) == 0u && !free_take_note(60)->on &&
+                 recorded_step(free_take_note(64)) == 16u && !free_take_note(64)->on && recorded_step(free_take_note(67)) == 28u);
+    bad += check("  .. as long as played", free_take_len(free_take_note(60)) == 2u * RECORD_UNIT);
+    hold(B_EDIT);
+    bad += check("  EDIT held: the notes and LEN back", TSEL->p[P_SLEN] == 16 && !notes_have_recording(TSEL) && seq_is_empty(TSEL));
+    free_take_start(118);
+    free_take_play(8, 500, 1);
+    hold(B_REC);
+    bad += check("free take: within 3 % the tempo set stays", msg_is("CAPTURED 2 BARS 118 BPM") && song.g[G_BPM] == 118 &&
+                 TSEL->p[P_SLEN] == 32 && recorded_step(free_take_note(64)) == 16u);
+    bad += check("  a note still held: up to the press", free_take_len(free_take_note(67)) == 4u * RECORD_UNIT);
+    input_off(TSEL, 67);
+    free_take_start(90);
+    grid_hit(&trk[3], 0, 0, 1);
+    free_take_play(8, 500, 0);
+    hold(B_REC);
+    bad += check("free take: another track has notes: the tempo stays, the notes keep their times",
+                 msg_is("CAPTURED 2 BARS 90 BPM") && song.g[G_BPM] == 90 && TSEL->p[P_SLEN] == 32 &&
+                 recorded_step(free_take_note(61)) == 3u);
+    free_take_start(100);
+    free_take_play(2, 500, 0);
+    fm1_ms += 4000u;
+    hold(B_REC);
+    bad += check("free take: the press long after the last note: the tempo stays",
+                 msg_is("CAPTURED 1 BAR 100 BPM") && song.g[G_BPM] == 100 && TSEL->p[P_SLEN] == 16);
+    free_take_start(100);
+    free_take_play(1, 500, 0);
+    hold(B_REC);
+    bad += check("free take: one note: the tempo stays", msg_is("CAPTURED 1 BAR 100 BPM") && song.g[G_BPM] == 100);
+    free_take_start(100);
+    free_take_play(1, 500, 0);
+    fm1_ms += CAP_FREE_REST_MS + 500u;
+    free_take_play(8, 500, 0);
+    hold(B_REC);
+    bad += check("free take: a long rest starts it again", msg_is("CAPTURED 2 BARS 120 BPM") && recorded_step(free_take_note(60)) == 0u &&
+                 capture_undo_active(60) == 1u && recorded_step(free_take_note(67)) == 28u);
+    free_take_start(100);
+    free_take_play(8, 500, 0);
+    fm1_ms += CAP_FREE_REST_MS + 500u;
+    hold(B_REC);
+    bad += check("free take: long forgotten: nothing, nothing starts", msg_is("NOTHING TO CAPTURE") && !transport_req && song.g[G_BPM] == 100);
+    free_take_start(100);
+    free_take_play(8, 500, 0);
+    grid_hit(TSEL, 3, 0, 1);
+    hold(B_REC);
+    bad += check("free take: a step entered since: nothing", msg_is("NOTHING TO CAPTURE") && !transport_req);
+    free_take_start(100);
+    grid_hit(TSEL, 3, 0, 1);
+    input_on(TSEL, 60, 100); input_off(TSEL, 60);
+    bad += check("  a pattern with notes keeps no free take (the last run stays to capture)", !cap_free);
+    free_take_start(100);
+    song.g[G_CLOCK] = 1;
+    input_on(TSEL, 60, 100); input_off(TSEL, 60);
+    bad += check("  an external clock's tempo is not ours: none", !cap_free);
+    song.g[G_CLOCK] = 0;
+    free_take_start(100);
+    rec_set(TSEL, 1);
+    input_on(TSEL, 60, 100); input_off(TSEL, 60);
+    bad += check("  armed: the first note still starts the take at the tempo set", song.playing && !cap_free && song.g[G_BPM] == 100);
+    seq_stop();
+    stop_transport();
+    ui_power_on();
+    return bad;
+}
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -6283,6 +6391,7 @@ int main(void)
     bad += test_stage_knobs_after_drum();
     bad += test_select_octave();
     bad += test_capture_undo();
+    bad += test_free_take();
 
     if (getenv("UI_SCREEN_DIR")) chain_screens(getenv("UI_SCREEN_DIR"));
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);

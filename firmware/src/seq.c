@@ -385,19 +385,25 @@ static uint32_t step_samples(const track_t *t, uint32_t period, uint32_t idx)
 /* Capture: the selected track's notes (keys, MIDI, a chord's notes) while the transport runs and no track is recording,
  * with its place: the steps the track has entered since PLAY (cap_step) and the 1/256 of the step, as recording.c
  * keeps them. A ring of 8-byte events (RAM is the audio arena's: kept small); REC held writes the selected track's last
- * bars into its pattern (ui_input.c capture_take). Durations in 1/256 of a step; tr bit 7: still held */
+ * bars into its pattern (ui_input.c capture_take). Durations in 1/256 of a step; tr bit 7: still held.
+ * A free take (cap_free): stopped, the clock our own, nothing armed, the pattern empty: what is played in its own time,
+ * step and dur in ms from its first note; capture_take makes a loop of it. A rest over CAP_FREE_REST_MS starts it again */
 #define CAP_N 128u
+#define CAP_FREE_REST_MS 8000u
 typedef struct { uint16_t step, dur; uint8_t on, note, vel, tr; } cap_ev_t;
 static cap_ev_t cap_ev[CAP_N];
 static uint32_t cap_w, cap_from;                /* events written; the first of this run of the transport */
 static uint8_t cap_track = 255u;               /* one buffer owner; selecting another track discards the old take */
 static uint16_t cap_step[NTRK];                 /* the step playing, counted from PLAY (65535 before the first) */
+static uint8_t cap_free;
+static uint32_t cap_free_t0, cap_free_last;     /* fm1_ms: its first note, its latest */
 /* Called in the audio ISR or with audio interrupts paused. */
 static void cap_select(uint32_t k)
 {
     if (cap_track == k) return;
     cap_from = cap_w;
     cap_track = (uint8_t)k;
+    cap_free = 0;
 }
 static uint32_t cap_frac(const track_t *t)      /* RECORD_UNIT fraction of the step playing */
 {
@@ -424,12 +430,31 @@ static void cap_on(const track_t *t, uint32_t note, uint32_t vel)
         selected = (hint & ~MIDI_TRACK_FOLLOW) - 1u;
     /* Queued takes have not punched in yet: collect until recording starts,
      * then pause until the active take finishes. Other tracks cost no capture work. */
-    if (k != selected || !song.playing || chain.running || rec_any())
+    if (k != selected || chain.running || rec_any())
         return;
+    if (!song.playing) {
+        if (chain.armed || song.rec || song.g[G_CLOCK])
+            return;
+        for (uint32_t i = 0; i < NSTEP; i++)
+            if (t->step[i].n || t->step[i].hit)
+                return;
+    }
     cap_select(k);
     cap_ev_t *e = &cap_ev[cap_w % CAP_N];
-    e->step = t->seq_pos >= 0x7FFFFFFFu ? (uint16_t)(cap_step[k] + 1u) : cap_step[k];
-    e->on = (uint8_t)(cap_frac(t) >> 8);
+    if (song.playing) {
+        e->step = t->seq_pos >= 0x7FFFFFFFu ? (uint16_t)(cap_step[k] + 1u) : cap_step[k];
+        e->on = (uint8_t)(cap_frac(t) >> 8);
+    } else {
+        uint32_t ms = fm1_ms;
+        if (!cap_free || ms - cap_free_last > CAP_FREE_REST_MS || ms - cap_free_t0 > 65535u) {
+            cap_free = 1;
+            cap_free_t0 = ms;
+            cap_from = cap_w;
+        }
+        cap_free_last = ms;
+        e->step = (uint16_t)(ms - cap_free_t0);
+        e->on = 0;
+    }
     e->dur = 0;
     e->note = (uint8_t)note;
     e->vel = (uint8_t)vel;
@@ -446,7 +471,8 @@ static void cap_off(const track_t *t, uint32_t note)
     for (i = 0; i < cap_w - cap_from && i < CAP_N; i++) {
         cap_ev_t *e = &cap_ev[(cap_w - 1u - i) % CAP_N];
         if (e->tr == (k | 128u) && e->note == note) {
-            e->dur = (uint16_t)cap_len(e, cap_now(t));
+            uint32_t ms = fm1_ms - cap_free_t0 - e->step;
+            e->dur = cap_free ? (uint16_t)(ms > 65535u ? 65535u : ms) : (uint16_t)cap_len(e, cap_now(t));
             e->tr = (uint8_t)k;
         }
     }
@@ -1127,6 +1153,7 @@ static void seq_start(void)
     }
     seq_seek_units = 0;
     cap_from = cap_w;                              /* capture and the jam log: this run */
+    cap_free = 0;
     cap_track = song.sel;
     jam.n = 0;
     song.tick = 0;
@@ -1226,6 +1253,7 @@ static void seq_stop(void)
     punch.req=-1; punch.keybit=0;
     for (uint32_t t = 0; t < NTRK; t++) midi_insert_cancel(t);
     kb_strum_pending = midi_strum_pending = 0; /* STOP cancels the unplayed part of live sweeps. */
+    cap_free = 0;
     cin_left=0; click_req=0; clk.env=0; audition_request=0; if(audition_active)audition_stop();
     uint32_t i;
     seq_erase_request = 0;
