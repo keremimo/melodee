@@ -99,7 +99,15 @@ static int shared_import(uint32_t e,uint32_t first,uint32_t count,const uint8_t 
 }
 static int native_fm_import32(uint32_t first,const uint8_t *raw,uint32_t *saved){return shared_import(ENGI_FM6,first,32u,raw,FM6_PACKED,saved);}
 
+#ifndef MELODEE_LEGACY_STORE                   /* (fm1_cc.h; host builds of this file alone: on) */
+#if BOARD_SMK37
+#define MELODEE_LEGACY_STORE 0
+#else
+#define MELODEE_LEGACY_STORE 1
+#endif
+#endif
 #if MELODEE_FLASH
+#if MELODEE_LEGACY_STORE
 /* P5's 26-record banks spill their final eight records into the two unused
  * records in each old 16-record bank. The final six records use the new pair.
  * Destinations are deterministic, so a reboot retries the identical writes. */
@@ -110,11 +118,14 @@ static uint32_t shared_p5_slot(uint32_t slot)
     uint32_t spill=b*8u+k-18u;
     return spill<32u?(spill/2u)*UP_PER_BANK+16u+spill%2u:378u+spill-32u;
 }
+#endif
 static int up_decode_bank(uint32_t b,int n)
 {
     if(n==(int)sizeof(up_disk_bank_t) && up_cache.magic==UP_DISK_MAGIC && up_cache.rsize==sizeof(up_disk_rec_t) && up_cache.nslot==UP_PER_BANK){
         for(uint32_t j=UP_PER_BANK;j--;){up_disk_rec_t r;memcpy(&r,(uint8_t *)&up_cache+8u+j*sizeof r,sizeof r);memset(&up_cache.r[j],0,sizeof(up_rec_t));memcpy(&up_cache.r[j],r.head,160u);memcpy(up_cache.r[j].cz_extra,r.extra,46u);}
-    }else if(b<4u && ((b<2u && n==3816 && up_cache.magic==UP_BANK_MAGIC && up_cache.rsize==238u && up_cache.nslot==16u) || (b>=2u && n==3808))){
+    }
+#if MELODEE_LEGACY_STORE
+    else if(b<4u && ((b<2u && n==3816 && up_cache.magic==UP_BANK_MAGIC && up_cache.rsize==238u && up_cache.nslot==16u) || (b>=2u && n==3808))){
         if(b>=2u)for(uint32_t j=16u;j--;){up_rec_t r;memcpy(&r,(uint8_t *)&up_cache+j*sizeof r,sizeof r);up_cache.r[j]=r;}
         for(uint32_t j=0;j<16u;j++)if(up_valid(&up_cache.r[j])){
             uint32_t k=b*16u+j;int star=b<4u?((k<32u?favorites.user:favorites_user_hi)>>(k%32u)&1u):b<8u?((favorites.factory[ENGI_FM6][(24u+(b-4u)*16u+j)/8u]>>((24u+(b-4u)*16u+j)%8u))&1u):((favorites.factory[ENGI_CZ][(65u+(b-8u)*16u+j)/8u]>>((65u+(b-8u)*16u+j)%8u))&1u);
@@ -146,7 +157,9 @@ static int up_decode_bank(uint32_t b,int n)
         for(uint32_t j=18u;j--;){p5_patch_t raw=((const p5_bank_t *)&up_cache)->patch[j];if(used>>j&1u)shared_native_record(&up_cache.r[j],ENGI_PROPHET,(const uint8_t *)&raw);else memset(&up_cache.r[j],0,sizeof(up_rec_t));}
         for(uint32_t j=0;j<18u;j++)if((used&stars)>>j&1u)up_cache.r[j].used|=UP_STAR;
         up_migrate|=1u<<b;
-    }else return 0;
+    }
+#endif
+    else return 0;
     up_cache.magic=UP_BANK_MAGIC;up_cache.rsize=sizeof(up_rec_t);up_cache.nslot=UP_PER_BANK;
     return 1;
 }
@@ -207,11 +220,14 @@ failed:
 static __attribute__((noinline)) int shared_repair_bank(uint32_t b)
 {
     up_bank_t bank = *up_cache_bank(b);
+#if MELODEE_LEGACY_STORE
     int legacy = (up_bank_old >> b) & 1u;
+#endif
     if (bank.magic != UP_BANK_MAGIC || bank.rsize != sizeof(up_rec_t) || bank.nslot != UP_PER_BANK)
         memset(&bank, 0, sizeof bank);
     else for (uint32_t j = 0; j < UP_PER_BANK; j++)
         if (bank.r[j].used && !up_valid(&bank.r[j])) memset(&bank.r[j], 0, sizeof bank.r[j]);
+#if MELODEE_LEGACY_STORE
     /* A partially readable legacy bank can still contain good FM6
      * programs. Embed their sidecars before replacing its source. */
     if (legacy && b < 4u) for (uint32_t j = 0; j < 16u; j++) {
@@ -224,6 +240,7 @@ static __attribute__((noinline)) int shared_repair_bank(uint32_t b)
         r->np = sizeof UP_NATIVE_PARAMS;
         for (uint32_t i = 0; i < sizeof UP_NATIVE_PARAMS; i++) r->cz_extra[i] = (uint8_t)(values[UP_NATIVE_PARAMS[i]] + 64);
     }
+#endif
     bank.magic = UP_BANK_MAGIC; bank.rsize = sizeof(up_rec_t); bank.nslot = UP_PER_BANK;
     *up_cache_bank(b) = bank;             /* sidecar reads may have borrowed the shared cache */
     if (up_save_bank(b)) {
@@ -234,6 +251,7 @@ static __attribute__((noinline)) int shared_repair_bank(uint32_t b)
     return 0;
 }
 
+#if MELODEE_LEGACY_STORE
 static __attribute__((noinline)) int shared_migrate_general(uint32_t b)
 {
     up_bank_t bank=*up_cache_bank(b);
@@ -275,6 +293,7 @@ static __attribute__((noinline)) int shared_migrate_prophet(uint32_t b)
     }
     return 0;
 }
+#endif
 
 static void shared_boot(void)
 {
@@ -303,6 +322,7 @@ static void shared_boot(void)
         }
         up_converting = 0; up_migration_error = 0; BOOT_WORK_END(0);
     }
+#if MELODEE_LEGACY_STORE
     uint32_t total=0,done_banks=0;
     /* Inspect first, so clean boots do not show a migration screen or write. */
     for(uint32_t b=0;b<UP_BANKS;b++)(void)up_cache_bank(b);
@@ -332,6 +352,7 @@ static void shared_boot(void)
 done:
     up_converting=0;
     BOOT_WORK_END(up_migration_error);
+#endif
 }
 #else
 static int shared_wipe(void)

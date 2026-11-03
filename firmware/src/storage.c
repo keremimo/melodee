@@ -473,13 +473,20 @@ static uint32_t st_cand(uint32_t obj, uint32_t i)
 {
     return !st_small(obj) || i < ST_SP_N ? i + 2u : ST_SMALL_U0 + i - ST_SP_N;
 }
+#ifndef MELODEE_LEGACY_STORE                   /* (fm1_cc.h; host builds of this file alone: on) */
+#if BOARD_SMK37
+#define MELODEE_LEGACY_STORE 0
+#else
+#define MELODEE_LEGACY_STORE 1
+#endif
+#endif
 static int st_current(uint32_t obj, st_hdr_t *h)
 {
     if (!st_banked(obj) && !st_small(obj)) return st_legacy_current(obj, h);
     /* Retry older headers only after a failed payload CRC. Rejecting one
      * candidate in RAM avoids an erase merely to read storage. */
     uint32_t rejected[4] = {0, 0, 0, 0}, n = st_cands(obj);
-    st_hdr_t legacy; int old = st_pfile(obj) ? -1 : st_legacy_current(obj, &legacy);
+    st_hdr_t legacy; int old = st_pfile(obj) || !MELODEE_LEGACY_STORE ? -1 : st_legacy_current(obj, &legacy);
     for (;;) {
         st_hdr_t best = {0}; int current = -1; uint32_t at = 0;
         for (uint32_t i = 0; i < n; i++) {
@@ -643,6 +650,10 @@ static int st_small_save(uint32_t obj, const void *src, uint32_t len)
  * 0 when every bank's current record is in the pool */
 static int st_small_migrate(void *buf, uint32_t max)
 {
+#if !MELODEE_LEGACY_STORE
+    (void)buf; (void)max;
+    return 0;
+#else
     int err = 0;
     for (uint32_t o = 0; o < OBJ_COUNT; o++) {
         if (!st_small(o)) continue;
@@ -652,6 +663,7 @@ static int st_small_migrate(void *buf, uint32_t max)
         if (rc) err = rc;                    /* (a 3,816-byte pre-UPB2 bank stays put until up_boot converts it) */
     }
     return err;
+#endif
 }
 static int st_pair_save(uint32_t obj, const void *src, uint32_t len);
 static int st_save(uint32_t obj, const void *src, uint32_t len)

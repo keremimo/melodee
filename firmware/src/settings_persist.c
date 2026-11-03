@@ -63,8 +63,19 @@ static int settings_owned(const persist_t *p)
 }
 /* Legacy Melodee has no owner tag. Require its tagged palette and complete
  * schema, then check the optional template in project.c before accepting it. */
+#ifndef MELODEE_LEGACY_STORE                   /* (fm1_cc.h; host builds of this file alone: on) */
+#if BOARD_SMK37
+#define MELODEE_LEGACY_STORE 0
+#else
+#define MELODEE_LEGACY_STORE 1
+#endif
+#endif
 static int settings_legacy_valid(const persist_t *p)
 {
+#if !MELODEE_LEGACY_STORE
+    (void)p;
+    return 0;
+#else
     uint32_t work = p->ext.usb_off, points = (work >> 8) & 255u;
     int usb_ok = work <= 3u || ((work & 0xFFFF00FCu) == WORK_BUDGET_TAG && points >= 8u && points <= 32u);
     return p->magic == PERSIST_MAGIC && palette_stored_ok(p->palette) &&
@@ -72,6 +83,7 @@ static int settings_legacy_valid(const persist_t *p)
         (p->zoom <= 0xFFu || (p->zoom & 0xFFFF0000u) == RECORD_PREF_TAG) &&
         hold_stored_ok(p->bold) && p->favorites.filter <= 1u && usb_ok &&
         p->ext.boot <= PROJ_SLOTS && p->ext.drumch <= 17u && p->ext.lights <= LIGHTS_N;
+#endif
 }
 
 /* Normalize in place; 1 = read, 0 = invalid. */

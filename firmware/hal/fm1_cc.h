@@ -14,6 +14,16 @@
 #ifndef BOARD_SMK37
 #define BOARD_SMK37 0
 #endif
+/* MELODEE_LEGACY_STORE: read what earlier Melodee builds left in the store (preset banks in their old fixed pairs,
+ * pre-UPB2 bank records, old native FM / CZ / Prophet banks, settings without the owner tag) and migrate it. The
+ * SMK-37's store was never written by one of those builds: its build leaves these paths out (~2 KB of flash) */
+#ifndef MELODEE_LEGACY_STORE
+#if BOARD_SMK37
+#define MELODEE_LEGACY_STORE 0
+#else
+#define MELODEE_LEGACY_STORE 1
+#endif
+#endif
 /* SMK_MODEL: the model name the SMK build reports (its identity, its update loader's, the boot stub's record): the
  * SMK-37 Pro, SMK-37 Elite and MKE-P37 are the same keyboard under three names, and the stock updater only takes a
  * unit's own factory package. build.py sets it from MODEL=elite / mke. */

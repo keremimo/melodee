@@ -157,11 +157,20 @@ static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
         }
         return 1;
     }
+#ifndef MELODEE_LEGACY_STORE                   /* (fm1_cc.h; host builds of this file alone: on) */
+#if BOARD_SMK37
+#define MELODEE_LEGACY_STORE 0
+#else
+#define MELODEE_LEGACY_STORE 1
+#endif
+#endif
+#if MELODEE_LEGACY_STORE                       /* (the old bank formats: an SMK-37 never converts them) */
     if(bank>=2u && bank<4u && len==3808u)return 1;
     if(bank<4u && len==3816u && h->magic==UP_BANK_MAGIC && h->rsize==238u && h->nslot==16u)return 1;
     if(bank>=4u && bank<8u)return len==sizeof(native_fm_t) && native_fm_valid((const native_fm_t *)raw);
     if(bank>=8u && bank<16u)return len==sizeof(cz_bank_t) && cz_bank_valid((const cz_bank_t *)raw);
     if(bank>=16u && bank<21u)return len==sizeof(p5_bank_t) && p5_bank_valid((const p5_bank_t *)raw,bank-16u);
+#endif
     return 0;
 }
 #endif
