@@ -1003,7 +1003,16 @@
             <li><strong>Devices:</strong> a full-speed device with a USB-MIDI 1.0 interface, alone or behind a hub, including hubs built from two chips. A device that is more than MIDI also works, such as a sampler or audio interface with MIDI (tried with an Akai MPC Sample). The first one found with MIDI is used. Low-speed devices are not supported.</li>
             <li><strong>In:</strong> notes, controllers, clock and transport arrive as USB MIDI. Instrument tracks play from it; MIDI tracks listen with SYSTEM MIDI on USB; CLK on USB follows its clock. SysEx from the device is ignored.</li>
             <li><strong>Out:</strong> <a href="#midi-track">MIDI tracks</a> send to the device. Output-only synths work.</li>
-            <li><strong>Messages:</strong> <strong>USB MIDI READY</strong> (connected), <strong>USB NO MIDI DEVICE</strong>, <strong>USB LOW SPEED</strong>, <strong>USB CONTROLLER LOST</strong>. Reconnect the device, or switch USB HOST off and on, to try again.</li>
+            <li><strong>Messages:</strong>
+              <ul>
+                <li><strong>USB MIDI CONNECTED</strong>: ready to play. <strong>USB MIDI DISCONNECTED</strong>: it was unplugged or stopped answering; it is found again when it comes back.</li>
+                <li><strong>NOTHING ON THE USB PORT</strong>: the FM-1 sees no device at all. Check the cable or adapter, and use a powered hub.</li>
+                <li><strong>USB DEVICE NOT ANSWERING</strong>: something is there but does not reply. The FM-1 tries a hub port again for a few seconds; if it stays, unplug the device and plug it back.</li>
+                <li><strong>HUB FOUND</strong>: the hub works and nothing is plugged into it. Plug in a MIDI device.</li>
+                <li><strong>NO MIDI DEVICE ON THE HUB</strong> or <strong>NOT A USB-MIDI DEVICE</strong>: what is plugged in has no USB-MIDI. Some devices need a class-compliant mode switched on.</li>
+                <li><strong>LOW-SPEED USB DEVICE</strong>: not supported.</li>
+              </ul>
+              Switching USB HOST off and on starts the search again.</li>
           </ul>
         </section>
       </section>

@@ -474,10 +474,22 @@ static void fm1_main(void)
 #if MELODEE_USB_HOST
         uh_task(fm1_ms);                                /* before usb_retry: a host port is not retried as a device */
         if (uh.msg) {
-            static const char *const UH_TEXT[] = {"", "", "", "MIDI READY", "NO MIDI DEVICE",
-                                                  "LOW SPEED", "CONTROLLER LOST"};
-            if (UH_TEXT[uh.msg][0])                     /* (on / off is the header's HOST tag, not a toast) */
-                ui_say("USB ", UH_TEXT[uh.msg]);
+            /* Each UH_MSG_* as the toast the user sees, then (if there is something to do) a hint shown as the second
+             * message. ON / OFF have no text: they are the header's HOST tag (docs/design/README.md, HOST). */
+            static const char *const UH_TEXT[][2] = {
+                [UH_MSG_MIDI] = {"USB MIDI CONNECTED", ""},
+                [UH_MSG_LOST] = {"USB MIDI DISCONNECTED", ""},
+                [UH_MSG_NOMIDI] = {"NOT A USB-MIDI DEVICE", ""},
+                [UH_MSG_LOW] = {"LOW-SPEED USB DEVICE", "NOT SUPPORTED"},
+                [UH_MSG_NOLINE] = {"NOTHING ON THE USB PORT", "USE A POWERED HUB"},
+                [UH_MSG_NOANSWER] = {"USB DEVICE NOT ANSWERING", "UNPLUG IT, PLUG IT BACK"},
+                [UH_MSG_HUB_EMPTY] = {"HUB FOUND", "PLUG IN A MIDI DEVICE"},
+                [UH_MSG_HUB_NOMIDI] = {"NO MIDI DEVICE ON THE HUB", ""},
+            };
+            if (uh.msg < sizeof UH_TEXT / sizeof UH_TEXT[0] && UH_TEXT[uh.msg][0]) {
+                ui_message(UH_TEXT[uh.msg][0]);
+                str_cpy(ui.msg2, UH_TEXT[uh.msg][1], sizeof ui.msg2);
+            }
             uh.msg = 0;
         }
 #endif

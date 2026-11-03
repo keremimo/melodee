@@ -27,7 +27,7 @@ class StackBudget(unittest.TestCase):
             src = Path(directory)
             (src / 'core.h').write_text('typedef struct { void (*render)(int); } engine_t;')
             (src / 'seq.c').write_text('if (song.playing || cin_left\nif (started) seq_advance(0);')
-            (src / 'usb_host.c').write_text('#define UH_HUB_LEVELS 2u\nreturn depth < UH_HUB_LEVELS ? uh_hub_probe\n'
+            (src / 'usb_host.c').write_text('#define UH_HUB_LEVELS 2u\nr = depth < UH_HUB_LEVELS && uh_hub_probe\n'
                                             'uh_probe((uint8_t)(level + 1u), m)')
             (src / 'eng_test.c').write_text('.render=renderer,')
             return stack_budget.analyze(ir, dis, src)
