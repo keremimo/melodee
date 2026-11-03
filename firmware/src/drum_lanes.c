@@ -172,12 +172,28 @@ static int dlk_tick(track_t *t)
     return 0;
 }
 
+/* the kit's sum, one block: DRV and the output stage, as the 808's lanes leave */
+static inline __attribute__((always_inline)) void dlk_out(const int32_t *y, int32_t *out, uint32_t n, const vmod_t *m, const int16_t *p)
+{
+    int32_t drv = p[P_E7], g = 0, mk = 0;
+    if (drv > 0) {                               /* DRV: x1..x4 into the soft clip, the level kept (Q12) */
+        g = 4096 + drv * 3 * 4096 / 127;
+        mk = (int32_t)((19661u << 15) / (uint32_t)softclip((19661 * g) >> 12));
+    }
+    for (uint32_t i = 0; i < n; i++) {           /* x1.25 and the knee below, as the 808's lanes leave */
+        int32_t s = clamp(y[i], -131071, 131071);  /* (eight lanes: within DRV's 32-bit product) */
+        if (g)
+            s = (softclip((s * g) >> 12) * mk) >> 15;
+        out[i] += voice_amp(soft_knee(s + (s >> 2), 24000), m, i) << 1;
+    }
+}
+
 /* the kit, one block: each lane's drum at its level, the steps easing out, DRV, the output as the 808's */
 static __attribute__((noinline)) void dlk_render(track_t *t, int32_t *out, uint32_t n, const vmod_t *m,
                                                  const int16_t *p)
 {
     dlk_part_t *K = dlk_part((uint32_t)(t - trk) % NPART);
-    int32_t y[CTL] = {0}, x[CTL], drv = p[P_E7], g = 0, mk = 0;
+    int32_t y[CTL] = {0}, x[CTL];
     uint32_t i, k;
     if (!K || !K->ready || K->kit != p[P_E0])
         return;
@@ -210,14 +226,5 @@ static __attribute__((noinline)) void dlk_render(track_t *t, int32_t *out, uint3
             c->fade = 0, c->on = 0;
         c->last = c->on || c->ease ? s : 0;
     }
-    if (drv > 0) {                               /* DRV: x1..x4 into the soft clip, the level kept (Q12) */
-        g = 4096 + drv * 3 * 4096 / 127;
-        mk = (int32_t)((19661u << 15) / (uint32_t)softclip((19661 * g) >> 12));
-    }
-    for (i = 0; i < n; i++) {                    /* x1.25 and the knee below, as the 808's lanes leave */
-        int32_t s = clamp(y[i], -131071, 131071);  /* (eight lanes: within DRV's 32-bit product) */
-        if (g)
-            s = (softclip((s * g) >> 12) * mk) >> 15;
-        out[i] += voice_amp(soft_knee(s + (s >> 2), 24000), m, i) << 1;
-    }
+    dlk_out(y, out, n, m, p);
 }

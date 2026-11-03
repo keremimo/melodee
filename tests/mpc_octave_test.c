@@ -194,7 +194,7 @@ static void drum_pads(void)
         {36, 38, 39, 37, 42, 46, 56, 49, 41, 45, 50, 70, 64, 61, 60, 75},
         {36, 38, 39, 37, 42, 46, 51, 49, 41, 45, 50, 51, 36, 38, 42, 46},
     };
-    for (uint32_t kit = DK_808; kit <= DK_FM; kit++) {
+    for (uint32_t kit = DK_808; kit <= DK_TIGHT; kit++) {
         setup_mpc();
         for (uint32_t k = 0; k < NPART; k++) {
             track_t *t = &trk[k];
@@ -206,7 +206,7 @@ static void drum_pads(void)
                 for (uint32_t n = 0; n < 128u; n++) {
                     uint32_t want = KB_SILENT;
                     for (uint32_t p = 0; p < 16u; p++)
-                        if (n == MPC_PAD_NOTES[k][p]) want = notes[kit == DK_909][p];
+                        if (n == MPC_PAD_NOTES[k][p]) want = notes[kit == DK_909 || kit >= DK_STUDIO][p];
                     assert(midi_map(t, n) == want);
                 }
                 /* Native keys retain their chromatic drum map and bank octave. */
@@ -220,14 +220,14 @@ static void drum_pads(void)
         }
     }
     for (uint32_t source = 1; source <= 2u; source++)
-        for (uint32_t kit = DK_808; kit <= DK_FM; kit++) {
+        for (uint32_t kit = DK_808; kit <= DK_TIGHT; kit++) {
             setup_mpc(); song.g[G_MIDI] = (int16_t)(source - 1u); ui.msg_t = 0;
             for (uint32_t k = 0; k < NPART; k++) {
                 track_t *t = &trk[k]; set_engine_of(t, ENGI_DRUM); t->p[P_E0] = (int16_t)kit;
                 t->p[P_QUANT] = Q_MPC; t->mpc_octave = 3;
                 for (uint32_t p = 0; p < 16u; p++) {
                     seq_stop(); memset(t->step, 0, sizeof t->step); song.rec = (uint8_t)(1u << k);
-                    uint32_t src = MPC_PAD_NOTES[k][p], want = notes[kit == DK_909][p];
+                    uint32_t src = MPC_PAD_NOTES[k][p], want = notes[kit == DK_909 || kit >= DK_STUDIO][p];
                     if (source == 1u) midi_in_event(0x09u | 0x90u << 8 | src << 16 | 100u << 24);
                     else { um_byte(0x90); um_byte((uint8_t)src); um_byte(100); }
                     events_block(CTL); frame();

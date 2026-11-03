@@ -68,6 +68,9 @@
 # DRUM SID (tests/drum_sid_test.c): KIT SID (src/drum_sid.c): one 6581 on one voice, its three voices taken by
 #                   the hits, frame programs at PAL frames, DIGI on $D418 and its effect on the voices ringing,
 #                   the filter for the routed drums, levels next to the 808; demos in build/sid_kit_demo/.
+# DRUM REAL (tests/drum_real_test.c): KIT STUDIO, BOOM, TIGHT (src/drum_real.c): the decoder against the encoder, every
+#                   drum alone, overlaps, hat choke and takes, KICK SWAP, length, kit switch, knobs, levels, corners;
+#                   demos in build/drum_real_demo/.
 # DRUM KITS (tests/drum_kits_test.c): KIT CR78 (src/drum_cr78.c) and KIT FM (src/drum_fm.c) on the lanes of
 #                   src/drum_lanes.c: every drum alone, one voice, a lane struck again without a step, the hat choke,
 #                   a recorded length, kit switches, the knobs' directions, levels next to the 808, no wrapped
@@ -193,7 +196,9 @@ old_to_new() {                                    # a package of another app (th
         "$OUT/ldr_test" "$OUT/old.fwsc" build/melodee.fwsc
 }
 smk_packages() {                                  # SMK-37 layout packages of this build's binaries (BOARD_SMK37 tests)
-    "$PY" tools/fm1pkg_make.py --board smk37 --res build/melodee-res.bin build/melodee.bin build/loader/ota.bin "$OUT/smk_new.fwsc" >/dev/null &&
+    # (a resource region the SMK-37's 16 sectors hold: the FM-1's, cut short, its header remade)
+    "$PY" -c 'import struct,sys,zlib; d=open(sys.argv[1],"rb").read()[32:60032]; h=struct.pack("<7I",0x3153524D,len(d),zlib.crc32(d),0,0,0,0); open(sys.argv[2],"wb").write(h+struct.pack("<I",zlib.crc32(h))+d)' build/melodee-res.bin "$OUT/smk_res.bin" &&
+    "$PY" tools/fm1pkg_make.py --board smk37 --res "$OUT/smk_res.bin" build/melodee.bin build/loader/ota.bin "$OUT/smk_new.fwsc" >/dev/null &&
         head -c 200000 build/melodee.bin > "$OUT/smk_old_app.bin" &&
         "$PY" tools/fm1pkg_make.py --board smk37 "$OUT/smk_old_app.bin" build/loader/ota.bin "$OUT/smk_old.fwsc" >/dev/null
 }
@@ -530,6 +535,8 @@ if sound && [ $TABLES = 1 ]; then
         "$OUT/drum_sid_test" build/sid_kit_demo
     t "DRUM CR78/FM: eight lanes on one voice, retriggers, choke, length, knobs, levels, corners" drum_kits_test -O2 $FW -- \
         "$OUT/drum_kits_test" build/drum_kits_demo
+    t "DRUM STUDIO/BOOM/TIGHT: decoder vs encoder, overlaps, choke, takes, length, knobs, levels, corners" drum_real_test -O2 $FW -- \
+        "$OUT/drum_real_test" build/drum_real_demo
     t "NOISE: colour slopes, key-tracked filter and clock, META period, DC, clipping, retrigger, cost, demos" noise_test \
         -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -- "$OUT/noise_test" build/noise_demo
     t "FM6: the DX7's algorithms, pitch, levels, envelopes, modulation; DC, clipping, macros, patches, voices, cost, demos" \
