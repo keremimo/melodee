@@ -924,7 +924,7 @@
           <li>A note that already started still releases on the track that played it if you change ROUT so its channel is no longer included.</li>
           <li>The keys send on the selected track’s channel.</li>
           <li>Pitch bend, sustain and panic are supported. Common CCs control level, pan, cutoff/brightness, envelope times and glide. CC91 does nothing. CC93 operates KNOB1 with the MINILAB profile; otherwise it does nothing.</li>
-          <li>Microtonal MIDI out sends degree addresses; an external synth needs the same tuning and mapping to match.</li>
+          <li>Microtonal MIDI out sends the semitone nearest each pitch, so an external synth plays the closest twelve-tone notes without sharing the tuning. Degrees that share a semitone strike it again, and it ends with the last of them.</li>
         </ul>
         <section id="midi-clock">
           <h3>Clock and transport</h3>

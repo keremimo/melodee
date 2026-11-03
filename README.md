@@ -1151,8 +1151,9 @@ microtonal tuning. ROOT and TRN shift pitch in ordinary semitones. The octave bu
 ARP OCT and chord voicings move by the scale's repeat period (3:1 for Bohlen–Pierce).
 Microtonal notes display as degrees, such as D1 and D3+1, and retain separate identities
 when several degrees fit inside one semitone. Recordings and projects retain these degrees.
-MIDI OUT carries degree addresses; an external synth needs the same tuning and mapping to
-reproduce these pitches.
+MIDI OUT sends the semitone nearest each pitch, ROOT and TRN included, so an external synth plays
+the closest twelve-tone notes without sharing the tuning. A release goes to the note its press
+sent. Degrees that share a semitone strike it again, and it ends with the last of them.
 
 QNT **ALL** plays the next scale note on every key, black keys included. QNT **MPC** routes MPC Sample
 Bank **E → track 1**, **F → track 2**, **G → track 3** and **H → track 4**, on any MIDI channel,
