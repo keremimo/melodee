@@ -58,6 +58,17 @@ to build and attest firmware from the tagged source. See [release verification](
 for the process and the command to check a downloaded package. An attestation establishes
 build provenance; hardware validation is a separate check.
 
+## In development since 1.6.1
+
+On the nightly channel, not yet in a stable release. Free take, the Capture and Bluetooth fixes, the hub search and the new MIDI LEARN are covered by automated tests; they have not yet been tried on hardware.
+
+- **SMK-37 family (beta):** builds for the SMK-37 Pro, SMK-37 Elite and MKE-P37, with pad modes, knob and fader banks, velocity, sustain pedal and TRS MIDI out. See [SMK37.md](SMK37.md).
+- **Free take:** stopped, on an empty pattern, play a phrase and press and hold REC on the next 1. The loop plays from the top, and the tempo follows if nothing else has notes.
+- **MIDI LEARN:** another controller's knobs and buttons now stand for the panel's own on every page, and stay learned after power-off. FORGET LEARNED clears them.
+- **Capture:** holding EDIT takes all of a capture's notes away, with redo, and a capture no longer erases what a step already played.
+- **Bluetooth:** a device the FM-1 once paired with on CONNECT OUT can connect back on VISIBLE.
+- **USB HOST:** MIDI devices are found behind more hubs, and the screen says why none was found.
+
 ## What's new in 1.6.1
 
 Clock output and Song Position are covered by automated tests; they have not yet been tried with a real follower.
@@ -598,9 +609,10 @@ user presets saved by earlier Melodee versions are not imported, and the user sa
   Clock pulses alone do not take over, and if the leader has stopped, PLAY runs on the internal tempo until its next
   Start, Continue or Stop. Changing the clock source clears this transport selection. TRS is an input only, so no clock
   leaves through it
-- **MIDI LEARN and controllers:** the HOME menu's **MIDI LEARN** binds up to 16 CCs to any knob of a track's page or
-  Stage's knobs: start it, turn a knob, send a CC. Bindings are kept only until power-off. **MIDI KNOBS** (GENERAL or
-  MINILAB) operates the eight panel controls from a controller
+- **MIDI LEARN and controllers:** the HOME menu's **MIDI LEARN** gives another controller's knobs and buttons to the
+  panel's own, on every page: touch a control, send a CC (a button also takes a note). They stay learned after
+  power-off and travel in backups; **FORGET LEARNED** clears them. **MIDI KNOBS** (GENERAL or MINILAB) operates the
+  eight panel controls from a controller
 - **Bluetooth MIDI:** one BLE-MIDI connection, in and out, alongside USB and TRS. Hold HOME and choose **BLUETOOTH**.
   **Mode** picks how you connect: **CONNECT OUT** scans for BLE controllers and synths from that page; **VISIBLE**
   advertises as Melodee XXXX so a Mac, iPad or phone can connect. The radio's on/off state, the pairing and the last
@@ -666,8 +678,8 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
 - **GLO + SELECT** turns the menu's **GLO SELECT** on any page: the same choices, BPM by default
 - **Held:** GLO and SCL open their quick layers; EDIT undoes, SAVE saves the project, HOME opens the menu, SEQ the PATTERNS grid with
   the song under it, REC captures (below).
-- **Undo:** hold EDIT to undo a finished recording take (**UNDO RECORDING**; there is one such undo), else the last
-  sound or pattern load or Capture; hold it again to go further back (up to 8 levels); while EDIT is held, OCT- undoes and OCT+ redoes. On the step pages EDIT's undo
+- **Undo:** hold EDIT to undo a finished recording take or Capture (**UNDO RECORDING**; there is one such undo), else the
+  last sound or pattern load; hold it again to go further back (up to 8 levels); while EDIT is held, OCT- undoes and OCT+ redoes. On the step pages EDIT's undo
   covers the step edits first
   When editing synth steps, SCL and EDIT use the editing controls below instead.
 - **FX** opens the track's rack: three note-effect slots and a Shared row; SELECT visits the racks and occupied slots.
@@ -711,6 +723,11 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
   switching tracks clears it. Hold **REC** to write the selected track's last bars into its pattern, with their timing, velocities and lengths: an
   empty pattern takes 1, 2 or 4 bars (as many as your notes span) and its LEN follows; a pattern with notes takes its
   last LEN steps over what it holds. Hold EDIT to undo
+- **Free take:** stopped, on an empty pattern, with nothing armed and CLK on INT, play a phrase and press and hold **REC**
+  on the next 1. The press ends the loop; when the hold registers, the pattern plays it from the top. If every other
+  track's current pattern is empty and you played more than one note, the tempo follows: the BPM nearest the current
+  one that makes the loop 16, 32 or 64 steps. Otherwise the tempo stays and the loop is as short as your notes allow.
+  A rest over 8 seconds starts again. Hold EDIT to undo; the tempo stays as set
 
 ### Browsing sounds
 

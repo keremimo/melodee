@@ -109,7 +109,8 @@ All future tagged releases, including release candidates, must use
 [zvenson/fm1-build](https://github.com/zvenson/fm1-build) through
 `.github/workflows/release.yml`. The firmware job calls the reviewed `@v1` reusable
 workflow, which installs the JieLi toolchain and SDK, runs our build and blocking
-host/web tests, and attests the resulting `.fwsc` and application binary. Keep the
+host/web tests, and attests the resulting `.fwsc` and application binary, for the FM-1
+and each SMK-37 model. Keep the
 reviewed version tag when updating this integration; the Firmware Hub recognises
 the shared builder's identity. Local release builds are for development and do not
 replace these attested artifacts.

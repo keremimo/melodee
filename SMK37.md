@@ -9,6 +9,9 @@ unchanged; everything for the SMK-37 is behind `BOARD_SMK37`.
 - **SMK-37 Elite**: `MODEL=elite` (identity `SMK-37 Elite_900`).
 - **MKE-P37**: `MODEL=mke` (identity `MKE-P37_900`).
 
+This is a beta. Only the SMK-37 Elite has run Melodee so far; the Pro and MKE-P37 packages are the same firmware under
+their model's name, and have not been tried on those units.
+
 All of them are the same hardware. Each build carries its model's name, so the stock updater still takes that
 unit's stock package later: install the package for your model. The installers take a package only for exactly
 the connected model (an Elite package is refused on a Pro, an FM-1 package on any SMK, an SMK package on an FM-1);
@@ -64,10 +67,15 @@ BOARD=smk37 MODEL=mke ./build.sh       # build/melodee-smk37-mke.fwsc
 
 ## Install
 
-Connect the keyboard by USB and run, with the package for your model:
+A release carries one package per model; take the one for yours from the
+[releases page](https://github.com/keremimo/melodee/releases): `melodee-smk37-X.Y.Z.fwsc` (SMK-37 Pro),
+`melodee-smk37-elite-X.Y.Z.fwsc` (SMK-37 Elite) or `melodee-smk37-mke-X.Y.Z.fwsc` (MKE-P37). A package you built
+yourself is in `build/`, as above. The web installer's Melodee channels carry the FM-1's package only.
+
+Connect the keyboard by USB and run, from a checkout of this repository, with the package for your model:
 
 ```sh
-python3 tools/fm1_install.py build/melodee-smk37.fwsc
+python3 tools/fm1_install.py melodee-smk37-X.Y.Z.fwsc
 ```
 
 `fm1_install.py` needs `mido` and `python-rtmidi` (`pip3 install mido python-rtmidi`). It checks that the package
