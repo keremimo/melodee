@@ -5848,8 +5848,10 @@ static int test_select_octave(void)
 static void pad_down(uint32_t c, uint32_t v) { host_padq[host_padq_w++ % 32u] = (uint16_t)(c << 8 | v); fm1_in.pad_st[c] = 0x80; }
 static void pad_up(uint32_t c) { host_padq[host_padq_w++ % 32u] = (uint16_t)(c << 8); fm1_in.pad_st[c] = 0; }
 static void tap_pad(uint32_t c) { pad_down(c, 100); frame(); pad_up(c); frame(); }
-static int pad_is_wait(uint32_t c) { uint32_t x = host_pad_rgb[c]; return (x >> 16) > ((x >> 8) & 255u) && !(x & 255u) && (x >> 16) > 80u; }
-static int pad_is_active(uint32_t c) { return host_pad_rgb[c] == ((uint32_t)PAD_ACT[0] << 16 | (uint32_t)PAD_ACT[1] << 8 | PAD_ACT[2]); }
+/* (the pads' colours as smk_pad scales them by PAD LIGHTS: MID, the default, is half) */
+static uint32_t pad_lv(uint32_t v) { return v * SMK_PAD_LV[settings_lights % LIGHTS_N] >> 3; }
+static int pad_is_wait(uint32_t c) { uint32_t x = host_pad_rgb[c]; return (x >> 16) > ((x >> 8) & 255u) && !(x & 255u) && (x >> 16) > pad_lv(80u); }
+static int pad_is_active(uint32_t c) { return host_pad_rgb[c] == (pad_lv(PAD_ACT[0]) << 16 | pad_lv(PAD_ACT[1]) << 8 | pad_lv(PAD_ACT[2])); }
 static int test_smk_pads(void)
 {
     int bad = 0;
@@ -5957,6 +5959,26 @@ static int test_smk_pads(void)
     tap_pad(10);
     ui.menu = 0; frame();
     bad += check("a pattern pad under the menu: nothing, then or after", TSEL->pattern == 1u);
+    /* the sustain pedal (seq.c sustain_poll): its rest taken once the readings settle; a key let go under it stays
+     * held, struck again it sounds again, up releases it; a drum track ignores it */
+    stop_transport(); song.rec = 0; go_home(); frames(100);
+    fm1_in.frames = 0; fm1_in.pedal = 1000; keyboard_block();          /* (settling: the rest is this) */
+    fm1_in.frames = 1000; keyboard_block(); frame();
+    bad += check("the pedal at rest: nothing held", !gates());
+    key_down(w2); frame();
+    fm1_in.pedal = 0; keyboard_block();
+    key_up(w2); frame();
+    bad += check("pedal down: the key let go stays held", gates() > 0u);
+    key_down(w2); frame();
+    key_up(w2); frame();
+    bad += check("  struck again under the pedal: still held", gates() > 0u);
+    fm1_in.pedal = 1000; keyboard_block(); frame();
+    bad += check("  pedal up: released", !gates());
+    fm1_in.pedal = 0; keyboard_block();
+    key_down(w3); frame(); key_up(w3); frame();
+    bad += check("  pedal down again: held", gates() > 0u);
+    fm1_in.pedal = 1000; keyboard_block(); frame();
+    bad += check("  up: released", !gates());
     ui_power_on();
     return bad;
 }

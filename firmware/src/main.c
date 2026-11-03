@@ -215,7 +215,7 @@ static void smk_faders(void)
         last[i] = (uint8_t)v;
         smk_fader_ms = fm1_ms | 1u;
         smk_last_fader = 1;
-        if (smk_fbank != BK_LEVELS && !bank_knobs_on())
+        if (bank_trk(smk_fbank) == P_COUNT && !bank_knobs_on())
             continue;
         cur = smk_fader_value(i);
         if (cur < 0)

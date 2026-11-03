@@ -26,7 +26,7 @@ The FM-1's manual still applies; the SMK-37's controls map onto the FM-1's like 
 | Keys F3..G5 (the middle 27) | the FM-1's 27 keys, with velocity |
 | Keys C3..E3 and G#5..C6 (the outer 10) | more notes for the selected track (its key map, scale, chord and octave), with velocity |
 | 16 pads | the 16 white keys F3..G5, with velocity, low notes on the bottom row; where the keys are a grid (SEQ held: the patterns, the DRUM grid, NAME, the layers) steps 1-8 are the top row and 9-16 the bottom row |
-| Pad lights | every pad lit, in three colours: off dark orange nothing there, on light blue something there (a key in the layout), a brighter blue a pattern or step holding notes, active bright happening now (held, playing); a pattern waiting for the bar pulses orange. While the transport runs: the selected track's steps on the page that plays |
+| Pad lights | every pad lit, in the selected track's colour: off dark orange nothing there, on dim something there (a key in the layout), full a pattern or step holding notes, white-blue happening now (held, playing); a pattern waiting for the bar pulses orange. The pads' modes (keys, drums, steps, patterns) and their lights: [docs/SMK37_UX.md](docs/SMK37_UX.md). HOME menu > PAD LIGHTS sets their level |
 | K1..K4 | KNOB 1..4 (the screen calls them K1..K4) |
 | K5 | MASTER (volume) |
 | K6 / K7 / K8 | SELECT / ALGORITHM / PRESETS |
@@ -37,8 +37,9 @@ The FM-1's manual still applies; the SMK-37's controls map onto the FM-1's like 
 | OCTAVE- / OCTAVE+ | OCT- / OCT+ |
 | KNOB BANK | as HOME held: opens or closes the menu (lit while the menu is open) |
 | < / > | one step of SELECT: the previous / next page, pattern, row or note, wherever SELECT turns |
-| FADER BANK | what the faders set (lit off bank A): A the levels of tracks 1..4; B the selected track's filter (PROPHET: CUTOFF, RESONANCE, ENV AMOUNT, filter DECAY; CZ-1 and the other engines their four HOME knobs); C its amp envelope (A D S R); D its FX rack (the MIX of slots 1-3, the SEND to the shared FX) |
-| Faders 1..4 | as FADER BANK says; a fader takes over only once it moves; with NOTE REPEAT held a fader's edit is momentary, as a knob's |
+| KNOB BANK / FADER BANK | tap: the next bank of K1..K4 / the faders; held: the bank picker (a top-row pad or `<` `>` picks; a bottom-row pad picks the pads' mode). The banks: PAGE (the page's own four), SOUND, FILTER, ENV, LFO, FX, ARP of the selected track's engine, and LEVELS, SENDS, PANS of tracks 1..4 (the faders as a mixer; LEVELS is the faders' default, lit off it) |
+| Faders 1..4 | as FADER BANK says; a fader takes over once it crosses the value (the cards show where it stands); with NOTE REPEAT held a fader's edit is momentary, as a knob's |
+| Sustain pedal | holds the keys' and pads' notes of the selected synth track while down (drums ignore it); CC64 on the track's channel. Plug it in before power-on, or hold it down a minute once |
 | Pitch wheel | pitch bend of the selected track (2 semitones; PROPHET its BEND, FM6 its DX7 range) |
 | Mod wheel | the selected track's mod wheel (CC1, the MOD matrix's MODW source; PROPHET and FM6 their own wheel); engines without one get a vibrato unless a MOD slot uses MODW |
 | OCTAVE- + OCTAVE+ held at power-on | HARDWARE CALIBRATION: teach the buttons and knobs again |

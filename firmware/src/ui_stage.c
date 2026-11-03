@@ -93,11 +93,11 @@ static void stage_columns(void)
     uint32_t c;
 #if BOARD_SMK37
     {                                                   /* a bank's cards (ui_smk.c), the faders' with their gauges */
-        uint32_t bk = strip_bank();
-        if (bk == BK_LEVELS) {
+        uint32_t bk = strip_bank(), tid = bank_trk(bk);
+        if (tid < P_COUNT) {                            /* LEVELS, SENDS, PANS: tracks 1..4's */
             for (c = 0; c < NPART; c++)
                 card_tc[c] = T_TRK(c);
-            layer_cards(LAYER_GLO);
+            trk_cards(tid);
             memset(card_tc, 0, sizeof card_tc);
             if (smk_faders_out())
                 smk_fader_gauges();

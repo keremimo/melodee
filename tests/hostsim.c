@@ -37,6 +37,8 @@ static struct {
     uint32_t notes_retrig;                              /* (hal/smk_input.h: what the SMK-37 UI and seq.c read) */
     uint8_t key_vel[37], pad_st[16], pad_press[16], fader[4];
     int16_t enc_steps[8];
+    uint16_t pedal;
+    uint32_t frames;
 #endif
 } fm1_in;
 /* Serial host fixtures retain their established admission policy. Dedicated

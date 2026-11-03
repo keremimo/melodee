@@ -15,14 +15,16 @@ static int new_on(void);                               /* NEW SONG (ui_new.c) */
 static void new_draw(void);
 #if BOARD_SMK37
 /* the SMK-37's banks (ui_smk.c): what the strip shows and the faders reach */
-enum { BK_PAGE, BK_SOUND, BK_FILTER, BK_ENV, BK_LFO, BK_FX, BK_ARP, BK_LEVELS, BK_N };
+enum { BK_PAGE, BK_SOUND, BK_FILTER, BK_ENV, BK_LFO, BK_FX, BK_ARP, BK_LEVELS, BK_SENDS, BK_PANS, BK_N };
 static uint32_t strip_bank(void);
 static const page_t *bank_page(uint32_t bank);
+static uint32_t bank_trk(uint32_t bank);                /* a track bank's id (LEVELS, SENDS, PANS), else P_COUNT */
 static void smk_fader_gauges(void);
 static int smk_faders_out(void);
 static const char *smk_head_tag(void);
 static void smk_strip_poll(void);
 static void layer_cards(uint32_t l);                    /* ui_layer.c */
+static void trk_cards(uint32_t id);                     /* ui_layer.c: tracks 1..4's id (LEVEL, SEND, PAN) */
 #endif
 
 /* --------------------------------------------------------- drawing --- */
@@ -750,12 +752,13 @@ static void draw_columns(void)
     if (!page_over && !ui.home && col_style != CS_CAPTURE && (strip_bank() != BK_PAGE || smk_faders_out())) {
         uint32_t bk = strip_bank();                      /* a bank's cards in place of the page's (ui_smk.c), the
                                                           * faders' with their pickup gauges; Stage: stage_columns */
-        const page_t *bp = bk == BK_PAGE || bk == BK_LEVELS ? 0 : bank_page(bk);
-        if (bk == BK_LEVELS) {
+        uint32_t tid = bank_trk(bk);
+        const page_t *bp = bk == BK_PAGE || tid < P_COUNT ? 0 : bank_page(bk);
+        if (tid < P_COUNT) {                             /* LEVELS, SENDS, PANS: tracks 1..4's (the GLO layer's cards) */
             uint32_t c;
             for (c = 0; c < NPART; c++)
                 card_tc[c] = T_TRK(c);
-            layer_cards(LAYER_GLO);
+            trk_cards(tid);
             memset(card_tc, 0, sizeof card_tc);
         } else {
             page_over = bp ? bp : cur_page();

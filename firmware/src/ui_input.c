@@ -505,10 +505,12 @@ static uint32_t breath_on(void) { return BREATH[(fm1_ms / 125u) & 7u] != 0xFFu; 
 enum { PS_OFF, PS_ON, PS_FILLED, PS_ACTIVE, PS_WAIT, PS_NONE };
 static const uint8_t PAD_WAIT[3] = {255, 110, 0}, PAD_ACT[3] = {190, 230, 255};
 static const uint8_t SMK_LV_BREATH[8] = {255, 176, 128, 100, 92, 100, 128, 176};   /* (BREATH's steps) */
+static const uint8_t SMK_PAD_LV[LIGHTS_N] = {1, 2, 4, 6, 8};   /* PAD LIGHTS (the menu's LIGHTS row): the pads' level, /8 */
 static void smk_pad(uint32_t c, uint32_t st, uint32_t trk)
 {
     uint16_t h = T_TRK(trk & 3u);
     uint32_t r = (h >> 11) * 255u / 31u, g = ((h >> 5) & 63u) * 255u / 63u, b = (h & 31u) * 255u / 31u;
+    uint32_t lv = SMK_PAD_LV[settings_lights % LIGHTS_N];
     switch (st) {
     case PS_ON: r = 70u + r * 2u / 5u; g = 20u + g * 2u / 5u; b = b * 2u / 5u; break;
     case PS_FILLED: break;
@@ -521,7 +523,7 @@ static void smk_pad(uint32_t c, uint32_t st, uint32_t trk)
     case PS_NONE: r = 30; g = 9; b = 0; break;
     default: r = 100; g = 34; b = 0; break;
     }
-    padled_set(c, (uint8_t)r, (uint8_t)g, (uint8_t)b);
+    padled_set(c, (uint8_t)(r * lv >> 3), (uint8_t)(g * lv >> 3), (uint8_t)(b * lv >> 3));
 }
 static int l_glo(uint32_t k) { return (ui.layer ? ui.layer : ui.ly) == LAYER_GLO && k < 27u; }
 /* a key id's state from the lights' planes (ui_leds): lit ACTIVE, breathing WAITING, dim or the buttons' plane ON */
@@ -536,6 +538,8 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
     const int8_t *map = smk_pad_key;
     for (c = 0; c < SMK_NLED; c++)
         fm1_led[c] = (uint8_t)(nl[c] || (nw[c] && blink));
+    fm1_led[18] = (uint8_t)((seq_counting() || song.rec_wait) && blink);   /* SEQ PLAY's red: waiting (a count-in, a
+                                                                             * take for the loop), blinking as WAITING */
     if (panel_btn_of(SMK_BTN_FADER_BANK) == NB)         /* FADER BANK lit off LEVELS, KNOB BANK off PAGE; blinking
                                                          * while held (its picker up, ui_smk.c) */
         fm1_led[SMK_BTN_FADER_BANK] = (uint8_t)(pop.on == POP_BANK && pop.col == 1u ? blink : smk_fbank != BK_LEVELS);
@@ -554,7 +558,7 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
     for (c = 0; c < SMK_NPAD; c++) {
         uint32_t st = PS_NONE, hue = sel, mpc = c < 8u ? c + 8u : c - 8u;
         if (smk_pad_ctx == SPC_BANK) {                  /* a BANK button held: the banks, then the pads' modes */
-            if (c < BK_N) st = c == pop.sel ? PS_ACTIVE : bank_has(c) ? PS_ON : PS_OFF;
+            if (c < 8u) st = c == pop.sel ? PS_ACTIVE : bank_has(c) ? PS_ON : PS_OFF;   /* (SENDS, PANS: < > or K1) */
             else if (c - 8u < PM_N) st = c - 8u == smk_pmode ? PS_ACTIVE : PS_ON;
         } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PATTERNS) {   /* the tracks in their hues (the one
                                                          * selected FILLED, armed WAITING), the page's patterns (playing
@@ -605,6 +609,9 @@ static void ui_leds(void)
 {
     uint8_t nl[LED_BUF] = {0}, nd[LED_BUF] = {0}, nb[LED_BUF] = {0}, nw[LED_BUF] = {0};
     uint32_t k, c, play, lights = settings_lights % LIGHTS_N, pdim = 0, pbr = 0;
+#if BOARD_SMK37
+    lights = LIGHTS_FULL;                               /* (PAD LIGHTS is the pads' level, smk_pad: every plane shows) */
+#endif
     uint32_t fam = cur_fam();
     uint32_t armed = song.rec != 0u, rolling = song.playing != 0u, counting = (uint32_t)seq_counting();
     uint32_t recording_now = (song.rec & ~song.rec_wait) && rolling && !counting && !chain.running;
@@ -1093,13 +1100,16 @@ static void smk_pads_sync(void)
         smk_pad_at = at;
     }
 }
-/* a pad of STEPS tapped: a step. A synth track: an empty step gets the last note played (notes_place), a step with
- * notes becomes the cursor (K2..K4 edit it); held PAT_HOLD_MS: cleared. The drum grid: the lane's hit toggled (ACC
- * held: its accent), DRUM HIT its hit */
-static void smk_pad_step(uint32_t c, uint32_t down)
+/* a pad of STEPS tapped: a step, with the tap's velocity. A synth track: an empty step gets the last note played
+ * (notes_place) at the tap's velocity, a step with notes becomes the cursor (K2..K4 edit it); held PAT_HOLD_MS:
+ * cleared. The drum grid: the lane's hit toggled (ACC held, or a hard tap on an empty step: its accent), DRUM HIT its
+ * hit */
+#define SMK_ACC_VEL 112u                                /* a tap this hard: an accent */
+static void smk_pad_step(uint32_t c, uint32_t v)
 {
-    uint32_t i = ui.bank * 16u + c, len = (uint32_t)TSEL->p[P_SLEN];
-    if (!down) {
+    uint32_t i = ui.bank * 16u + c, len = (uint32_t)TSEL->p[P_SLEN], hard = v >= SMK_ACC_VEL;
+    step_t *st = &TSEL->step[i % NSTEP];
+    if (!v) {
         if (smk_pad_hold == c + 1u) smk_pad_hold = 0;
         return;
     }
@@ -1110,16 +1120,22 @@ static void smk_pad_step(uint32_t c, uint32_t down)
     smk_pad_hold_at = (uint8_t)i;
     smk_pad_hold_ms = fm1_ms;
     if (drum_track(TSEL)) {
-        if (!ui.home && cur_page()->scope == SC_DRUMHIT) { cursor_set((int32_t)i); drum_hit_key(black_held(GK_ACC)); return; }
-        if (black_held(GK_ACC)) grid_acc(TSEL, i, ui.lane, 2);
+        uint32_t acc = black_held(GK_ACC) || (hard && !((step_lanes(st) >> ui.lane) & 1u));
+        if (!ui.home && cur_page()->scope == SC_DRUMHIT) { cursor_set((int32_t)i); drum_hit_key(acc); return; }
+        if (acc) grid_acc(TSEL, i, ui.lane, 2);
         else grid_hit(TSEL, i, ui.lane, 2);
         cursor_set((int32_t)i);
         smk_pad_hold = 0;                               /* (a hit toggles: nothing to clear by holding) */
         return;
     }
     cursor_set((int32_t)i);
-    if (!TSEL->step[i].n && !(TSEL->step[i].flags & SF_RECORDED))
+    if (!st->n && !(st->flags & SF_RECORDED)) {
         notes_place();
+        if (st->n) {                                    /* (placed: the tap's velocity, as a played note's) */
+            st->vel = (uint8_t)v;
+            st->flags &= (uint8_t)~SF_ACCENT;
+        }
+    }
     ui.force = 1;
 }
 /* the pads the UI has (the HAL's map says none for them): the bank picker's, the drums, the steps, the patterns (once
@@ -1156,7 +1172,7 @@ static void smk_pads_input(void)
             }
         } else if (smk_pad_ctx == SPC_BANK) {           /* the top row a bank, the bottom row the pads' mode */
             if (!v) continue;
-            if (c < BK_N) {
+            if (c < 8u) {                               /* (the first eight banks; SENDS and PANS by < > or K1) */
                 if (bank_has(c)) { pop.sel = (uint8_t)c; pop.sig = 0; bank_apply(pop.col, c); }
             } else if (c - 8u < PM_N) {
                 pads_set(c - 8u);
@@ -2209,16 +2225,17 @@ static int fx_rack_back(void)
 }
 
 /* T1..T4 (T5..T8) LEVEL on KNOB k (those in use, with a level), recorded as on MIXER: the GLO layer's knobs, the
- * SMK-37's LEVELS bank */
-static void level_knob(uint32_t k, int32_t s)
+ * SMK-37's LEVELS bank (its SENDS and PANS banks: the same for id) */
+static void trk_knob(uint32_t k, int32_t s, uint32_t id)
 {
     uint32_t t = trk_group() + k;
-    int16_t *vp = &trk[t].p[P_LEVEL];
+    int16_t *vp = &trk[t].p[id];
     if (t >= trk_n() || midi_track_only(&trk[t]))
         return;
-    *vp = (int16_t)clamp(*vp + accel(EN_K1 + k, s, TP[P_LEVEL].max - TP[P_LEVEL].min), TP[P_LEVEL].min, TP[P_LEVEL].max);
-    motion_capture(&trk[t], P_LEVEL, *vp);
+    *vp = (int16_t)clamp(*vp + accel(EN_K1 + k, s, TP[id].max - TP[id].min), TP[id].min, TP[id].max);
+    motion_capture(&trk[t], id, *vp);
 }
+static void level_knob(uint32_t k, int32_t s) { trk_knob(k, s, P_LEVEL); }
 
 /* KNOB k turned s on the page shown (the sound designer's pages too): what it edits there, its card hot */
 static void page_knob_edit(uint32_t k, int32_t s)
@@ -2239,11 +2256,12 @@ static void page_knob_edit(uint32_t k, int32_t s)
     }
     smk_last_fader = 0;                                 /* (the strip shows the knobs' bank again) */
     if (smk_kbank != BK_PAGE && bank_knobs_on()) {      /* the knobs' bank: its page in place of the page's own */
-        const page_t *bp = smk_kbank == BK_LEVELS ? 0 : bank_page(smk_kbank);
+        uint32_t tid = bank_trk(smk_kbank);
+        const page_t *bp = tid < P_COUNT ? 0 : bank_page(smk_kbank);
         ui.hot_col = (uint8_t)k;
         ui.hot_t = 40;
         if (ui.home) stage_knob_touch();
-        if (smk_kbank == BK_LEVELS) { level_knob(k, s); return; }
+        if (tid < P_COUNT) { trk_knob(k, s, tid); return; }
         if (bp) {
             page_over = bp;
             momentary_take(k);

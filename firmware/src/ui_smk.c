@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The SMK-37's banks (docs/SMK37_UX.md, sections 3-5): one list of eight, each a set of four parameters of the
+/* The SMK-37's banks (docs/SMK37_UX.md, sections 3-5): one list of ten, each a set of four parameters of the
  * selected track's engine, reached by K1..K4 (KNOB BANK; PAGE = the page's own four, the FM-1) or by the four faders
- * (FADER BANK; LEVELS = tracks 1..4). A bank is a page_t (bank_page), so the cards, edit_param, the pickers, the
- * momentary edits and motion capture follow with no path of their own: the knobs' bank is page_over while they edit
+ * (FADER BANK), or one parameter of tracks 1..4 (LEVELS, SENDS, PANS: the faders as a mixer, bank_trk). A bank is a
+ * page_t (bank_page), so the cards, edit_param, the pickers, the momentary edits and motion capture follow with no
+ * path of their own: the knobs' bank is page_over while they edit
  * (ui_input.c page_knob_edit) and while the strip draws (ui_draw.c draw_columns, ui_stage.c stage_columns).
  * The strip shows the knobs' bank, or, for ST_KNOB_MS after a fader moved, the faders' bank with a pickup gauge under
  * each card (the value's bar, a tick where the fader stands; a fader "away" since a bank or track change takes over
@@ -13,7 +14,12 @@
 #if BOARD_SMK37
 enum { SB_NONE, SB_TAP, SB_HOLD };
 static void smk_fader_momentary(uint32_t id, uint32_t native);   /* main.c */
-static const char *const BK_NAME[BK_N] = {"PAGE", "SOUND", "FILTER", "ENV", "LFO", "FX", "ARP", "LEVELS"};
+static const char *const BK_NAME[BK_N] = {"PAGE", "SOUND", "FILTER", "ENV", "LFO", "FX", "ARP", "LEVELS", "SENDS", "PANS"};
+/* the track banks: control i reaches track i's id (LEVELS, SENDS, PANS: the faders as a mixer; P_COUNT: not one) */
+static uint32_t bank_trk(uint32_t bank)
+{
+    return bank == BK_LEVELS ? P_LEVEL : bank == BK_SENDS ? P_FXSEND : bank == BK_PANS ? P_PAN : P_COUNT;
+}
 #define SMK_BANK_HOLD_MS 500u                           /* a BANK button held this long: its picker */
 static uint8_t smk_kbank;                               /* K1..K4's bank */
 static uint8_t smk_fbank = BK_LEVELS;                   /* the faders' */
@@ -90,7 +96,7 @@ static const page_t *bank_page(uint32_t bank)
         smk_bank_pg.id[k] = ids[k];
     return &smk_bank_pg;
 }
-static int bank_has(uint32_t bank) { return bank == BK_PAGE || bank == BK_LEVELS || bank_page(bank) != 0; }
+static int bank_has(uint32_t bank) { return bank == BK_PAGE || bank_trk(bank) < P_COUNT || bank_page(bank) != 0; }
 /* the next bank the engine has, after b (wrapping) */
 static uint32_t bank_next(uint32_t b, int32_t dir)
 {
@@ -124,7 +130,7 @@ static uint32_t strip_bank(void)
 /* the knobs' bank page while they edit (0: the page's own) */
 static const page_t *knob_bank_page(void)
 {
-    return smk_kbank != BK_PAGE && smk_kbank != BK_LEVELS && bank_knobs_on() ? bank_page(smk_kbank) : 0;
+    return smk_kbank != BK_PAGE && bank_trk(smk_kbank) == P_COUNT && bank_knobs_on() ? bank_page(smk_kbank) : 0;
 }
 /* the header's tag: FADERS while the faders' cards are up, the knobs' bank (nothing for PAGE), else the pads' mode
  * while picked by hand and not what AUTO would show */
@@ -168,12 +174,13 @@ static int32_t smk_fader_value(uint32_t i)
     const param_desc_t *d;
     const page_t *pg;
     int32_t v;
-    if (smk_fbank == BK_LEVELS) {
+    uint32_t tid = bank_trk(smk_fbank);
+    if (tid < P_COUNT) {
         uint32_t t = trk_group() + i;
         if (t >= trk_n() || midi_track_only(&trk[t]))
             return -1;
-        d = &TP[P_LEVEL];
-        v = trk[t].p[P_LEVEL];
+        d = &TP[tid];
+        v = trk[t].p[tid];
     } else {
         pg = smk_fbank == BK_PAGE ? (ui.home ? stage_page() : cur_page()) : bank_page(smk_fbank);
         if (!pg || !fader_page_ok(pg))
@@ -190,16 +197,17 @@ static int32_t smk_fader_value(uint32_t i)
 static void smk_fader_set(uint32_t i, int32_t v)
 {
     const page_t *pg;
-    if (smk_fbank == BK_LEVELS) {
+    uint32_t tid = bank_trk(smk_fbank);
+    if (tid < P_COUNT) {                                /* LEVELS, SENDS, PANS: track i's */
         uint32_t t = trk_group() + i;
-        int16_t *vp = &trk[t].p[P_LEVEL];
+        int16_t *vp = &trk[t].p[tid];
         if (t >= trk_n() || midi_track_only(&trk[t]))
             return;
         if (t == song.sel)
-            smk_fader_momentary(P_LEVEL, 0);
-        *vp = (int16_t)(TP[P_LEVEL].min + ((int32_t)TP[P_LEVEL].max - TP[P_LEVEL].min) * v / 127);
+            smk_fader_momentary(tid, 0);
+        *vp = (int16_t)(TP[tid].min + ((int32_t)TP[tid].max - TP[tid].min) * v / 127);
         if (!(t == song.sel && momentary.active))
-            (void)motion_capture(&trk[t], P_LEVEL, *vp);
+            (void)motion_capture(&trk[t], tid, *vp);
         return;
     }
     pg = smk_fbank == BK_PAGE ? (ui.home ? stage_page() : cur_page()) : bank_page(smk_fbank);

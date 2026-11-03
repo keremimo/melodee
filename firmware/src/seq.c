@@ -852,6 +852,54 @@ static __attribute__((noinline)) void kb_lat(uint32_t k)
  * own key map (the DRUM kit: a GM note a key) continues it chromatically. Not while a layer's button is held, on
  * the DRUM grid or in NAME (the 27 keys are the UI's there); a key-up always ends what its key-down started */
 static uint8_t ext_chord[FM1_NKEY][CHORD_MAX], ext_chn[FM1_NKEY], ext_trk[FM1_NKEY];
+/* the sustain pedal (smk_input.h fm1_in.pedal, mux C address 6): a switch of either polarity, its rest level taken at
+ * power-on (nothing plugged: the reading never leaves it), down once it moves SMK_SUS_STEP from the rest. Down, the
+ * keys' and the KEYS pads' releases on a synth track wait, as under a controller's sustain: the key stays held
+ * (kb_sus for the 27 keys, EXT_SUS in ext_chn for the outer ten), so the arp, the chords and recording see it held;
+ * struck again it sounds again (a release and a new note, as a key struck before a full lift); up, the waiting
+ * releases go out. Drums ignore it (as MIDI's drum hits do). CC64 goes to the selected track's channel at each edge.
+ * A pedal "down" for a minute is a pedal plugged in after power-on (the jack's switch moved the rest): the new rest */
+#define SMK_SUS_STEP 200u
+#define SMK_SUS_RELEARN_MS 60000u
+#define EXT_SUS 0x80u
+static uint32_t kb_sus, kb_phys;                      /* the keys let go under the pedal, held on; the keys down last block */
+static uint8_t sus_down;
+static uint16_t sus_rest;
+static uint32_t sus_t0;
+static void ext_key_release(uint32_t k)
+{
+    track_t *t = &trk[ext_trk[k] % NTRK];
+    uint32_t i, mc = trk_midi_ch(trk_index(t));
+    for (i = 0; i < (ext_chn[k] & ~EXT_SUS); i++) {
+        input_off(t, ext_chord[k][i]);
+        midi_out_event(0x08u | (0x80u | mc) << 8 | (uint32_t)ext_chord[k][i] << 16);
+    }
+    ext_chn[k] = 0;
+}
+static uint32_t sustain_poll(void)
+{
+    uint32_t raw = fm1_in.pedal, d, down, k;
+    if (fm1_in.frames < 300u) {                       /* (the readings settle) */
+        sus_rest = (uint16_t)raw;
+        return 0;
+    }
+    d = raw > sus_rest ? raw - sus_rest : sus_rest - raw;
+    down = d > SMK_SUS_STEP;
+    if (down && sus_down && fm1_ms - sus_t0 > SMK_SUS_RELEARN_MS) {
+        sus_rest = (uint16_t)raw;
+        down = 0;
+    }
+    if (down != sus_down) {
+        sus_down = (uint8_t)down;
+        sus_t0 = fm1_ms;
+        midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(song.sel)) << 8 | 64u << 16 | (down ? 127u : 0u) << 24);
+        if (!down)
+            for (k = 0; k < FM1_NKEY; k++)
+                if (ext_chn[k] & EXT_SUS)
+                    ext_key_release(k);
+    }
+    return down;
+}
 static uint32_t smk_ext_map(const track_t *t, int32_t ks)     /* ks: -5..-1 below key 0 (F3), 27..31 above */
 {
     const engine_t *e = ENGINES[eng_idx(t->eng_req)];
@@ -880,16 +928,16 @@ static void ext_keys_block(void)
         track_t *t;
         if (k >= FM1_NKEY)
             continue;
-        if (!v) {                                     /* up: the notes it started, on its track */
-            t = &trk[ext_trk[k] % NTRK];
-            mc = trk_midi_ch(trk_index(t));
-            for (i = 0; i < ext_chn[k]; i++) {
-                input_off(t, ext_chord[k][i]);
-                midi_out_event(0x08u | (0x80u | mc) << 8 | (uint32_t)ext_chord[k][i] << 16);
-            }
-            ext_chn[k] = 0;
+        if (!v) {                                     /* up: the notes it started, on its track (under the pedal: they
+                                                       * wait, unless a drum's) */
+            if (sus_down && ext_chn[k] && !drum_track(&trk[ext_trk[k] % NTRK]))
+                ext_chn[k] |= EXT_SUS;
+            else
+                ext_key_release(k);
             continue;
         }
+        if (ext_chn[k] & EXT_SUS)                     /* struck again under the pedal: sounds again */
+            ext_key_release(k);
         if (ext_chn[k] || kb_asleep || kb_lock || (fm1_in.buttons & kb_mask) || song.grid)   /* (as the 27 keys) */
             continue;
         t = TSEL;
@@ -912,7 +960,7 @@ static void keyboard_block(void)
 {
     uint32_t cur = fm1_in.notes, ch, k;
 #if BOARD_SMK37
-    uint32_t rt;
+    uint32_t rt, sus = sustain_poll();
     ext_keys_block();
     {   /* keys struck again before a full lift (smk_input.h): their bit never dropped, so end the note and
          * start it with the new velocity; a key the UI or a layer owns, or that just went down or up: as is */
@@ -921,6 +969,19 @@ static void keyboard_block(void)
         fm1_in.notes_retrig = 0;
         fm1__unlock(l);
     }
+    if (sus) {                                        /* the pedal: a note key let go stays held (not a layer's, not a
+                                                       * drum's); one struck again sounds again, as the retrigger */
+        uint32_t gone = kb_prev & ~cur & ~kb_layer & ~punch_claimed, again = cur & ~kb_phys & kb_sus;
+        for (k = 0; gone >> k; k++)
+            if (((gone >> k) & 1u) && kb_note[k] != KB_SILENT && !drum_track(&trk[kb_trk[k] % NTRK]))
+                kb_sus |= 1u << k;
+        kb_sus &= ~again;
+        rt |= again;
+    } else {
+        kb_sus = 0;
+    }
+    kb_phys = cur;
+    cur |= kb_sus;
     rt &= cur & kb_prev;
     for (k = 0; rt >> k; k++) {
         if (!((rt >> k) & 1u) || ((kb_layer | punch_claimed) >> k) & 1u || kb_note[k] == KB_SILENT)

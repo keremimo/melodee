@@ -30,7 +30,12 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
        MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN, MI_MIDI_FORGET,
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
-static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
+static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD",
+#if BOARD_SMK37
+                                              "PAD LIGHTS",                 /* (the pads' level: ui_input.c smk_pad) */
+#else
+                                              "LIGHTS",
+#endif
 #if MELODEE_USB_AUDIO
                                               "USB AUDIO", "USB INPUT", "USB VOLUME",
 #endif

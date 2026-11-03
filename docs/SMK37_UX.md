@@ -10,7 +10,9 @@ the banks (`firmware/src/ui_smk.c`, the faders in `main.c`), the pad modes and t
 choose a pattern or a track on the SMK (Kerem: only the pads trigger, arm and record sequences); the PATTERNS pads
 carry the FM-1's whole pattern-key gesture set (`ui_input.c` pads_patterns_on, smk_pat_bit: the one state machine,
 `pattern_keys`, fed by the pads instead of the keys), SEQ held puts them on the pads everywhere, and the keys go on
-playing (and recording, armed) with SEQ held, on PATTERNS and under the pattern dialog. Where the build differs from
+playing (and recording, armed) with SEQ held, on PATTERNS and under the pattern dialog. Evening: the sustain pedal
+(section 6), STEPS taps with velocity, the SENDS and PANS track banks (sections 3-4), PAD LIGHTS (7.5), SEQ PLAY's
+red LED blinking while a count-in or a take waits. Where the build differs from
 the first proposal below, the text says so in place. The open questions (section 8) stand, answered for now by the
 build's defaults.
 
@@ -114,11 +116,12 @@ These take the pads for as long as they last, whatever the mode, and give them b
 |---|---|---|
 | SEQ held | PATTERNS (above), over a mode picked by hand too; the keys play on | unchanged (`seq_held.png`) |
 | GLO held (SET) | top row MUTE 1-4: FILLED while the track sounds, ON when muted or soloed out; bottom row SOLO 1-4 while held (ACTIVE), **All** unmutes, **Tap** taps (ON; dim with an outside clock) | the GLO map as it is (`layer_glo.png`) |
+| GLO double-tapped (locked, #83) | the same map, kept until GLO is tapped again: the pads as a mute / solo surface for a performance (no mode of its own) | the GLO layer, locked |
 | SCALE held (SET) | a piano: top row C4 .. C5, bottom row the black keys between (the two gaps OFF); the root FILLED, the scale's notes ON, the rest OFF; a tap makes that note the root | the SCL map as it is (`layer_scl.png`) |
 | FX held (punch) | the 16 white keys' punches as today, each ON in its family's colour, the one held ACTIVE | the punch layer as it is |
 | EDIT held | the FM-1's white-key map on the grid layout: the sections on the pads; Init, Fav, Undo, Store stay on the black keys (built so; a map of their own is a later step) | the sections map as it is |
 | NAME | the letters on the 16 pads as today, the cycling pad ACTIVE; the black keys their functions | unchanged (`name.png`) |
-| KNOB BANK / FADER BANK held | top row the eight banks (the current ACTIVE, one the engine lacks OFF), bottom row AUTO, KEYS, DRUM, STEPS, PATTERNS (the current ACTIVE); a tap picks and the button may be let go | the bank picker (section 3) |
+| KNOB BANK / FADER BANK held | top row the first eight banks (the current ACTIVE, one the engine lacks OFF; SENDS and PANS by `<` `>` or K1), bottom row AUTO, KEYS, DRUM, STEPS, PATTERNS (the current ACTIVE); a tap picks and the button may be let go | the bank picker (section 3) |
 | a question, the menu | the pads keep their mode; KEYS and DRUM still play, STEPS and PATTERNS taps do nothing (as the FM-1's pattern keys under a dialog), the pattern dialog's own pads excepted | - |
 
 ### 2.4 AUTO: which mode the page picks
@@ -172,7 +175,7 @@ The keys have no lights. Everything the FM-1 showed on them has a new home:
 ## 3. Knob banks
 
 What K1..K4 edit. One list, shared with the faders (one table in the firmware; a bank is a set of four parameters,
-whichever control reaches them):
+whichever control reaches them, or, for the three track banks, one parameter of tracks 1..4):
 
 | Bank | PROPHET | CZ-1 | FM6 | SID, NOISE, the others | DRUM |
 |---|---|---|---|---|---|
@@ -184,6 +187,8 @@ whichever control reaches them):
 | FX | the rack: MIX of slots 1-3, SEND (today's fader bank D) | | | | the same |
 | ARP | ARP's MODE RATE OCT GATE | | | | - |
 | LEVELS | tracks 1-4 LEVEL (the GLO layer's knobs; the fader default) | | | | the same |
+| SENDS | tracks 1-4 SEND (to the shared FX) | | | | the same |
+| PANS | tracks 1-4 PAN | | | | the same |
 
 A bank the engine has nothing for ("-") is skipped when cycling and dark on the picker's pad; its name stays in the
 picker's list, dim. Which parameters exactly go in CZ-1's and FM6's ENV / FILTER rows is an open question (section 8);
@@ -202,7 +207,7 @@ so `edit_param`, the cards, the pickers and motion capture follow with no new pa
 
 ## 4. Fader banks
 
-The same eight banks; the default is LEVELS (tracks 1-4). **FADER BANK tap** = the next bank, **held** = the picker
+The same ten banks; the default is LEVELS (tracks 1-4; with SENDS and PANS the faders are a four-track mixer). **FADER BANK tap** = the next bank, **held** = the picker
 (`pick_faders.png`), the LED lit while the bank is not LEVELS. PAGE on the faders is the classic: on ENV the faders are
 A D S R, on a P5 filter page the filter, on MIXER the levels; it follows SELECT.
 
@@ -237,8 +242,13 @@ blink while held (the layer's blink). SEQ PLAY's two-colour LED: green as PLAY, 
 - Pad pressure: channel aftertouch to the selected track in KEYS (the matrix's AT source; nothing unless a MOD slot
   uses it, so no sound changes by itself). DRUM and STEPS: none in phase 1 (open: pressure on a held step = its
   velocity).
-- Velocity: the keys' and pads' velocity as today (the stock curves from the calibration record). Open: a SETTINGS
-  row for the pads' curve (soft / normal / hard) if the stock curve feels wrong.
+- Velocity: the keys' and pads' velocity as today (the stock curves from the calibration record), VELOCITY in the
+  menu (NORMAL SOFT HARD FIXED). A STEPS tap places its step at the tap's velocity (a synth track) or, hard
+  (>= 112) on an empty step, as an accent (the drum grid).
+- The sustain pedal (the jack; `seq.c` sustain_poll): down, a key or KEYS pad let go stays held on a synth track (the
+  arp, chords and recording see it held), struck again it sounds again; up releases; drums ignore it; CC64 goes out
+  on the track's channel. Its rest level is taken at power-on (either polarity, nothing plugged: never down); a pedal
+  down for a minute is one plugged in afterwards: the new rest.
 - The 10 outer keys: notes, always (no lights, so no shortcuts).
 
 ## 7. Screen changes
@@ -254,8 +264,8 @@ All composed from what exists; no new component, no hint rows, no text panels:
 3. **The bank picker**: the existing picker card (`pick_draw`'s) with the bank names, over the two left columns,
    while a BANK button is held.
 4. **Stage's sheet**: a **Pads** row (AUTO / KEYS / DRUM / STEPS / PATTERNS), after Add / Remove track.
-5. **SETTINGS**: no new rows in phase 1 (the pad velocity curve later, if wanted). KEYS LIGHTS has no keys to light on
-   the SMK: hidden there (it still dims idle buttons; keep that under a BUTTONS LIGHTS name, or drop).
+5. **SETTINGS**: VELOCITY (built). The FM-1's LIGHTS row is **PAD LIGHTS** on the SMK: the pads' level, OFF 1/8,
+   LOW 1/4, MID 1/2 (the default), HIGH 3/4, FULL; the lights' planes never gate on it there.
 6. Everything else (PATTERNS, NOTES, the grid, the layers, NAME, the dialogs) is unchanged: the pads mirror it.
 
 ## 8. Open questions (for Kerem)

@@ -424,28 +424,34 @@ static void layer_glo_keys(int32_t h)
     }
 }
 
-static void layer_cards(uint32_t l)
+/* T1..T4's id (LEVEL; the SMK-37's banks: SEND, PAN) as four cards (the track's icon; muted: dim); T5..T8 their
+ * channel */
+static void trk_cards(uint32_t id)
 {
     char val[12];
     const char *unit;
     uint32_t c;
-    if (l == LAYER_GLO) {                 /* T1..T4 LEVEL (the track's icon; muted: dim); T5..T8 their channel */
-        for (c = 0; c < NPART; c++) {
-            uint32_t t = trk_group() + c;
-            if (t >= trk_n()) {                         /* (a track not in use: an empty card) */
-                draw_column(c, "", "", "", T_THEME, -1, ICON_NONE);
-                continue;
-            }
-            if (midi_track_only(&trk[t])) {             /* (no level: the MIDI Track's channel) */
-                char ch[8] = "CH ";
-                fmt_int(ch + 3, (int32_t)midi_track_channel(&trk[t]) + 1);
-                draw_column(c, "MIDI", ch, "", glo_sounding(t) ? VAL(c) : T_DIM, -1, ICON_NONE);
-                continue;
-            }
-            param_format(&TP[P_LEVEL], trk[t].p[P_LEVEL], val, &unit);
-            draw_column(c, "LEVEL", val, unit, glo_sounding(t) ? VAL(c) : T_DIM, RATIO(&TP[P_LEVEL], trk[t].p[P_LEVEL]),
-                        trk_icon(t, 1));
+    for (c = 0; c < NPART; c++) {
+        uint32_t t = trk_group() + c;
+        if (t >= trk_n()) {                             /* (a track not in use: an empty card) */
+            draw_column(c, "", "", "", T_THEME, -1, ICON_NONE);
+            continue;
         }
+        if (midi_track_only(&trk[t])) {                 /* (no level: the MIDI Track's channel) */
+            char ch[8] = "CH ";
+            fmt_int(ch + 3, (int32_t)midi_track_channel(&trk[t]) + 1);
+            draw_column(c, "MIDI", ch, "", glo_sounding(t) ? VAL(c) : T_DIM, -1, ICON_NONE);
+            continue;
+        }
+        param_format(&TP[id], trk[t].p[id], val, &unit);
+        draw_column(c, TP[id].label, val, unit, glo_sounding(t) ? VAL(c) : T_DIM, RATIO(&TP[id], trk[t].p[id]),
+                    trk_icon(t, 1));
+    }
+}
+static void layer_cards(uint32_t l)
+{
+    if (l == LAYER_GLO) {                 /* T1..T4 LEVEL */
+        trk_cards(P_LEVEL);
     } else {                                            /* the page's four (SCL: LY_SCL) */
         uint8_t h = ui.home, pg = ui.page;
         ui.home = 0;
