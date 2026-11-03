@@ -5,6 +5,7 @@
  * glow: ui_input.c ui_leds), KNOB ACCEL (ui_input.c accel_by), USB AUDIO (IN+OUT, IN, OUT or OFF; usb.c ua_off_set),
  * USB INPUT (stereo master or four track stems; usb.c ua_tracks_set),
  * USB HOST (the USB-C port hosts a USB-MIDI controller instead of talking to a computer; not saved; usb_host.c),
+ * TRS MIDI OUT (SMK-37: the jack sends what USB MIDI sends; smk_midi_out.h),
  * AUTOSAVE (automatic project saves after five seconds stopped and untouched), HOME SELECT (what SELECT turns on HOME:
  * ui.c HS_*), GLO SELECT (what SELECT turns with GLO held, on any page: the same choices), UNUSED TRACKS (SHOW:
  * Stage and MIXER keep a greyed "Add track" row for each place not in use; HIDE: the tracks in use only, ui.c
@@ -23,6 +24,9 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #if MELODEE_BLE
        MI_BLE,
 #endif
+#if BOARD_SMK37
+       MI_TRS,
+#endif
        MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN, MI_MIDI_FORGET,
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
@@ -35,6 +39,9 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #endif
 #if MELODEE_BLE
                                               "BLUETOOTH",
+#endif
+#if BOARD_SMK37
+                                              "TRS MIDI OUT",
 #endif
                                               "MIDI KNOBS", "MIDI MODE", "MIDI LEARN", "FORGET LEARNED",
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
@@ -328,6 +335,9 @@ static void draw_menu(void)
                 if (i == MI_HOME_SEL) value = HS_NAME[home_select()];
                 if (i == MI_GLO_SEL) value = HS_NAME[glo_select()];
                 if (i == MI_TRACKS) value = GLO_SELECT & TRACKS_HIDE ? "HIDE" : "SHOW";
+#if BOARD_SMK37
+                if (i == MI_TRS) value = GLO_SELECT & TRS_OUT_OFF ? "OFF" : "ON";
+#endif
                 if (i == MI_SCREEN) value = (const char *const[]){"NEVER", "5 MIN", "15 MIN", "30 MIN", "60 MIN"}[scr_get()];
                 if (i == MI_LIGHTS) value = LIGHTS_NAME[settings_lights % LIGHTS_N];
 #if MELODEE_USB_AUDIO
@@ -518,6 +528,13 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         GLO_SELECT = (uint8_t)(hide ? GLO_SELECT | TRACKS_HIDE : GLO_SELECT & ~TRACKS_HIDE);
         ui.force = 1; ok = 0;
     }
+#if BOARD_SMK37
+    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_TRS) {        /* KNOB 1 right ON, left OFF; OCT+ toggles */
+        uint32_t off = s > 0 ? 0u : s < 0 ? 1u : !(GLO_SELECT & TRS_OUT_OFF);
+        GLO_SELECT = (uint8_t)(off ? GLO_SELECT | TRS_OUT_OFF : GLO_SELECT & ~TRS_OUT_OFF);
+        ui.force = 1; ok = 0;
+    }
+#endif
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_GLO_SEL) {    /* .. GLO SELECT the same */
         glo_select_set(hs_step(glo_select(), s));
         ui.force = 1; ok = 0;

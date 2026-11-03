@@ -11,13 +11,19 @@
  * install (ui_boot.c).
  *   0xCB000  header: magic, length, CRC-32 of the payload, header CRC (written last: the commit record)
  *   0xCB020  payload: .mres as linked; the sector tails hold data too (build.py: none parses as an update record) */
-#define RES_BASE 0xCB000u
-#define RES_SECTORS 21u                               /* to 0xDFFFF: room for more data later */
+#ifndef FL_RES_LO                                     /* (hal/fm1_flash_map.h, per board; host tests: the FM-1's) */
+#define FL_RES_LO 0xCB000u
+#define FL_RES_HI 0xE0000u
+#endif
+#define RES_BASE FL_RES_LO                            /* FM-1 0xCB000, 21 sectors to 0xDFFFF; SMK-37 0x9F000, 16 sectors */
+#define RES_SECTORS ((FL_RES_HI - FL_RES_LO) / ST_SECTOR)
 #define RES_HEAD 32u
 #define RES_MAGIC 0x3153524Du                       /* MRS1 */
 typedef struct { uint32_t magic, len, crc, rsv[4], hcrc; } res_hdr_t;
 _Static_assert(sizeof(res_hdr_t) == RES_HEAD, "resource commit record");
+#if !BOARD_SMK37 && defined(FL_DATA_HI)
 _Static_assert(RES_BASE + RES_SECTORS * ST_SECTOR == FL_DATA_HI, "the region ends at the OTA staging");
+#endif
 extern const uint8_t _mres_start[], _mres_end[];
 static uint8_t *wire_take(void);                       /* project.c: the main loop's staging RAM */
 /* build.py finds this by name and writes the payload's length and CRC-32 into the image */

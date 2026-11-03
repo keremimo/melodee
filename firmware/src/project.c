@@ -1432,19 +1432,28 @@ static int settings_write_record(uint32_t n)
 _Static_assert(sizeof set_rec + sizeof mb_saved <= ST_SECTOR - sizeof(st_hdr_t), "BLE settings and template fit A/B settings sectors");
 #endif
 
+#ifndef FL_JEDEC_OK
+#define FL_JEDEC_OK(id) ((id) == 0x856014u || (id) == 0xB36014u)   /* (host tests without hal/fm1_flash_map.h: the FM-1's parts) */
+#endif
 static void persist_boot(void)                    /* before settings_init / panel_init */
 {
 #if MELODEE_FLASH
     persist_t p;
     boot_work.state = 0;
     uint32_t f = irq_save();
-    uint32_t jid = FL_FAR(fl_jedec_ram)();
-    flash_ok = (jid == 0x856014u || jid == 0xB36014u);    /* the expected 1 MiB parts (0x85 Puya, 0xB3 UCUN), else stay RAM-only */
+    flash_ok = FL_JEDEC_OK(FL_FAR(fl_jedec_ram)());      /* the expected 1 MiB parts (fm1_flash_map.h), else stay RAM-only */
     irq_restore(f);
     if (!flash_ok)
         return;
-    fl_plain_window_init();                        /* flash above 0x93000 reads as plaintext through XIP
+    fl_plain_window_init();                        /* flash above 0x93000 (SMK 0x9D000) reads as plaintext through XIP
                                                     * (user sample sets are played from there) */
+#if BOARD_SMK37
+    if (st_owner_check() < 0) {                    /* never parse another ported firmware's store (storage.c): */
+        flash_ok = 0;                              /* not cleared, so RAM-only until the next boot */
+        st_foreign = 1;
+        return;
+    }
+#endif
     int moved = st_small_migrate(wire_take(), sizeof proj_wire_u);   /* preset banks still in old pairs: into the pool */
 #ifdef RES_BASE
     res_boot(moved == 0);                          /* the resource region (res.c) installed? */

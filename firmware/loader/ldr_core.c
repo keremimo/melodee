@@ -41,15 +41,33 @@
  *   ldr_progress(done, total)
  * plus the ota.c hooks (frames, time, idle). */
 #define LDR_APP_LO 0x4000u
+#if BOARD_SMK37
+/* SMK-37: app area up to the stock PRCT end (the stub, the body and the marker at the FM-1's places; the sectors
+ * from 0x93000 up hold what the package holds there); records only in the VM, so the record scan can never erase
+ * BTIF / USRTRIM (0xC0000..0xC1FFF, the key calibration) or anything above */
+#define LDR_APP_HI 0x9D000u
+#define LDR_REC_LO 0x9D000u
+#define LDR_REC_HI 0xC0000u
+_Static_assert(LDR_APP_HI <= LDR_REC_LO && LDR_REC_HI <= 0xC0000u && LDR_APP_LO >= 0x4000u,
+               "SMK loader windows must stay below BTIF / USRTRIM and above the head");
+#else
 #define LDR_APP_HI 0x93000u
 #define LDR_REC_LO 0x93000u                     /* update records live above the app ... */
 #define LDR_REC_HI 0xFC000u                     /* ... and below Melodee's globals */
+#endif
 #define LDR_STUB_SEC 0x4000u                    /* the directory and the boot stub */
 #define LDR_MARK_SEC 0x91000u                   /* stub_core.h STUB_MARK_SEC, STUB_MARK_OFF */
 #define LDR_MARK_OFF 0x91FE0u
 #define LDR_RES_TYPE 101u                       /* the package's res.bin (tools/fm1pkg_make.py RES_TYPE) */
+#if BOARD_SMK37
+/* the resource region (firmware/src/res.c RES_BASE, hal/fm1_flash_map.h FL_RES): in the VM, below the store owner tag */
+#define LDR_RES_LO 0x9F000u
+#define LDR_RES_HI 0xAF000u
+#else
 #define LDR_RES_LO 0xCB000u                     /* the resource region (firmware/src/res.c RES_BASE ...) */
 #define LDR_RES_HI 0xE0000u                     /* ... to the staged loader */
+#endif
+_Static_assert(LDR_RES_LO >= LDR_REC_LO && LDR_RES_HI <= LDR_REC_HI, "the resource region lies in the loader's record window");
 #define LDR_RES_MAGIC 0x3153524Du               /* res.c RES_MAGIC "MRS1": its commit record */
 #define LDR_ST_MAGIC 0x554C4546u                /* storage.c ST_MAGIC "FELU": a storage commit record */
 

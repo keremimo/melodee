@@ -90,6 +90,11 @@ static void shw_delay_us(uint32_t us)                /* fm1_delay_us */
  * the app's screen-off, which drives it high, left the unit without keys until it was low again) no key reads
  * closed and no LED lights. on: fm1_lcd_hw_init's first two lines (low, an output), which the app runs before its
  * first key scan; off: fm1_lcd_backlight(0), the app's screen-off */
+#if BOARD_SMK37
+/* SMK-37: no such rail (the keyboard's matrix and LEDs are always powered) and PA2 is a matrix row there: never an
+ * output. Nothing to do */
+static void shw_rail(uint32_t on) { (void)on; }
+#else
 static void shw_rail(uint32_t on)
 {
     if (on) {
@@ -99,6 +104,7 @@ static void shw_rail(uint32_t on)
         R32(0x50000u) |= 1u << 2;                    /* FM1_LCD_PA_OUT |= FM1_LCD_BL */
     }
 }
+#endif
 
 /* ------------------------------------------------------------------ key matrix, LEDs (hal/fm1_input.h) --- */
 #define SHW_PR(p, r) R32(0x50000u + (p) * 0x40u + (r))   /* hal/fm1_gpio.h FM1_PR */
@@ -106,6 +112,90 @@ enum { SHW_PA = 0, SHW_PB = 1, SHW_PH = 7 };
 enum { SHW_OUT = 0x00, SHW_IN = 0x04, SHW_DIR = 0x08, SHW_DIE = 0x0C, SHW_PU = 0x10, SHW_PD = 0x14, SHW_HD0 = 0x18,
        SHW_HD = 0x1C };
 
+#if BOARD_SMK37
+/* SMK-37 (hal/smk_input.h, the keyboard's own HAL): four 595s (32 bits) on PA3 (clock) / PA4 (data), latched by PA1,
+ * PA0 their output enable (low); the app shifts them with SPI2 (group C, IOMAP_CON1 bits 17..16), the stub by hand,
+ * the same bits in the same order (the DMA's four bytes from memory, little-endian, each msb first). Word bits
+ * 31..24: columns 0..7 (active low, one-hot); bits 15..0: the button LED lines (active low). OCTAVE- is button 4 at
+ * column 6, OCTAVE+ button 5 at column 3, both on row 6 = PH8 (input, pull-up, low = closed: smk_input.h SMK_BTNC,
+ * smk__rows). The only pins touched: PA0, PA1, PA3, PA4 (outputs, as the app's) and PH8 (an input, as the app's);
+ * never PA2, PA5..PA9, PH6, PH9 (rows: inputs, left as they are) */
+#define SHW_IOMAP_CON1 R32(0x51020u)
+#define SHW_USBIO_CON R32(0x16A0Cu)                      /* the button LEDs' two commons (smk_input.h smk__common) */
+#define SHW_COLW(c) (~(0x01000000u << (c)))             /* smk_input.h SMK_COLW, columns 0..7 */
+enum { SHW_COL_OCTDN = 6, SHW_COL_OCTUP = 3, SHW_ROW_PH = 8, SHW_LED_OCTDN = 13 };   /* (LED group 0, bit 13) */
+
+static void shw_sr_word(uint32_t w)                  /* smk_input.h smk__shift (by hand) + smk__latch */
+{
+    uint32_t i;
+    for (i = 0; i < 32u; i++) {
+        if ((w >> ((i & ~7u) + 7u - (i & 7u))) & 1u)  /* byte i / 8 of the word, its bit 7 first */
+            SHW_PR(SHW_PA, SHW_OUT) |= 1u << 4;
+        else
+            SHW_PR(SHW_PA, SHW_OUT) &= ~(1u << 4);
+        SHW_PR(SHW_PA, SHW_OUT) |= 1u << 3;
+        SHW_PR(SHW_PA, SHW_OUT) &= ~(1u << 3);
+    }
+    SHW_PR(SHW_PA, SHW_OUT) |= 1u << 1;
+    SHW_PR(SHW_PA, SHW_OUT) &= ~(1u << 1);
+}
+
+static void shw_common(uint32_t grp_on)              /* smk__common: 0 / 1 that group's common low, 2 both off */
+{
+    uint32_t v = SHW_USBIO_CON | 0x1000Fu | (1u << 17) | (1u << 18);
+    if (grp_on < 2u)
+        v &= ~(1u << (17u + grp_on));
+    SHW_USBIO_CON = v;
+}
+
+static void shw_input_init(void)                     /* fm1_input_init's pins (smk_input.h; the app repeats it later) */
+{
+    const uint32_t out = (1u << 0) | (1u << 1) | (1u << 3) | (1u << 4), row = 1u << SHW_ROW_PH;
+    SHW_IOMAP_CON1 &= ~0x30000u;                     /* PA3 / PA4 as GPIO (a warm reset keeps the app's SPI2) */
+    SHW_PR(SHW_PA, SHW_DIE) |= out;                  /* smk__pin_out: PA0 /OE, PA1 latch, PA3, PA4 low */
+    SHW_PR(SHW_PA, SHW_PU) &= ~out;
+    SHW_PR(SHW_PA, SHW_PD) &= ~out;
+    SHW_PR(SHW_PA, SHW_OUT) &= ~out;
+    SHW_PR(SHW_PA, SHW_DIR) &= ~out;
+    SHW_PR(SHW_PH, SHW_DIE) |= row;                  /* smk__pin_in_pu: PH8 */
+    SHW_PR(SHW_PH, SHW_DIR) |= row;
+    SHW_PR(SHW_PH, SHW_PD) &= ~row;
+    SHW_PR(SHW_PH, SHW_PU) |= row;
+    shw_common(2);
+    shw_sr_word(0xFFFFFFFFu);
+}
+
+/* one sample: bit0 OCTAVE- (column 6, row PH8), bit1 OCTAVE+ (column 3, row PH8), bit2 the same row with no column
+ * latched, 1 = the row low; 100 us to settle as on the FM-1. *pa: the PH inputs as read for bit0 */
+static uint32_t shw_keys(uint32_t *pa)
+{
+    static const uint8_t COL[2] = {SHW_COL_OCTDN, SHW_COL_OCTUP};
+    uint32_t p, k = 0, in;
+    for (p = 0; p < 3u; p++) {
+        shw_sr_word(p < 2u ? SHW_COLW(COL[p]) : 0xFFFFFFFFu);
+        shw_delay_us(100);
+        in = SHW_PR(SHW_PH, SHW_IN);
+        if (!p)
+            *pa = in;
+        k |= ((~in >> SHW_ROW_PH) & 1u) << p;
+    }
+    shw_sr_word(0xFFFFFFFFu);
+    return k;
+}
+
+/* OCTAVE-'s LED, n times on for ms (rescue only) */
+static void shw_blink(uint32_t n, uint32_t ms)
+{
+    while (n--) {
+        shw_sr_word(0xFFFFFFFFu & ~(1u << SHW_LED_OCTDN));
+        shw_common(0);
+        shw_delay_us(ms * 1000u);
+        shw_common(2);
+        shw_sr_word(0xFFFFFFFFu);
+        shw_delay_us(120000u);
+    }
+}
+#else
 static void shw_led_lines(uint32_t rowmask)          /* fm1__led_lines: row bit 1 PA9, 2 PA10, 3 PH6, 4 PH9 */
 {
     uint32_t a = SHW_PR(SHW_PA, SHW_OUT) & ~((1u << 9) | (1u << 10));
@@ -189,20 +279,27 @@ static void shw_blink(uint32_t n, uint32_t ms)
     shw_sr_word(0xFFFFu);
 }
 
+#endif /* BOARD_SMK37 */
+
 /* ------------------------------------------------------------------ the plain XIP window (hal/fm1_flash.h) --- */
 #define SHW_SFCENC_CON (*(volatile uint8_t *)0x40300u)
 #define SHW_SFCENC_UNENC_H R32(0x40308u)
 #define SHW_SFCENC_UNENC_L R32(0x4030Cu)
 #define SHW_CACHE_CON R32(0x1EEE008u)
 #define SHW_XIP(off) (0x02000000u + (uint32_t)(off) - 0x4000u)   /* hal/fm1_xip.h FM1_XIP */
+#if BOARD_SMK37
+#define SHW_PLAIN_LO 0x9D000u                        /* hal/fm1_flash_map.h FL_PLAIN_LO (stub_core.h STUB_PLAIN_LO) */
+#else
+#define SHW_PLAIN_LO 0x93000u
+#endif
 
-/* fl_plain_window_init with its fl_inval: flash from 0x93000 reads undecrypted (the staged loader is stored
- * plain). Interrupts are off already and stay off (no cli / sti here) */
+/* fl_plain_window_init with its fl_inval: flash from 0x93000 (SMK: 0x9D000) reads undecrypted (the staged loader is
+ * stored plain). Interrupts are off already and stay off (no cli / sti here) */
 static void shw_plain_window(void)
 {
-    uint32_t a = SHW_XIP(0x93000u) & ~31u, e = SHW_XIP(0x93000u) + (0x100000u - 0x93000u);
+    uint32_t a = SHW_XIP(SHW_PLAIN_LO) & ~31u, e = SHW_XIP(SHW_PLAIN_LO) + (0x100000u - SHW_PLAIN_LO);
     SHW_SFCENC_CON &= (uint8_t)~2u;
-    SHW_SFCENC_UNENC_L = SHW_XIP(0x93000u);
+    SHW_SFCENC_UNENC_L = SHW_XIP(SHW_PLAIN_LO);
     SHW_SFCENC_UNENC_H = 0x07FFFFFFu;
     SHW_SFCENC_CON |= 2u;
     while (!(SHW_CACHE_CON & 0x4000u))

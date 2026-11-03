@@ -5,6 +5,9 @@
  * audio keeps up, erases and writes only inside the storage areas, the audio buffer silenced
  * first. The host tests (storage_test.c) provide their own st_* on a simulated NOR. */
 static uint8_t flash_ok;                 /* JEDEC id matched at boot (persist_boot) */
+#if BOARD_SMK37
+#define ST_IDLE() fm1_wdt_feed()                /* (storage.c st_owner_check: a first boot clears ~80 sectors) */
+#endif
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {
     uint8_t *d = dst;
@@ -26,21 +29,41 @@ static void audio_silence(void)                 /* IRQs off: the DMA would loop 
     for (i = 0; i < sizeof abuf / sizeof abuf[0]; i++)
         abuf[i] = 0;
 }
+#if BOARD_SMK37
+static void st_stock_release(void);             /* storage.c: the stock mapping's end marker */
+static int st_in_usrflash(uint32_t off);
+#endif
+#if !MELODEE_PROPHET_PROTOTYPE
+static int st_erase_raw(uint32_t off)           /* the sector erase itself, inside the allowed windows */
+{
+    uint32_t took, f;
+    int rc;
+    f = irq_save();
+    audio_silence();
+    rc = FL_FAR(fl_erase4k_ram)(off, &took);
+    irq_restore(f);
+    return rc;
+}
+#endif
+#if BOARD_SMK37
+#define ST_ERASE_MARKER() st_erase_raw(FL_STOCKTAG_LO)   /* (storage.c st_stock_release: not through st_erase's hook) */
+#endif
 static int st_erase(uint32_t off)
 {
 #if MELODEE_PROPHET_PROTOTYPE
     (void)off;
     return -8; /* measurement firmware must not persist the temporary index-0 renderer */
 #else
-    uint32_t took, f;
-    int rc;
+#if BOARD_SMK37
+    if (!FL_STORE_OK(off, 0x1000u) && !FL_STOCKTAG_OK(off, 0x1000u))   /* (the marker: only its release) */
+        return -8;
+    if (st_in_usrflash(off))
+        st_stock_release();                     /* before the first erase in USRFLASH: see storage.c */
+#else
     if (!FL_STORE_OK(off, 0x1000u))
         return -8;
-    f = irq_save();
-    audio_silence();
-    rc = FL_FAR(fl_erase4k_ram)(off, &took);
-    irq_restore(f);
-    return rc;
+#endif
+    return st_erase_raw(off);
 #endif
 }
 static int st_prog(uint32_t off, const void *src, uint32_t n)
@@ -51,6 +74,10 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 #else
     if (!FL_STORE_OK(off, n))                   /* only inside the storage areas */
         return -8;
+#if BOARD_SMK37
+    if (st_in_usrflash(off))
+        st_stock_release();                     /* before the first program in USRFLASH too */
+#endif
     return fl_write(off, src, n);
 #endif
 }

@@ -43,5 +43,15 @@ try{
  assert.deepEqual(planFor('this',true),{firmware:false,resume:false,boot:true});
  assert.deepEqual(planFor('loader',true),{firmware:true,resume:true,boot:true});
  assert.equal(planFor('open',true),null);
+ // the SMK-37 builds: a package goes only to exactly its model (SMK-37 Pro, SMK-37 Elite, MKE-P37); the FM-1's as before
+ assert.equal(describeDevice({model:'SMK-37 Pro',text:'SMK-37 Pro_016'},'SMK-37 Pro_91061').kind,'stock');
+ assert.equal(describeDevice({model:'SMK-37 Pro',text:'SMK-37 Pro_900'},'SMK-37 Pro_91061').kind,'dev');
+ assert.deepEqual(describeDevice({model:'SMK-37 Pro',text:'SMK-37 Pro_91061'},'SMK-37 Pro_91061'),{kind:'this',version:'1.6.1'});
+ assert.equal(describeDevice({model:'SMK-37 Pro',text:'SMK-37 Pro_91060'},'SMK-37 Pro_91061').kind,'melodee');
+ assert.equal(describeDevice({model:'FM-1',text:'FM-1_91061'},'SMK-37 Pro_91061').kind,'model');
+ assert.equal(describeDevice({model:'SMK-37 Elite',text:'SMK-37 Elite_016'},'SMK-37 Pro_91061').kind,'model');
+ assert.equal(describeDevice({model:'SMK-37 Pro',text:'SMK-37 Pro_016'},'FM-1_91061').kind,'model');
+ assert.equal(describeDevice({model:'FM-1',text:'FM-1_016'},'FM-1_91061').kind,'stock');
+ assert.equal(describeDevice({model:'ota-SMK-37 Pro',text:'ota-SMK-37 Pro_900'},'SMK-37 Pro_91061').kind,'loader');
  console.log('Installer: Saadet layout/plan, Melodee channels, cache separation, fetch races, language and write lock passed');
 }finally{page.window.close();}

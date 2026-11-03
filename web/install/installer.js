@@ -14,7 +14,7 @@ import { productOf, logicalImage } from "../fm1pkg.js";
 import { SteadyUpdater } from "./transfer.js";
 import { hold, busyElsewhere } from "./keepalive.js";
 import { describeDevice, planFor, progressModel, remaining, afterFailure } from "./progress.js";
-import { MELODEE_LOADER, STOCK_LOADER } from "../fm1ota.js";
+import { MELODEE_LOADER, STOCK_LOADER, melodeeLoader } from "../fm1ota.js";
 import { BackupConnection } from "../fm1backup.js";
 import { installResources, resHeader, resStatus, RES_COMMAND } from "../fm1res.js";
 import { setupLeaving } from "./leave.js";
@@ -784,8 +784,9 @@ async function resumeWrite(up, image, product, step) {
   const ota = await up.waitFor(IS_OTA,8000);
   if (!ota) throw fail("noloader","FM-1 in update mode not found");
   ota.link.close();
-  if (ota.id.text !== MELODEE_LOADER) throw fail("wrongloader",`This package requires ${MELODEE_LOADER}; found ${ota.id.text}`,ota.id.text);
-  if (!await up.resume(image,step,product,MELODEE_LOADER)) throw fail("stopped","The update did not finish");
+  const own = melodeeLoader(product);           /* (an SMK-37 build: its model's loader) */
+  if (ota.id.text !== own) throw fail("wrongloader",`This package requires ${own}; found ${ota.id.text}`,ota.id.text);
+  if (!await up.resume(image,step,product,own)) throw fail("stopped","The update did not finish");
 }
 /* the resource region (firmware/src/res.c) after the firmware, or alone (Finish setup): the build's region through
  * editor command 82. Never fails the install: without it the FM-1 runs Melodee Pixel and INIT sounds, and the end
@@ -796,7 +797,7 @@ async function pushResources(up, step) {
   catch (e) { log(`resources: ${e.message}`); return { ok: false, error: fail("resfetch", e.message, e.message) }; }
   if (!region) return null;
   for (let tries = 0; tries < 20; tries++) {
-    const dev = await up.find(id => id.model === "FM-1");
+    const dev = await up.find(id => id.model === st.meta.product.split("_")[0]);
     if (dev) {
       const input = dev.link.input, output = dev.link.output; dev.link.close();
       const link = new BackupConnection(input, output);
@@ -880,7 +881,7 @@ async function start(isStock = false) {
       if (plan.resume) { phase = "staged"; await resumeWrite(up, image, product, step); }
       else {
         await up.install(image, product, (k, a, b) => { if (k === "loader") phase = "staged"; step(k, a, b); },
-                         MELODEE_LOADER);
+                         melodeeLoader(product));
       }
       phase = "done";
       mark(false);

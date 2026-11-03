@@ -149,13 +149,16 @@ function lock(on) {
  ['stock-file','stock-recovery','stock-skip-backup','transit-go','transit-recovery','transit-skip-backup'].forEach(id=>{$(id).disabled=on;});
 }
 const lockInstaller=on=>{setBusy(on);lock(on);};
-const refuseLoader=id=>sayK(id===STOCK_LOADER?'loaderStock':id===MELODEE_LOADER?'loaderMelodee':'loaderUnknown',id);
+// the official loader of each SMK-37 model ("ota-SMK-37 Pro_016") is official too; a Melodee package's own loader
+// carries its model (fm1ota.js melodeeLoader)
+const SMK_STOCK_LOADER=/^ota-(SMK-37 Pro|SMK-37 Elite|MKE-P37)_016$/;
+const refuseLoader=id=>sayK(id===STOCK_LOADER||SMK_STOCK_LOADER.test(id)?'loaderStock':id===melodeeLoader(id.slice(4))?'loaderMelodee':'loaderUnknown',id);
 $("stock-file").addEventListener("change", async () => {
   if (writing) return;
   const epoch = ++stockFileEpoch, file = $("stock-file").files[0]; stock = null; lockInstaller(false);
   if (!file) return;
   try {
-    if (file.size !== STOCK_V15_SIZE) throw new Error("FM-1 V15 / FM-1.fwsc");
+    if (file.size !== STOCK_V15_SIZE && file.size !== STOCK_SMK016_SIZE) throw new Error("FM-1 V15 / FM-1.fwsc, SMK-37 Pro V016 / SMK-37_Pro_016.fwsc");
     const verified = await validateStockPackage(new Uint8Array(await file.arrayBuffer()));
     if (epoch !== stockFileEpoch) return;
     stock = verified; if (!writing) sayK("stockValid"); lockInstaller(writing);
@@ -181,7 +184,9 @@ async function leaveMelodee(target) {
   if (isBusy() || (target === "stock" && !stock)) return;
   if (!navigator.requestMIDIAccess) { sayK("nomidi"); return; }
   let selected = stock;
-  const transit = target === "transit", ownLoader = transit ? MELODEE_LOADER : STOCK_LOADER;
+  // the official file goes to its model's official loader (FM-1: STOCK_LOADER; SMK-37 Pro: "ota-SMK-37 Pro_016")
+  const transit = target === "transit", ownLoader = transit ? MELODEE_LOADER : "ota-" + stock.product;
+  const model = transit ? "FM-1" : stock.product.split("_")[0];
   const skipBackup = $(target + "-skip-backup").checked;
   const confirmation = () => confirm(t(target + (skipBackup ? "ConfirmNoBackup" : "Confirm")));
   let completed = false, failure = null;
@@ -190,8 +195,8 @@ async function leaveMelodee(target) {
   let link = null;
   try {
     if (transit) { sayK("transitLoading"); selected = await fetchTransitPackage(); }
-    const key = transit ? "transit:0.1.3" : "stock:V15";
-    if (!await session.begin({key,label:transit ? "TransitFM1 0.1.3" : "M-VAVE V15",image:selected.image,onResume:() => leaveMelodee(target)})) return;
+    const key = transit ? "transit:0.1.3" : stock.product === "FM-1_015" ? "stock:V15" : "stock:" + stock.product;
+    if (!await session.begin({key,label:transit ? "TransitFM1 0.1.3" : stock.product === "FM-1_015" ? "M-VAVE V15" : "M-VAVE " + stock.product,image:selected.image,onResume:() => leaveMelodee(target)})) return;
     let midi;
     try { midi = await navigator.requestMIDIAccess({sysex:true}); } catch (e) { sayK("denied"); return; }
     const up = new SteadyUpdater(midi, log);
@@ -212,7 +217,7 @@ async function leaveMelodee(target) {
       if (await up.resume(selected.image, step, selected.product, ownLoader)) complete();
       else sayK("stopped");
     } else {
-      const device = await up.find(id => id.model === "FM-1");
+      const device = await up.find(id => id.model === model);
       if (!device) { sayK("notfound"); return; }
       const input = device.link.input, output = device.link.output; device.link.close();
       if (!skipBackup) {

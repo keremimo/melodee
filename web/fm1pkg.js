@@ -2,10 +2,10 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 //
-// FM-1 .fwsc packages in the browser: the package identity and the image the
+// FM-1 (and SMK-37) .fwsc packages in the browser: the package identity and the image the
 // device reads during an update.
 
-const BLOCKS = 20, BLK = 0x30, KEEP = 0x2F;
+const BLOCKS = 20, BLK = 0x30, KEEP = 0x2F, MAX_BLOCKS = 64;
 export const STOCK_V15_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a";
 export const STOCK_APP_SIZE = 0x8DFBC;
 export const STOCK_V15_SIZE = 699956;
@@ -228,7 +228,7 @@ export class Package {
   }
 }
 
-// the package identity ("FM-1_904"): one marker byte after each of the first 20 blocks
+// the package identity ("FM-1_904", "SMK-37 Pro_016"): one marker byte after each of the first 20 blocks
 export function productOf(fwsc) {
   if (fwsc.length < BLOCKS * BLK) throw new Error("not an FM-1 package (too short)");
   let s = "";
@@ -239,27 +239,90 @@ export function productOf(fwsc) {
   return s;
 }
 
-// the image the device addresses during an update: the .fwsc without the 20 marker bytes
-export function logicalImage(fwsc) {
-  const out = new Uint8Array(fwsc.length - BLOCKS);
-  for (let i = 0; i < BLOCKS; i++) out.set(fwsc.subarray(i * BLK, i * BLK + KEEP), i * KEEP);
-  out.set(fwsc.subarray(BLOCKS * BLK), BLOCKS * KEEP);
+// interleave blocks: 20, then more while the marker is the unused 0x7D (the stock SMK-37 Pro v016 has 36)
+export function blockCount(fwsc) {
+  let n = BLOCKS;
+  while (n < MAX_BLOCKS && (n + 1) * BLK <= fwsc.length && fwsc[n * BLK + KEEP] === 0x7D) n++;
+  return n;
+}
+
+function deinterleave(fwsc, blocks) {
+  const out = new Uint8Array(fwsc.length - blocks);
+  for (let i = 0; i < blocks; i++) out.set(fwsc.subarray(i * BLK, i * BLK + KEEP), i * KEEP);
+  out.set(fwsc.subarray(blocks * BLK), blocks * KEEP);
   return out;
 }
+
+function jlDec(b) {                        // JieLi ENC stream cipher (its own inverse)
+  const out = Uint8Array.from(b);
+  let key = 0xFFFF;
+  for (let i = 0; i < out.length; i++) {
+    out[i] ^= key & 0xFF;
+    key = ((key << 1) ^ (key & 0x8000 ? 0x1021 : 0)) & 0xFFFF;
+  }
+  return out;
+}
+
+// the logical image's flash.bin (type 0) and ota.bin (type 100) match their CRCs (as fm1_install.py)
+function filesOk(img) {
+  if (img.length < 0x40) return false;
+  const h = jlDec(img.subarray(0, 0x40)), rd = (a, o, n) => a.slice(o, o + n).reduce((v, x, i) => v + x * 2 ** (8 * i), 0);
+  if (crc16(h.subarray(2, 0x40)) !== rd(h, 0, 2)) return false;
+  const count = rd(h, 8, 2);
+  if (count < 1 || count > 8 || img.length < 0x40 + 0x50 * count) return false;
+  for (let i = 0; i < count; i++) {
+    const e = jlDec(img.subarray(0x40 + i * 0x50, 0x90 + i * 0x50));
+    const typ = rd(e, 0, 2), off = rd(e, 8, 4), size = rd(e, 12, 4);
+    if (off + size > img.length) return false;
+    if ((typ === 0 || typ === 100) && crc16(img.subarray(off, off + size)) !== rd(e, 4, 2)) return false;
+  }
+  return true;
+}
+
+// the logical image's flash.bin (UFW entry type 0): its offset in the image
+function flashOffset(img) {
+  const rd = (a, o, n) => a.slice(o, o + n).reduce((v, x, i) => v + x * 2 ** (8 * i), 0), count = rd(jlDec(img.subarray(0, 0x40)), 8, 2);
+  for (let i = 0; i < count; i++) {
+    const e = jlDec(img.subarray(0x40 + i * 0x50, 0x90 + i * 0x50));
+    if (rd(e, 0, 2) === 0) return rd(e, 8, 4);
+  }
+  throw new Error("The official firmware has no flash.bin.");
+}
+
+// the image the device addresses during an update: the .fwsc without the marker bytes (20 blocks; the detected
+// count only when the files' CRCs pass with it: a 20-block package can have 0x7D after block 20 by chance)
+export function logicalImage(fwsc) {
+  const n = blockCount(fwsc);
+  if (n !== BLOCKS) {
+    const img = deinterleave(fwsc, n);
+    if (filesOk(img)) return img;
+  }
+  return deinterleave(fwsc, BLOCKS);
+}
+
+// The official SMK-37 Pro V016 (SMK-37_Pro_016.fwsc, 36 interleave blocks), for the return of an SMK-37 Pro.
+export const STOCK_SMK016_SHA256 = "2d98ce72530e71d617384963423820536f094501299e2cfec0a8d3c3fb6bcfb0";
+export const STOCK_SMK016_SIZE = 705252;
+export const STOCK_SMK016_PRODUCT = "SMK-37 Pro_016";
 
 export async function sha256hex(bytes) {
   const d = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-// Only the user's unmodified official V15 is accepted for a return to stock.
+// Only the user's unmodified official V15 (SMK-37 Pro: V016) is accepted for a return to stock.
 // The digest pins every file, loader and flash layout; filenames are not evidence.
 // The file goes to the device unchanged, through its own official loader, as M-VAVE's
 // updater sends it. head: the image range Melodee compares with the device's boot
 // data (CHECK HEAD, firmware/src/ota.c) before it starts that loader.
 export async function validateStockPackage(bytes) {
+  if (bytes.length === STOCK_SMK016_SIZE && await sha256hex(bytes) === STOCK_SMK016_SHA256 &&
+      productOf(bytes) === STOCK_SMK016_PRODUCT) {     // SMK-37 Pro: 36 interleave blocks, its own layout
+    const image = logicalImage(bytes), head = flashOffset(image);
+    return { product: STOCK_SMK016_PRODUCT, image, sha256: STOCK_SMK016_SHA256, head: { from: head, to: head + 0x4000 } };
+  }
   if (bytes.length !== STOCK_V15_SIZE || await sha256hex(bytes) !== STOCK_V15_SHA256)
-    throw new Error("Select the unmodified official FM-1 V15 file (FM-1.fwsc).");
+    throw new Error("Select the unmodified official FM-1 V15 file (FM-1.fwsc) or SMK-37 Pro V016 file (SMK-37_Pro_016.fwsc).");
   const pkg = new Package(bytes);
   if (pkg.product !== "FM-1_015" || pkg.flashFileOff !== 1044 || pkg.flashSize !== 602112 ||
       pkg.appBase !== 16384 || pkg.appOff !== 16672 || pkg.app.size !== STOCK_APP_SIZE ||
