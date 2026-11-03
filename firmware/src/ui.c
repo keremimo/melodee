@@ -1010,13 +1010,14 @@ static void track_defaults_steps(track_t *t)
 
 /* ROOT, SCL, scale QNT, recording QNT and the MPC degree are the project's: kept the same in each track's own slots
  * for compatibility with the project format and editor protocol. TRN stays the track's. */
-static int scale_shared(uint32_t id) { return id == P_ROOT || id == P_SCALE || id == P_QUANT || id == P_MPCDEG || id == P_RECQ; }
+static int scale_shared(uint32_t id) { return id == P_ROOT || id == P_SCALE || id == P_TUNING || id == P_QUANT || id == P_MPCDEG || id == P_RECQ; }
 static void scale_share(const track_t *from)
 {
     uint32_t k;
     for (k = 0; k < NTRK; k++) {
         trk[k].p[P_ROOT] = from->p[P_ROOT];
         trk[k].p[P_SCALE] = from->p[P_SCALE];
+        trk[k].p[P_TUNING] = from->p[P_TUNING];
         trk[k].p[P_QUANT] = from->p[P_QUANT];
         trk[k].p[P_RECQ] = from->p[P_RECQ];
         trk[k].p[P_MPCDEG] = (int16_t)clamp(from->p[P_MPCDEG], 1, (int32_t)scale_count(from));

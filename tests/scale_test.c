@@ -26,7 +26,7 @@ static void mapping_test(void)
     uint32_t s, k, w;
     int root, oct, trans;
     assert(TP[P_SCALE].max + 1 == SCALE_TOTAL);
-    assert(sizeof SCALE_MASK / sizeof SCALE_MASK[0] == sizeof EXPECTED / sizeof EXPECTED[0]);
+    assert(sizeof SCALE_MASK / sizeof SCALE_MASK[0] == sizeof EXPECTED / sizeof EXPECTED[0] + SCALE_TOTAL - SCALE_MICRO_END);
     t->p[P_QUANT] = 2;
     for (s = 0; s < SCALE_LEGACY; s++) {
         uint32_t mask = 0;

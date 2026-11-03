@@ -243,8 +243,11 @@ static int param_master_fx(uint32_t id){return id>=G_MFXTYPE && id<=G_MFX3CHAR;}
 #define G_SAFETY G_RESERVED9
 #define G_DRREV G_RESERVED26
 
+#define P_TUNING P_RESERVED47                           /* the project's tuning (scales.h TUNING, 0 Equal): a retired slot,
+                                                         * so no stored layout moves. Records before FUN22 / TPLL may hold
+                                                         * an old value there: their readers zero it */
 static int param_reserved(uint32_t id)
-{ return (id>=P_RESERVED33 && id<=P_RESERVED36) || (id>=P_RESERVED45 && id<=P_RESERVED48); }
+{ return (id>=P_RESERVED33 && id<=P_RESERVED36) || (id>=P_RESERVED45 && id<=P_RESERVED48 && id!=P_TUNING); }
 static int global_reserved(uint32_t id)
 { return (id>=G_RESERVED4 && id<=G_RESERVED11) || (id>=G_RESERVED24 && id<=G_RESERVED26); }
 

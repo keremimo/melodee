@@ -1631,6 +1631,10 @@ static void edit_param(uint32_t slot, int32_t steps)
         if (!vp[1]) vp[1] = 64;
         if (v == FX_MIDIDELAY) { vp[2] = 1; vp[3] = 64; }
     }
+    if (pg->scope == SC_TRACK && vp == &TSEL->p[P_SCALE]) {   /* (SCL held, a MIDI knob) past the retired entries */
+        v = scale_land(*vp, v);
+        scale_tuning_follow(TSEL, (uint32_t)*vp, (uint32_t)v);
+    }
     if(pg->scope==SC_GLOBAL && vp>=song.g+G_MFXTYPE && vp<=song.g+G_MFX3TYPE &&
        ((uint32_t)(vp-song.g)-G_MFXTYPE)%FX_PARAMS==0u){
         uint32_t flags=motion_guard();shared_fx_select(song.g,((uint32_t)(vp-song.g)-G_MFXTYPE)/FX_PARAMS,v);motion_unguard(flags);

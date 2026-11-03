@@ -246,7 +246,7 @@ static const param_desc_t TP[P_COUNT] = {
     [P_MUTE] = PE("MUTE", N_ONOFF, 0),
     [P_RESERVED45] = PD("", F_INT, 0, 127, 0),
     [P_RESERVED46] = PD("", F_INT, 0, 127, 0),
-    [P_RESERVED47] = PD("", F_INT, 0, 127, 0),
+    [P_TUNING] = PE("TUNING", N_TUNING, 0),
     [P_RESERVED48] = PD("", F_INT, 0, 127, 0),
 #define MSLOT(k) [P_M##k##SRC] = PE("SRC" #k, N_MSRC, 0), [P_M##k##DST] = PE("DST" #k, N_MDST, 0), \
                  [P_M##k##AMT] = PD("AMT" #k, F_BIPCT, -64, 63, 0)
@@ -630,7 +630,7 @@ static const page_t PAGES[] = {
     {"SCALES", FAM_SCL, SC_TRACK, GR_SCALE_PICKER, {0xFF, P_SCALE, P_ROOT, P_QUANT}},
     {"SCL", FAM_SCL, SC_TRACK, GR_SCALE, {P_ROOT, 0xFF, P_QUANT, P_TRANS}}, /* K2: scale favorite */
     {"CHORD", FAM_SCL, SC_TRACK, GR_CHORD, {P_CHRD, P_VOIC, P_STRUM, P_STROKE}},   /* SCL again: the chord keys (chord.c) */
-    {"MPC", FAM_SCL, SC_TRACK, GR_NONE, {P_MPCDEG, 0xFF, 0xFF, 0xFF}},   /* the degree of each bank's pad 02: a row of SCL's list
+    {"MPC", FAM_SCL, SC_TRACK, GR_NONE, {P_MPCDEG, P_TUNING, 0xFF, 0xFF}},   /* the degree of each bank's pad 02: a row of SCL's list
                                                                           * (QNT MPC only), not a page of its own */
     {"EDIT 1", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E0, P_E1, P_E2, P_E3}},
     {"EDIT 2", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E4, P_E5, P_E6, P_E7}},
@@ -928,5 +928,5 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
 static int param_kept(uint32_t i)
 {
     return i == P_LEVEL || i == P_PAN || i == P_MUTE || (i >= P_AMODE && i <= P_SGATE) ||
-           i == P_CHRD || i == P_VOIC || i == P_STRUM || i == P_STROKE || i == P_MPCDEG || i == P_RECQ || param_fx(i) || param_fx_send(i);
+           i == P_CHRD || i == P_VOIC || i == P_STRUM || i == P_STROKE || i == P_MPCDEG || i == P_RECQ || i == P_TUNING || param_fx(i) || param_fx_send(i);
 }

@@ -19,7 +19,7 @@ static uint32_t mo_lanes(uint16_t *ids)
     uint32_t i, j, n = 0, k = song.sel % NTRK;
     for (i = 0; i < motion.count; i++) {
         const motion_event_t *e = &motion.event[i];
-        if ((e->place >> 6) != k || motion_pattern[i] != TSEL->pattern || e->param == P_RECQ ||
+        if ((e->place >> 6) != k || motion_pattern[i] != TSEL->pattern || e->param == P_RECQ || e->param == P_TUNING ||
             (motion_native_event(e->param,e->value) && (uint32_t)e->value >> 8 != motion_native_tag(TSEL)))   /* (another engine's) */
             continue;
         for (j = 0; j < n && ids[j] != motion_token(e); j++)

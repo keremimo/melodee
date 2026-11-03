@@ -28,7 +28,7 @@ static void midi_in(uint32_t st, uint32_t note)
 static void mapping(void)
 {
     track_t *t = setup("24EDO");
-    for (uint32_t s = SCALE_LEGACY; s < SCALE_TOTAL; s++) {
+    for (uint32_t s = SCALE_LEGACY; s < SCALE_MICRO_END; s++) {
         t->p[P_SCALE] = s;
         const micro_scale_t *sc = micro_scale(t);
         assert(scale_count(t) == sc->count);
@@ -123,7 +123,7 @@ static double audio_frequency(track_t *t)
 }
 static void frequency(void)
 {
-    const char *names[] = {"24EDO", "31EDO", "JI-MAJ", "MT-1/4", "RAST", "BP-ET"};
+    const char *names[] = {"24EDO", "31EDO", "JI-MAJ", "MT-1/4", "RAST-D", "BP-ET"};
     for (uint32_t s = 0; s < NELEM(names); s++) {     /* (FM6's INIT VOICE: one sine) */
         track_t *t = setup(names[s]);
         t->eng_req = t->engine = ENGI_FM6;

@@ -12,8 +12,8 @@ typedef struct { const char *page; uint8_t slot; } lrow_t;
 enum { LP_NONE, LP_SCALE, LP_GRAPH };
 typedef struct { const char *title; uint8_t pic, n; lrow_t row[16]; } list_t;
 static const list_t LISTS[] = {
-    {"SCL", LP_SCALE, 6, {{"SCL", 0}, {"SCALES", 1}, {"SCL", 2}, {"MPC", 0}, {"SCL", 3}, {"SCL", 1}}},   /* (MPC: QNT MPC's
-                                                                                                    * pad degree) */
+    {"SCL", LP_SCALE, 7, {{"SCL", 0}, {"SCALES", 1}, {"MPC", 1}, {"SCL", 2}, {"MPC", 0}, {"SCL", 3}, {"SCL", 1}}},   /* (MPC: the
+                                                                                     * tuning, QNT MPC's pad degree) */
     {"VOICE", LP_NONE, 9, {{"VOICE", 0}, {"VOICE", 1}, {"VOICE", 2}, {"VOICE", 3}, {"VOICE 2", 0}, {"VOICE 2", 1},
                            {"VOICE 2", 2}, {"VOICE 2", 3}, {"VOICE 3", 0}}},
     {"FM LFO", LP_NONE, 7, {{"FM LFO", 0}, {"FM LFO", 1}, {"FM LFO", 2}, {"FM LFO", 3}, {"FM LFO 2", 0}, {"FM LFO 2", 1},
@@ -57,7 +57,10 @@ static int list_gone(uint32_t i)
     return 0;
 }
 /* list l's rows shown: all but MPC's degree while QNT is not MPC (the page it was on alone, Kerem 2026-10-11) */
-static int list_row_on(const lrow_t *rw) { return !str_eq(rw->page, "MPC") || TSEL->p[P_QUANT] == Q_MPC; }
+static int list_row_on(const lrow_t *rw)                 /* (a microtonal scale tunes itself; DEG: QNT MPC's) */
+{
+    return !str_eq(rw->page, "MPC") || (rw->slot ? !micro_scale(TSEL) : TSEL->p[P_QUANT] == Q_MPC);
+}
 static uint32_t list_n(const list_t *l)
 {
     uint32_t r, n = 0;
@@ -185,19 +188,21 @@ static void list_scale_pic(int32_t y, int32_t h)
 {
     static const uint8_t WHITE[7] = {0, 2, 4, 5, 7, 9, 11}, BLACK[5][2] = {{1, 0}, {3, 1}, {6, 3}, {8, 4}, {10, 5}};
     uint32_t mask = scale_mask(TSEL), root = (uint32_t)TSEL->p[P_ROOT] % 12u, i;
+    int tuned = tune_active(TSEL);                      /* (a tuning: each key off its line by its cents, flat lower) */
+    int32_t top = tuned ? 8 : 4, kh = tuned ? h - 16 : h - 8;
     for (uint32_t band = 0; band < (uint32_t)((uint32_t)h); band += CV_MAX / (240)) {
         cv_begin_band(240,(uint32_t)h,T_BG,band);                   /* (on the background: no panel) */
         for (i = 0; i < 7u; i++) {
             uint32_t n = WHITE[i], on = (mask >> ((n + 12u - root) % 12u)) & 1u;
             uint16_t c = n == root ? T_TEXT : on ? T_THEME : T_SURF;
-            cv_rrect(20 + 29 * (int32_t)i, 4, 27, h - 8, 4, c, T_BG);
+            cv_rrect(20 + 29 * (int32_t)i, top - (tuned ? tune_off(TSEL, (int32_t)n) * 7 / 5000 : 0), 27, kh, 4, c, T_BG);
         }
         for (i = 0; i < 5u; i++) {
             uint32_t n = BLACK[i][0], on = (mask >> ((n + 12u - root) % 12u)) & 1u;
             uint16_t c = n == root ? T_TEXT : on ? ux_mix(T_BG, T_THEME, 75) : T_BG;
-            int32_t x = 20 + 29 * BLACK[i][1] + 19;
-            cv_rrect(x, 4, 16, (h - 8) * 58 / 100, 3, T_LINE, T_BG);
-            cv_rrect(x + 1, 5, 14, (h - 8) * 58 / 100 - 2, 2, c, T_LINE);
+            int32_t x = 20 + 29 * BLACK[i][1] + 19, y1 = top - (tuned ? tune_off(TSEL, (int32_t)n) * 7 / 5000 : 0);
+            cv_rrect(x, y1, 16, (h - 8) * 58 / 100, 3, T_LINE, T_BG);
+            cv_rrect(x + 1, y1 + 1, 14, (h - 8) * 58 / 100 - 2, 2, c, T_LINE);
         }
         cv_blit_band(0, (uint32_t)y);
     }
@@ -272,8 +277,9 @@ static void list_rows(uint32_t n, uint32_t row, uint32_t first, uint32_t vis,
 static const list_t *list_drawn;                        /* (list_text) */
 static int list_text(uint32_t r, char *lb, char *v, uint16_t *vc)
 {
-    list_cap(list_at(list_drawn, r), lb, v, vc);
-    return str_eq(list_at(list_drawn, r)->page, "SCALES");   /* (OCT+: its list) */
+    const lrow_t *rw = list_at(list_drawn, r);
+    list_cap(rw, lb, v, vc);
+    return str_eq(rw->page, "SCALES") || (str_eq(rw->page, "MPC") && rw->slot);   /* (OCT+: its list) */
 }
 static void list_draw(void)
 {
@@ -309,7 +315,8 @@ static void list_draw(void)
     }
     if (l->pic == LP_SCALE) {
         static uint32_t ps;
-        uint32_t s2 = scale_mask(TSEL) * 13u + (uint32_t)TSEL->p[P_ROOT] + ux.gen * 977u + ux.pal * 31u + song.sel * 7u;
+        uint32_t s2 = scale_mask(TSEL) * 13u + (uint32_t)TSEL->p[P_ROOT] + ux.gen * 977u + ux.pal * 31u + song.sel * 7u +
+                      (tune_active(TSEL) ? (uint32_t)TSEL->p[P_TUNING] * 8191u + (uint32_t)TSEL->p[P_TRANS] * 127u : 0u);
         if (ui.force || s2 != ps) {
             ps = s2;
             list_scale_pic(pic_y, PV_SOUND_Y - pic_y);

@@ -78,9 +78,11 @@ ok(["FM-1", "FM-1 MIDI 1", "Melodee", "Felucca"].every(name => E.isDevicePort({n
 
 {
   const d = {min: 0, max: E.SCALE_INFO.length - 1, names: E.SCALE_INFO.map(r => r.name)};
-  ok(E.scaleRows(d).length === 70, "scale picker: every supported scale available");
+  ok(E.scaleRows(d).length === 60, "scale picker: every scale but the entries that became tunings");
+  ok(E.scaleRows(d, "All scales", "", [], d.names.indexOf("WERCK3")).length === 61, "scale picker: a retired entry listed while selected");
+  ok(E.scaleRows({min: 0, max: 69, names: d.names.slice(0, 70).map(n => n === "BAYAT-D" ? "BAYATI" : n)}).length === 70, "scale picker: older firmware keeps every entry its own");
   ok(E.scaleRows(d, "Equal divisions").length === 24, "scale picker: family filtering");
-  ok(E.scaleRows(d, "All scales", "quarter-comma")[0]?.name === "MT-1/4", "scale picker: readable names searchable");
+  ok(E.scaleRows(d, "All scales", "pentatonic")[0]?.name === "PEN", "scale picker: readable names searchable");
   ok(E.scaleRows(d, "All scales", "53EDO")[0]?.count === 53, "scale picker: short names and note counts searchable");
   ok(E.scaleRows(d, "Favorites", "", ["BP-JI", "24EDO"]).map(r => r.name).join() === "24EDO,BP-JI", "scale picker: favorites retain catalogue IDs");
   ok(E.scaleRows(d, "Favorites").length === 0 && E.scaleRows(d, "All scales", "missing scale").length === 0, "scale picker: empty favorites and search");
@@ -268,9 +270,9 @@ async function editorMock() {
     "editor: INFO");
   let descs = 0;
   for (let i = 0; i < info.pcount; i++) if (E.parse[E.CMD.DESC](await rq(E.req.desc(0, i))).label) descs++;
-  ok(descs === info.pcount-8, "editor: DESC for every parameter");
+  ok(descs === info.pcount-7, "editor: DESC for every parameter");
   {
-    for(const id of [33,34,35,36,45,46,47,48]){
+    for(const id of [33,34,35,36,45,46,48]){
       const d=E.parse[E.CMD.DESC](await rq(E.req.desc(0,id)));
       const r=E.parse[E.CMD.SET](await rq(E.req.set(0,id,127)));
       ok(!d.label && r.value===0,"editor: removed effect parameter is inert "+id);
@@ -388,6 +390,9 @@ async function editorMock() {
   const scale = E.parse[E.CMD.DESC](await rq(E.req.desc(0, 26)));
   const scaleNames = JSON.parse(readFileSync(new URL("../assets/scales/catalog.json", import.meta.url), "utf8")).map(s => s.name);
   ok(scale.label === "SCL" && scale.max === scaleNames.length - 1 && eq(scale.names, scaleNames), "editor: full microtonal scale catalogue exposed");
+  const tuning = E.parse[E.CMD.DESC](await rq(E.req.desc(0, 47)));
+  const tuningNames = JSON.parse(readFileSync(new URL("../assets/scales/tunings.json", import.meta.url), "utf8")).map(s => s.name);
+  ok(tuning.label === "TUNING" && tuning.max === tuningNames.length - 1 && eq(tuning.names, tuningNames), "editor: the tunings exposed");
   const scaleSet = E.parse[E.CMD.SET](await rq(E.req.set(0, scale.id, scaleNames.length - 1)));
   ok(scaleSet.value === scaleNames.length - 1, "editor: new scale selection is not clamped to the old range");
   await rq(E.req.set(0, scale.id, scaleNames.indexOf("53EDO")));

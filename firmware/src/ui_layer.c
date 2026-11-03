@@ -37,7 +37,7 @@ static const page_t LY_SCL = {"SCL", FAM_SCL, SC_TRACK, GR_SCALE, {P_ROOT, P_SCA
 
 static struct {
     uint8_t l, trk, oct;               /* SET: layer, snapshot track, OCT- / OCT+ pressed (bits) */
-    int16_t v[9];                      /* the values when it opened: GLO mutes, levels, BPM; SCL ROOT..TRN, CHRD VOIC */
+    int16_t v[9];                      /* the values when it opened: GLO mutes, levels, BPM; SCL ROOT..TRN, CHRD VOIC TUNING */
     uint32_t solo;                     /* GLO: the keys held that solo */
     uint32_t tap[4];                   /* GLO TAP: the last taps (fm1_ms) */
     uint8_t ntap, dt_l, dtap, rp_dirty;
@@ -123,7 +123,7 @@ static void layer_opened(uint32_t l)
             lys.v[4u + k] = trk[trk_group() + k].p[P_LEVEL];
         } else {
             lys.v[k] = TSEL->p[P_ROOT + k];
-            lys.v[4u + k] = k < 2u ? TSEL->p[P_CHRD + k] : 0;
+            lys.v[4u + k] = k < 2u ? TSEL->p[P_CHRD + k] : k == 2u ? TSEL->p[P_TUNING] : 0;
         }
     lys.v[8] = song.g[G_BPM];
 }
@@ -314,6 +314,7 @@ static uint32_t layer_oct(uint32_t pressed, uint32_t oct)
                 trk[lys.trk % NTRK].p[P_ROOT + k] = lys.v[k];
             trk[lys.trk % NTRK].p[P_CHRD] = lys.v[4];
             trk[lys.trk % NTRK].p[P_VOIC] = lys.v[5];
+            trk[lys.trk % NTRK].p[P_TUNING] = lys.v[6];
             scale_share(&trk[lys.trk % NTRK]);
             ui_message("SCALE PUT BACK");
         }
@@ -374,15 +375,27 @@ static uint16_t lc_fill(uint32_t st, uint16_t *ink)
 static void layer_scl(void)                             /* KNOB 2's scales as a list (their names in full), four
                                                          * around the one now selected (filled) */
 {
-    uint32_t i, sc = (uint32_t)TSEL->p[P_SCALE], max = (uint32_t)TP[P_SCALE].max, first;
-    first = sc > 1u ? sc - 1u : 0u;
-    if (max >= 3u && first > max - 3u)
-        first = max - 3u;
-    for (i = first; i < first + 4u && i <= max; i++) {
-        int32_t y = 3 + 30 * (int32_t)(i - first);
-        uint16_t ink, fill = lc_fill(i == sc ? LS_SEL : LS_OFF, &ink);
-        const char *t = SCALE_TITLE[i];
-        const aafont_t *f = ty_fit(TY_TX, t, 200);
+    uint32_t i, sc = (uint32_t)TSEL->p[P_SCALE], rank = 0, total = 0, at = 0, first;
+    for (i = 0; i < SCALE_TOTAL; i++)                   /* (the retired entries left out, the one selected kept) */
+        if (!scale_retired(i) || i == sc) {
+            if (i == sc)
+                rank = total;
+            total++;
+        }
+    first = rank > 1u ? rank - 1u : 0u;
+    if (total >= 4u && first > total - 4u)
+        first = total - 4u;
+    for (i = 0; i < SCALE_TOTAL && at < first + 4u; i++) {
+        int32_t y;
+        uint16_t ink, fill;
+        const char *t;
+        const aafont_t *f;
+        if ((scale_retired(i) && i != sc) || at++ < first)
+            continue;
+        y = 3 + 30 * (int32_t)(at - 1u - first);
+        fill = lc_fill(i == sc ? LS_SEL : LS_OFF, &ink);
+        t = SCALE_TITLE[i];
+        f = ty_fit(TY_TX, t, 200);
         if (i == sc)
             cv_rrect(8, y, 224, 28, 8, fill, T_SURF);
         cv_free_text(18, ty_y(y + 14, f), f, t, i == sc ? ink : T_SEC, i == sc ? fill : T_SURF, 200);

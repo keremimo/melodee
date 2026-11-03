@@ -28,19 +28,26 @@ static uint32_t favorites_user_hi;
 /* Scale favorites use the upper half of retired engine 14's PER5 row. Keep
  * old preset bits 0..127 intact; tagged storage ignores unrecognized bytes.
  * No settings/template layout change. */
+#include "scales.h"
 #define SCALE_FAV_CAP 96u
 static int scale_fav_valid(void)
 {
     const uint8_t *p = favorites.factory[14];
     return p[28] == 'S' && p[29] == 'C' && p[30] == 'L' && p[31] == 1;
 }
+static uint32_t scale_fav_id(uint32_t scale)    /* a maqam's star stays where its retired entry had it */
+{
+    return scale >= SCALE_MICRO_END && scale < SCALE_TOTAL ? scale - SCALE_MICRO_END + SCALE_MAQAM_OLD : scale;
+}
 static int scale_favorite(uint32_t scale)
 {
+    scale = scale_fav_id(scale);
     return scale < SCALE_FAV_CAP && scale_fav_valid() &&
         ((favorites.factory[14][16u + scale / 8u] >> (scale % 8u)) & 1u);
 }
 static int scale_favorite_set(uint32_t scale, int on)
 {
+    scale = scale_fav_id(scale);
     if (scale >= SCALE_FAV_CAP || scale_favorite(scale) == !!on) return 0;
     uint8_t *p = favorites.factory[14];
     if (!scale_fav_valid()) {

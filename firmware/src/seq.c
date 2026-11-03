@@ -95,6 +95,8 @@ static uint32_t scale_mask(const track_t *t)
             mask |= 1u << ((s->pitch[i] + 5000) / 10000 % 12);
         return mask;
     }
+    if (t->p[P_SCALE] >= (int32_t)SCALE_MICRO_END)      /* (the twelve-tone scales after the pitch tables) */
+        return SCALE_MASK[SCALE_LEGACY + clamp(t->p[P_SCALE] - (int32_t)SCALE_MICRO_END, 0, (int32_t)(SCALE_TOTAL - SCALE_MICRO_END) - 1)];
     return SCALE_MASK[clamp(t->p[P_SCALE], 0, SCALE_LEGACY - 1)];
 }
 
