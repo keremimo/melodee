@@ -55,7 +55,7 @@
 #endif
 #endif
 #ifndef MELODEE_VERSION
-#define MELODEE_VERSION "v1.6.0-rc.1" /* shown in the menu, the console and the editor; build.py --release X.Y[.Z] */
+#define MELODEE_VERSION "v1.6.1" /* shown in the menu, the console and the editor; build.py --release X.Y[.Z] */
 #endif
 #if MELODEE_OTA && !MELODEE_FLASH
 #error "MELODEE_OTA needs MELODEE_FLASH"

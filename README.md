@@ -34,8 +34,8 @@ For a black-screen device already in ROM UBOOT, use the
 [direct USB recovery tool](BUILDING.md#recover-a-black-screen-fm-1).
 
 Multi-engine synthesizer and sequencer firmware for the M-VAVE FM-1. Current stable release:
-**[Melodee 1.6.0](https://github.com/keremimo/melodee/releases/tag/v1.6.0)**
-([release notes](https://github.com/keremimo/melodee/blob/v1.6.0/docs/RELEASE_1.6.0.md)).
+**[Melodee 1.6.1](https://github.com/keremimo/melodee/releases/tag/v1.6.1)**
+([release notes](docs/RELEASE_1.6.1.md)).
 
 Four internal synth/MIDI parts plus four dedicated MIDI tracks, 64-section songs with timed
 punch FX, 32 projects, USB Host input/output, Bluetooth MIDI, AUTO/AUTO2 harmony and a shared
@@ -58,14 +58,17 @@ to build and attest firmware from the tagged source. See [release verification](
 for the process and the command to check a downloaded package. An attestation establishes
 build provenance; hardware validation is a separate check.
 
-## In development since 1.6.0
+## What's new in 1.6.1
 
-On the nightly channel, not yet in a stable release. Covered by automated tests; not yet tried with a real follower.
+Clock output and Song Position are covered by automated tests; they have not yet been tried with a real follower.
 
 - **MIDI clock out:** with CLK on INT, the FM-1 sends clock on USB and Bluetooth, stopped or playing, with Start on PLAY and Stop on STOP.
 - **Song Position:** PLAY from a SONG cursor sends Song Position and Continue. Following on USB, TRS or Bluetooth, Song Position then Continue starts every pattern where playing from the top would put it.
 - **Timing:** INT runs on exact musical units, so nothing drifts, and synced LFOs lock to the song on either kind of clock. Clock and transport go ahead of notes in the MIDI queues.
 - **CLK is the device's:** loading a project no longer changes it.
+- **Manual:** rewritten against the firmware, with new sections for MIDI tracks, clock, MIDI LEARN, Bluetooth and USB Host.
+
+Stored data is unchanged from 1.6.0. See the [1.6.1 release notes](docs/RELEASE_1.6.1.md).
 
 ## What's new in 1.6.0
 
@@ -82,7 +85,7 @@ On the nightly channel, not yet in a stable release. Covered by automated tests;
 **Upgrading:** back up on your current firmware first; that backup is your way back, because older firmware
 cannot read 1.6's project storage or restore its backups. Existing projects load, but CZ-1 tracks are 6 dB lower
 and the limiter starts at −2 dBFS, so check your balance. The web installer needs one install; from 1.5.1 or
-earlier through Firmware Hub, install twice. See the [1.6.0 release notes](https://github.com/keremimo/melodee/blob/v1.6.0/docs/RELEASE_1.6.0.md) for
+earlier through Firmware Hub, install twice. See the [1.6.0 release notes](docs/RELEASE_1.6.0.md) for
 compatibility and hardware-validation limits.
 
 ## What's new in 1.5.1
