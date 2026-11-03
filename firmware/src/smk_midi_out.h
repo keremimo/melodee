@@ -6,7 +6,8 @@
  * midi_out_event), and the TIMER5 tick (main.c, 10 kHz, nested in the render too) sends one byte whenever the UART
  * has finished the last: ~0.4 ms a byte, never waiting. A byte the UART does not finish within SMO_TIMEOUT ticks is
  * given up; after SMO_DEAD of those in a row the jack stays quiet until the menu's TRS MIDI OUT is set again (no
- * UART: no hang, no stall). TRS MIDI OUT OFF: nothing is queued. Room for every owed ending (smo_start, smo_end) is
+ * UART: no hang, no stall). TRS MIDI OUT set OFF: what the jack sounds ends first (midi_track.c midi_trs_set, smo_stop),
+ * then nothing is queued. Room for every owed ending (smo_start, smo_end) is
  * kept from all the rest, so a release is never dropped. Hardware: hal/smk_uart_tx.h; the host test
  * (tests/smk_midi_out_test.c) gives SMO_TX_DONE / SMO_TX_PUT its own UART. */
 #pragma once
@@ -34,6 +35,7 @@ static struct {
     uint32_t lost;                /* bytes timed out in a row */
     uint32_t sent, timeouts, drops;
     uint32_t owed;                /* what smo_start began and smo_end has not ended */
+    uint16_t live;                /* channels smo_put sent a note or a pedal down on: what smo_stop ends */
     volatile uint8_t dead;
 } smo SMO_SECTION;
 
@@ -80,7 +82,13 @@ static int smo_send(uint32_t pkt, uint32_t keep)       /* producer: one packet, 
 }
 
 #define SMO_END 3u                                     /* the bytes of what ends a note or a pedal */
-static void smo_put(uint32_t pkt) { (void)smo_send(pkt, SMO_END * smo.owed); }
+static void smo_put(uint32_t pkt)
+{
+    uint32_t cin = pkt & 15u;
+    if (smo_send(pkt, SMO_END * smo.owed) &&
+        (cin == 9u || (cin == 11u && ((pkt >> 16) & 255u) == 64u && pkt >> 24 >= 64u)))
+        smo.live |= (uint16_t)(1u << ((pkt >> 8) & 15u));
+}
 
 /* A MIDI Track's note or pedal: admitted only with room left for its ending and every other owed one. */
 static int smo_start(uint32_t pkt)
@@ -119,6 +127,22 @@ static void smo_tick(void)                             /* the TIMER5 tick: at mo
     SMO_TX_PUT(smo.ring[smo.r % SMO_RING]);
     smo.r++;
     smo.wait = 1;
+}
+
+/* TRS MIDI OUT going OFF. What smo_put sent has no books here, so each channel it played on gets pedal up, then All
+ * Notes Off (a receiver honours the pedal first). Both or neither; 0: no room yet, the caller comes back. */
+static int smo_stop(void)
+{
+    while (smo.live && !smo.dead) {
+        uint32_t ch = (uint32_t)__builtin_ctz(smo.live);
+        if (SMO_RING - (smo.w - smo.r) < SMO_END * (smo.owed + 2u))
+            return 0;
+        (void)smo_send(0x0Bu | (0xB0u | ch) << 8 | 64u << 16, 0);
+        (void)smo_send(0x0Bu | (0xB0u | ch) << 8 | 123u << 16, 0);
+        smo.live &= (uint16_t)~(1u << ch);
+    }
+    smo.live = 0;
+    return 1;
 }
 
 static void smo_on(uint32_t on)                        /* the menu: TRS MIDI OUT ON / OFF (ON tries the UART again) */

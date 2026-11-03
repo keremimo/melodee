@@ -3,7 +3,7 @@
 /* SMK-37: a MIDI Track at the TRS jack, whatever USB and BLE are doing. The real track paths, the jack's bytes taken
  * from its ring as the tick would send them: with no computer a note ends; a USB or BLE that is gone or full neither
  * keeps the jack waiting nor gets it duplicates, and still gets its own release later; a full ring never costs a
- * release; TRS MIDI OUT OFF sends nothing. Built with and without BLE (-DTRS_BLE). */
+ * release; TRS MIDI OUT set OFF ends what the jack sounds, then sends nothing. Built with and without BLE (-DTRS_BLE). */
 #ifdef TRS_BLE
 #define MELODEE_BLE_TEST_NO_MAIN 1
 #include "melodee_ble_test.c"
@@ -77,7 +77,7 @@ static track_t *fresh(void)
     events_block(0);
     usb.config = 0;
     mo_r = mo_w = 0;
-    trs_out = 1; smo.dead = 0; smo.r = smo.w; smo.drops = 0;
+    trs_out = 1; smo.dead = 0; smo.r = smo.w; smo.drops = 0; smo.live = 0;
     jack_n = 0;
     return &trk[0];
 }
@@ -241,6 +241,71 @@ static void jack_off_or_dead(void)
     expect(smo.w - smo.r == 255u, "released with no UART: its room is back");
 }
 
+/* TRS MIDI OUT set OFF (main.c smo_sync: the menu, a settings load): what the jack sounds ends first */
+static void going_off(void)
+{
+    track_t *t = fresh();
+    trk_note_on(t, 60, 100); trk_note_on(t, 64, 90);
+    midi_trs_set(0);
+    expect(JACK(0x90, 60, 100, 0x90, 64, 90, 0x80, 60, 0, 0x80, 64, 0) && !trs_out && !smo.owed, "set OFF: a MIDI Track's notes end at the jack");
+    trk_note_off(t, 60); trk_note_off(t, 64); flushes();
+    trk_note_on(t, 62, 100); trk_note_off(t, 62); flushes();
+    jack_take();
+    expect(jack_n == 12u && !smo.owed, "set OFF: nothing more, and their releases owe nothing");
+    midi_trs_set(1);
+    trk_note_on(t, 62, 100); trk_note_off(t, 62);
+    expect(trs_out && jack_count(0x90, 62) == 1u && jack_count(0x80, 62) == 1u, "set ON: the jack plays again");
+
+    fresh();
+    midi_event(0xB0, 0, 64, 127); midi_event(0x90, 0, 60, 97);
+    midi_trs_set(0);
+    expect(JACK(0xB0, 64, 127, 0x90, 60, 97, 0xB0, 64, 0, 0x80, 60, 0), "set OFF: a MIDI Track's pedal lifts too");
+
+    fresh();
+    midi_out_event(0x09u | 0x91u << 8 | 60u << 16 | 100u << 24);
+    midi_out_event(0x0Bu | 0xB3u << 8 | 64u << 16 | 127u << 24);
+    midi_out_event(0x0Bu | 0xB5u << 8 | 1u << 16 | 40u << 24);    /* the mod wheel owes nothing */
+    midi_trs_set(0);
+    expect(JACK(0x91, 60, 100, 0xB3, 64, 127, 0xB5, 1, 40, 0xB1, 64, 0, 0xB1, 123, 0, 0xB3, 64, 0, 0xB3, 123, 0) && !smo.live,
+           "set OFF: keys and pads: pedal up, all notes off, on each channel they played");
+    midi_out_event(0x08u | 0x81u << 8 | 60u << 16);
+    jack_take();
+    expect(jack_n == 21u, "set OFF: the key's release later sends nothing");
+
+    fresh();
+    usb.config = 1;
+    midi_out_event(0x09u | 0x90u << 8 | 61u << 16 | 100u << 24);
+    midi_trs_set(0);
+    expect(usb_next(0x90, 61) && !usb_held(), "set OFF: USB gets no all notes off");
+    midi_out_event(0x08u | 0x80u << 8 | 61u << 16);
+    expect(usb_next(0x80, 61) && !usb_held(), "set OFF: USB still gets the key's release");
+
+    t = fresh();
+    usb.config = 1;
+    trk_note_on(t, 60, 100);
+    midi_trs_set(0);
+    expect(usb_next(0x90, 60) && !usb_held() && jack_count(0x80, 60) == 1u, "set OFF: a MIDI Track's note ends at the jack, USB's goes on");
+    trk_note_off(t, 60); flushes();
+    expect(usb_next(0x80, 60) && !usb_held() && jack_count(0x80, 60) == 1u, "... and ends on USB when released, the jack's once");
+
+    fresh();
+    midi_out_event(0x09u | 0x90u << 8 | 60u << 16 | 100u << 24);
+    for (uint32_t i = 0; i < 2u * SMO_RING; i++) { midi_sync_emit(0xF8u); rt_r = rt_w; }
+    midi_trs_set(0);
+    expect(trs_out && smo.live == 1u, "set OFF, the ring full: it waits, nothing dropped");
+    jack_take();
+    midi_trs_set(0);
+    expect(!trs_out && !smo.live && jack_count(0xB0, 64) == 1u && jack_count(0xB0, 123) == 1u, "... room again: the endings, then OFF");
+
+    t = fresh();
+    trk_note_on(t, 60, 100);
+    midi_out_event(0x09u | 0x91u << 8 | 61u << 16 | 100u << 24);
+    jack_take();
+    smo.dead = 1;
+    midi_trs_set(0);
+    expect(!trs_out && !smo.owed && !smo.live && smo.r == smo.w, "set OFF with no UART: nothing owed, no waiting");
+}
+
 static void other_streams(void)
 {
     fresh();
@@ -347,6 +412,15 @@ static void microtonal(void)
     flushes();
     expect(JACK(0x90, 72, 100, 0x80, 72, 0) && usb_held() == 0 && !midi_sent_n, "microtonal: a press USB never took owes it no release");
     usb.config = 0;
+
+    t = fresh();                                         /* set OFF: the semitone the press sent, nothing kept */
+    t->p[P_SCALE] = (int16_t)edo24; t->p[P_QUANT] = Q_ALL;
+    trk_note_on(t, 84, 100);
+    midi_trs_set(0);
+    expect(JACK(0x90, 72, 100, 0x80, 72, 0) && !midi_sent_n, "microtonal: set OFF ends the semitone, nothing kept");
+    trk_note_off(t, 84); flushes();
+    expect(JACK(0x90, 72, 100, 0x80, 72, 0), "microtonal: its release later sends nothing");
+    midi_trs_set(1);
     t->p[P_SCALE] = 1; t->p[P_QUANT] = Q_OFF;
 }
 
@@ -356,7 +430,7 @@ int main(void)
 #ifdef TRS_BLE
     reset_ble();
 #endif
-    no_computer(); usb_gone(); usb_full(); ring_full(); jack_off_or_dead(); other_streams(); microtonal();
+    no_computer(); usb_gone(); usb_full(); ring_full(); jack_off_or_dead(); going_off(); other_streams(); microtonal();
 #ifdef TRS_BLE
     ble();
 #endif
