@@ -90,6 +90,10 @@ static void lifecycle(void)
     assert(chord_make(t, 60, out, &root, &mask) == 4 && out[3] == 86);
     t->p[P_VOIC] = VC_CLOSE; t->p[P_CHRD] = CH_MAJ;
     assert(chord_make(t, 60, out, &root, &mask) == 3 && out[1] == 68 && out[2] == 74);
+    t->p[P_CHRD] = CH_DOM7;                               /* 7:4 is 969 cents: 950, not 1000 */
+    assert(chord_make(t, 60, out, &root, &mask) == 4 && out[1] == 68 && out[2] == 74 && out[3] == 79);
+    t->p[P_CHRD] = CH_MIN7;                               /* 9:5 is 1018: 1000, not 1050 */
+    assert(chord_make(t, 60, out, &root, &mask) == 4 && out[1] == 66 && out[2] == 74 && out[3] == 80);
     t->p[P_CHRD] = 0; t->p[P_AMODE] = 1; t->p[P_AOCT] = 2;
     arp_add(t, 60); arp_tick(t, 1); assert(t->arp_note == 60);
     t->arp_pos = 0xFFFFFFF; arp_tick(t, 1); assert(t->arp_note == 84);
@@ -103,6 +107,54 @@ static void lifecycle(void)
     assert(after.t[0].p[P_SCALE] == (int16_t)scale_id("JI-MAJ") && after.t[0].step[0].note[0] == 62);
     assert(micro_pitch(t, 62) == 600000 + (int32_t)round(120000 * log2(1.25)));
     puts("microtonal: close pitches, MIDI releases after changes, chords, ARP periods and project recordings ok");
+}
+/* a fixed shape on a degree: its tones above the key, in steps (c: 0 for a shape of three) */
+static int shape_is(const char *name, uint32_t mode, int32_t degree, int32_t a, int32_t b, int32_t c)
+{
+    track_t *t = setup(name);
+    int32_t iv[CHORD_MAX + 1u], root = 60 + degree;
+    uint32_t n = chord_tones(t, mode, &root, iv);
+    return root == 60 + degree && !iv[0] && iv[1] == a && iv[2] == b && (n == 4u ? iv[3] == c : !c);
+}
+static void ratio_chords(void)
+{
+    static const uint8_t RATIOS[CH_POW - CH_MAJ + 1][CHORD_MAX] = {
+        {4, 5, 6}, {10, 12, 15}, {4, 5, 6, 7}, {8, 10, 12, 15}, {10, 12, 15, 18}, {6, 8, 9}, {2, 3, 4},
+    };
+    for (uint32_t k = 0; k < NELEM(RATIOS); k++)
+        for (uint32_t i = 0; i < CHORD_MAX; i++)
+            assert(CHORD_JUST[k][i] == (RATIOS[k][i] ? (int32_t)lround(120000 * log2((double)RATIOS[k][i] / RATIOS[k][0])) : -1));
+    track_t *t = setup("24EDO");
+    for (uint32_t s = SCALE_LEGACY; s < SCALE_MICRO_END; s++) {   /* every entry, retired ones too: each tone the degree nearest */
+        t->p[P_SCALE] = s;
+        for (int32_t d = 0; d < micro_scale(t)->count; d++)
+            for (uint32_t k = 0; k < NELEM(RATIOS); k++) {
+                int32_t iv[CHORD_MAX + 1u], root = 60 + d;
+                uint32_t n = chord_tones(t, CH_MAJ + k, &root, iv);
+                assert(root == 60 + d && !iv[0]);
+                for (uint32_t i = 0; i < n; i++) {
+                    int32_t note = root + iv[i], target = micro_pitch(t, root) + CHORD_JUST[k][i];
+                    int32_t miss = abs(micro_pitch(t, note) - target);
+                    assert(note >= 0 && note <= 127);
+                    assert(note == 0 || miss <= abs(micro_pitch(t, note - 1) - target));
+                    assert(note == 127 || miss <= abs(micro_pitch(t, note + 1) - target));
+                }
+            }
+    }
+    assert(shape_is("19EDO", CH_DOM7, 0, 6, 11, 15));     /* 947, not 1011 */
+    assert(shape_is("19EDO", CH_MAJ7, 0, 6, 11, 17));
+    assert(shape_is("31EDO", CH_DOM7, 0, 10, 18, 25));    /* 968, not 1006 */
+    assert(shape_is("22EDO", CH_MIN7, 0, 6, 13, 19));     /* 1036, not 982 */
+    assert(shape_is("53EDO", CH_MAJ, 0, 17, 31, 0));      /* 385, not 408 */
+    assert(shape_is("53EDO", CH_MIN, 0, 14, 31, 0));      /* 317, not 294 */
+    assert(shape_is("RAST-J", CH_DOM7, 0, 2, 4, 5));      /* C: 906, not 1056, is nearer 7:4 */
+    assert(shape_is("RAST-J", CH_MAJ, 1, 2, 4, 0));       /* D: a third, 294, not a fourth */
+    assert(shape_is("RAST-J", CH_MAJ7, 4, 2, 4, 6));      /* G: 996, not the octave */
+    assert(shape_is("RAST-J", CH_MIN, 3, 2, 4, 0));       /* F: a third, 408, not a second */
+    assert(shape_is("BAYAT-D", CH_MAJ, 0, 2, 4, 0));      /* a retired entry too: 300, not 500 */
+    for (int32_t d = 0; d < 18; d++)                      /* 700 was a tie in 18EDO, 10 or 11 steps by the key: 702 is not */
+        assert(shape_is("18EDO", CH_MAJ, d, 6, 11, 0));
+    puts("microtonal: fixed chord shapes aim at their just ratios on every entry and degree");
 }
 static double audio_frequency(track_t *t)
 {
@@ -215,7 +267,7 @@ static void names(void)
 }
 int main(void)
 {
-    mapping(); lifecycle(); frequency(); names();
+    mapping(); lifecycle(); ratio_chords(); frequency(); names();
     puts("microtonal tests passed");
     return 0;
 }
