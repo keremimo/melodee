@@ -276,7 +276,7 @@ before it is merged.
 `tools/smk_ux_mocks.py`. No firmware change.
 
 Built 2026-11-03 (measured on the Elite build, image bytes over the 566,144 B baseline): phase 1 +2,720 B (RAM
-+48 B), phases 2 and 3 together +2,664 B (RAM +96 B): 571,528 B in all, 680 B of data RAM left. The host suite's UI
++48 B), phases 2 and 3 together +2,808 B (RAM +96 B): 571,672 B in all, 680 B of data RAM left. The host suite's UI
 tests and render lint pass for the FM-1 build; the SMK build is not host-tested (no host stub of `hal/smk_input.h`
 yet) and has not run on the Elite.
 

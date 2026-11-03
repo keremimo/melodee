@@ -152,6 +152,15 @@ static void smk_strip_poll(void)
 }
 
 /* ---------------------------------------------------------------- the faders' values --- */
+/* a page whose four knobs set values (edit_param's own path: an absolute value lands): not the pages whose knobs
+ * move a cursor, a row, a slot or an action (NOTES, the drum grid and hits, MIXER, DRUM SOUND, the racks, MOD, the
+ * stores, the tools, SCL's favourite) */
+static int fader_page_ok(const page_t *pg)
+{
+    uint32_t sc = pg->scope, g = pg->graph;
+    return sc != SC_STEP && sc != SC_DRUMHIT && sc != SC_TRK && sc != SC_DRUM && sc != SC_P5STORE &&
+           g != GR_FXRACK && g != GR_MOD && g != GR_FMSTORE && g != GR_CZTOOLS && g != GR_SCALE;
+}
 /* fader i's parameter as 0..127 (-1: nothing there) */
 static int32_t smk_fader_value(uint32_t i)
 {
@@ -167,7 +176,7 @@ static int32_t smk_fader_value(uint32_t i)
         v = trk[t].p[P_LEVEL];
     } else {
         pg = smk_fbank == BK_PAGE ? (ui.home ? stage_page() : cur_page()) : bank_page(smk_fbank);
-        if (!pg)
+        if (!pg || !fader_page_ok(pg))
             return -1;
         d = page_desc(pg, i, &vp);
         if (!d || !vp || d->max == d->min)
@@ -194,7 +203,7 @@ static void smk_fader_set(uint32_t i, int32_t v)
         return;
     }
     pg = smk_fbank == BK_PAGE ? (ui.home ? stage_page() : cur_page()) : bank_page(smk_fbank);
-    if (!pg)
+    if (!pg || !fader_page_ok(pg))
         return;
     page_over = pg;
     momentary_take(i);
