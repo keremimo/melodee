@@ -195,8 +195,15 @@ Switch it OFF to give the port back to the computer; the FM-1 never boots as a h
 - **Not supported:** SysEx/editor traffic to attached devices, device-specific LED protocols, USB MIDI 2.0,
   low-speed devices, a third hub level, more than one hub on the first hub's ports at a time, hot-plugging a
   second controller while one runs (unplug and replug; a lost controller is found again by itself).
-- **Messages** (toast): USB MIDI READY, USB NO MIDI DEVICE, USB LOW SPEED, USB CONTROLLER LOST. On / off is the
-  header's `HOST` tag (and the menu row), not a toast.
+- **Messages** (toast, then a hint where there is something to do; `uh_result` picks one from what the search met):
+  USB MIDI CONNECTED, USB MIDI DISCONNECTED, NOT A USB-MIDI DEVICE, USB DEVICE NOT ANSWERING (unplug it, plug it
+  back), HUB FOUND (plug in a MIDI device), NO MIDI DEVICE ON THE HUB, LOW-SPEED USB DEVICE (not supported),
+  NOTHING ON THE USB PORT (use a powered hub; said once, 3 s after HOST is switched on). On / off is the header's
+  `HOST` tag (and the menu row), not a toast.
+- **Hubs:** a hub is recognised by `bDeviceClass` 9 or by an interface of class 9 (some hubs say it only there). A
+  hub port whose device did not finish enumerating is reset and probed again up to 4 times, 1 s apart; a device
+  that answered without MIDI is not. `uh.dg` keeps what the last search met in letters (see `uh_dg` in
+  `usb_host.c`) for the tests and a debugger; it is not shown.
 
 `tests/usb_host_test.c` runs the real driver against a model of the SIE and of a keyboard, a hub and a stick
 (`tests/run_tests.sh`). It cannot show that the controller behaves as the SDK's host code implies; the register

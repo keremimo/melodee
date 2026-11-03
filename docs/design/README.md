@@ -287,7 +287,9 @@ place status cards over knobs, lists, waveforms, or notes.
   switching USB HOST on to switching it off (or a power-cycle: it is never saved); priority: normal context, below
   `ERASING`, `WAIT LOOP` and messages; label `HOST` in the compact label font left of the page name and the
   low-battery glyph, taking its width from the page marks. Dim (`T_MID`) while no controller answers, theme colour
-  while one is connected. A controller found, lost or not MIDI, and a low-speed device, are brief toasts.
+  while one is connected. A controller found or lost, and why a search found none (nothing on the port, not
+  answering, a hub with nothing or no MIDI on it, not MIDI, low speed), are brief toasts, with a hint as the
+  second message where the user can act (usb_host.c `uh_result`, main.c `UH_TEXT`).
   The optional octave pill gives way when the tag needs the room. Screens that draw their own header (PRESETS, SONG,
   MENU) do not show the tag yet; the USB HOST row in the menu shows the state there.
   A connected device may provide IN, OUT or both; the same tag covers a USB synth receiving MIDI tracks.

@@ -22,7 +22,7 @@ def analyze(ir, dis, src):
     if not ("if (song.playing || cin_left" in seq and
             "if (started) seq_advance(0);" in seq and
             "#define UH_HUB_LEVELS 2u" in usb and
-            "return depth < UH_HUB_LEVELS ? uh_hub_probe" in usb and
+            "r = depth < UH_HUB_LEVELS && uh_hub_probe" in usb and
             "uh_probe((uint8_t)(level + 1u), m)" in usb):
         raise ValueError(
             'review stack re-entry bounds after transport/USB changes')
