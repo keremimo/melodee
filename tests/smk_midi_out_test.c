@@ -99,6 +99,29 @@ int main(void)
     tick(100000);
     check(ut_len == 255u && ut_out[252] == 0x90 && ut_out[253] == 84, "... and those 85 go out whole");
 
+    reset();                                           /* owed endings: their room is kept from everything else */
+    for (i = 0; smo_start(PKT(9, 0x90, i, 100)); i++)
+        ;
+    check(i == 42u && smo.owed == 42u && smo.w - smo.r == 126u, "notes owed an ending: 42 at once, half the ring kept for them");
+    smo_put(PKT(11, 0xB0, 1, 1));
+    check(smo.w - smo.r == 129u, "... the rest takes what is free");
+    for (n = 0; n < 40u; n++)
+        smo_put(PKT(11, 0xB0, 1, 1));
+    check(SMO_RING - (smo.w - smo.r) >= 42u * SMO_END, "... and never that room");
+    for (n = 0; n < i; n++)
+        smo_end(PKT(8, 0x80, n, 0));
+    check(!smo.owed, "every ending fits");
+    tick(100000);
+    for (n = t = 0; n < ut_len; n += 3u)
+        t += ut_out[n] == 0x80;
+    check(t == i && !ut_overrun, "... and goes out");
+    check(smo_start(PKT(9, 0x90, 60, 100)) && smo.owed == 1u, "ring empty: a note admitted");
+    tick(100000);
+    trs_out = 0;
+    smo_end(PKT(8, 0x80, 60, 0));
+    check(!smo.owed && smo.w == smo.r, "ended while OFF: nothing sent, nothing owed");
+    check(!smo_start(PKT(9, 0x90, 60, 100)) && !smo.owed, "struck while OFF: nothing owed");
+
     reset();
     trs_out = 0;
     smo_put(PKT(9, 0x90, 60, 100));
