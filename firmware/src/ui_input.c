@@ -826,7 +826,24 @@ static void qsave_poll(void)
 /* Capture. What the selected track played in its last bars while no track was recording (seq.c cap_ev) into
  * its pattern, as recorded notes (timing, velocity and length as played): an empty pattern takes 1, 2 or 4 bars (16, 32
  * or 64 steps), as many as the notes span, its LEN set to it; a pattern with notes the last LEN steps, over them. The
- * bars end at the bar playing when a note in it was played, else at its start. EDIT held undoes it */
+ * bars end at the bar playing when a note in it was played, else at its start. EDIT held undoes it, the notes with
+ * the steps (recording_undo.c, as a live take); repeating a take that adds nothing leaves that undo alone */
+/* a step it wrote to: the view of its recorded notes, and what the pattern already played there still plays */
+static void capture_rebuild(track_t *t, uint32_t i)
+{
+    step_t *st = &t->step[i], was = *st;
+    notes_rebuild(t, i);
+    if (was.hit) st->acc |= was.acc;                    /* (hit: lane accents; none: the step's gate) */
+    else if (!st->hit) st->acc = was.acc;
+    st->hit |= was.hit;
+    st->flags |= was.flags & SF_ACCENT;
+    if (was.vel > st->vel) st->vel = was.vel;
+    for (uint32_t m = 0; m < was.n; m++) {
+        uint32_t q = 0;
+        while (q < st->n && st->note[q] != was.note[m]) q++;
+        if (q == st->n && st->n < 4u) st->note[st->n++] = was.note[m];
+    }
+}
 static void capture_take(void)
 {
     track_t *t = TSEL;
@@ -862,9 +879,6 @@ static void capture_take(void)
         w = empty ? (span <= 16u ? 16u : span <= 32u ? 32u : 64u) : (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP);
         start = (uint16_t)(end - w);
     }
-    load_begin(t, UNDO_PAT);
-    if (empty)
-        t->p[P_SLEN] = (int16_t)w;
     for (i = from; i != until; i++) {
         const cap_ev_t *e = &captured[i % CAP_N];
         uint32_t actual = (uint16_t)(e->step - start), on = (uint32_t)e->on << 8, view, dur, exp;
@@ -896,8 +910,14 @@ static void capture_take(void)
         for (; j < RECORD_MAX && recording[j].vel && (recording_present(&recording[j]) || recording_sounding(j)); j++)
             ;
         if (j == RECORD_MAX) { fm1_irq_on(); full = 1; break; }
+        if (!put) {
+            recording_undo_capture(t);
+            if (empty)
+                t->p[P_SLEN] = (int16_t)w;
+        }
         if (recording[j].vel) recording_unlink(j);
         recording_restore_note(t, j, r);
+        if (t->step[view].time != ST_NOTE) step_clear(&t->step[view]);
         t->step[view].time = ST_NOTE;
         t->step[view].flags |= SF_RECORDED;
         touched |= 1ull << view;
@@ -907,13 +927,14 @@ static void capture_take(void)
     for (i = 0; i < NSTEP; i++)
         if ((touched >> i) & 1u) {
             fm1_irq_off();
-            notes_rebuild(t, i);
+            capture_rebuild(t, i);
             fm1_irq_on();
         }
-    if (put)
-        t->seq_active = 1;
-    load_end(t);
     if (!put) { ui_message("NOTHING TO CAPTURE"); return; }
+    t->seq_active = 1;
+    fm1_irq_off();
+    recording_undo_finish(t);
+    fm1_irq_on();
     {
         char b[16];
         fmt_int(b, (int32_t)(w % 16u ? w : w / 16u));

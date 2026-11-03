@@ -6150,6 +6150,62 @@ int main(void)
     return bad ? 1 : 0;
 }
 #else
+/* #113: EDIT held after a capture takes its notes away, also where the pattern already had a step: none left to
+ * sound unseen. A hit on the same step stays, as it was */
+static uint32_t capture_undo_play(uint32_t note)      /* a 16th on every step of one bar of track 4 */
+{
+    for (uint32_t i = 0; i < 16u; i++) {
+        while (cap_step[3] != (uint16_t)i) events_block(1);
+        input_on(TSEL, note, 100);
+        events_block(2);
+        input_off(TSEL, note);
+    }
+    return 16u;
+}
+static uint32_t capture_undo_active(uint32_t note)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < RECORD_MAX; i++)
+        n += recording_active(TSEL, i) && recorded_note(&recording[i]) == note;
+    return n;
+}
+static int test_capture_undo(void)
+{
+    int bad = 0;
+    enum { HAT = 42, KICK = 36 };
+    for (uint32_t recorded = 0; recorded < 2u; recorded++) {
+        step_t before[NSTEP];
+        ui_power_on();
+        recording_reset();
+        track_select(3);
+        track_defaults_steps(TSEL);
+        TSEL->p[P_SLEN] = 16;
+        for (uint32_t i = 0; i < 16u; i += 4u) {
+            if (recorded) {                             /* DRUM HIT's kicks: a step that is a view of recorded notes */
+                ui.cursor = (uint8_t)i;
+                ui.drum_sound = (uint8_t)drum_sound_of(TSEL, KICK);
+                drum_hit_key(0);
+                step_history_finish();
+            } else grid_hit(TSEL, i, 0, 1);             /* the grid's kicks */
+        }
+        memcpy(before, TSEL->step, sizeof before);
+        uint32_t kicks = capture_undo_active(KICK);
+        transport_req = 1;
+        events_block(1);
+        capture_undo_play(HAT);
+        hold(B_REC);
+        bad += check(recorded ? "#113 over DRUM HIT's kicks: a captured bar of hats" : "#113 over the grid's kicks: a captured bar of hats",
+                     msg_is("CAPTURED 16 STEPS") || msg_is("CAPTURED 1 BAR"));
+        bad += check("  .. all 16 are there", capture_undo_active(HAT) == 16u);
+        bad += check("  .. and the kicks still on their steps", (step_lanes(&TSEL->step[0]) & 1u) && (step_lanes(&TSEL->step[12]) & 1u));
+        hold(B_EDIT);
+        bad += check("  EDIT held: no hat left to sound", capture_undo_active(HAT) == 0u);
+        bad += check("  .. the kicks as they were", capture_undo_active(KICK) == kicks && !memcmp(before, TSEL->step, sizeof before));
+        stop_transport();
+    }
+    ui_power_on();
+    return bad;
+}
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -6226,6 +6282,7 @@ int main(void)
     bad += test_fm6_charts();
     bad += test_stage_knobs_after_drum();
     bad += test_select_octave();
+    bad += test_capture_undo();
 
     if (getenv("UI_SCREEN_DIR")) chain_screens(getenv("UI_SCREEN_DIR"));
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
