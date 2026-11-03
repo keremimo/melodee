@@ -912,7 +912,22 @@ static void keyboard_block(void)
 {
     uint32_t cur = fm1_in.notes, ch, k;
 #if BOARD_SMK37
+    uint32_t rt;
     ext_keys_block();
+    {   /* keys struck again before a full lift (smk_input.h): their bit never dropped, so end the note and
+         * start it with the new velocity; a key the UI or a layer owns, or that just went down or up: as is */
+        uint32_t l = fm1__lock();
+        rt = fm1_in.notes_retrig;
+        fm1_in.notes_retrig = 0;
+        fm1__unlock(l);
+    }
+    rt &= cur & kb_prev;
+    for (k = 0; rt >> k; k++) {
+        if (!((rt >> k) & 1u) || ((kb_layer | punch_claimed) >> k) & 1u || kb_note[k] == KB_SILENT)
+            continue;
+        key_off(k, &trk[kb_trk[k] % NTRK]);
+        key_on(k, &trk[kb_trk[k] % NTRK]);
+    }
 #endif
     ch = cur ^ kb_prev;                           /* keys also sound while entering steps */
     if (!ch) return;

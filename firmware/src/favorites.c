@@ -5,7 +5,7 @@
 /* Stable engine/preset references; fixed capacity independent of optional engines.
  * Bytes no engine's presets reach hold other settings, kept with the favorites (settings_persist.c):
  *   row 8  (GRAIN, retired; Felucca 1.0's stars in bits 0..11) 4..7 tagged USB VOLUME, 8..15 GLO > WEIGHTS (settings_persist.c),
- *          16..25 the FX key map, 28..31 its tag (below)
+ *          16..25 the FX key map, 28..31 its tag (below), 26 tagged VELOCITY (SMK-37, settings_persist.c)
  *   row 14 (OBXF, retired; its old stars in 0..15)             16..27 the scale favorites, 28..31 their tag
  *   row 15 (CZ-1: factory tones bits 0..64, native slots 65..192) 26 tagged USB INPUT (settings_persist.c), 27 SCREEN OFF,
  *          28 tagged AUTOSAVE OFF, 29 the PRESETS LIST (browse.c),

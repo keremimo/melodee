@@ -324,6 +324,47 @@ static void con_smk(void)                               /* the SMK-37 inputs (sm
     con_puts("\r\n");
 }
 
+/* the velocity of the last presses (smk_input.h smk_hit), newest first: a key's gap between its contacts
+ * (T in the stock's 0.1 ms units, so T - 10 = tenths of a ms), the curve's 1..1023 and the MIDI velocity
+ * sent; a pad's baseline, peak and velocity. Then the state: VELOCITY, the factory curves taken or not */
+static void con_keys(void)
+{
+    static const char *const CURVE[4] = {"NORMAL", "SOFT", "HARD", "FIXED"};
+    uint32_t n = smk_hit_n, i, m = n < SMK_HITS ? n : SMK_HITS;
+    for (i = 1; i <= m; i++) {
+        uint32_t j = (n - i) % SMK_HITS, src = smk_hit[j].src;
+        if (src & 0x80u) {
+            con_puts("pad ");
+            con_dec((int32_t)(src & 0x1Fu));
+            con_puts(" base ");
+            con_dec(smk_hit[j].b);
+            con_puts(" peak ");
+            con_dec(smk_hit[j].a);
+        } else {
+            con_puts("key ");
+            con_dec((int32_t)(src & 0x3Fu));
+            con_puts(src & 0x40u ? " again gap " : " gap ");
+            con_dec((int32_t)(smk_hit[j].a - 10u) / 10);
+            con_putc('.');
+            con_dec((int32_t)(smk_hit[j].a - 10u) % 10);
+            con_puts(" ms curve ");
+            con_dec(smk_hit[j].b);
+        }
+        con_puts(" vel ");
+        con_dec(smk_hit[j].vel);
+        con_puts("\r\n");
+    }
+    con_kv("presses", (int32_t)n);
+    con_puts("velocity ");
+    con_puts(CURVE[smk_vel_curve & 3u]);
+    con_puts(smk_trim_ok ? " factory curves\r\n" : " default curves\r\n");
+    con_puts("key 0 curve ");
+    for (i = 0; i < 5u; i++) { con_dec(smk_trim_key[0][i]); con_putc(' '); }
+    con_puts("\r\npad 0 curve ");
+    for (i = 0; i < 5u; i++) { con_dec(smk_trim_pad[0][i]); con_putc(' '); }
+    con_puts("\r\n");
+}
+
 /* what the firmware sends the pads: GRB words by hardware pad (0..7 top row, 8..15 bottom row) */
 static void con_leds(void)
 {
@@ -384,7 +425,7 @@ static void con_exec(const char *p)
 {
     if (con_word(&p, "help") || con_word(&p, "?"))
 #if BOARD_SMK37
-        con_puts("status  dbg  smk  padtest  leds  crash  params  memr ADDR [LEN]  flr OFF [LEN]  uboot yes\r\n");
+        con_puts("status  dbg  smk  keys  padtest  leds  crash  params  memr ADDR [LEN]  flr OFF [LEN]  uboot yes\r\n");
 #else
         con_puts("status  dbg  inp  crash  params  memr ADDR [LEN]  flr OFF [LEN]  uboot yes\r\n");
 #endif
@@ -397,6 +438,8 @@ static void con_exec(const char *p)
 #if BOARD_SMK37
     else if (con_word(&p, "smk"))
         con_smk();
+    else if (con_word(&p, "keys"))
+        con_keys();
     else if (con_word(&p, "padtest"))
         con_padtest();
     else if (con_word(&p, "leds"))

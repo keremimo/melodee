@@ -25,7 +25,14 @@
  *
  * Key velocity: the stock two-contact algorithm (T = 10 + frames between contact 1 and contact 2, in the
  * stock's 0.1 ms frames, from the 24 MHz time base here) and its 5-point curves (trimdata at flash 0xC1000,
- * defaults {5,640,800,920,980}). Our scan samples a key once per 1.6 ms, so fast strikes quantise coarsely. */
+ * defaults {5,640,800,920,980}: x = 1023 - T, the points are the x of velocity 1, 32, 64, 96 and 127, so with
+ * the defaults a gap of 4.8 ms or less is 127, 8 ms ~100, 16 ms ~78, 32 ms ~42, 100 ms 1). Our scan samples a
+ * key once per 1.6 ms, so fast strikes quantise coarsely. A note starts when contact 2 closes and ends when
+ * contact 1 has been open SMK_KEY_REL frames; a key struck again before that (contact 2 reopened and closed
+ * again, with contact 1 held or open for less than the release) sounds again: a release and a new note, the
+ * velocity from the time contact 2 was open (fm1_in.notes_retrig for the 27 keys, as seq.c keyboard_block
+ * sees no edge; two queue entries for the outer keys). VELOCITY (smk_vel_curve) remaps the curves' output
+ * for keys and pads. The last presses are logged for the console (smk_hit, `keys`). */
 #pragma once
 #include <stdint.h>
 #include "fm1_time.h"
@@ -56,6 +63,7 @@
 #define SMK_DEB_RELEASE 4u        /* frames open in a row: a button release (~6 ms) */
 #define SMK_DEB_PRESS 2u          /* frames closed in a row: a button press (~3 ms) */
 #define SMK_KEY_REL 3u            /* frames with contact 1 open: a key release (~5 ms) */
+#define SMK_KEY_RETRIG 1u         /* frames with contact 2 open (the note on) beyond the first before its reclose is a new strike (~3 ms) */
 #define SMK_ENC_DIV 4             /* decoder counts a step: a detent is a whole quadrature cycle (the stock's 2
                                    * gave two UI steps a click, as the FM-1 has one) */
 enum { FM1_BTN_OCT_DOWN = 4, FM1_BTN_OCT_UP = 5 };
@@ -117,6 +125,24 @@ static volatile uint8_t smk_padq_w, smk_padq_r;
 /* 5-point velocity curves (trimdata, flash 0xC1000: +0x08 16 pads x 5 u16, +0xA8 37 keys x 5 u16) */
 static uint16_t smk_trim_pad[SMK_NPAD][5] __attribute__((section(".pool"), aligned(4)));   /* (.pool: RAM is full) */
 static uint16_t smk_trim_key[FM1_NKEY][5] __attribute__((section(".pool"), aligned(4)));
+static uint8_t smk_trim_ok;        /* 1: the factory record was taken (else the defaults) */
+/* VELOCITY (the menu, settings_persist.c): 0 NORMAL the curves as they are, 1 SOFT (lighter touch, louder),
+ * 2 HARD, 3 FIXED 100 (as the FM-1's keys) */
+static uint8_t smk_vel_curve;
+/* the last presses, for the console (`keys`): a key: src = key (| 0x40 struck again), a = T (0.1 ms units),
+ * b = the curve's 1..1023; a pad: src = 0x80 | pad, a = the peak, b = the baseline; vel = what was sent */
+#define SMK_HITS 16u
+static struct { uint8_t src, vel; uint16_t a, b; } smk_hit[SMK_HITS] __attribute__((section(".pool"), aligned(4)));
+static uint8_t smk_hit_n;          /* presses logged (the next entry is smk_hit_n % SMK_HITS) */
+static void smk__log(uint32_t src, uint32_t vel, uint32_t a, uint32_t b)
+{
+    uint32_t i = smk_hit_n % SMK_HITS;
+    smk_hit[i].src = (uint8_t)src;
+    smk_hit[i].vel = (uint8_t)vel;
+    smk_hit[i].a = (uint16_t)a;
+    smk_hit[i].b = (uint16_t)b;
+    smk_hit_n++;
+}
 
 /* ------------------------------------------------------------------ state --- */
 static volatile struct {
@@ -126,12 +152,15 @@ static volatile struct {
     uint32_t pressed, released;  /* button edges since the last fm1_input_edges() */
     uint32_t remote, remote_tap; /* MIDI LEARN: buttons a controller holds; pressed, not yet seen down by the debounce */
     uint32_t notes_pressed;      /* note-key press edges since the last fm1_input_note_edges() */
-    uint64_t keys;               /* all 37 keybed keys: bit k = key k (0 = lowest C) */
+    uint32_t notes_retrig;       /* note keys struck again while down (their bit in notes stays set): seq.c restarts them */
+    uint64_t keys;               /* all 37 keybed keys: bit k = key k (0 = lowest C), set while its note sounds */
     uint8_t key_vel[FM1_NKEY];   /* MIDI velocity 1..127 of each key's last press (a pad: its white key's) */
     uint8_t raw[FM1_NCOL];       /* last frame, rows packed, 1 = closed */
     uint8_t cnt[FM1_NBTN];       /* button debounce */
-    uint8_t ks_last[FM1_NKEY], ks_stab[FM1_NKEY], ks_rel[FM1_NKEY];
-    uint32_t ks_t1[FM1_NKEY];    /* fm1_ticks() when contact 1 closed */
+    uint8_t ks_stab[FM1_NKEY];   /* the contacts' settled state: 0 open, 1 contact 1, 3 both */
+    uint8_t ks_rel[FM1_NKEY];    /* frames with both contacts open */
+    uint8_t ks_open[FM1_NKEY];   /* frames since contact 2 opened with the note on (saturates) */
+    uint32_t ks_t1[FM1_NKEY];    /* fm1_ticks() when contact 1 closed, or contact 2 opened with the note on */
     uint8_t enc_last[FM1_NENC], enc_hist[FM1_NENC];
     int16_t enc_cnt[FM1_NENC];   /* transitions, + = B leads */
     int16_t enc_steps[FM1_NENC];
@@ -232,7 +261,19 @@ static uint32_t smk_curve(const uint16_t *t, uint32_t x)   /* stock curve: 5 poi
     v = (i - 1u) * 256u + ((x - t[i - 1u]) << 8) / (uint32_t)(t[i] - t[i - 1u]);
     return v ? v : 1u;
 }
-FM1_INLINE uint8_t smk_vel7(uint32_t v10) { return (uint8_t)(v10 >> 3 ? v10 >> 3 : 1u); }
+static uint8_t smk_vel7(uint32_t v)   /* the curve's 1..1023 -> MIDI 1..127, through VELOCITY */
+{
+    if (smk_vel_curve == 3u)
+        return 100;
+    if (v > 1023u)
+        v = 1023u;
+    if (smk_vel_curve == 1u)
+        v = 1023u - (1023u - v) * (1023u - v) / 1023u;
+    else if (smk_vel_curve == 2u)
+        v = v * v / 1023u;
+    v >>= 3;
+    return (uint8_t)(v ? v : 1u);
+}
 
 static void smk_trim_defaults(void)
 {
@@ -262,6 +303,7 @@ static int smk_trim_load(const uint8_t *rec)
     }
     if (!ok)
         return 0;
+    smk_trim_ok = 1;
     for (i = 0; i < SMK_NPAD + FM1_NKEY; i++)
         for (j = 0; j < 5u; j++) {
             uint16_t v = (uint16_t)(rec[8u + i * 10u + 2u * j] | rec[9u + i * 10u + 2u * j] << 8);
@@ -304,9 +346,12 @@ FM1_INLINE uint32_t smk__closed(uint32_t code) { return (fm1_in.raw[code >> 4] >
 
 static void smk__extq(uint32_t k, uint32_t vel)
 {
-    uint8_t w = smk_extq_w;
-    if ((uint8_t)(w + 1u) % SMK_EXTQ == smk_extq_r)
+    uint32_t w = smk_extq_w;
+    if ((w + 1u) % SMK_EXTQ == smk_extq_r) {          /* full (never, drained every audio half): a press is */
+        if (!vel)                                     /* dropped, a release takes the newest entry's place */
+            smk_extq[(w + SMK_EXTQ - 1u) % SMK_EXTQ] = (uint16_t)(k << 8);
         return;
+    }
     smk_extq[w] = (uint16_t)(k << 8 | vel);
     smk_extq_w = (uint8_t)((w + 1u) % SMK_EXTQ);
 }
@@ -333,36 +378,59 @@ static void smk__key_event(uint32_t k, uint32_t vel)     /* vel 0 = release */
         fm1_in.keys &= ~((uint64_t)1u << k);
 }
 
+/* the note of key k: velocity from the time since ks_t1 (contact 1 closed, or contact 2 opened while the note
+ * was on), the stock formula */
+static void smk__strike(uint32_t k, uint32_t now, uint32_t again)
+{
+    uint32_t T = 10u + (now - fm1_in.ks_t1[k]) / (100u * FM1_TICKS_PER_US);   /* stock 0.1 ms frames */
+    uint32_t x = T <= 0x3FEu ? 0x3FFu - T : 1u, v = smk_curve(smk_trim_key[k], x), vel = smk_vel7(v);
+    if (again) {                                      /* struck again while down: end it, then the new note */
+        smk__key_event(k, 0);
+        if (k >= SMK_KEY_F3 && k < SMK_KEY_F3 + 27u)
+            fm1_in.notes_retrig |= 1u << (k - SMK_KEY_F3);
+    }
+    smk__key_event(k, vel);
+    smk__log(k | (again ? 0x40u : 0u), vel, T, v);
+}
+
 static void smk__keys(uint32_t now)
 {
     uint32_t k;
     for (k = 0; k < FM1_NKEY; k++) {
         uint32_t s = smk__closed(SMK_KEYC[k][0]) | smk__closed(SMK_KEYC[k][1]) << 1, st = fm1_in.ks_stab[k];
-        if (s == 2u)                                      /* contact 2 without 1: treat as 1 then 2 */
+        uint32_t on = (uint32_t)(fm1_in.keys >> k) & 1u;
+        if (s == 2u)                                      /* contact 2 without 1: treat as both */
             s = 3u;
-        if (s == st) {
-            fm1_in.ks_rel[k] = 0;
-            continue;
-        }
-        if (s == 0u) {                                    /* contact 1 open: a release after a few frames */
+        if (s == 0u) {                                    /* both open: a release after a few frames */
+            if (st == 0u) {
+                fm1_in.ks_rel[k] = 0;
+                continue;
+            }
             if (++fm1_in.ks_rel[k] < SMK_KEY_REL)
                 continue;
             fm1_in.ks_rel[k] = 0;
             fm1_in.ks_stab[k] = 0;
-            if (st == 3u)
+            if (on)
                 smk__key_event(k, 0);
             continue;
         }
         fm1_in.ks_rel[k] = 0;
+        if (s == st) {                                    /* as settled; the note on with contact 2 open: count */
+            if (on && st == 1u && fm1_in.ks_open[k] != 0xFFu)
+                fm1_in.ks_open[k]++;
+            continue;
+        }
         if (st == 0u)
             fm1_in.ks_t1[k] = now;                        /* contact 1 made (or both in one frame) */
-        if (s == 3u && st != 3u) {                        /* contact 2 made: the note, timed from contact 1 */
-            uint32_t T = 10u + (now - fm1_in.ks_t1[k]) / (100u * FM1_TICKS_PER_US);   /* stock 0.1 ms frames */
-            uint32_t x = T <= 0x3FEu ? 0x3FFu - T : 1u;
-            smk__key_event(k, smk_vel7(smk_curve(smk_trim_key[k], x)));
+        if (s == 3u) {                                    /* contact 2 made */
+            if (!on)
+                smk__strike(k, now, 0);                   /* the note, timed from contact 1 */
+            else if (st == 1u && fm1_in.ks_open[k] >= SMK_KEY_RETRIG)
+                smk__strike(k, now, 1);                   /* struck again before a full lift, timed from its reopening */
+        } else if (st == 3u && on) {                      /* 3 -> 1: still down; a re-strike is timed from here */
+            fm1_in.ks_t1[k] = now;
+            fm1_in.ks_open[k] = 0;
         }
-        if (s == 1u && st == 3u)                          /* 3 -> 1: still down */
-            continue;
         fm1_in.ks_stab[k] = (uint8_t)s;
     }
 }
@@ -518,7 +586,11 @@ static void smk__pad(uint32_t p, uint32_t raw)
         }
         fm1_in.pad_st[p] = 0x80;
         fm1_in.pad_low[p] = 0;
-        smk__padq(p, smk_vel7(smk_curve(smk_trim_pad[p], fm1_in.pad_peak[p])));
+        {
+            uint32_t vel = smk_vel7(smk_curve(smk_trim_pad[p], fm1_in.pad_peak[p]));
+            smk__padq(p, vel);
+            smk__log(0x80u | p, vel, fm1_in.pad_peak[p], base);
+        }
         return;
     }
     fm1_in.pad_press[p] = (uint8_t)(raw <= 0x200u ? raw >> 4 : (raw - 0x200u) / 4u + 32u > 127u ? 127u

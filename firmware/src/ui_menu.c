@@ -25,7 +25,7 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
        MI_BLE,
 #endif
 #if BOARD_SMK37
-       MI_TRS,
+       MI_TRS, MI_VELOCITY,
 #endif
        MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN, MI_MIDI_FORGET,
        MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
@@ -41,7 +41,7 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
                                               "BLUETOOTH",
 #endif
 #if BOARD_SMK37
-                                              "TRS MIDI OUT",
+                                              "TRS MIDI OUT", "VELOCITY",
 #endif
                                               "MIDI KNOBS", "MIDI MODE", "MIDI LEARN", "FORGET LEARNED",
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
@@ -51,6 +51,9 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 static const char *const MI_USB_NAME[4] = {"IN+OUT", "IN", "OUT", "OFF"};
 #endif
 static const char *const MI_MIDI_KNOB_NAME[MK_PROFILES] = {"OFF", "GENERAL", "MINILAB"};
+#if BOARD_SMK37
+static const char *const SMK_VEL_NAME[4] = {"NORMAL", "SOFT", "HARD", "FIXED"};
+#endif
 static const char *const MI_MIDI_MODE_NAME[MK_MODES] = {"ABSOLUTE", "REL 1", "REL 2", "REL 3"};
 
 /* https://keremimo.github.io/melodee, QR version 3, correction M (segno; checked with a decoder).
@@ -271,6 +274,9 @@ static void draw_menu(void)
     uint32_t i, pass, sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
                             settings_hold * 3511u + settings_lights * 6151u + settings_autosave * 15485863u +
                             settings_midi_knobs * 997u + settings_midi_knob_mode * 10007u +
+#if BOARD_SMK37
+                            smk_vel_curve * 28657u +
+#endif
 #if MELODEE_USB_AUDIO
                             ua_off_want * 92821u + ua_tracks_want * 324161u +
 #endif
@@ -337,6 +343,7 @@ static void draw_menu(void)
                 if (i == MI_TRACKS) value = GLO_SELECT & TRACKS_HIDE ? "HIDE" : "SHOW";
 #if BOARD_SMK37
                 if (i == MI_TRS) value = GLO_SELECT & TRS_OUT_OFF ? "OFF" : "ON";
+                if (i == MI_VELOCITY) value = SMK_VEL_NAME[smk_vel_curve % 4u];
 #endif
                 if (i == MI_SCREEN) value = (const char *const[]){"NEVER", "5 MIN", "15 MIN", "30 MIN", "60 MIN"}[scr_get()];
                 if (i == MI_LIGHTS) value = LIGHTS_NAME[settings_lights % LIGHTS_N];
@@ -532,6 +539,11 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_TRS) {        /* KNOB 1 right ON, left OFF; OCT+ toggles */
         uint32_t off = s > 0 ? 0u : s < 0 ? 1u : !(GLO_SELECT & TRS_OUT_OFF);
         GLO_SELECT = (uint8_t)(off ? GLO_SELECT | TRS_OUT_OFF : GLO_SELECT & ~TRS_OUT_OFF);
+        ui.force = 1; ok = 0;
+    }
+    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_VELOCITY) {   /* KNOB 1 steps NORMAL SOFT HARD FIXED, OCT+ wraps */
+        uint32_t v = smk_vel_curve % 4u;                             /* (keys and pads, smk_input.h; saved with the menu) */
+        smk_vel_curve = (uint8_t)(s > 0 ? (v < 3u ? v + 1u : v) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % 4u);
         ui.force = 1; ok = 0;
     }
 #endif
