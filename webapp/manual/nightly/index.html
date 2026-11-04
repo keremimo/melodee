@@ -81,7 +81,7 @@
     </div>
   </nav>
   <h1>Manual</h1>
-  <p class="small">Firmware: <span data-firmware-version>next-9671858</span>. Use the guide shipped with your firmware; the <a href="https://keremimo.github.io/melodee/webapp/manual/nightly/">nightly manual</a> follows the latest development build.</p>
+  <p class="small">Firmware: <span data-firmware-version>next-3fe570d</span>. Use the guide shipped with your firmware; the <a href="https://keremimo.github.io/melodee/webapp/manual/nightly/">nightly manual</a> follows the latest development build.</p>
   <p>How to use Melodee on the M-VAVE FM-1 after installing the custom firmware. This guide shows screenshots of each page and tables what each knob and control on that page does. Screens shown here use the NIGHT theme; your colors depend on the MENU Settings page (long hold HOME button) → COLOR. Type on the device is large. FONT in that same menu switches between Rubik and Melodee Pixel.</p>
 
   <div class="layout">
@@ -174,7 +174,7 @@
         <p>Hold <kbd>OCT+</kbd> on pages that have a sheet (Stage, sound pages, NOTES, PATTERNS, SONG, and others) to open actions such as Init sound, Copy to…, or Sound designer.</p>
         <p><strong>Undo / redo:</strong></p>
         <ul>
-          <li>Hold <kbd>EDIT</kbd> to undo. On NOTES, that undoes the last step edit first. Otherwise a finished recording take is undone first (<strong>UNDO RECORDING</strong>), and if there is none, the last sound or pattern load (or Capture).</li>
+          <li>Hold <kbd>EDIT</kbd> to undo. On NOTES, that undoes the last step edit first. Otherwise a finished recording take or Capture is undone first (<strong>UNDO RECORDING</strong>), and if there is none, the last sound or pattern load.</li>
           <li>While <kbd>EDIT</kbd> is held, <kbd>OCT−</kbd> undoes further and <kbd>OCT+</kbd> redoes. On NOTES those keys stay on the step edits. Elsewhere <kbd>OCT+</kbd> redoes the take (<strong>REDO RECORDING</strong>) before the load history.</li>
           <li>A take keeps one undo: recorded notes, manual steps, length, division, swing, gate and that track’s motion, put back in one step. Playback can keep going. It is refused while that track is still recording (<strong>FINISH RECORDING</strong>). A newer take replaces it. Switching pattern or engine, or loading a project, drops it. Other tracks stay as they are. If the snapshot cannot be kept, the screen says <strong>NO RECORD UNDO MEMORY</strong> or <strong>UNDO MEMORY FULL</strong>.</li>
           <li>Sound and pattern loads keep eight levels. A new edit clears redo. Recording, changing track or bank, or changing loop length starts a fresh step-edit history.</li>
@@ -842,6 +842,7 @@
           <li><strong>Undo a take:</strong> when you stop or disarm, or a one-pass shortcut finishes, hold <kbd>EDIT</kbd> to put that pattern back as it was (<strong>UNDO RECORDING</strong>). Motion recorded while armed is included, even when no notes were played. There is one such undo. Details are under <a href="#navigate">Sheets and undo</a>.</li>
           <li>While stopped and armed, the first key or MIDI note starts playback and records immediately, skipping count-in. A count-in you start with <kbd>PLAY</kbd> still runs (internal clock only; external clock skips it).</li>
           <li><strong>Capture (Take Taker):</strong> sometimes referred to as "retroactive recording" - while the transport runs, Melodee keeps only what you play on the selected track. Switching tracks clears the previous capture buffer; notes on other tracks are ignored. Hold <kbd>REC</kbd> to write the selected track’s last bars into its pattern. An empty pattern takes 1, 2 or 4 bars and sets LEN (the pattern length on SEQ → Pattern); a pattern with notes takes its last LEN steps. Hold <kbd>EDIT</kbd> to undo. Capture pauses while a track is actively recording.</li>
+          <li><strong>Free take:</strong> stopped, on an empty pattern, with nothing armed and <strong>CLK</strong> on <strong>INT</strong>, play a phrase and press and hold <kbd>REC</kbd> on the next 1. The press ends the loop; when the hold registers, the pattern plays it from the top and the screen says what it made, for example <strong>CAPTURED 2 BARS 120 BPM</strong>. If every other track’s current pattern is empty and you played more than one note, the tempo follows: the BPM nearest the current one that makes the loop 16, 32 or 64 steps. Otherwise the tempo stays and the loop is as short as your notes allow. A rest over 8 seconds starts again. Tap <kbd>REC</kbd> instead and it arms as usual. Hold <kbd>EDIT</kbd> to undo; the tempo stays as set.</li>
           <li><strong>SEQ → TEMPO → QNT</strong> sets one recording grid for all audio and MIDI tracks, saved with the project or template. It quantizes the new take’s onsets when recording ends. <strong>OFF</strong> (default) keeps the timing you played. This is separate from scale QNT on SCL. Track GATE affects manually entered steps.</li>
           <li>A project shares <strong>1,024 timed notes</strong> across all its patterns. <strong>RECORDING FULL</strong> leaves existing takes intact; clear or replace recorded steps to free space.</li>
         </ul>
@@ -893,7 +894,8 @@
             <tr><td>BLUETOOTH</td><td><kbd>OCT+</kbd> opens the Bluetooth MIDI page. See <a href="#bluetooth">Bluetooth</a>.</td></tr>
             <tr><td>MIDI KNOBS</td><td><strong>OFF</strong> (default), <strong>GENERAL</strong> or <strong>MINILAB</strong>. Operate the eight panel controls from a MIDI controller. Remembered; see <a href="#midi-knobs">MIDI knobs</a>.</td></tr>
             <tr><td>MIDI MODE</td><td><strong>ABSOLUTE</strong> (default), <strong>REL 1</strong>, <strong>REL 2</strong> or <strong>REL 3</strong>. Match the controller’s encoder output. Remembered.</td></tr>
-            <tr><td>MIDI LEARN</td><td>Bind CCs to knobs. The row shows how many are bound. Kept until power-off. See <a href="#midi-learn">MIDI LEARN</a>.</td></tr>
+            <tr><td>MIDI LEARN</td><td>Give a controller’s knobs and buttons to the panel’s own. The row shows how many are learned. See <a href="#midi-learn">MIDI LEARN</a>.</td></tr>
+            <tr><td>FORGET LEARNED</td><td>Asks, then clears every learned control.</td></tr>
             <tr><td>AUDIO CLICK</td><td><strong>OFF</strong> / <strong>REC</strong> (while recording) / <strong>ON</strong>.</td></tr>
             <tr><td>CLICK LEVEL</td><td>Metronome volume, 0–100% (default 12), apart from <kbd>MASTER KNOB</kbd>.</td></tr>
             <tr><td>COUNT-IN</td><td>Bars of count-in before an armed track records when you start with <kbd>PLAY</kbd> (internal clock only).</td></tr>
@@ -956,18 +958,19 @@
 
         <section id="midi-learn">
           <h3>MIDI LEARN</h3>
-          <p>Bind a CC to any knob of a track’s page, or to Stage’s knobs. Up to 16 CCs.</p>
+          <p>Give another controller’s knob or button to one of the panel’s own: the seven knobs apart from <kbd>MASTER KNOB</kbd>, and the fourteen buttons. It then works as that control on every page, and holds and combinations work too.</p>
           <ol>
-            <li>Hold <kbd>HOME</kbd>, go to <strong>MIDI LEARN</strong> and press <kbd>OCT+</kbd>. The menu closes and the screen says <strong>LEARN: TURN A KNOB</strong>.</li>
-            <li>Go to the page and turn the knob. The screen says <strong>SEND A CC</strong>.</li>
-            <li>Move the controller. The screen confirms it, for example <strong>CC 74 = T1 WAVE</strong>. Bind as many as you like.</li>
-            <li>Hold <kbd>HOME</kbd> to open the menu; that ends learning.</li>
+            <li>Hold <kbd>HOME</kbd>, go to <strong>MIDI LEARN</strong> and press <kbd>OCT+</kbd> or turn <kbd>KNOB 1</kbd> right. A list of the panel’s controls opens.</li>
+            <li>Turn a knob or press a button on the FM-1. Its row says <strong>Send a CC</strong> (a knob) or <strong>CC or note</strong> (a button). Nothing else happens while this list is open.</li>
+            <li>Move the controller. The row shows what it learned, for example <strong>CC 74</strong> or <strong>Note 36</strong>. Go on with the next control.</li>
+            <li>Hold <kbd>HOME</kbd> to leave.</li>
           </ol>
           <ul>
-            <li>A binding belongs to that track, page and knob, on any MIDI channel, and only works while the track has the engine it was learned on. It works from any page. Lists, slot pages, SONG, PATTERNS and MOTION cannot be learned.</li>
-            <li>A learned CC no longer does what the standard map gave it. CCs with a meaning of their own cannot be learned: 0, 1, 6, 11, 32, 38, 64, 96–101 and 120 up.</li>
-            <li>A new binding replaces the CC’s or the knob’s old one. <strong>MIDI LEARN FULL</strong> means 16 are in use. Turn <kbd>KNOB 1</kbd> left on the menu row to forget them all.</li>
-            <li>Bindings are kept only until power-off.</li>
+            <li>A knob takes a CC on any MIDI channel and follows <strong>MIDI MODE</strong>. A button takes a CC on any channel (64 and up is down) or a note on its channel.</li>
+            <li>A message learned again moves to its new control. With nothing waiting, a learned message moves the list to the control that has it.</li>
+            <li>A learned message no longer does what it did. CCs with a meaning of their own cannot be learned: 0, 1, 6, 11, 32, 38, 64, 96–101 and 120 up.</li>
+            <li>A controller button that sends only one value, or latches, stays down until its next value or for 10 seconds, so a hold can fire.</li>
+            <li>Learned controls stay after power-off and travel in backups. <strong>FORGET LEARNED</strong>, the next row of the menu, asks and then clears them all.</li>
           </ul>
         </section>
 
@@ -1003,7 +1006,16 @@
             <li><strong>Devices:</strong> a full-speed device with a USB-MIDI 1.0 interface, alone or behind a hub, including hubs built from two chips. A device that is more than MIDI also works, such as a sampler or audio interface with MIDI (tried with an Akai MPC Sample). The first one found with MIDI is used. Low-speed devices are not supported.</li>
             <li><strong>In:</strong> notes, controllers, clock and transport arrive as USB MIDI. Instrument tracks play from it; MIDI tracks listen with SYSTEM MIDI on USB; CLK on USB follows its clock. SysEx from the device is ignored.</li>
             <li><strong>Out:</strong> <a href="#midi-track">MIDI tracks</a> send to the device. Output-only synths work.</li>
-            <li><strong>Messages:</strong> <strong>USB MIDI READY</strong> (connected), <strong>USB NO MIDI DEVICE</strong>, <strong>USB LOW SPEED</strong>, <strong>USB CONTROLLER LOST</strong>. Reconnect the device, or switch USB HOST off and on, to try again.</li>
+            <li><strong>Messages:</strong>
+              <ul>
+                <li><strong>USB MIDI CONNECTED</strong>: ready to play. <strong>USB MIDI DISCONNECTED</strong>: it was unplugged or stopped answering; it is found again when it comes back.</li>
+                <li><strong>NOTHING ON THE USB PORT</strong>: the FM-1 sees no device at all. Check the cable or adapter, and use a powered hub.</li>
+                <li><strong>USB DEVICE NOT ANSWERING</strong>: something is there but does not reply. The FM-1 tries a hub port again for a few seconds; if it stays, unplug the device and plug it back.</li>
+                <li><strong>HUB FOUND</strong>: the hub works and nothing is plugged into it. Plug in a MIDI device.</li>
+                <li><strong>NO MIDI DEVICE ON THE HUB</strong> or <strong>NOT A USB-MIDI DEVICE</strong>: what is plugged in has no USB-MIDI. Some devices need a class-compliant mode switched on.</li>
+                <li><strong>LOW-SPEED USB DEVICE</strong>: not supported.</li>
+              </ul>
+              Switching USB HOST off and on starts the search again.</li>
           </ul>
         </section>
       </section>
