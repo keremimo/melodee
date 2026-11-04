@@ -257,7 +257,7 @@ standard and single-core firmware; the current installer offers dual-core firmwa
   manual notes, recorded notes and motion together.
 - **USB capture:** stereo master capture is the default, including track and shared
   effects. Hold HOME and choose USB INPUT > 4 TRACKS for isolated mono stems.
-- **Optional autosave:** hold HOME and set AUTOSAVE to OFF to keep project saves manual.
+- **Optional autosave:** hold HOME and set AUTOSAVE to OFF to keep project saves manual. AUTOSAVE TIME sets the inactivity delay from 5–60 seconds (default 15 seconds).
   It defaults ON, remembers the choice across power-offs, and leaves manual SAVE working.
 - **Clock choice:** the HOME menu's OVERCLOCK chooses 320 MHz (default) or 360 MHz for
   the next start. A CPU fault at 360 MHz returns the device to 320 MHz.
@@ -703,7 +703,7 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
   Stage's sheet afterwards
 - **Hold SAVE** (or **SAVE + REC**) to save the project back to the slot it was loaded from or last saved to (`SAVED 02`), stopping
   the transport first; a new project opens SAVE > PROJECT on a free slot. **Autosave:** stopped and untouched for
-  5 seconds (no key, button, knob or MIDI), a project that has a slot saves itself there when it changed.
+  the **AUTOSAVE TIME** interval (5–60 seconds, default 15; no key, button, knob or MIDI), a project that has a slot saves itself there when it changed.
   Hold **HOME** and set **AUTOSAVE** to **OFF** to disable it (default **ON**). The choice survives power-off;
   manual saves still work
 - **Capture:** while the transport runs and no track is recording, Melodee keeps what you play on the selected track;

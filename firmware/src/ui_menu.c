@@ -5,7 +5,7 @@
  * glow: ui_input.c ui_leds), KNOB ACCEL (ui_input.c accel_by), USB AUDIO (IN+OUT, IN, OUT or OFF; usb.c ua_off_set),
  * USB INPUT (stereo master or four track stems; usb.c ua_tracks_set),
  * USB HOST (the USB-C port hosts a USB-MIDI controller instead of talking to a computer; not saved; usb_host.c),
- * AUTOSAVE (automatic project saves after five seconds stopped and untouched), HOME SELECT (what SELECT turns on HOME:
+ * AUTOSAVE (automatic project saves after the selected inactivity interval), HOME SELECT (what SELECT turns on HOME:
  * ui.c HS_*), GLO SELECT (what SELECT turns with GLO held, on any page: the same choices), UNUSED TRACKS (SHOW:
  * Stage and MIXER keep a greyed "Add track" row for each place not in use; HIDE: the tracks in use only, ui.c
  * stage_rows),
@@ -24,7 +24,7 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
        MI_BLE,
 #endif
        MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN,
-       MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
+       MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_AUTOSAVE_TIME, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
 static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #if MELODEE_USB_AUDIO
@@ -38,7 +38,7 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #endif
                                               "MIDI KNOBS", "MIDI MODE", "MIDI LEARN",
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
-                                              "AUTOSAVE", "PICKER POPUPS", "KNOB ACCEL", "HOME SELECT", "GLO SELECT", "UNUSED TRACKS", "SCREEN OFF", "CALIBRATION", "ABOUT", "SOUND DESIGNER", "BACK"};
+                                              "AUTOSAVE", "AUTOSAVE TIME", "PICKER POPUPS", "KNOB ACCEL", "HOME SELECT", "GLO SELECT", "UNUSED TRACKS", "SCREEN OFF", "CALIBRATION", "ABOUT", "SOUND DESIGNER", "BACK"};
 #if MELODEE_USB_AUDIO
 /* USB AUDIO's four settings, as ua_off_want (UA_OFF_OUT | UA_OFF_IN) */
 static const char *const MI_USB_NAME[4] = {"IN+OUT", "IN", "OUT", "OFF"};
@@ -260,7 +260,7 @@ static void draw_menu(void)
     if (ui.menu == 3) { draw_ble_page(); return; }
 #endif
     uint32_t i, pass, sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
-                            settings_hold * 3511u + settings_lights * 6151u + settings_autosave * 15485863u +
+                            settings_hold * 3511u + settings_lights * 6151u + settings_autosave * 15485863u + settings_autosave_seconds * 49999u +
                             settings_midi_knobs * 997u + settings_midi_knob_mode * 10007u +
 #if MELODEE_USB_AUDIO
                             ua_off_want * 92821u + ua_tracks_want * 324161u +
@@ -323,6 +323,9 @@ static void draw_menu(void)
                 }
                 if (i == MI_PICKER) value = PREF_BITS & PREF_PICK_OFF ? "OFF" : "ON";
                 if (i == MI_FONT) value = TY_PIXEL ? "PIXEL" : "RUBIK";
+                if (i == MI_AUTOSAVE_TIME) {
+                    fmt_int(b, settings_autosave_seconds); str_cpy(b + str_len(b), " SEC", 5); value = b;
+                }
                 if (i == MI_AUTOSAVE) value = settings_autosave ? "ON" : "OFF";
                 if (i == MI_HOME_SEL) value = HS_NAME[home_select()];
                 if (i == MI_GLO_SEL) value = HS_NAME[glo_select()];
@@ -490,6 +493,11 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         value=s>0?(value<top?value+1:value):s<0?(value?value-1:0):(value+1)%(top+1);
         if(id==0)settings_click=value;else if(id==2)settings_countin=value;else if(id==3)settings_preview=value;else settings_chord_add=value;
         ok=0;ui.force=1;
+    }
+    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_AUTOSAVE_TIME) {
+        int32_t v = settings_autosave_seconds;
+        settings_autosave_seconds = (uint8_t)(s ? clamp(v + s * 5, 5, 60) : v >= 60 ? 5 : v + 5);
+        ui.force = 1; ok = 0;
     }
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_AUTOSAVE) {
         settings_autosave = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !settings_autosave);

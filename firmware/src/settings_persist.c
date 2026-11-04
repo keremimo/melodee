@@ -32,6 +32,8 @@ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KE
 #ifndef PROJ_SLOTS
 #define PROJ_SLOTS 32u                              /* (core.h) */
 #endif
+/* Retired DIGITAL row bytes 16..19: 'A', 'S', version 1, inactivity seconds. */
+#define AUTOSAVE_TIME_BYTE 16u
 #define AUTOSAVE_OFF_TAG 0xA1u                     /* CZ row byte 28: only this tag disables autosave */
 #define WORK_BUDGET_TAG 0x57420000u /* WB: high bits of usb_off; low two bits retain USB mode */
 /* GLO > WEIGHTS in favorites.c row 8 bytes 8..15: 'W', version 1, the five points (0 AUTO, 1..15), bit 0 of the
@@ -100,6 +102,11 @@ static int settings_import(persist_t *p, int n)
     p->palette = palette_to_stored(palette_from_stored(p->palette));
     settings_screen=p->favorites.factory[15][27] < 8u ? p->favorites.factory[15][27] : 0u;
     settings_autosave = p->favorites.factory[15][28] != AUTOSAVE_OFF_TAG;
+    {
+        const uint8_t *a = p->favorites.factory[1] + AUTOSAVE_TIME_BYTE;
+        settings_autosave_seconds = a[0] == 'A' && a[1] == 'S' && a[2] == 1u &&
+            a[3] >= 5u && a[3] <= 60u && a[3] % 5u == 0u ? a[3] : AUTOSAVE_SECONDS_DEFAULT;
+    }
     {
         const uint8_t *m = p->favorites.factory[1] + MIDI_KNOB_PREF_BYTE;
         int valid = m[0] == 'M' && m[1] == 'K' && m[2] < MK_PROFILES && m[3] < MK_MODES;
@@ -188,6 +195,10 @@ static void settings_export(persist_t *p)
 #endif
     p->favorites.factory[15][27]=settings_screen;
     p->favorites.factory[15][28] = settings_autosave ? 0u : AUTOSAVE_OFF_TAG;
+    {
+        uint8_t *a = p->favorites.factory[1] + AUTOSAVE_TIME_BYTE;
+        a[0] = 'A'; a[1] = 'S'; a[2] = 1u; a[3] = settings_autosave_seconds;
+    }
     p->ext.usb_off=(p->ext.usb_off&3u)|(settings_budget!=VOICE_BUDGET_DEFAULT?WORK_BUDGET_TAG|((uint32_t)settings_budget<<8):0u);
     p->ext.boot = settings_boot;
     p->ext.drumch = settings_drumch == 10u ? 0u : !settings_drumch ? 17u : settings_drumch;
