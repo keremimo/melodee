@@ -1,0 +1,8 @@
+# the store survives a restart: the simulated flash keeps Melodee's settings and the boot reads them again
+wait 3000
+turn SELECT 2
+wait 500
+reboot
+wait 3000
+expect engine 19
+expect playing 0

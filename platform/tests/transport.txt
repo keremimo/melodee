@@ -1,0 +1,11 @@
+# PLAY starts and stops the sequencer; SEQ opens the notes page
+wait 3000
+tap PLAY
+wait 500
+expect playing 1
+tap PLAY
+wait 500
+expect playing 0
+tap SEQ
+wait 400
+shot seq.png
