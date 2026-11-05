@@ -10,7 +10,15 @@
 #undef MELODEE_DUAL_CORE
 #define MELODEE_DUAL_CORE 0
 #endif
-#define MELODEE_CACHE_RAM 0
+#define MELODEE_CACHE_RAM 1     /* the base tests and sets the ways (fm1.toml cache_ram_ways); fm1_cache below says so */
+/* hal/fm1_cache.h's status, from the base's test (ml_cache_ready): resources.c's bank 3 and editor command 72 */
+enum { FM1_CACHE_DISABLED, FM1_CACHE_READY, FM1_CACHE_RETRY,
+       FM1_CACHE_EXTERNAL_MEMORY, FM1_CACHE_TIMEOUT, FM1_CACHE_WAY_FAILED,
+       FM1_CACHE_MEMORY_FAILED };
+static struct {
+    uint32_t status, con_before, data_before, instruction_before;
+    uint32_t con_after, data_after, instruction_after, failure_address, test_ticks;
+} fm1_cache;
 #ifdef MELODEE_SMK37
 #define BOARD_SMK37 1
 #endif
@@ -445,6 +453,7 @@ static void ml_host_messages(void)
 void mlb_init(void)
 {
     fm1_ms = ml_ms();
+    fm1_cache.status = ml_cache_ready() ? FM1_CACHE_READY : FM1_CACHE_DISABLED;
     settings_init();
     dsp_tables_init();
     flash_ok = (uint8_t)ml_flash_ok();
