@@ -174,14 +174,16 @@ def patch_usb(s, wide=False):
 def smk37_toml(source, model, name):
     """platform/fm1.toml for one SMK-37 model: its board and model, its USB product (the base adds " SMK-37")."""
     text = replace(source, 'usb_product = "Melodee FM-1"', f'usb_product = "Melodee {name}"')
-    text = replace(text, 'o2_cflags = ["-DMELODEE_RAM_AUDIO=1"]', 'o2_cflags = ["-DMELODEE_RAM_AUDIO=1", "-DMELODEE_SMK37=1"]')
+    text = replace(text, 'o2_cflags = ["-DMELODEE_RAM_AUDIO=1", "-Os"]', 'o2_cflags = ["-DMELODEE_RAM_AUDIO=1", "-Os", "-DMELODEE_SMK37=1"]')
     return f'board = "smk37"\nmodel = "{model}"\n' + text
 
 
 def smk37_linker(source):
-    """platform/app.ld (Melodee's sections) with the SMK's app slot, as the base's device/app_smk37.ld has it."""
-    text = replace(source, 'XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0xADFBC /* the app slot (0x8DFBC) and 128 KB',
-                   'XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0xB7FBC /* the app slot (0x97FBC) and 128 KB')
+    """platform/app.ld (Melodee's map) with the SMK's app slot (0x4000..0x9CFFF, as the base's device/app_smk37.ld has
+    it) and its resource region (hal/fm1_flash_map.h FL_RES: 0x9F000..0xAEFFF)."""
+    text = replace(source, 'XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x9DFBC   /* the app slot (0x8DFBC) and 64 KB',
+                   'XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0xA7FBC   /* the app slot (0x97FBC) and 64 KB')
+    text = replace(text, 'RES    (r)   : ORIGIN = 0x020C7020, LENGTH = 0x14FE0', 'RES    (r)   : ORIGIN = 0x0209B020, LENGTH = 0xFFE0')
     return replace(text, '_app_xip_end = ORIGIN(XIP) + 0x8DFBC;', '_app_xip_end = ORIGIN(XIP) + 0x97FBC;')
 
 
