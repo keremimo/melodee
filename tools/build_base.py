@@ -22,8 +22,8 @@ REV="698e2cba46b33bf14d9bf756675036053535638e"
 BSP_REV="f878800967e66e721dfbc9a4f5fe1835772ae8fc"
 # The SMK-37 board layer: the two PR branches feat/smk37-board (fm1-base on REV, felucca-bsp on BSP_REV), cloned from
 # the local repositories until they are pushed (SMK_FROM). The revisions pin it as REV and BSP_REV pin the FM-1's.
-SMK_REV="115d3d76d8dde22404b5a969670179357998aebe"
-SMK_BSP_REV="5e4af66a7da9cffae1ddaf45222f6dff55452ac6"
+SMK_REV="2303d1b1ae3e805c73b4b4063fd445abfa84f8a0"
+SMK_BSP_REV="3fb410b40d4e152dba417576a6f5a7468a2f39a3"
 SMK_FROM=(Path.home()/"code/personal/fm1-base", Path.home()/"code/personal/felucca-bsp")
 SMK_MODELS={"pro":("Pro",""),"elite":("Elite","-elite"),"mke":("MKE","-mke")}  # the product's name, the file's suffix
 parser=argparse.ArgumentParser(add_help=False)
