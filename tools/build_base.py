@@ -102,6 +102,9 @@ if target:
     package = out/(stem+".fwsc")
     record_build(ROOT, package, before, version, product_of(package.read_bytes()), "--no-ble" not in build_args,
                  REV, BSP_REV)
+    res = out/"melodee-res.bin"                      # (the installers push it after an update: tools/fm1_resources.py)
+    if res.exists():
+        shutil.copyfile(res, ROOT/"build"/(package.stem.split("-usb")[0] + "-res.bin"))
     if smk:
         shutil.copyfile(package,ROOT/"build"/package.name)
         print(f"package  {ROOT/'build'/package.name}")
