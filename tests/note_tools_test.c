@@ -18,7 +18,9 @@ static void select_range(uint32_t start,int32_t delta)
 static uint32_t duration(uint32_t i){return recording[i].duration*(1u<<(recording[i].owner>>5));}
 int main(void)
 {
-    setup();manual(2,60,2);select_range(2,0);note_move_snapped(0,RECORD_UNIT/4u,1);
+    /* A zero-length range gesture opens a sheet; select the note directly so
+     * the key below reaches the NOTES entry path instead of that popup. */
+    setup();manual(2,60,2);cursor_set(2);frame();note_move_snapped(0,RECORD_UNIT/4u,1);
     uint32_t copied=notes_selected(TSEL),original=copied==0u?1u:0u;
     recorded_note_t source=recording[original],duplicate=recording[copied];
     uint32_t key=0;while(key<26u&&(kb_map(TSEL,key)==60u||kb_map(TSEL,key)==KB_SILENT))key++;
