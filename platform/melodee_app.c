@@ -40,6 +40,11 @@
 #define MELODEE_RES __attribute__((section(".mres"), aligned(4)))
 #define RES_OK() (res_ok != 0u)
 static uint8_t res_ok;                  /* res.c: installed and this build's; else the readers fall back */
+#ifdef PLAT_HOST
+/* the host: no resource region in a flash; the MELODEE_RES data are ordinary constants there (no section), read as
+ * installed (mlb_init) */
+const uint8_t _mres_start[1], _mres_end[1];
+#endif
 #define panel ml_instrument_panel
 #define settings ml_instrument_settings
 #define bootguard ml_instrument_bootguard
@@ -440,6 +445,9 @@ void mlb_init(void)
         fm1_multicore_start();                      /* bounded handshake; the base arms the PC limits after app_init */
 #endif
     ml_usb_full(1);                                 /* the USB recording before MASTER (#103), MASTER for the speaker */
+#ifdef PLAT_HOST
+    res_ok = 1;
+#endif
     glo_restore();
     project_boot();
 #ifdef RES_BASE
