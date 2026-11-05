@@ -17,3 +17,4 @@ midi USB 80 3C 00
 wait 300
 expect peak_db_max >-60
 shot boot.png
+expect usb_play_gain 2048

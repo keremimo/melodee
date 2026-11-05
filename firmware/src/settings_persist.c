@@ -138,7 +138,7 @@ static int settings_import(persist_t *p, int n)
         settings_click_level = q[0] == 'C' && q[1] == 'K' && q[2] == 1u && q[3] <= 100u ? q[3] :
                                (uint8_t)(level == 1u ? 6u : level == 2u ? 25u : CLICK_LEVEL_DEFAULT);
     }
-#if MELODEE_USB_AUDIO
+#if MELODEE_USB_VOLUME
     {
         const uint8_t *u = p->favorites.factory[USB_VOLUME_ROW] + USB_VOLUME_BYTE;
         settings_usb_volume = u[0] == 'U' && u[1] == 'V' && u[2] == 1u && u[3] <= 100u ? u[3] : (uint8_t)UA_VOLUME_DEFAULT;
@@ -200,6 +200,8 @@ static void settings_export(persist_t *p)
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;
     p->favorites.factory[15][26] = ua_tracks ? 0xA1u : 0u; /* tagged; old/unknown bytes default to stereo */
+#endif
+#if MELODEE_USB_VOLUME
     {
         uint8_t *u = p->favorites.factory[USB_VOLUME_ROW] + USB_VOLUME_BYTE;
         memset(u, 0, 4);
