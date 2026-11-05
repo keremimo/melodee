@@ -1,0 +1,28 @@
+# Melodee on fm1-base (tools/build_base.py pins the base and felucca-bsp; tools/build.py's settings: the base's)
+name = "MELODEE"
+id_prefix = "FM-1_9"           # dev FM-1_900, as Melodee's own build
+usb_manufacturer = "Ellic Studio"
+usb_product = "Melodee FM-1"
+o2 = ["melodee_app.c"]         # the whole instrument: one unit, its UI at minsize and its audio resident (ir_pass)
+o2_cflags = ["-DMELODEE_RAM_AUDIO=1", "-Os"]   # -Os at the front end, as tools/build.py: optsize on every function, then -O2
+asm = ["cpu1_entry.S"]
+include = ["../firmware/src", "../build/gen"]
+words = "words.tsv"
+ble = true
+ble_central = true
+ble_stack = "own"
+ble_pairing = true
+usb_audio_in = true
+usb_audio_out = true
+usb_host = true                # the menu's USB HOST: a USB-MIDI controller or synth, directly or behind a hub
+xdata2 = true                  # Melodee's superblock and globals at 0xFC000..0xFEFFF (storage.c), where they always were
+boot_pack = true
+licence = "GPL-3.0-only"
+repo = "https://github.com/keremimo/melodee"
+author = "Kerem Kilic (Ellic Studio)"
+
+# Melodee's own second-core worker and the Bluetooth stack and its radio drivers: Melodee's copies, which
+# tools/base_overlay.py puts in place of the base's bt/ble and bsp/chip ones.
+vendored = ["hardware/", "ble/"]
+
+ir_pass = "tools/ir_pass.py"
