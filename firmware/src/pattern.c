@@ -28,7 +28,10 @@
 /* every inactive bank dense: the parts' NPAT - 1, the MIDI-only tracks' NPAT_MIDI - 1. Encoding a bank never runs out
  * (whatever path wrote the playing pattern); what a project may hold is the save's room (pattern_room) */
 #define PAT_CHUNKS ((NPART * (NPAT - 1u) + NMIDI * (NPAT_MIDI - 1u)) * PAT_BLOCKS * PAT_BLOCK_CHUNKS)
-#define PAT_RETAINED_CHUNKS (PAT_CHUNKS < 960u ? PAT_CHUNKS : 960u)   /* (the retained SRAM .noinit leaves) */
+#ifndef PAT_RETAINED_MAX
+#define PAT_RETAINED_MAX 960u                  /* (the retained SRAM .noinit leaves; fm1-base: platform/melodee_app.c) */
+#endif
+#define PAT_RETAINED_CHUNKS (PAT_CHUNKS < PAT_RETAINED_MAX ? PAT_CHUNKS : PAT_RETAINED_MAX)
 #define PAT_NONE 0x7FFFu
 #define PAT_REPEAT 0x8000u
 _Static_assert(NSTEP % PAT_BLOCK_STEPS == 0u && PAT_CHUNKS < PAT_NONE, "bounded pattern block pool");

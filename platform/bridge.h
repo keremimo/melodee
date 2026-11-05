@@ -74,6 +74,12 @@ int ml_ble_linked(void);
 int ml_ble_available(void);
 int ml_ble_enabled(void);
 void ml_ble_enable(int on);
+void ml_ble_relink(int on);                     /* look for the last device (CONNECT OUT), or stop */
+int ml_ble_device_connect(int i);               /* the scan's device i: 0 = connecting */
+void ml_ble_device_drop(void);
+int ml_ble_rf_ok(const uint8_t *copy);          /* a checked calibration copy (ble_vm.c) */
+enum { ML_BLE_OFF, ML_BLE_STARTING, ML_BLE_READY };   /* plat.h BLE_* */
+enum { ML_BLE_DEV_OFF, ML_BLE_DEV_SCANNING, ML_BLE_DEV_CONNECTING, ML_BLE_DEV_SEARCHING, ML_BLE_DEV_READY };   /* BLE_DEV_* */
 void ml_ble_reconnect(void);
 int ml_ble_device_state(void);
 int32_t ml_ble_pairing_code(void);

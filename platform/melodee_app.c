@@ -28,7 +28,11 @@
 #define MELODEE_USB_HOST 0      /* the base's (fm1.toml usb_host): uh below is its state for the UI */
 #define MELODEE_CDC 0
 #define MELODEE_UART 0          /* the TRS jack's reader is the base's: its messages come with plat_midi_in */
-#define MELODEE_BLE 0           /* (the own stack through the bridge: not yet) */
+#if defined(FM1B_BLE) && FM1B_BLE
+#define MELODEE_BLE 1           /* the base's own stack, Melodee's pages and record (midi_ble_base.h) */
+#else
+#define MELODEE_BLE 0
+#endif
 #ifndef MELODEE_ID
 #define MELODEE_ID "FM-1_900"
 #endif
@@ -38,6 +42,10 @@
 #define MELODEE_VERSION "v1.7.0-base-dev"
 #endif
 #define MELODEE_RES __attribute__((section(".mres"), aligned(4)))
+/* NOINIT also holds the base's crash record and radio log here (1.8 KB with Bluetooth): fewer pattern chunks there, the
+ * rest in the pool (pattern.c) */
+#define PAT_RETAINED_MAX 880u
+#define MELODEE_BIG_BSS __attribute__((section(".pool")))
 #define RES_OK() (res_ok != 0u)
 static uint8_t res_ok;                  /* res.c: installed and this build's; else the readers fall back */
 #ifdef PLAT_HOST
@@ -203,6 +211,9 @@ static struct { uint8_t want, on, run, msg; } uh;
 enum { UH_MSG_NONE, UH_MSG_MIDI, UH_MSG_LOST, UH_MSG_NOMIDI, UH_MSG_LOW, UH_MSG_NOLINE, UH_MSG_NOANSWER,
        UH_MSG_HUB_EMPTY, UH_MSG_HUB_NOMIDI };
 
+#if MELODEE_BLE
+#include "midi_ble_base.h"
+#endif
 #include "../firmware/src/song_chain.c"
 #include "../firmware/src/seq.c"
 
@@ -399,8 +410,12 @@ static void ml_poll(void)
     for (i = 0; i < 27u; i++) if ((keys & ~fm1_in.notes) >> i & 1u) fm1_in.note_t[i] = fm1_ticks();
     fm1_in.buttons = buttons; fm1_in.notes = keys;
     for (i = 0; i < 7u; i++) ml_enc[i] += enc[i];
-    while (ml_midi_in(&packet, &port))              /* port: 1 USB (and the host's device), 2 TRS, 3 Bluetooth */
+    while (ml_midi_in(&packet, &port)) {            /* port: 1 USB (and the host's device), 2 TRS, 3 Bluetooth */
+#if MELODEE_BLE
+        if (port == 3) mb.epoch_ms = fm1_ms;        /* (the header's BLE activity: ui_draw.c) */
+#endif
         (void)midi_enqueue_at(packet, (uint32_t)port, ml_midi_t24());
+    }
 }
 static void ml_host_messages(void)
 {
@@ -482,6 +497,10 @@ void mlb_frame(void)
     melodee_dbg.stage = 1;
     ui_input();
     glo_poll();
+#if MELODEE_BLE
+    mel_ble_poll();
+    if (mb_revision != mb_committed) persist_pending = 1;
+#endif
     settings_poll();
     melodee_dbg.stage = 2;
     ui_leds();

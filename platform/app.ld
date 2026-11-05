@@ -39,7 +39,6 @@ SECTIONS
     .ram_text : { _rt_start = .; KEEP(*(.ram_text*))
                   . = ALIGN(4); _c1_start = .; KEEP(*(.c1_text*))
                   . = ALIGN(4); _dsp_start = .; *(.dsp_text*) . = ALIGN(4); _dsp_end = .; _c1_end = .;
-                  . = ALIGN(4); _dt_start = .; *(.dsp_tables*) . = ALIGN(4); _dt_end = .;
                   _rt_end = .; } > RAMTEXT AT > XIP
     _rt_load = LOADADDR(.ram_text);
     _resource_low_start = ALIGN(_rt_end, 4);
@@ -52,7 +51,9 @@ SECTIONS
     _resource_data_start = ALIGN(_bss_end, 4);
     _resource_data_end = ORIGIN(RAM) + LENGTH(RAM);
     .pool (NOLOAD) : { _pool_start = .; *(.pool*) . = ALIGN(4); } > POOL
-    .audio_text : { _sd_audio_start = .; _audio_start = .; *(.audio_text*) *(.audio_libc*) . = ALIGN(4);
+    /* the resident audio code, then the DSP tables (.dsp_tables: data, loaded with it) */
+    .audio_text : { _sd_audio_start = .; _audio_start = .; *(.audio_text*) *(.audio_libc*)
+                    . = ALIGN(4); _dt_start = .; *(.dsp_tables*) . = ALIGN(4); _dt_end = .;
                     _sd_audio_end = .; _audio_end = .; } > POOL AT > XIP
     _sd_audio_load = LOADADDR(.audio_text);
     _sd_exec_end = _sd_audio_end;

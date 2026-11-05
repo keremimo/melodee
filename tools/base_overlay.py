@@ -35,112 +35,117 @@ def function(s, name, body):
     return s[:start] + body.rstrip() + s[end:]
 
 
-def patch_usb(s):
-    # Native stereo frames throughout both rings; format conversion at USB only.
-    s = replace(s, '#define UAC_MAXP (UA_MAXF * 4u)', '#define UAC_MAXP (UA_MAXF * 6u)')
-    s = replace(s, 'static uint32_t ua_ring[UA_N] FELUCCA_UAC_RING_ATTR;',
-        'typedef struct { int32_t l, r; } ml_pcm_frame;\nstatic ml_pcm_frame ua_ring[UA_N] __attribute__((section(".pool")));')
-    s = replace(s, 'static uint32_t ep4tx[UA_MAXF]', 'static uint32_t ep4tx[(UAC_MAXP + 3u) / 4u]')
-    s = replace(s, 'uint32_t last;               /* the last frame sent, repeated on an underrun */',
-        'ml_pcm_frame last;           /* native frame held on underrun */')
-    s = replace(s, '#define UO_MAXP (UO_MAXF * 4u)', '#define UO_MAXP (UO_MAXF * 6u)')
-    s = replace(s, 'static uint32_t uo_ring[UO_N];', 'static ml_pcm_frame uo_ring[UO_N] __attribute__((section(".pool")));')
-    s = replace(s, 'static uint32_t ep4rx[UO_MAXF + 1u]', 'static uint32_t ep4rx[(UO_MAXP + 3u) / 4u + 1u]')
-    # Both widths are selectable per direction; all formats remain 44.1 kHz.
-    alt = '''#define ML_AS24(s, terminal, ep, attr) \\
-    9, 4, (s), 2, 1, 1, 2, 0, 0, \\
-    7, 0x24, 1, (terminal), 1, 1, 0, \\
-    11, 0x24, 2, 1, 2, 3, 24, 1, 0x44, 0xAC, 0, \\
-    9, 5, (ep), (attr), (UA_MAXF*6u)&255u, (UA_MAXF*6u)>>8, 1, 0, 0, \\
-    7, 0x25, 1, ((ep)&128u)?1:0, 0, 0, 0,
-#if FELUCCA_UAC
-#define ML_CAP24(s) ML_AS24(s,2,0x84,0x05)
-#else
-#define ML_CAP24(s)
-#endif
-#if FELUCCA_UAC_OUT
-#define ML_PLAY24(s) ML_AS24(s,3,0x04,0x09)
-#else
-#define ML_PLAY24(s)
-#endif
-#define D_AUDIO(a) D_AC(a) D_MIDI((a) + 1) D_AS((a) + 2) ML_CAP24((a)+2) D_ASO((a) + 3) ML_PLAY24((a)+3)'''
-    # The base numbers the interfaces (IF_AS, IF_ASO, IF_MIDI) and may put MIDI last; its AC header takes the terminals'
-    # length as a parameter.
-    alt = alt[:alt.rindex('#define D_AUDIO')]
-    s = replace(s, '/* audio + MIDI from interface a, in the order FELUCCA_UAC_MIDI_LAST picks */',
-                alt + '/* audio + MIDI from interface a, in the order FELUCCA_UAC_MIDI_LAST picks */')
-    s = replace(s, '#define D_AUDIO(a) D_AC(a) D_AS((a) + IF_AS) D_ASO((a) + IF_ASO) D_MIDI((a) + IF_MIDI)',
-                '#define D_AUDIO(a) D_AC(a) D_AS((a) + IF_AS) ML_CAP24((a)+IF_AS) D_ASO((a) + IF_ASO) ML_PLAY24((a)+IF_ASO) D_MIDI((a) + IF_MIDI)')
-    s = replace(s, '#define D_AUDIO(a) D_AC(a) D_MIDI((a) + IF_MIDI) D_AS((a) + IF_AS) D_ASO((a) + IF_ASO)',
-                '#define D_AUDIO(a) D_AC(a) D_MIDI((a) + IF_MIDI) D_AS((a) + IF_AS) ML_CAP24((a)+IF_AS) D_ASO((a) + IF_ASO) ML_PLAY24((a)+IF_ASO)')
-    s = replace(s, '#define AUD_LEN (92 + (63 + FMT_LEN) * FELUCCA_UAC + 74 * FELUCCA_UAC_OUT - (FELUCCA_UAC_MIDI_LAST == 2))',
-                '#define AUD_LEN (92 + (106 + FMT_LEN) * FELUCCA_UAC + 117 * FELUCCA_UAC_OUT - (FELUCCA_UAC_MIDI_LAST == 2))')
-    s = replace(s, 'wvalue <= 1u && usb.config', 'wvalue <= 2u && usb.config')
-    s = replace(s, 'uac.last = 0;', 'uac.last = (ml_pcm_frame){0,0};')
-    s = replace(s, 'ua_ring[(r + i) & (UA_N - 1u)] = 0;', 'ua_ring[(r + i) & (UA_N - 1u)] = (ml_pcm_frame){0,0};')
-    helper = '''static int32_t ml_pcm_read(const uint8_t *p, uint32_t width)
-{
-    uint32_t v=p[0]|(uint32_t)p[1]<<8;
-    if(width==2u)return (int32_t)(int16_t)v*256;
-    v|=(uint32_t)p[2]<<16;
-    return (v&0x800000u)?(int32_t)v-16777216:(int32_t)v;
-}
-static uint32_t ml_pcm_rng=0x913ab267u;
-static uint32_t ml_pcm_random(void){uint32_t x=ml_pcm_rng;x^=x<<13;x^=x>>17;x^=x<<5;return ml_pcm_rng=x;}
-static void ml_pcm_write(uint8_t *p,uint32_t width,int32_t v)
-{
-    v=v>8388607?8388607:v<-8388608?-8388608:v;
-    if(width==2u){
-        if(v)v+=(int32_t)(ml_pcm_random()&255u)-(int32_t)(ml_pcm_random()&255u)+128;
-        v>>=8;v=v>32767?32767:v<-32768?-32768:v;
+def patch_usb(s, wide=False):
+    # wide: Saadet's 24-bit streams beside the 16-bit ones (twice the rings). Melodee streams 16-bit, as it always
+    # did: only its rings move to the pool, where its arena's room is counted.
+    if not wide:
+        s = replace(s, 'static uint32_t uo_ring[UO_N];', 'static uint32_t uo_ring[UO_N] __attribute__((section(".pool")));')
+    else:
+        # Native stereo frames throughout both rings; format conversion at USB only.
+        s = replace(s, '#define UAC_MAXP (UA_MAXF * 4u)', '#define UAC_MAXP (UA_MAXF * 6u)')
+        s = replace(s, 'static uint32_t ua_ring[UA_N] FELUCCA_UAC_RING_ATTR;',
+            'typedef struct { int32_t l, r; } ml_pcm_frame;\nstatic ml_pcm_frame ua_ring[UA_N] __attribute__((section(".pool")));')
+        s = replace(s, 'static uint32_t ep4tx[UA_MAXF]', 'static uint32_t ep4tx[(UAC_MAXP + 3u) / 4u]')
+        s = replace(s, 'uint32_t last;               /* the last frame sent, repeated on an underrun */',
+            'ml_pcm_frame last;           /* native frame held on underrun */')
+        s = replace(s, '#define UO_MAXP (UO_MAXF * 4u)', '#define UO_MAXP (UO_MAXF * 6u)')
+        s = replace(s, 'static uint32_t uo_ring[UO_N];', 'static ml_pcm_frame uo_ring[UO_N] __attribute__((section(".pool")));')
+        s = replace(s, 'static uint32_t ep4rx[UO_MAXF + 1u]', 'static uint32_t ep4rx[(UO_MAXP + 3u) / 4u + 1u]')
+        # Both widths are selectable per direction; all formats remain 44.1 kHz.
+        alt = '''#define ML_AS24(s, terminal, ep, attr) \\
+        9, 4, (s), 2, 1, 1, 2, 0, 0, \\
+        7, 0x24, 1, (terminal), 1, 1, 0, \\
+        11, 0x24, 2, 1, 2, 3, 24, 1, 0x44, 0xAC, 0, \\
+        9, 5, (ep), (attr), (UA_MAXF*6u)&255u, (UA_MAXF*6u)>>8, 1, 0, 0, \\
+        7, 0x25, 1, ((ep)&128u)?1:0, 0, 0, 0,
+    #if FELUCCA_UAC
+    #define ML_CAP24(s) ML_AS24(s,2,0x84,0x05)
+    #else
+    #define ML_CAP24(s)
+    #endif
+    #if FELUCCA_UAC_OUT
+    #define ML_PLAY24(s) ML_AS24(s,3,0x04,0x09)
+    #else
+    #define ML_PLAY24(s)
+    #endif
+    #define D_AUDIO(a) D_AC(a) D_MIDI((a) + 1) D_AS((a) + 2) ML_CAP24((a)+2) D_ASO((a) + 3) ML_PLAY24((a)+3)'''
+        # The base numbers the interfaces (IF_AS, IF_ASO, IF_MIDI) and may put MIDI last; its AC header takes the terminals'
+        # length as a parameter.
+        alt = alt[:alt.rindex('#define D_AUDIO')]
+        s = replace(s, '/* audio + MIDI from interface a, in the order FELUCCA_UAC_MIDI_LAST picks */',
+                    alt + '/* audio + MIDI from interface a, in the order FELUCCA_UAC_MIDI_LAST picks */')
+        s = replace(s, '#define D_AUDIO(a) D_AC(a) D_AS((a) + IF_AS) D_ASO((a) + IF_ASO) D_MIDI((a) + IF_MIDI)',
+                    '#define D_AUDIO(a) D_AC(a) D_AS((a) + IF_AS) ML_CAP24((a)+IF_AS) D_ASO((a) + IF_ASO) ML_PLAY24((a)+IF_ASO) D_MIDI((a) + IF_MIDI)')
+        s = replace(s, '#define D_AUDIO(a) D_AC(a) D_MIDI((a) + IF_MIDI) D_AS((a) + IF_AS) D_ASO((a) + IF_ASO)',
+                    '#define D_AUDIO(a) D_AC(a) D_MIDI((a) + IF_MIDI) D_AS((a) + IF_AS) ML_CAP24((a)+IF_AS) D_ASO((a) + IF_ASO) ML_PLAY24((a)+IF_ASO)')
+        s = replace(s, '#define AUD_LEN (92 + (63 + FMT_LEN) * FELUCCA_UAC + 74 * FELUCCA_UAC_OUT - (FELUCCA_UAC_MIDI_LAST == 2))',
+                    '#define AUD_LEN (92 + (106 + FMT_LEN) * FELUCCA_UAC + 117 * FELUCCA_UAC_OUT - (FELUCCA_UAC_MIDI_LAST == 2))')
+        s = replace(s, 'wvalue <= 1u && usb.config', 'wvalue <= 2u && usb.config')
+        s = replace(s, 'uac.last = 0;', 'uac.last = (ml_pcm_frame){0,0};')
+        s = replace(s, 'ua_ring[(r + i) & (UA_N - 1u)] = 0;', 'ua_ring[(r + i) & (UA_N - 1u)] = (ml_pcm_frame){0,0};')
+        helper = '''static int32_t ml_pcm_read(const uint8_t *p, uint32_t width)
+    {
+        uint32_t v=p[0]|(uint32_t)p[1]<<8;
+        if(width==2u)return (int32_t)(int16_t)v*256;
+        v|=(uint32_t)p[2]<<16;
+        return (v&0x800000u)?(int32_t)v-16777216:(int32_t)v;
     }
-    uint32_t q=(uint32_t)v;p[0]=(uint8_t)q;p[1]=(uint8_t)(q>>8);
-    if(width==3u)p[2]=(uint8_t)(q>>16);
-}
-'''
-    s = replace(s, 'static inline int32_t uac_s16(', helper + '\nstatic inline int32_t uac_s16(')
-    s = function(s, 'void uac_tap(const int32_t *out', '''static __attribute__((noinline)) void uac_tap(const int32_t *out,uint32_t n)
-{
-    uint32_t w=ua_w;if(!uac.feed)return;
-    if(UA_N-(w-ua_r)<n){uac.overruns++;return;}
-    for(uint32_t i=0;i<n;i++)ua_ring[(w+i)&(UA_N-1u)]=(ml_pcm_frame){out[2u*i],out[2u*i+1u]};
-    RING_PUBLISH();ua_w=w+n;
-}''')
-    s = function(s, 'uint32_t uac_packet(uint32_t *d)', '''static uint32_t uac_packet(uint32_t *d)
-{
-    uint32_t n=44u,width=uac.alt==2u?3u:2u;
-    uac.acc+=100u;if(uac.acc>=1000u){uac.acc-=1000u;n++;}
-    uint32_t r=ua_r,fill=ua_w-r,k=0;
-    if(uac.go){
-        if(uac.fill_min>UA_HI){n++;uac.adj_up++;}
-        else if(uac.fill_min<UA_LO){n--;uac.adj_down++;}
-        k=fill<n?fill:n;if(k<n)uac.underruns++;
+    static uint32_t ml_pcm_rng=0x913ab267u;
+    static uint32_t ml_pcm_random(void){uint32_t x=ml_pcm_rng;x^=x<<13;x^=x>>17;x^=x<<5;return ml_pcm_rng=x;}
+    static void ml_pcm_write(uint8_t *p,uint32_t width,int32_t v)
+    {
+        v=v>8388607?8388607:v<-8388608?-8388608:v;
+        if(width==2u){
+            if(v)v+=(int32_t)(ml_pcm_random()&255u)-(int32_t)(ml_pcm_random()&255u)+128;
+            v>>=8;v=v>32767?32767:v<-32768?-32768:v;
+        }
+        uint32_t q=(uint32_t)v;p[0]=(uint8_t)q;p[1]=(uint8_t)(q>>8);
+        if(width==3u)p[2]=(uint8_t)(q>>16);
     }
-    RING_PUBLISH();
-    ml_pcm_frame last=uac.go?uac.last:(ml_pcm_frame){0,0};
-    uint8_t *p=(uint8_t *)d;
-    for(uint32_t i=0;i<n;i++){
-        if(i<k)last=ua_ring[(r+i)&(UA_N-1u)];
-        ml_pcm_write(p+2u*i*width,width,last.l);
-        ml_pcm_write(p+(2u*i+1u)*width,width,last.r);
-    }
-    uac.last=last;RING_PUBLISH();ua_r=r+k;
-    uac.pkts++;uac.frames+=n;return n;
-}''')
-    s = replace(s, 'n = (sie_rd(S_RXCOUNT1) | (sie_rd(S_RXCOUNT2) << 8)) / 4u;',
-        'uint32_t width=uo.alt==2u?3u:2u;\n    n = (sie_rd(S_RXCOUNT1) | (sie_rd(S_RXCOUNT2) << 8)) / (2u*width);')
-    s = replace(s, 'uo_ring[(w + i) & (UO_N - 1u)] = ep4rx[i];',
-        'uo_ring[(w+i)&(UO_N-1u)]=(ml_pcm_frame){ml_pcm_read((uint8_t *)ep4rx+2u*i*width,width),ml_pcm_read((uint8_t *)ep4rx+(2u*i+1u)*width,width)};')
-    s = replace(s, '(float)gain_q12 * (1.0f / 16.0f)', '(float)gain_q12 * (1.0f / 4096.0f)')
-    s = replace(s, 'uint32_t k = pos >> 16, a = uo_ring[(r + k) & (UO_N - 1u)], b = uo_ring[(r + k + 1u) & (UO_N - 1u)];',
-        'uint32_t k=pos>>16;ml_pcm_frame a=uo_ring[(r+k)&(UO_N-1u)],b=uo_ring[(r+k+1u)&(UO_N-1u)];')
-    s = replace(s, '(float)(int16_t)a + ((float)(int16_t)b - (float)(int16_t)a)', '(float)a.l + ((float)b.l - (float)a.l)')
-    s = replace(s, '(float)(int16_t)(a >> 16) + ((float)(int16_t)(b >> 16) - (float)(int16_t)(a >> 16))', '(float)a.r + ((float)b.r - (float)a.r)')
-    s = replace(s, 'fm1_usb_ep4_send(ep4tx, n * 4u);', 'fm1_usb_ep4_send(ep4tx, n * (uac.alt==2u?6u:4u));')
+    '''
+        s = replace(s, 'static inline int32_t uac_s16(', helper + '\nstatic inline int32_t uac_s16(')
+        s = function(s, 'void uac_tap(const int32_t *out', '''static __attribute__((noinline)) void uac_tap(const int32_t *out,uint32_t n)
+    {
+        uint32_t w=ua_w;if(!uac.feed)return;
+        if(UA_N-(w-ua_r)<n){uac.overruns++;return;}
+        for(uint32_t i=0;i<n;i++)ua_ring[(w+i)&(UA_N-1u)]=(ml_pcm_frame){out[2u*i],out[2u*i+1u]};
+        RING_PUBLISH();ua_w=w+n;
+    }''')
+        s = function(s, 'uint32_t uac_packet(uint32_t *d)', '''static uint32_t uac_packet(uint32_t *d)
+    {
+        uint32_t n=44u,width=uac.alt==2u?3u:2u;
+        uac.acc+=100u;if(uac.acc>=1000u){uac.acc-=1000u;n++;}
+        uint32_t r=ua_r,fill=ua_w-r,k=0;
+        if(uac.go){
+            if(uac.fill_min>UA_HI){n++;uac.adj_up++;}
+            else if(uac.fill_min<UA_LO){n--;uac.adj_down++;}
+            k=fill<n?fill:n;if(k<n)uac.underruns++;
+        }
+        RING_PUBLISH();
+        ml_pcm_frame last=uac.go?uac.last:(ml_pcm_frame){0,0};
+        uint8_t *p=(uint8_t *)d;
+        for(uint32_t i=0;i<n;i++){
+            if(i<k)last=ua_ring[(r+i)&(UA_N-1u)];
+            ml_pcm_write(p+2u*i*width,width,last.l);
+            ml_pcm_write(p+(2u*i+1u)*width,width,last.r);
+        }
+        uac.last=last;RING_PUBLISH();ua_r=r+k;
+        uac.pkts++;uac.frames+=n;return n;
+    }''')
+        s = replace(s, 'n = (sie_rd(S_RXCOUNT1) | (sie_rd(S_RXCOUNT2) << 8)) / 4u;',
+            'uint32_t width=uo.alt==2u?3u:2u;\n    n = (sie_rd(S_RXCOUNT1) | (sie_rd(S_RXCOUNT2) << 8)) / (2u*width);')
+        s = replace(s, 'uo_ring[(w + i) & (UO_N - 1u)] = ep4rx[i];',
+            'uo_ring[(w+i)&(UO_N-1u)]=(ml_pcm_frame){ml_pcm_read((uint8_t *)ep4rx+2u*i*width,width),ml_pcm_read((uint8_t *)ep4rx+(2u*i+1u)*width,width)};')
+        s = replace(s, '(float)gain_q12 * (1.0f / 16.0f)', '(float)gain_q12 * (1.0f / 4096.0f)')
+        s = replace(s, 'uint32_t k = pos >> 16, a = uo_ring[(r + k) & (UO_N - 1u)], b = uo_ring[(r + k + 1u) & (UO_N - 1u)];',
+            'uint32_t k=pos>>16;ml_pcm_frame a=uo_ring[(r+k)&(UO_N-1u)],b=uo_ring[(r+k+1u)&(UO_N-1u)];')
+        s = replace(s, '(float)(int16_t)a + ((float)(int16_t)b - (float)(int16_t)a)', '(float)a.l + ((float)b.l - (float)a.l)')
+        s = replace(s, '(float)(int16_t)(a >> 16) + ((float)(int16_t)(b >> 16) - (float)(int16_t)(a >> 16))', '(float)a.r + ((float)b.r - (float)a.r)')
+        s = replace(s, 'fm1_usb_ep4_send(ep4tx, n * 4u);', 'fm1_usb_ep4_send(ep4tx, n * (uac.alt==2u?6u:4u));')
     # Melodee's standard playback master mute/volume stays available to the OS.
     s=replace(s,'D_AC_HEADER((a), 42)','D_AC_HEADER((a), 52)')
     s=replace(s,'9, 0x24, 3, 4, 0x01, 0x03, 0, 3, 0,', '10, 0x24, 6, 5, 3, 1, 3, 0, 0, 0, 9, 0x24, 3, 4, 0x01, 0x03, 0, 5, 0,')
-    s=replace(s,'117 * FELUCCA_UAC_OUT', '127 * FELUCCA_UAC_OUT')
+    s=replace(s,'117 * FELUCCA_UAC_OUT', '127 * FELUCCA_UAC_OUT') if wide else replace(s,'74 * FELUCCA_UAC_OUT', '84 * FELUCCA_UAC_OUT')   # (+ the feature unit)
     s=replace(s,'static void ep0_service(void)', '#if FELUCCA_UAC_OUT\n#include "usb_volume.h"\n#endif\nstatic void ep0_service(void)')
     s=replace(s,'    for (i = 0; i < 8u; i++)\n        s[i] = ep0buf[i];', '#if FELUCCA_UAC_OUT\n    if(ml_volume_pending){\n        int ok=ml_volume_data(ep0buf,sie_rd(S_COUNT0));if(ok)goto ack;goto stall;\n    }\n#endif\n    for (i = 0; i < 8u; i++)\n        s[i] = ep0buf[i];')
     s=replace(s,'    usb.setups++;', '    usb.setups++;\n#if FELUCCA_UAC_OUT\n    if(ml_volume_setup(s))return;\n#endif')
@@ -148,7 +153,7 @@ static void ml_pcm_write(uint8_t *p,uint32_t width,int32_t v)
     s=replace(s,'    uo_ep4_reset();\n    uo_stream(0);', '    uo_ep4_reset();\n    uo_stream(0);\n    ua_host_volume_reset();')
     # These reset routines precede the control implementation.
     s=replace(s,'static void uo_ep4_reset(void)', 'static void ua_host_volume_reset(void);\nstatic void uo_ep4_reset(void)')
-    s=replace(s,'        float l = (float)a.l', '        int32_t target=ua_host_mute?0:ua_host_target_q15;\n        ua_host_gain_q15+=(target-ua_host_gain_q15)/128;\n        if(ua_host_gain_q15!=target&&target-ua_host_gain_q15<128&&target-ua_host_gain_q15>-128)ua_host_gain_q15=target;\n        float volume=(float)ua_host_gain_q15*(1.0f/32768.0f);\n        float l = (float)a.l')
+    s=replace(s,'        float l = (float)'+('a.l' if wide else '(int16_t)a'), '        int32_t target=ua_host_mute?0:ua_host_target_q15;\n        ua_host_gain_q15+=(target-ua_host_gain_q15)/128;\n        if(ua_host_gain_q15!=target&&target-ua_host_gain_q15<128&&target-ua_host_gain_q15>-128)ua_host_gain_q15=target;\n        float volume=(float)ua_host_gain_q15*(1.0f/32768.0f);\n        float l = (float)'+('a.l' if wide else '(int16_t)a'))
     s=replace(s,'(int32_t)(l * g)', '(int32_t)(l * g * volume)')
     s=replace(s,'(int32_t)(rr * g)', '(int32_t)(rr * g * volume)')
     # Raw streams reach the existing bounded native-bank parsers even when too
@@ -346,7 +351,6 @@ static void smk_main_poll(void)''')
 #define BLE_DEVICE_NAME "{product}" """)
     s=replace(s,'#include "ble_stack.c"\n','#include "ble_stack.c"\n#include "ble_vm.c"\n')
     # the calibration: stored first, then measured (ble_own.h); its copy kept with the address
-    s=replace(s,'    uint8_t bta_mem[4 * 40];','    uint8_t ml_rf[BLE_RF_COPY_SIZE];              /* the stock trims\' copy (ble_own.h) */\n    uint8_t bta_mem[4 * 40];')
     s=replace(s,"""    fm1_rf_cal_on = 1;                            /* (our own measurement, not a stored 187) */
     ble_hw_wl82_start(&OWN_TRIMS);                /* the radio's start-up, its calibration (crystal ramp from RAM) */
     own_cal_log();

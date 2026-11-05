@@ -199,6 +199,47 @@ int ml_sysex_send(const uint8_t *p,uint32_t n){
 #endif
 }
 #include "ble_devices.h"
+#include "ble_saved.h"
+#if FM1B_BLE && !defined(PLAT_HOST)   /* (platform/ble_own.h, in the device's bt_own.c) */
+extern void mlb_ble_relink(int on);
+extern int mlb_ble_rf_ok(const uint8_t *copy);
+void ml_ble_relink(int on){mlb_ble_relink(on);}
+int ml_ble_rf_ok(const uint8_t *copy){return mlb_ble_rf_ok(copy);}
+#else
+void ml_ble_relink(int on){(void)on;}
+int ml_ble_rf_ok(const uint8_t *copy){(void)copy;return 0;}
+#endif
+int ml_ble_device_connect(int i){return plat_ble_connect(i);}
+void ml_ble_device_drop(void){plat_ble_disconnect();}
+#ifdef APP_BLE_STORE
+/* The address and the computer's bond: Melodee's settings trailer (ble_saved.h), as its own stack kept them */
+int app_ble_load(struct plat_ble_rec *r){
+    const ml_ble_saved_t *s=mlb_ble_saved();
+    if(!s->valid)return 0;
+    for(int i=0;i<6;i++)r->addr[i]=s->addr[i];
+    r->bonded=(uint8_t)(s->bond[0]==0xB5u&&s->bond[1]==1u);
+    if(r->bonded){
+        for(int i=0;i<8;i++)r->bond_rand[i]=s->bond[2+i];
+        r->bond_ediv=(uint16_t)(s->bond[10]|s->bond[11]<<8);
+        for(int i=0;i<16;i++)r->bond_ltk[i]=s->bond[12+i];
+    }
+    return 1;
+}
+int app_ble_save(const struct plat_ble_rec *r){
+    ml_ble_saved_t *s=mlb_ble_saved();
+    for(int i=0;i<6;i++)s->addr[i]=r->addr[i];
+    s->valid=1;
+    for(int i=0;i<28;i++)s->bond[i]=0;
+    if(r->bonded){
+        s->bond[0]=0xB5u;s->bond[1]=1u;
+        for(int i=0;i<8;i++)s->bond[2+i]=r->bond_rand[i];
+        s->bond[10]=(uint8_t)r->bond_ediv;s->bond[11]=(uint8_t)(r->bond_ediv>>8);
+        for(int i=0;i<16;i++)s->bond[12+i]=r->bond_ltk[i];
+    }
+    mlb_ble_dirty();
+    return 0;
+}
+#endif
 #ifdef APP_SYS_TEXT
 /* The base's own screens (boot, crash, safe mode, calibration, the splash) on its canvas, in Melodee's faces. */
 static int32_t app_sys_h(int face){return mlb_sys_h(face);}
