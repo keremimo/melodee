@@ -1544,6 +1544,13 @@ static void seq_entry_notes(const uint8_t *n, uint32_t cnt)
     uint32_t i, j;
     if (!cnt)
         return;
+    /* Copied/moved notes are precise events. Retune the selected event rather
+     * than replacing its overview and losing overlapping notes or timing. */
+    uint32_t selected = notes_selected(t);
+    if (!drum_track(t) && selected < RECORD_MAX) {
+        notes_event_edit(1u, (int32_t)n[0] - recorded_note(&recording[selected]));
+        return;
+    }
     if (!ui.entry_open) {
         step_history.cursor_before = ui.cursor;
         ui.entry_open = 1;
@@ -2630,7 +2637,8 @@ static void ui_input(void)
         if (live_rec_sel() || song.playing) {           /* armed: the keys and MIDI record live; playing: they only */
             ui.entry_open = 0;                          /* play. Neither enters the cursor step */
             seq_midi_events(0);
-        } else if (!chain_busy() && notes_selected(TSEL) >= RECORD_MAX && !(TSEL->step[ui.cursor].flags & SF_RECORDED)) {
+        } else if (!chain_busy() && ((!drum_track(TSEL) && notes_selected(TSEL) < RECORD_MAX) ||
+                   (notes_selected(TSEL) >= RECORD_MAX && !(TSEL->step[ui.cursor].flags & SF_RECORDED)))) {
             seq_entry(notes);
         } else {
             seq_midi_events(0);

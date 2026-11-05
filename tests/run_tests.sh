@@ -406,6 +406,8 @@ if core && [ $TABLES = 1 ]; then
         -DMELODEE_USB_AUDIO=1 $FW
     t "Note/library gestures: quarter snapping, range moves/copies, undo and bulk preset erase" note_tools_test \
         -O1 -DMELODEE_USB_AUDIO=1 $FW
+    t "Copied note entry: panel/USB/TRS pitch, precise timing, undo and transport guards" copied_note_entry_test \
+        -O1 -DMELODEE_USB_AUDIO=1 $FW
     job ui_renders
     t "boot audio: codec waits for settled silent DMA and shuts down before I2S" audio_boot_test -w
     t "audio: overload protection, bounded fades and DMA diagnostics" audio_test $FW

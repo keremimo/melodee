@@ -18,7 +18,23 @@ static void select_range(uint32_t start,int32_t delta)
 static uint32_t duration(uint32_t i){return recording[i].duration*(1u<<(recording[i].owner>>5));}
 int main(void)
 {
+    /* A zero-length range gesture opens a sheet; select the note directly so
+     * the key below reaches the NOTES entry path instead of that popup. */
+    setup();manual(2,60,2);cursor_set(2);frame();note_move_snapped(0,RECORD_UNIT/4u,1);
+    uint32_t copied=notes_selected(TSEL),original=copied==0u?1u:0u;
+    recorded_note_t source=recording[original],duplicate=recording[copied];
+    uint32_t key=0;while(key<26u&&(kb_map(TSEL,key)==60u||kb_map(TSEL,key)==KB_SILENT))key++;
+    uint8_t pitch=(uint8_t)kb_map(TSEL,key);
+    ui.msg[0]=0;fm1_in.notes=host_notes=1u<<key;frame();fm1_in.notes=0;frame();
+    recorded_set_note(&duplicate,pitch);
+    int copied_bad=check("note keys retune an overlapping selected copy while stopped without changing timing or its source",
+        !song.playing&&!song.rec&&strcmp(ui.msg,"STOP TO EDIT")&&!ui.entry_open&&
+        !memcmp(&recording[copied],&duplicate,sizeof duplicate)&&!memcmp(&recording[original],&source,sizeof source));
+    hold(B_EDIT);recorded_set_note(&duplicate,60);
+    copied_bad+=check("key retuning a copied event is undoable without changing its overlapping source",
+        !memcmp(&recording[copied],&duplicate,sizeof duplicate)&&!memcmp(&recording[original],&source,sizeof source));
     int bad=0;setup();manual(2,60,1);manual(5,72,1);cursor_set(2);frame();
+    bad+=copied_bad;
     turn(EN_K3,-1);uint32_t i=notes_selected(TSEL);
     bad+=check("manual LENGTH becomes an exact 0.75-step event and leaves neighbours intact",i<RECORD_MAX&&duration(i)==3u*RECORD_UNIT/4u&&!recording[i].on&&TSEL->step[5].note[0]==72);
     hold(B_EDIT);bad+=check("undo restores the manual representation and clears converted events",notes_manual_start(TSEL)==2&&!recording[0].vel);
