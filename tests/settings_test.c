@@ -147,6 +147,18 @@ int main(void)
     {   /* AUTOSAVE: default ON for old/unknown bytes, tagged OFF survives a settings round trip. */
         persist_t q = original;
         assert(settings_autosave);
+        assert(settings_autosave_seconds == 15u);
+        settings_autosave_seconds = 45u;
+        settings_export(&q);
+        settings_autosave_seconds = 5u;
+        assert(settings_import(&q, sizeof q) && settings_autosave_seconds == 45u);
+        for (uint32_t byte = 0; byte < 256u; byte++) {
+            q.favorites.factory[1][AUTOSAVE_TIME_BYTE + 3] = (uint8_t)byte;
+            assert(settings_import(&q, sizeof q));
+            assert(settings_autosave_seconds == (byte >= 5u && byte <= 60u && byte % 5u == 0u ? byte : 15u));
+        }
+        q.favorites.factory[1][AUTOSAVE_TIME_BYTE] = 0;
+        assert(settings_import(&q, sizeof q) && settings_autosave_seconds == 15u);
         settings_autosave = 0;
         settings_export(&q);
         assert(sizeof q == 604u && q.favorites.factory[15][28] == AUTOSAVE_OFF_TAG);

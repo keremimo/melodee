@@ -5066,12 +5066,21 @@ static int test_capture(void)
         stop_transport();
         cap_w = cap_from = 0; memset(cap_ev, 0, sizeof cap_ev);
     }
-    {   /* autosave: a project with a slot, changed, stopped, untouched 5 s: saved once; unchanged: no write */
+    {   /* autosave: a project with a slot, changed, stopped, untouched 15 s: saved once; unchanged: no write */
         uint32_t writes;
         ui_power_on();
         stop_transport();
         project_save(1);
-        hold(B_HOME); ui.menu_sel = MI_AUTOSAVE;
+        hold(B_HOME); ui.menu_sel = MI_AUTOSAVE_TIME;
+        bad += check("autosave defaults to fifteen seconds", settings_autosave_seconds == 15u);
+        turn(EN_K1, -20);
+        bad += check("autosave time clamps to five seconds", settings_autosave_seconds == 5u);
+        turn(EN_K1, 20);
+        bad += check("autosave time clamps to sixty seconds", settings_autosave_seconds == 60u);
+        press(B_OCTUP);
+        bad += check("autosave time wraps with OCT+", settings_autosave_seconds == 5u);
+        turn(EN_K1, 2);
+        ui.menu_sel = MI_AUTOSAVE;
         turn(EN_K1, -1); turn(EN_K1, -1);
         bad += check("HOME menu AUTOSAVE: KNOB 1 left disables and clamps OFF", ui.menu == 1 && !settings_autosave);
         press(B_OCTUP);
@@ -5088,16 +5097,62 @@ static int test_capture(void)
         for (i = 0; i < 400u; i++) frame();
         hold(B_HOME); ui.menu_sel = MI_AUTOSAVE; press(B_OCTUP); hold(B_HOME);
         for (i = 0; i < 100u; i++) frame();
-        bad += check("autosave re-enabled: waits a fresh five seconds before saving", stored_param(1, 0, P_LEVEL) == 55);
+        bad += check("autosave re-enabled: waits a fresh fifteen seconds before saving", stored_param(1, 0, P_LEVEL) == 55);
         writes = stored_param(1, 0, P_LEVEL) == 77;
-        for (i = 0; i < 400u; i++) frame();             /* 6.4 s */
+        for (i = 0; i < 400u; i++) frame();
+        bad += check("autosave default waits beyond the old five-second delay", stored_param(1, 0, P_LEVEL) == 55);
+        for (i = 0; i < 500u; i++) frame();             /* 16 s total */
         bad += check("autosave: changed, stopped, untouched: back to its slot (B)", !writes && stored_param(1, 0, P_LEVEL) == 77);
         TSEL->p[P_LEVEL] = 66;
         for (i = 0; i < 100u; i++) frame();
-        bad += check("  .. not before AUTOSAVE_MS of rest", stored_param(1, 0, P_LEVEL) == 77);
+        bad += check("  .. not before the selected interval of rest", stored_param(1, 0, P_LEVEL) == 77);
         turn(EN_K1, 1);
         for (i = 0; i < 200u; i++) frame();
         bad += check("  .. and any touch starts the rest again", stored_param(1, 0, P_LEVEL) == 77);
+        hold(B_HOME); ui.menu_sel = MI_AUTOSAVE_TIME;
+        turn(EN_K1, -2); hold(B_HOME);
+        for (i = 0; i < 200u; i++) frame();
+        bad += check("custom five-second interval waits before saving", stored_param(1, 0, P_LEVEL) == 77);
+        turn(EN_K1, 1);
+        for (i = 0; i < 200u; i++) frame();
+        bad += check("custom interval restarts on input", stored_param(1, 0, P_LEVEL) == 77);
+        for (i = 0; i < 200u; i++) frame();
+        bad += check("custom five-second interval saves after inactivity", stored_param(1, 0, P_LEVEL) == 66);
+        for (uint32_t role = 0; role < NE; role++) {
+            ui_power_on();
+            stop_transport();
+            settings_autosave_seconds = 5u;
+            TSEL->p[P_LEVEL] = 77;
+            project_save(1);
+            autosave_poll(1);
+            TSEL->p[P_LEVEL] = 66;
+            for (i = 0; i < 250u; i++) frame();
+            turn(role, 1);
+            /* PRESETS may replace the sound: keep a known pending change. */
+            TSEL->p[P_LEVEL] = 66;
+            for (i = 0; i < 250u; i++) frame();
+            bad += check("every encoder restarts autosave inactivity", stored_param(1, 0, P_LEVEL) == 77);
+            for (i = 0; i < 150u; i++) frame();
+            bad += check("autosave resumes after encoder inactivity", stored_param(1, 0, P_LEVEL) == 66);
+        }
+        ui_power_on();
+        stop_transport();
+        settings_autosave_seconds = 5u;
+        go_page(GR_ROLL);
+        TSEL->p[P_LEVEL] = 77;
+        project_save(1);
+        autosave_poll(1);
+        TSEL->p[P_LEVEL] = 66;
+        for (uint32_t detent = 0; detent < 4u; detent++) {
+            for (i = 0; i < 250u; i++) frame();
+            turn(EN_SELECT, detent & 1u ? -1 : 1);
+            bad += check("sequence SELECT activity keeps autosave deferred", stored_param(1, 0, P_LEVEL) == 77);
+        }
+        for (i = 0; i < 250u; i++) frame();
+        bad += check("sequence SELECT starts a fresh inactivity interval", stored_param(1, 0, P_LEVEL) == 77);
+        for (i = 0; i < 100u; i++) frame();
+        bad += check("sequence SELECT allows autosave after inactivity", stored_param(1, 0, P_LEVEL) == 66);
+        settings_autosave_seconds = AUTOSAVE_SECONDS_DEFAULT;
         memset(proj_slot, 0, sizeof proj_slot);
         memset(proj_bank_slot, 0, sizeof proj_bank_slot);
     }
@@ -5607,6 +5662,7 @@ static int test_seq_keys(void)
     for (i = 0; i < 41u; i++)
         led_pos[i] = (uint8_t)((i % FM1_NCOL) << 3 | (1u + i / FM1_NCOL));
     song.rec = 4u;
+    fm1_ms += (1000u - fm1_ms % 1000u) % 1000u;     /* sample the armed LED in its visible breathing phase */
     ui_leds();
     bad += check("  the track keys lit: track 1 bright, 2 dim, 3 (armed) breathing, 4 dark",
                  key_light(14u + key_at(1, 0)) == 2u && plane_led(1, 14u + key_at(1, 1)) &&

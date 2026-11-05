@@ -768,9 +768,8 @@ static void jam_take(void)
     ui.force = 1;
 }
 
-/* Autosave: stopped and untouched for AUTOSAVE_MS (no key, button, knob or MIDI), the project back to its slot when it
+/* Autosave: stopped and untouched for the selected autosave interval (no key, button, knob or MIDI), the project back to its slot when it
  * differs from what is there (project.c project_autosave); once per rest */
-#define AUTOSAVE_MS 5000u
 static void project_autosave(void);
 static void autosave_poll(uint32_t active)
 {
@@ -788,7 +787,7 @@ static void autosave_poll(uint32_t active)
         done = 0;
         return;
     }
-    if (!done && fm1_ms - t0 >= AUTOSAVE_MS) {
+    if (!done && fm1_ms - t0 >= (uint32_t)settings_autosave_seconds * 1000u) {
         done = 1;
         project_autosave();
     }
@@ -2729,7 +2728,7 @@ static void ui_input(void)
 
     if(momentary.active && !(fm1_in.buttons&(1u<<panel.btn[B_LFO])))momentary_restore();
     seq_erase_update(0);
-    autosave_poll(pressed || bank_notes || fm1_in.buttons || fm1_in.notes || ui.hot_t);
+    autosave_poll(pressed || bank_notes || fm1_in.buttons || fm1_in.notes || panel_moved || ui.hot_t);
     if (recording_full) { recording_full = 0; ui_message("RECORDING FULL"); }
     if (recording_undo_lost) { recording_undo_lost = 0; ui_message("NO RECORD UNDO MEMORY"); }
     step_history_end();                                 /* (seq_undo.c: this frame's STEP edit) */
