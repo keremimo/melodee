@@ -50,7 +50,7 @@ static void ble_page_input(uint32_t oct)
         ui.force = 1;
     }
     /* A scan is a page action, never a background reconnection/pairing loop. */
-    if (mb.on && !(mb_saved.flags & MB_VISIBLE) && !mb.attempt && !ble_connected() && !mb.scanning && !mb.failure[0])
+    if (mb.on && !(mb_saved.flags & MB_VISIBLE) && !mb.attempt && !mb_central_up() && !mb.scanning && !mb.failure[0])
         mel_ble_scan(1);
     enc_drop();
 }

@@ -269,7 +269,7 @@ static void ble_head_text(char text[24])
     if (code != BLE_NO_PASSKEY) {
         str_cpy(text, "PIN 000000", 24);
         for (uint32_t n = 0; n < 6; n++) { text[9u - n] = (char)('0' + code % 10u); code /= 10u; }
-    } else if (mb.on && !mb.ready) {
+    } else if (mb.on && !MB_ANY(ready)) {
         const char *s = mel_ble_status();
         if (str_eq(s,"CONNECTION TIMEOUT")) s = "BLE TIMEOUT";
         else if (str_eq(s,"WAITING FOR MIDI")) s = "BLE WAIT";
@@ -418,7 +418,7 @@ static void draw_head(void)
         if (uh.on && !uh.run) tag_color = T_MID;
 #endif
 #if MELODEE_BLE
-        if (mb.ready) tag_color = T_THEME;
+        if (MB_ANY(ready)) tag_color = T_THEME;
 #endif
         if (hw)
             cv_text_on(236 - cw - (low ? 22 : 0) - hw + 4, ty_y(H_HEAD / 2, TY_LB), TY_LB, tag, tag_color, T_BG);
@@ -651,7 +651,7 @@ static void sound_name(const track_t *t, char *b)
 static int midi_rx_recent(uint32_t trs)
 {
 #if MELODEE_BLE
-    if (trs == 2u) return mb.ready && fm1_ms - mb.epoch_ms < 250u;
+    if (trs == 2u) return MB_ANY(ready) && fm1_ms - mb.epoch_ms < 250u;
 #endif
     static uint32_t last[2], at[2];
     static uint8_t seen[2];
@@ -958,7 +958,7 @@ static void draw_cards(void)
             uint32_t trs = (uint32_t)song.g[G_MIDI], rx = midi_rx_recent(trs);
 #if MELODEE_BLE
             if (trs == 2u) {
-                draw_column(c, "MIDI", "BLE", mb.ready ? "ON" : "WAIT", rx ? T_ACCENT : T_THEME, -1, ICON_AUTO);
+                draw_column(c, "MIDI", "BLE", MB_ANY(ready) ? "ON" : "WAIT", rx ? T_ACCENT : T_THEME, -1, ICON_AUTO);
                 continue;
             }
 #endif

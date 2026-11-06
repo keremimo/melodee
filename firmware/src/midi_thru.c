@@ -2,8 +2,8 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* The menu's MIDI THRU (ui.c MIDI_THRU_ON), the classic build's (fm1-base: platform/melodee_app.c midi_thru): what comes
  * in also goes on out, as it came (its channel, beside what Melodee plays with it), where it did not come from: USB in
- * to Bluetooth, the TRS jack's to USB and Bluetooth, Bluetooth's to USB; on the SMK-37 the jack's OUT too, unless it came
- * in on the jack. Channel messages; clock, Start, Continue, Stop and Song Position (F8 FA FB FC F2, told by status) only
+ * to Bluetooth, the TRS jack's to USB and Bluetooth, Bluetooth's to USB (two Bluetooth links, BLE_LINKS 2: and to the
+ * other link, a keyboard's on to the iPad); on the SMK-37 the jack's OUT too, unless it came in on the jack. Channel messages; clock, Start, Continue, Stop and Song Position (F8 FA FB FC F2, told by status) only
  * from the input CLK follows, so a follower downstream hears one clock (on INT, Melodee's own), through the transports'
  * clock queues as Melodee's own clock goes; nothing else (SysEx, MTC, active sensing, reset). Continuous streams (A0 B0
  * D0 E0, but the pedal and the all-off controllers) leave a busy ring's last 16 slots to the notes and the keys.
@@ -37,11 +37,12 @@ static void midi_thru(uint32_t pkt, uint32_t source)
         }
     }
 #if MELODEE_BLE
-    if (source != 3u) {
+    uint32_t links = source == 3u ? mel_ble_other_links() : ~0u;   /* (one link: none for Bluetooth's own) */
+    if (links) {
         if (sync)
-            mel_ble_sync(pkt, pulse);
-        else if (MBQ - (mb.tw - mb.tr) >= keep)
-            (void)mel_ble_emit(pkt);
+            mel_ble_sync_to(pkt, pulse, links);
+        else if (mel_ble_room_for(keep, links))
+            (void)mel_ble_emit_to(pkt, links);
     }
 #endif
 #if BOARD_SMK37 && defined(SMO_RING)

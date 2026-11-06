@@ -127,7 +127,7 @@ static void ml_relink_poll(uint32_t now)
 {
     uint8_t idx[BLE_SCAN_N];
     uint32_t i, n, t;
-    if (!ml_own.relink || ml_own.attempt || ml_own.page || ml_own.hold || ble_off || ble_connected()) {
+    if (!ml_own.relink || ml_own.attempt || ml_own.page || ml_own.hold || ble_off || (BLE_LINKS < 2 && ble_connected())) {
         if (ml_own.relink_scan && !ml_own.page)
             ml_scan(0);                           /* (the page's scan is the page's) */
         ml_own.relink_scan = 0;
@@ -263,7 +263,7 @@ int plat_ble_connect(int i)
 {
     uint8_t idx[BLE_SCAN_N];
     uint32_t n = ble_state == BLE_READY ? ble_scan_list(&own_scan, idx) : 0u;
-    if (i < 0 || (uint32_t)i >= n || ml_own.attempt || ble_connected())
+    if (i < 0 || (uint32_t)i >= n || ml_own.attempt || (BLE_LINKS < 2 && ble_connected()))
         return -1;
     ml_own.target = own_scan.e[idx[i]];
     ml_own.again = 0;
@@ -303,14 +303,14 @@ int32_t ble_midi_pairing_code(void) { return plat_ble_passkey(); }
 void ble_midi_drop_host(void)
 {
     own_held(1);
-    if (own_role == 1u)
+    if (own_role & 1u)
         ble_ll_disconnect(BLE_ERR_REMOTE_USER);
     own_held(0);
 }
 void ble_midi_reconnect(void)
 {
     own_held(1);
-    if (own_role == 1u) {
+    if (own_role & 1u) {
         ble_ll_disconnect(BLE_ERR_REMOTE_USER);   /* advertising again when it has gone */
     } else if (own_role == 0u) {
         ble_enable(0);

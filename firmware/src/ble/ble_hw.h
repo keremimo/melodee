@@ -71,8 +71,10 @@ struct ble_hw_conn {
  * for the first packet in the transmit window 1.25 ms + win_offset after the end of the CONNECT_IND it
  * received. Event counter 0 is that first event. */
 BLE_API void ble_hw_conn_start(const struct ble_hw_conn *c);
-/* leave the connection now (the engine stops; no more ble_ll_hw_* calls for it) */
-BLE_API void ble_hw_conn_stop(void);
+/* leave the connection now (the engine stops; no more ble_ll_hw_* calls for it). link: BLE_LINK_PERIPH or
+ * BLE_LINK_CENTRAL (docs/BLE-MULTILINK.md: with BLE_LINKS 2 every link-bound call below names the link; the roles'
+ * set-up calls (adv_*, conn_start, scan_*, init_*) are bound to their role's link) */
+BLE_API void ble_hw_conn_stop(uint8_t link);
 
 /* (as master, HW §21.4: the same call; the driver writes the master's values at instant - 1) */
 struct ble_hw_conn_upd {
@@ -85,13 +87,13 @@ struct ble_hw_conn_upd {
 };
 /* LL_CONNECTION_UPDATE_IND: the engine moves to the new parameters at the instant (the old interval ends at
  * the instant's old anchor, then the transmit window starts win_offset later) */
-BLE_API void ble_hw_conn_update(const struct ble_hw_conn_upd *u);
+BLE_API void ble_hw_conn_update(uint8_t link, const struct ble_hw_conn_upd *u);
 /* LL_CHANNEL_MAP_IND: the new map from the event whose counter is instant on */
-BLE_API void ble_hw_chmap_update(const uint8_t chm[5], uint16_t instant);
+BLE_API void ble_hw_chmap_update(uint8_t link, const uint8_t chm[5], uint16_t instant);
 /* the data length in use (LL_LENGTH_REQ / RSP): the largest payload either side sends from now on, 27..251 */
-BLE_API void ble_hw_set_lengths(uint8_t max_tx, uint8_t max_rx);
+BLE_API void ble_hw_set_lengths(uint8_t link, uint8_t max_tx, uint8_t max_rx);
 /* new data queued: a free TX buffer can be filled now (ble_ll_hw_tx), or at the next event */
-BLE_API void ble_hw_tx_kick(void);
+BLE_API void ble_hw_tx_kick(uint8_t link);
 
 #if BLE_CENTRAL
 /* scanning (HW §21.2): the same link in state 1, on 37 -> 38 -> 39 (software moves the channel in each event
@@ -142,19 +144,19 @@ BLE_API void ble_hw_rand(uint8_t *out, uint8_t n);
 BLE_API int ble_ll_hw_connect_ind(const uint8_t *pdu, uint8_t len);
 /* a new data-channel PDU received in the current event: CRC good, not a retransmission (the engine's SN
  * check), empty PDUs may be left out. pdu[0] carries LLID, NESN, SN, MD as received. */
-BLE_API void ble_ll_hw_rx(const uint8_t *pdu, uint8_t len);
+BLE_API void ble_ll_hw_rx(uint8_t link, const uint8_t *pdu, uint8_t len);
 /* a TX buffer is free: the link layer writes the next PDU into pdu (room for 2 + 255 octets:
  * 251 and an encrypted PDU's MIC) and returns its
  * length (2 + payload), or 0 when there is nothing to send (the engine sends an empty PDU). The link layer
  * sets LLID and MD (more queued); the engine sets NESN and SN. The PDU is final: the engine retransmits it as
  * it is until it is acknowledged. */
-BLE_API uint8_t ble_ll_hw_tx(uint8_t *pdu);
+BLE_API uint8_t ble_ll_hw_tx(uint8_t link, uint8_t *pdu);
 /* 1 when ble_ll_hw_tx() would return a PDU now (control or data queued); nothing is taken */
-BLE_API int ble_ll_hw_tx_pending(void);
+BLE_API int ble_ll_hw_tx_pending(uint8_t link);
 /* the oldest PDU returned by ble_ll_hw_tx() and not yet reported was acknowledged by the central */
-BLE_API void ble_ll_hw_tx_acked(void);
+BLE_API void ble_ll_hw_tx_acked(uint8_t link);
 /* a connection event closed: counter = its connEventCounter; rx_ok = at least one packet with a good CRC was
  * received in it. Called for every event, also the ones where nothing was received. */
-BLE_API void ble_ll_hw_event_end(uint16_t counter, uint8_t rx_ok);
+BLE_API void ble_ll_hw_event_end(uint8_t link, uint16_t counter, uint8_t rx_ok);
 
 #endif

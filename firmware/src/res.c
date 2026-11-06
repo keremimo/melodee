@@ -108,7 +108,7 @@ static int res_begin(void)
     if (!flash_ok) return 2;
     if (transport_busy()) return 4;
 #if MELODEE_BLE
-    if (mb.on || mb.closing) return 4;
+    if (mb.on || MB_ANY(closing)) return 4;
 #endif
     res_ok = 0;
     (void)st_convert(wire_take(), 0);                  /* (banks of an older layout still here move into the pool) */

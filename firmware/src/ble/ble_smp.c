@@ -103,7 +103,8 @@ static struct {
     uint32_t t0;                               /* our last SMP command (the 30 s SMP timeout, 3.4) */
     struct ble_keys keys;                       /* the responder's keys as they come */
 #endif
-} bsmp;
+} bsmp_b[BLE_LINKS] BLE_STATE_MEMORY;
+#define bsmp (bsmp_b[ble_ll_link()])              /* the running link's (ble_ll.h ble_ll_link) */
 #if BLE_CEN_PAIR
 /* the passkey on screen while a passkey pairing of ours waits for the peer's user (BLE_NO_PASSKEY: none). A variable
  * of its own (a symbol): the emulator's virtual phone user reads it there (fm1-emulator FM1_BLE_PASSKEY_AT) */

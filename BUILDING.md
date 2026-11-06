@@ -157,6 +157,7 @@ Build options (environment; most use `0` or `1`; defaults in `firmware/src/build
 | `MELODEE_USB_AUDIO` | 1 | One duplex "Melodee" device: stereo playback and stereo master recording or optional four-track mono recording (16 / 24 bit, 44.1 kHz) |
 | `MELODEE_CDC` | 0 (1 without USB audio) | USB serial console; it shares EP2 / EP3 with USB audio, so `MELODEE_USB_AUDIO=0` |
 | `MELODEE_UART` | 1 | TRS MIDI IN |
+| `MELODEE_BLE_LINKS` | 1 | Bluetooth links at once: `2` holds a computer's link and a device's together (BLE keyboard and iPad), not tried on hardware yet ([docs/BLE-MULTILINK.md](docs/BLE-MULTILINK.md)) |
 | `MELODEE_USB_HOST` | 1 | USB MIDI host: the menu's USB HOST makes the USB-C port the host of a class compliant controller, directly or behind a powered hub, two hub levels deep (`firmware/src/usb_host.c`). Not saved: every boot is a device |
 | `MELODEE_DUAL_CORE` | 1 | paired FM6/Prophet rendering on CPU1; target builds require `1` |
 | `MELODEE_CORE1_FALLBACK` | 1 | automatic recovery on one core; `0` halts for watchdog reset on CPU1 failure |
@@ -783,7 +784,8 @@ Host register-model tests cannot establish physical audio quality or CPU savings
 The default build includes Optimist's bidirectional BLE MIDI stack, with
 peripheral and central roles. The radio starts OFF each boot. Settings >
 Bluetooth controls discovery, connection and pairings. `MELODEE_BLE=0 ./build.sh`
-builds a comparison without BLE. See [Bluetooth MIDI](docs/BLE_MIDI.md) for
+builds a comparison without BLE; `MELODEE_BLE_LINKS=2 ./build.sh` one that holds a computer's link and a device's at
+once ([two links](docs/BLE-MULTILINK.md), unproven on hardware). See [Bluetooth MIDI](docs/BLE_MIDI.md) for
 pairing, factory-calibration requirements, persistence, provenance and the
 hardware checks still required. The full host suite includes sanitizer BLE
 fixtures and rendered UI checks.
