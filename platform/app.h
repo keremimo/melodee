@@ -22,6 +22,7 @@
 #define APP_CANVAS_PX (240u*24u)
 #define APP_SYSEX
 #define APP_HOST_EXPECT
+#define APP_BTDEV                                   /* lib/btdev.h: the Bluetooth MIDI devices (ble_devices.h) */
 #ifndef PLAT_HOST
 #define APP_SYS_TEXT                              /* the base's own screens in Melodee's faces (platform/app.c) */
 #endif
