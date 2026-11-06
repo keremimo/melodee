@@ -21,7 +21,7 @@ static void hw_scan_backoff_reset(void)
     drv.bo_sent = drv.bo_succ = drv.bo_fail = 0;
 }
 
-BLE_API void ble_hw_scan_start(const struct ble_hw_scan *s)
+static void hw_scan_start(const struct ble_hw_scan *s)
 {
     uint32_t iv = s->interval, win = s->window, b, i;
     hw_link_open();
@@ -41,14 +41,14 @@ BLE_API void ble_hw_scan_start(const struct ble_hw_scan *s)
     drv.scan_active = s->active ? 1u : 0u;
     CB->format = (uint16_t)(drv.scan_active ? 0u : 0x100u);   /* 6: bit8 0 = SCAN_REQ allowed */
     fm1_ble_col_wr(HW_LINK, 6, 0x2100u | 37u);             /* 7: channel 37 first */
-    CB->rxptr[0] = BB_OFF(bb.rx[0].buf + HW_SWHDR);        /* 8: two RX buffers (264 octets of room) */
-    CB->rxptr[1] = BB_OFF(bb.rx[1].buf + HW_SWHDR);
+    CB->rxptr[0] = BB_OFF(LK.rx[0].buf + HW_SWHDR);        /* 8: two RX buffers (264 octets of room) */
+    CB->rxptr[1] = BB_OFF(LK.rx[1].buf + HW_SWHDR);
     CB->rxbufcntl[0] &= (uint8_t)~1u;
     CB->rxbufcntl[1] &= (uint8_t)~1u;
     hw_rx_wipe(0);
     hw_rx_wipe(1);
     for (b = 0; b < 2u; b++) {                             /* 9: both TX buffers hold the SCAN_REQ */
-        uint8_t *p = bb.tx[b].buf + HW_SWHDR;
+        uint8_t *p = LK.tx[b].buf + HW_SWHDR;
         for (i = 0; i < 6u; i++) {
             p[i] = s->own[i];                              /* ScanA */
             p[6u + i] = 0;                                 /* AdvA: the engine's (C1) */
@@ -77,12 +77,21 @@ BLE_API void ble_hw_scan_start(const struct ble_hw_scan *s)
     BLE_DG(ble_dgs.ch = 37u);
 }
 
+BLE_API void ble_hw_scan_start(const struct ble_hw_scan *s)
+{
+    uint8_t was = hw_enter(BLE_LINK_CENTRAL);
+    hw_scan_start(s);
+    hw_leave(was);
+}
+
 BLE_API void ble_hw_scan_stop(void)
 {
+    uint8_t was = hw_enter(BLE_LINK_CENTRAL);
     hw_stop(BDS_SCAN, HW_STOP_WAIT_US);                    /* HW §21.2 Stop: column 14 = 0, interrupts off, idle */
     BLE_DG(ble_dgs.stops++);
     drv.state = HW_OFF;
     drv.gen++;
+    hw_leave(was);
 }
 
 /* Core Vol 6 Part B 4.4.3.2 as the vendor keeps it (HW §21.2): each ADV_IND / ADV_SCAN_IND counts the backoff down; at
@@ -151,7 +160,7 @@ static void hw_scan_take(uint32_t b)
     }
     if (type == 0x3u || type == 0x5u)
         return;                                            /* SCAN_REQ / CONNECT_IND: dropped in state 1 */
-    pdu = &bb.rx[b].buf[HW_SWHDR - 2u];
+    pdu = &LK.rx[b].buf[HW_SWHDR - 2u];
     pdu[0] = (uint8_t)ah;                                  /* Core layout: type, ChSel, TxAdd, RxAdd */
     pdu[1] = n;
     hw_scan_backoff(type);
@@ -216,7 +225,7 @@ static void hw_adr(volatile uint16_t *r, const uint8_t a[6])   /* an address int
     r[2] = (uint16_t)(a[4] | a[5] << 8);
 }
 
-BLE_API void ble_hw_init_start(const struct ble_hw_init *in)
+static void hw_init_start(const struct ble_hw_init *in)
 {
     const uint8_t *p = in->cind;
     uint32_t iv = in->interval, win = in->window, b, i;
@@ -247,14 +256,14 @@ BLE_API void ble_hw_init_start(const struct ble_hw_init *in)
     CB->filtercntl |= 0x10u;
     CB->optcntl &= (uint16_t)~0x08u;
     hw_adr(CB->targetadr, drv.init_peer);
-    CB->rxptr[0] = BB_OFF(bb.rx[0].buf + HW_SWHDR);        /* 5: two RX buffers */
-    CB->rxptr[1] = BB_OFF(bb.rx[1].buf + HW_SWHDR);
+    CB->rxptr[0] = BB_OFF(LK.rx[0].buf + HW_SWHDR);        /* 5: two RX buffers */
+    CB->rxptr[1] = BB_OFF(LK.rx[1].buf + HW_SWHDR);
     CB->rxbufcntl[0] &= (uint8_t)~1u;
     CB->rxbufcntl[1] &= (uint8_t)~1u;
     hw_rx_wipe(0);
     hw_rx_wipe(1);
     for (b = 0; b < 2u; b++) {                             /* 6: both TX buffers the CONNECT_IND */
-        uint8_t *q = bb.tx[b].buf + HW_SWHDR;
+        uint8_t *q = LK.tx[b].buf + HW_SWHDR;
         for (i = 0; i < 34u; i++)
             q[i] = p[2 + i];
         CB->txahdr[b] = (uint16_t)(5u | (uint32_t)drv.init_own_rand << 4 | (uint32_t)drv.init_peer_rand << 5);
@@ -281,11 +290,20 @@ BLE_API void ble_hw_init_start(const struct ble_hw_init *in)
     BLE_DG(ble_dgc.init_last_ch = 37u);
 }
 
+BLE_API void ble_hw_init_start(const struct ble_hw_init *in)
+{
+    uint8_t was = hw_enter(BLE_LINK_CENTRAL);
+    hw_init_start(in);
+    hw_leave(was);
+}
+
 BLE_API void ble_hw_init_stop(void)
 {
+    uint8_t was = hw_enter(BLE_LINK_CENTRAL);
     hw_stop(BDS_INIT, HW_STOP_WAIT_US);                    /* as any link: column 14 = 0, interrupts off, idle */
     drv.state = HW_OFF;
     drv.gen++;
+    hw_leave(was);
 }
 
 /* one state-3 report in buffer b: the target's ADV_IND (AdvA, TxAdd) or an ADV_DIRECT_IND from it to us (TargetA,
@@ -302,7 +320,7 @@ static int hw_init_stale(uint32_t n)
 static void hw_init_take(uint32_t b)
 {
     uint16_t ah = CB->rxahdr[b], dh = CB->rxdhdr[b], st = CB->rxstat[b];
-    const uint8_t *p = bb.rx[b].buf + HW_SWHDR;
+    const uint8_t *p = LK.rx[b].buf + HW_SWHDR;
     uint8_t n = (uint8_t)(dh >> 8), type = (uint8_t)(ah & 0x0Fu);
     CB->rxahdr[b] = CB->rxdhdr[b] = CB->rxstat[b] = 0;
     BLE_DG(ble_dgc.init_last_ahdr = ah);

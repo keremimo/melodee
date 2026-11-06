@@ -5,6 +5,15 @@
 #include "ui_test.c"
 #include <assert.h>
 
+/* the link layer's states: the computer's link and the device's (one link: the same) */
+#if BLE_LINKS > 1
+#define PST (ll_b[BLE_LINK_PERIPH].state)
+#define CST (ll_b[BLE_LINK_CENTRAL].state)
+#else
+#define PST (bll.state)
+#define CST (bll.state)
+#endif
+
 static const uint8_t zero_rand_for_stk[8];
 static uint32_t packet(uint32_t st, uint32_t note, uint32_t vel)
 { return (st >> 4) | st << 8 | note << 16 | vel << 24; }
@@ -25,16 +34,16 @@ int main(void)
     reset_ble();
     /* Neither a bare LL connection nor GATT discovery is a usable MIDI link. */
     assert(!mel_ble_ready());
-    usb.up = usb.config = 0; mb.ready = 1;
+    usb.up = usb.config = 0; mb.ln[0].ready = 1;
     uint32_t p = packet(0x90, 60, 100), out, ms;
     assert(midi_track_emit(p) && mo_r == mo_w);
     assert(ble_app_midi_peek(&out, &ms) && out == p); ble_app_midi_pop();
     assert(!ble_app_midi_peek(&out, &ms));
     usb.up = usb.config = 1;
-    assert(midi_track_emit(p)); assert(mo_w == 1 && mb.tw - mb.tr == 1);
-    mb.tw = mb.tr + MBQ;
+    assert(midi_track_emit(p)); assert(mo_w == 1 && mb.ln[0].tw - mb.ln[0].tr == 1);
+    mb.ln[0].tw = mb.ln[0].tr + MBQ;
     assert(!midi_track_emit(p) && mo_w == 1); /* no duplicate USB on a BLE retry */
-    mb.tw = mb.tr; mo_r = mo_w;
+    mb.ln[0].tw = mb.ln[0].tr; mo_r = mo_w;
     puts("BLE adapter: independent and atomic USB/BLE output admission passed");
 
     /* Clock out: its own rings, ahead of notes, each transport admitting it alone. */
@@ -50,11 +59,11 @@ int main(void)
     assert(!ble_app_midi_peek(&out, &ms));
     mo_r = mo_w; rt_r = rt_w;
     for (uint32_t i = 0; i < 2u * MBRT; i++) midi_sync_emit(0xF8u);
-    assert(mb.rt_w - mb.rt_r == MBRT - 4u && rt_w - rt_r == RTQ - 4u);   /* pulses keep room for transport */
-    midi_sync_emit(0xFAu); assert(mb.rt_w - mb.rt_r == MBRT - 3u && rt_w - rt_r == RTQ - 3u);
-    mb.rt_w = mb.rt_r + MBRT; rt_r = rt_w;
+    assert(mb.ln[0].rt_w - mb.ln[0].rt_r == MBRT - 4u && rt_w - rt_r == RTQ - 4u);   /* pulses keep room for transport */
+    midi_sync_emit(0xFAu); assert(mb.ln[0].rt_w - mb.ln[0].rt_r == MBRT - 3u && rt_w - rt_r == RTQ - 3u);
+    mb.ln[0].rt_w = mb.ln[0].rt_r + MBRT; rt_r = rt_w;
     midi_sync_emit(0xFCu); assert(rt_w - rt_r == 1);           /* a full BLE ring costs USB nothing */
-    mb.rt_r = mb.rt_w; rt_r = rt_w; rt_w += RTQ;
+    mb.ln[0].rt_r = mb.ln[0].rt_w; rt_r = rt_w; rt_w += RTQ;
     midi_sync_emit(0xFAu); assert(ble_app_midi_peek(&out, &ms) && out == start);   /* nor the other way */
     ble_app_midi_pop(); rt_r = rt_w;
     struct ble_midi_enc air; uint8_t air_buf[8];
@@ -73,10 +82,10 @@ int main(void)
     /* USB's lost-session cleanup must preserve a BLE-owned note. */
     midi_usb_lost = 1; events_block(0); assert(mn_get(0,60));
     midi_enqueue(packet(0x90, 64, 100), 1); events_block(0); assert(mn_get(0,64));
-    mb.lost = 1; mel_ble_drain(); events_block(0);
+    mb.ln[0].lost = 1; mel_ble_drain(); events_block(0);
     assert(!mn_get(0,60) && mn_get(0,64));
     /* A wireless maintenance SysEx never enters the OTA/parser path. */
-    uint32_t w = mb.rw; ble_app_midi_in(0x2235F004u, 0, 0); assert(mb.rw == w);
+    uint32_t w = mb.ln[0].rw; ble_app_midi_in(0x2235F004u, 0, 0); assert(mb.ln[0].rw == w);
     /* An old BLE release cannot end a USB retrigger of the same channel/note. */
     midi_enqueue(packet(0x90, 64, 110), 3); events_block(0);
     midi_enqueue(packet(0x90, 64, 120), 1); events_block(0);
@@ -89,14 +98,14 @@ int main(void)
     assert(song.playing && midi_clock.mode == 3);
     ble_app_midi_in(0xF80Fu, 0, 0); mel_ble_drain(); events_block(0);
     assert(midi_rx_pulses[2] == 1);
-    mb.overflow = 1; mel_ble_drain(); events_block(0); assert(!song.playing);
+    mb.ln[0].overflow = 1; mel_ble_drain(); events_block(0); assert(!song.playing);
     ble_app_midi_in(0x0005F203u, 0, 0); mel_ble_drain(); events_block(0);
     assert(midi_clock.spot_valid && midi_clock.spot == 5u);          /* Song Position, stopped */
     midi_clock.spot_valid = 0;
     puts("BLE adapter: external clock and overflow release passed");
 
     reset_ble();
-    mb.attempt = 1; bsmp.init = 1; bsmp.st = I_CONFIRM; smp_passkey = 42;
+    mb.attempt = 1; bsmp_b[BLE_LINK_CENTRAL].init = 1; bsmp_b[BLE_LINK_CENTRAL].st = I_CONFIRM; smp_passkey = 42;
     char text[24]; ble_head_text(text); assert(!strcmp(text,"PIN 000042"));
     smp_passkey = 0; ble_head_text(text); assert(!strcmp(text,"PIN 000000"));
     smp_passkey = 999999; ble_head_text(text); assert(!strcmp(text,"PIN 999999"));
@@ -105,10 +114,10 @@ int main(void)
     mb_saved.valid = 1; mb_saved.addr[0] = 12; mb_saved.rf[0] = 0xAC;
     memset(mb_saved.bond, 1, sizeof mb_saved.bond); mel_ble_forget();
     assert(mb_saved.valid && mb_saved.addr[0] == 12 && mb_saved.rf[0] == 0xAC && !mb_saved.bond[0]);
-    mb.on=1;mb.closing=1;
+    mb.on=1;mb.ln[0].closing=1;
     ble_app_bond((uint8_t[8]){1},12,(uint8_t[16]){2}); assert(!mb_saved.bond[0]);
     ble_app_central_keys(&(struct ble_keys){.has=BLE_KEYS_LTK}); assert(!mb.keys_new);
-    mb.closing=0;
+    mb.ln[0].closing=0;
     puts("BLE adapter: passkey lifecycle, missing calibration and forget isolation passed");
 
     /* A peer we paired with connects to us (Mode VISIBLE): its key known, saved with the settings, ended by Forget;
@@ -134,7 +143,7 @@ int main(void)
     assert(!strcmp(mel_ble_status(), "FORGET ON PEER"));
     ble_head_text(text); assert(!strcmp(text, "FORGET ON PEER"));
     mel_ble_poll(); assert(!strcmp(mel_ble_status(), "FORGET ON PEER"));   /* (told once, shown until it is over) */
-    mb.ready = 1; mel_ble_poll(); mb.ready = 0;
+    mb.ln[0].ready = 1; mel_ble_poll(); mb.ln[0].ready = 0;
     assert(!strcmp(mel_ble_status(), "VISIBLE 0201"));
     assert(!ble_host_ltk(zero_rand_for_stk, 0, back));
     assert(ble_host_key_refused());
@@ -145,14 +154,14 @@ int main(void)
     puts("BLE adapter: every peer's key known when it connects to us, Forget ends them, a refusal shown passed");
 
     /* Mode: VISIBLE advertises and never scans; CONNECT OUT is quiet until the page scans. Both saved. */
-    reset_ble(); mb.cal = 1; ble_enable(1); assert(bll.state == LL_ADV);   /* (the stack's default before a mode applies) */
-    ble_ll_advertise(0); assert(bll.state == LL_OFF);
-    mel_ble_scan(1); assert(mb.scanning && bll.state == LL_SCAN);
-    mel_ble_visible(1); assert(mb_saved.flags == MB_VISIBLE && !mb.scanning && bll.state == LL_ADV);
-    mel_ble_scan(1); assert(!mb.scanning && bll.state == LL_ADV);
+    reset_ble(); mb.cal = 1; ble_enable(1); assert(PST == LL_ADV);   /* (the stack's default before a mode applies) */
+    ble_ll_advertise(0); assert(PST == LL_OFF);
+    mel_ble_scan(1); assert(mb.scanning && CST == LL_SCAN);
+    mel_ble_visible(1); assert(mb_saved.flags == MB_VISIBLE && !mb.scanning && PST == LL_ADV && (BLE_LINKS == 1 || CST == LL_OFF));
+    mel_ble_scan(1); assert(!mb.scanning && PST == LL_ADV);
     assert(!strcmp(mel_ble_status(), "VISIBLE 0201"));
     ble_head_text(text); assert(!strcmp(text, "VISIBLE 0201"));
-    mel_ble_scan(0); mel_ble_visible(0); assert(!mb_saved.flags && bll.state == LL_OFF);
+    mel_ble_scan(0); mel_ble_visible(0); assert(!mb_saved.flags && PST == LL_OFF && CST == LL_OFF);
     assert(!strcmp(mel_ble_status(), "BLE AVAILABLE"));
     puts("BLE adapter: Mode VISIBLE advertises, CONNECT OUT stays quiet passed");
 
@@ -170,19 +179,90 @@ int main(void)
     const uint8_t widi[6] = {0x10,0x20,0x30,0x40,0x50,0x60};
     ble_store_set_last(&mb.store, widi, 0, "WIDI", BLE_KIND_MIDI);
     mel_ble_set(1); assert(mb.relink);
-    mel_ble_poll(); assert(mb.relink_scan && bll.state == LL_SCAN && !strcmp(mel_ble_status(), "RECONNECTING"));
-    fm1_ms += MB_RELINK_SCAN_MS; mel_ble_poll(); assert(!mb.relink_scan && bll.state == LL_OFF);
-    fm1_ms += MB_RELINK_MS - MB_RELINK_SCAN_MS; mel_ble_poll(); assert(mb.relink_scan && bll.state == LL_SCAN);
+    mel_ble_poll(); assert(mb.relink_scan && CST == LL_SCAN && !strcmp(mel_ble_status(), "RECONNECTING"));
+    fm1_ms += MB_RELINK_SCAN_MS; mel_ble_poll(); assert(!mb.relink_scan && CST == LL_OFF);
+    fm1_ms += MB_RELINK_MS - MB_RELINK_SCAN_MS; mel_ble_poll(); assert(mb.relink_scan && CST == LL_SCAN);
     struct ble_found *e = &mb.found.e[0]; memset(e, 0, sizeof *e);
     e->used = e->midi = 1; e->kind = BLE_KIND_MIDI; memcpy(e->addr, widi, 6); e->seen_ms = fm1_ms;
-    mel_ble_poll(); assert(mb.attempt && !mb.relink_scan && bll.state == LL_INIT && !bll.scan_want);
+    mel_ble_poll(); assert(mb.attempt && !mb.relink_scan && CST == LL_INIT && !llg.scan_want);
     assert(!strcmp(mel_ble_status(), "RECONNECTING"));
-    fm1_ms += 10001u; mel_ble_poll(); assert(!mb.attempt && mb.relink && !mb.failure[0] && bll.state == LL_OFF);
+    fm1_ms += 10001u; mel_ble_poll(); assert(!mb.attempt && mb.relink && !mb.failure[0] && CST == LL_OFF);
     fm1_ms += MB_RELINK_MS; e->used = 1; e->seen_ms = fm1_ms; mel_ble_poll(); assert(mb.attempt);   /* (heard again) */
-    mel_ble_disconnect(); assert(!mb.relink); mel_ble_poll(); assert(bll.state == LL_OFF && !bll.scan_want);
-    fm1_ms += MB_RELINK_MS; mel_ble_poll(); assert(!mb.attempt && bll.state == LL_OFF);
-    mel_ble_visible(1); mel_ble_set(1); assert(!mb.relink && bll.state == LL_ADV);
+    mel_ble_disconnect(); assert(!mb.relink); mel_ble_poll(); assert(CST == LL_OFF && !llg.scan_want);
+    fm1_ms += MB_RELINK_MS; mel_ble_poll(); assert(!mb.attempt && CST == LL_OFF);
+    mel_ble_visible(1); mel_ble_set(1); assert(!mb.relink == (BLE_LINKS == 1) && PST == LL_ADV);   /* (two links: VISIBLE relinks too) */
     puts("BLE adapter: power-on relink to the last device passed");
+
+#if BLE_LINKS > 1
+    /* Two links: a queue pair per link behind the hooks (ble_ll_link()), output to every link that is up and admitted
+     * whole, clock per link, MIDI THRU's link mask, input from both, a link going says nothing of the other's. */
+    reset_ble(); mb.cal = 1; usb.up = usb.config = 0;
+    mb.ln[0].ready = mb.ln[1].ready = 1;
+    uint32_t q = packet(0x90, 62, 80), was;
+    assert(midi_track_emit(q) && mb.ln[0].tw - mb.ln[0].tr == 1 && mb.ln[1].tw - mb.ln[1].tr == 1);
+    was = ll_enter(BLE_LINK_CENTRAL);
+    assert(ble_app_midi_peek(&out, &ms) && out == q); ble_app_midi_pop(); assert(!ble_app_midi_peek(&out, &ms));
+    ll_leave(was);
+    assert(mb.ln[0].tw - mb.ln[0].tr == 1);                   /* (the computer's still waits for its link) */
+    assert(ble_app_midi_peek(&out, &ms) && out == q); ble_app_midi_pop();
+    mb.ln[1].tw = mb.ln[1].tr + MBQ;
+    assert(!midi_track_emit(q) && mb.ln[0].tw == mb.ln[0].tr);   /* the device's queue full: refused whole */
+    mb.ln[1].ready = 0;
+    assert(midi_track_emit(q) && mb.ln[0].tw - mb.ln[0].tr == 1);   /* a link not up is not waited for */
+    mb.ln[0].tr = mb.ln[0].tw; mb.ln[1].tr = mb.ln[1].tw; mb.ln[1].ready = 1;
+    mb.ln[0].rt_w = mb.ln[0].rt_r + MBRT;
+    midi_sync_emit(0xFAu); assert(mb.ln[1].rt_w - mb.ln[1].rt_r == 1);   /* a full clock ring costs the other link nothing */
+    mb.ln[0].rt_r = mb.ln[0].rt_w; mb.ln[1].rt_r = mb.ln[1].rt_w; rt_r = rt_w;
+    mb_in_link = BLE_LINK_CENTRAL; assert(mel_ble_other_links() == 1u << BLE_LINK_PERIPH);
+    assert(mel_ble_emit_to(q, mel_ble_other_links()) && mb.ln[0].tw - mb.ln[0].tr == 1 && mb.ln[1].tw == mb.ln[1].tr);
+    mb_in_link = BLE_LINK_PERIPH; assert(mel_ble_other_links() == 1u << BLE_LINK_CENTRAL);
+    mb.ln[0].tr = mb.ln[0].tw;
+    assert(mel_ble_room_for(MBQ)); mb.ln[1].tw = mb.ln[1].tr + 1; assert(!mel_ble_room_for(MBQ)); mb.ln[1].tr = mb.ln[1].tw;
+    was = ll_enter(BLE_LINK_CENTRAL); ble_app_midi_in(packet(0x90, 67, 100), 10, 10); ll_leave(was);
+    ble_app_midi_in(packet(0x90, 69, 100), 10, 10);           /* (the computer's) */
+    assert(mb.ln[1].rw - mb.ln[1].rr == 1 && mb.ln[0].rw - mb.ln[0].rr == 1);
+    mel_ble_drain(); events_block(0);
+    assert(mn_get(0,67) && mn_get(0,69) && midi_note_source(0,67) == 3 && midi_note_source(0,69) == 3);
+    assert(!strcmp(mel_ble_status(), "COMPUTER + DEVICE"));
+    was = ll_enter(BLE_LINK_CENTRAL); ble_app_state(); ll_leave(was);   /* the device's link went */
+    assert(!mb.ln[1].ready && mb.ln[1].lost && mb.ln[0].ready && !mb.ln[0].lost);
+    assert(!strcmp(mel_ble_status(), "BLE CONNECTED"));
+    mel_ble_drain(); assert(midi_ble_lost); events_block(0);
+    assert(!mn_get(0,67) && !mn_get(0,69));                   /* (every Bluetooth note ends: one source, 3) */
+    puts("BLE adapter: two links, a queue pair each, output to both, clock per link, input from both passed");
+
+    /* With the computer on link 0, the device's link scans, relinks and connects out beside it; an attempt out that
+     * times out leaves the computer's link up. */
+    reset_ble(); mb.cal = 1; ble_enable(1); ble_ll_advertise(0);
+    PST = LL_CONN;                                            /* (a computer on link 0: its state alone, no driver) */
+    mel_ble_scan(1); assert(mb.scanning && CST == LL_SCAN && PST == LL_CONN);
+    mel_ble_scan(0); assert(!mb.scanning && CST == LL_OFF);
+    ble_store_set_last(&mb.store, widi, 0, "WIDI", BLE_KIND_MIDI);
+    mel_ble_set(1); assert(mb.relink);
+    mel_ble_poll(); assert(mb.relink_scan && CST == LL_SCAN && PST == LL_CONN);
+    memset(e, 0, sizeof *e);
+    e->used = e->midi = 1; e->kind = BLE_KIND_MIDI; memcpy(e->addr, widi, 6); e->seen_ms = fm1_ms;
+    mel_ble_poll(); assert(mb.attempt && CST == LL_INIT && PST == LL_CONN);
+    fm1_ms += 10001u; mel_ble_poll(); assert(!mb.attempt && mb.relink && CST == LL_OFF && PST == LL_CONN);
+    PST = LL_OFF;
+    puts("BLE adapter: the device's link scans, relinks and gives up beside the computer's passed");
+
+    /* Mode VISIBLE keeps the last device relinked (Kerem 2026-11-06): a round's scan pauses advertising, between rounds
+     * Melodee advertises under its name; the page's scan calls leave a round's scan alone. */
+    reset_ble(); mb.cal = 1; ble_enable(1);
+    ble_store_set_last(&mb.store, widi, 0, "WIDI", BLE_KIND_MIDI);
+    mel_ble_visible(1); mel_ble_set(1); assert(mb.relink && PST == LL_ADV);
+    mel_ble_poll(); assert(mb.relink_scan && CST == LL_SCAN && PST == LL_OFF && !strcmp(mel_ble_status(), "RECONNECTING"));
+    mel_ble_scan(1); mel_ble_scan(0); assert(!mb.scanning && mb.relink_scan && CST == LL_SCAN);
+    fm1_ms += MB_RELINK_SCAN_MS; mel_ble_poll(); assert(!mb.relink_scan && CST == LL_OFF && PST == LL_ADV);
+    assert(!strcmp(mel_ble_status(), "VISIBLE 0201"));
+    fm1_ms += MB_RELINK_MS - MB_RELINK_SCAN_MS; mel_ble_poll(); assert(mb.relink_scan && CST == LL_SCAN && PST == LL_OFF);
+    memset(e, 0, sizeof *e);
+    e->used = e->midi = 1; e->kind = BLE_KIND_MIDI; memcpy(e->addr, widi, 6); e->seen_ms = fm1_ms;
+    mel_ble_poll(); assert(mb.attempt && CST == LL_INIT);
+    fm1_ms += 10001u; mel_ble_poll(); assert(!mb.attempt && mb.relink && CST == LL_OFF && PST == LL_ADV);
+    puts("BLE adapter: Mode VISIBLE relinks the last device between advertising passed");
+#endif
 
     reset_ble(); settings_midi_knobs = MK_GENERAL;
     midi_event_source=1; assert(midi_knob_receive(0,17,20));

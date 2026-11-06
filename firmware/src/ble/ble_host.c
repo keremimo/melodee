@@ -29,7 +29,8 @@ static struct {
     uint8_t slow;                              /* audio streamed on this link: the fast interval to ask for again after */
     uint8_t asked;                             /* the slower interval asked for, at ask_us (asked again after a while) */
     uint32_t ask_us;
-} bhs;
+} bhs_b[BLE_LINKS] BLE_STATE_MEMORY;
+#define bhs (bhs_b[ble_ll_link()])                /* the running link's (ble_ll.h ble_ll_link) */
 
 /* the advertised name and the GAP Device Name: BLE_DEVICE_NAME, then " XXXX" = the last four hex digits of the device
  * address (its two least significant octets, as an address is written: "Optimist A1B2" for ..:A1:B2; docs/
@@ -108,7 +109,8 @@ BLE_API void ble_host_disconnected(uint8_t reason)
     ble_att_reset();
     ble_smp_reset();
 #if BLE_CENTRAL
-    ble_central_disconnected(reason);
+    if (ble_ll_link() == BLE_LINK_CENTRAL)         /* (BLE_LINKS 2: the computer's link going says nothing of the device's) */
+        ble_central_disconnected(reason);
 #endif
     ble_app_state();
 }

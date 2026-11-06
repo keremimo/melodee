@@ -133,10 +133,11 @@ static void fm1_ble_link_irqs_on(uint32_t link)
 {
     FM1_BLE_IACK = 0x001u << link;
     FM1_BLE_IACK = 0x101u << link;
-    FM1_BLE_G2EN = 0x100u << link;
+    FM1_BLE_G2EN = FM1_BLE_G2EN | 0x100u << link;          /* (read-modify-write: another link's enable stays; with one link
+                                                            * the register reads 0 here and this is stock's plain write) */
     FM1_BLE_IEN = FM1_BLE_IEN | 0x001u << link;
     FM1_BLE_IEN = FM1_BLE_IEN | 0x101u << link;
-    FM1_BLE_G2EN = 0x101u << link;
+    FM1_BLE_G2EN = FM1_BLE_G2EN | 0x101u << link;
 }
 
 /* acknowledge and test the pending bits (HW §8: serviced when enable AND pending) */

@@ -7,6 +7,7 @@ top. A patch that no longer matches its base fails the build. Where the boards d
 and each such place says so.
 """
 from pathlib import Path
+import os
 import shutil
 
 
@@ -192,6 +193,73 @@ def smk37_linker(source):
     return replace(text, '_mres_end = .; } > RES\n', '_mres_end = .; } > RES AT > RESLOAD\n')
 
 
+def ble_links():
+    """MELODEE_BLE_LINKS=2 builds the stack with a computer's link and a device's link at once (docs/BLE-MULTILINK.md);
+    anything else, the default, is one link and changes nothing in the base's Bluetooth"""
+    v = os.environ.get("MELODEE_BLE_LINKS", "1")
+    if v not in ("1", "2"):
+        raise ValueError("MELODEE_BLE_LINKS: 1 or 2")
+    return int(v)
+
+
+def patch_two_links(s):
+    """bt/bt_own.c for BLE_LINKS 2: the computer's link and the device's are up together (own_role is two flags: 1 the
+    computer, 2 the device), each with a MIDI queue of its own behind the stack's hooks (which link a hook serves:
+    ble_ll_link()), and the screen stream only to the computer's link"""
+    # the device's link needs less than the computer's: a ring of 512 for its frames and a queue of 32 (the SMK-37's RAM
+    # has no room for a second link at the computer's sizes: 556 B over)
+    s = replace(s, '#define BLE_NAME_HEX 0\n', '#define BLE_NAME_HEX 0\n#define BLE_LINKS 2\n#define BLE_LL_TX_RING_CENTRAL 512u\n')
+    s = replace(s, 'static struct { uint32_t pkt; uint16_t ms; } own_out[OQ];\nstatic volatile uint32_t oo_w, oo_r;',
+                '#define OQ1 32u                                   /* the device link\'s queue */\n'
+                'static struct { uint32_t pkt; uint16_t ms; } own_out0[OQ], own_out1[OQ1];   /* one queue per link */\n'
+                '#define OQ_N(l) ((l) ? OQ1 : OQ)\n'
+                '#define OQ_AT(l, i) ((l) ? &own_out1[(i) % OQ1] : &own_out0[(i) % OQ])\n'
+                'static volatile uint32_t oo_w[BLE_LINKS], oo_r[BLE_LINKS];')
+    s = replace(s, '''    if (oo_r == oo_w)
+        return 0;
+    *pkt = own_out[oo_r % OQ].pkt;
+    *t_ms = own_out[oo_r % OQ].ms;
+    return 1;''', '''    uint32_t l = ble_ll_link();                   /* (the hooks run under the link they serve) */
+    if (oo_r[l] == oo_w[l])
+        return 0;
+    *pkt = OQ_AT(l, oo_r[l])->pkt;
+    *t_ms = OQ_AT(l, oo_r[l])->ms;
+    return 1;''')
+    s = replace(s, '''    if (oo_r != oo_w)
+        oo_r++;''', '''    uint32_t l = ble_ll_link();
+    if (oo_r[l] != oo_w[l])
+        oo_r[l]++;''')
+    s = replace(s, 'static int own_stream_on(void) { return own_role == 1u && ble_midi_ready(); }',
+                'static int own_stream_on(void) { return (own_role & 1u) && ble_ll_link() == BLE_LINK_PERIPH && ble_midi_ready(); }')
+    s = replace(s, 'own_in[oi_w % IQ].pkt = own_role == 2u ? (pkt & ~0xF0u) | 0x10u : pkt & ~0xF0u;',
+                'own_in[oi_w % IQ].pkt = ble_ll_link() == BLE_LINK_CENTRAL ? (pkt & ~0xF0u) | 0x10u : pkt & ~0xF0u;')
+    s = replace(s, '    own_role = ble_central_state() != BLE_CS_IDLE ? 2u : ble_connected() ? 1u : 0u;',
+                '    own_role = (uint8_t)((ble_central_state() != BLE_CS_IDLE ? 2u : 0u) | (ble_ll_link_connected(BLE_LINK_PERIPH) ? 1u : 0u));')
+    s = replace(s, '    return link == 0 ? own_role == 1u && ble_midi_ready() : own_role == 2u && ble_midi_ready();',
+                '    return link == 0 ? (own_role & 1u) && ble_midi_ready_link(BLE_LINK_PERIPH)\n'
+                '                     : (own_role & 2u) && ble_midi_ready_link(BLE_LINK_CENTRAL);')
+    s = replace(s, '''    while (k < n && oo_w - oo_r < OQ) {
+        own_out[oo_w % OQ].pkt = pkts[k];
+        own_out[oo_w % OQ].ms = ms[k];
+        RING_PUBLISH();
+        oo_w++;''', '''    while (k < n && oo_w[link] - oo_r[link] < OQ_N(link)) {
+        OQ_AT(link, oo_w[link])->pkt = pkts[k];
+        OQ_AT(link, oo_w[link])->ms = ms[k];
+        RING_PUBLISH();
+        oo_w[link]++;''')
+    s = replace(s, 'int ble_midi_peripheral_connected(void) { return own_role == 1u && ble_midi_ready(); }',
+                'int ble_midi_peripheral_connected(void) { return (own_role & 1u) && ble_midi_ready_link(BLE_LINK_PERIPH); }')
+    s = replace(s, 'int ble_midi_peripheral_linked(void) { return own_role == 1u; }',
+                'int ble_midi_peripheral_linked(void) { return (own_role & 1u) != 0u; }')
+    s = replace(s, 'ble_state == BLE_READY && own_role == 1u, i;', 'ble_state == BLE_READY && (own_role & 1u), i;')
+    # the log line: both flags say both links
+    s = replace(s, 'shim_log(own_role == 1u ? (ready_said ? "computer: MIDI on" : "computer connected")\n                     : own_role == 2u ? (ready_said ? "device: MIDI on" : "device connected") : "no link: advertising");',
+                'shim_log(own_role == 3u ? (ready_said ? "computer + device: MIDI on" : "computer + device connected")\n'
+                '                     : own_role == 1u ? (ready_said ? "computer: MIDI on" : "computer connected")\n'
+                '                     : own_role == 2u ? (ready_said ? "device: MIDI on" : "device connected") : "no link: advertising");')
+    return s
+
+
 def apply(work, board="fm1", model=None, product="Melodee"):
     smk = board == "smk37"
     if smk:
@@ -351,6 +419,8 @@ def apply(work, board="fm1", model=None, product="Melodee"):
 #define FM1_RF_CAL_MEMORY __attribute__((section(".pool")))
 #define BLE_DEVICE_NAME "{product}" """)
     s=replace(s,'#include "ble_stack.c"\n','#include "ble_stack.c"\n#include "ble_vm.c"\n')
+    if ble_links() == 2:
+        s=patch_two_links(s)
     # the calibration: stored first, then measured (ble_own.h); its copy kept with the address
     s=replace(s,"""    fm1_rf_cal_on = 1;                            /* (our own measurement, not a stored 187) */
     ble_hw_wl82_start(&OWN_TRIMS);                /* the radio's start-up, its calibration (crystal ramp from RAM) */
@@ -396,6 +466,9 @@ static struct ble_scan_tab own_scan;""")
 {
     ml_own_poll();
 """)
+    # the debug line reads the link layer's wishes, which moved from `bll` to `llg` (platform/ble/ble_ll.c)
+    s=replace(s,'q = put_dec(q, bll.enabled);','q = put_dec(q, llg.enabled);')
+    s=replace(s,'put_dec(q, bll.scan_want);','put_dec(q, llg.scan_want);')
     for name in ('void plat_ble_scan(int on)','int plat_ble_connect(int i)'):
         s=function(s,name,'')
     s=replace(s,'return ble_ll_scanning() ? BLE_DEV_SCANNING : BLE_DEV_OFF;','return ble_ll_scanning() && !ml_relink_scanning() ? BLE_DEV_SCANNING : BLE_DEV_OFF;')

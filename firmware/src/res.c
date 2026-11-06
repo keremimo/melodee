@@ -64,7 +64,7 @@ static int res_begin(void)
     if (!flash_ok) return 2;
     if (transport_busy()) return 4;
 #if MELODEE_BLE
-    if (mb.on || mb.closing) return 4;
+    if (mb.on || MB_ANY(closing)) return 4;
 #endif
     res_ok = 0;
     if (st_small_migrate(wire_take(), sizeof proj_wire_u)) return 3;

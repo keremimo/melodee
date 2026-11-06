@@ -15,6 +15,7 @@
 BLE_API void ble_init(const uint8_t addr[6], uint8_t addr_random);
 BLE_API void ble_enable(int on);
 BLE_API int ble_midi_ready(void);
+BLE_API int ble_midi_ready_link(uint8_t link);   /* ... of link BLE_LINK_PERIPH / BLE_LINK_CENTRAL (BLE_LINKS 2) */
 BLE_API int ble_connected(void);
 
 /* ---- the firmware implements these ---- */

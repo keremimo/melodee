@@ -4,20 +4,32 @@
  * BLE IRQ -> private RX ring -> TIMER5 -> the existing audio input ring.
  * Audio/UI -> TX ring -> BLE IRQ. Foreground mutations mask the BLE IRQs only.
  * One radio link, either role: Mode CONNECT OUT scans on the Bluetooth page and keeps the last device linked
- * (relink), Mode VISIBLE advertises for a computer or phone. No USB echo/bridge and no wireless update SysEx. */
+ * (relink), Mode VISIBLE advertises for a computer or phone. No USB echo/bridge and no wireless update SysEx.
+ * BLE_LINKS 2 (MELODEE_BLE_LINKS=2, docs/BLE-MULTILINK.md): a computer or phone on link 0 (BLE_LINK_PERIPH) and a device
+ * Melodee connected out to on link 1 (BLE_LINK_CENTRAL) at once, each with MIDI queues of its own (struct mb_link: the
+ * stack's hooks run under the link they serve, ble_ll_link()). Mode still says what an idle link does (VISIBLE: link 0
+ * advertises; CONNECT OUT: link 1 scans, relinks), a link that is up stays up through a Mode change, and MIDI out goes to
+ * every link that is up. */
 #include "ble/ble_stack.c"
 #include "ble/ble_vm.c"
 
 #define MBQ 64u
 #define MBRT 16u                                /* clock, transport, Song Position (usb.c midi_rt_q) */
-static struct {
+struct mb_link {                                /* one link's MIDI: in (TIMER5 drains it), out, its clock and transport */
     uint32_t rx[MBQ], time[MBQ], tx[MBQ], ms[MBQ];
     volatile uint32_t rw, rr, tw, tr, rt_w, rt_r;
     uint32_t rt[MBRT], rt_ms[MBRT];
     uint8_t peeked_rt;
     volatile uint8_t ready, lost, overflow;
-    uint8_t on, started, cal, scanning, attempt, was_ready, connected, was_pairing, closing, forgetting;
+    uint8_t connected, closing;
+};
+static struct {
+    struct mb_link ln[BLE_LINKS];               /* by link: BLE_LINK_PERIPH (the computer's), BLE_LINK_CENTRAL (a device's) */
+    uint8_t on, started, cal, scanning, attempt, was_ready, was_pairing, forgetting;
     uint8_t boot, relink, relink_scan;          /* radio start owed from power-on; looking for the last device */
+#if BLE_LINKS > 1
+    uint8_t up_seen;                            /* the links ready at the last poll (bit n: link n) */
+#endif
     uint8_t idx[BLE_SCAN_N], count;
     uint32_t epoch_ms, deadline, aged, generation, relink_t;
     char shown[24];                             /* "VISIBLE 1A2B": Melodee 1A2B on the computer */
@@ -30,6 +42,19 @@ static struct {
     char failure[24];
 } mb __attribute__((section(".pool")));
 static volatile uint8_t midi_ble_lost;
+#define MBL (&mb.ln[ble_ll_link()])            /* inside a hook: the link it serves (one link: 0) */
+#define MBC (&mb.ln[BLE_LINK_CENTRAL])         /* the link Melodee connects out on */
+#if BLE_LINKS > 1
+#define MB_ANY(f) (mb.ln[0].f || mb.ln[1].f)
+#define MB_READY_BITS ((uint32_t)mb.ln[0].ready | (uint32_t)mb.ln[1].ready << 1)
+#define mb_link_up(n) ble_ll_link_connected((uint8_t)(n))
+static uint8_t mb_in_link;                      /* the link of the message mel_ble_drain hands midi_enqueue */
+#else
+#define MB_ANY(f) (mb.ln[0].f)
+#define MB_READY_BITS ((uint32_t)mb.ln[0].ready)
+#define mb_link_up(n) ble_connected()
+#endif
+#define mb_central_up() mb_link_up(BLE_LINK_CENTRAL)   /* (one link: the link, whichever role) */
 
 static void mb_dirty(void) { mb_saved.magic = MEL_BLE_MAGIC; mb_revision++; }
 /* TIMER5 may enter while foreground holds this lock. Keep its unlock from
@@ -50,53 +75,57 @@ static void mb_unlock(void)
 
 BLE_API int ble_app_midi_peek(uint32_t *pkt, uint32_t *ms)
 {
-    mb.peeked_rt = mb.rt_r != mb.rt_w;
-    if (mb.peeked_rt) {
+    struct mb_link *l = MBL;
+    l->peeked_rt = l->rt_r != l->rt_w;
+    if (l->peeked_rt) {
         RING_PUBLISH();
-        *pkt = mb.rt[mb.rt_r % MBRT]; *ms = mb.rt_ms[mb.rt_r % MBRT];
+        *pkt = l->rt[l->rt_r % MBRT]; *ms = l->rt_ms[l->rt_r % MBRT];
         return 1;
     }
-    if (mb.tr == mb.tw) return 0;
+    if (l->tr == l->tw) return 0;
     RING_PUBLISH();
-    *pkt = mb.tx[mb.tr % MBQ]; *ms = mb.ms[mb.tr % MBQ];
+    *pkt = l->tx[l->tr % MBQ]; *ms = l->ms[l->tr % MBQ];
     return 1;
 }
 BLE_API void ble_app_midi_pop(void)                 /* (the one peeked: a pulse may have arrived since) */
 {
+    struct mb_link *l = MBL;
     RING_PUBLISH();
-    if (mb.peeked_rt) mb.rt_r++;
-    else mb.tr++;
+    if (l->peeked_rt) l->rt_r++;
+    else l->tr++;
 }
 BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last)
 {
+    struct mb_link *l = MBL;
     uint32_t status = (pkt >> 8) & 255u;
     /* Route performance messages and clock only. OTA/editor framing stays USB. */
-    if (!mb.on || mb.closing || !((status >= 0x80u && status < 0xF0u) ||
+    if (!mb.on || l->closing || !((status >= 0x80u && status < 0xF0u) ||
         status == 0xF2u || status == 0xF8u || status == 0xFAu || status == 0xFBu || status == 0xFCu)) return;
-    if (mb.rw - mb.rr >= MBQ) { mb.overflow = 1; return; }
+    if (l->rw - l->rr >= MBQ) { l->overflow = 1; return; }
     mb.epoch_ms = fm1_ms;
-    uint32_t at = mb.rw % MBQ, back = (last - ts) & 0x1FFFu;
-    mb.rx[at] = pkt;
+    uint32_t at = l->rw % MBQ, back = (last - ts) & 0x1FFFu;
+    l->rx[at] = pkt;
     /* Preserve relative timing within the packet without trusting the peer's epoch. */
-    mb.time[at] = MIDI_TIME_NOW() - (back < 1000u ? back : 0u) * MIDI_TICKS_PER_MS;
-    RING_PUBLISH(); mb.rw++;
+    l->time[at] = MIDI_TIME_NOW() - (back < 1000u ? back : 0u) * MIDI_TICKS_PER_MS;
+    RING_PUBLISH(); l->rw++;
 }
-BLE_API void ble_app_state(void)
+BLE_API void ble_app_state(void)                    /* (the link's own: ble_midi_ready and ble_connected are its) */
 {
-    uint8_t ready = (uint8_t)(ble_midi_ready() && !mb.closing);
+    struct mb_link *l = MBL;
+    uint8_t ready = (uint8_t)(ble_midi_ready() && !l->closing);
     uint8_t connected = (uint8_t)ble_connected();
-    if ((mb.ready && !ready) || (mb.connected && !connected)) mb.lost = 1;
+    if ((l->ready && !ready) || (l->connected && !connected)) l->lost = 1;
     if (!connected) {
-        mb.closing = 0;
+        l->closing = 0;
         if (mb.forgetting) { memset(&bhs_key, 0, sizeof bhs_key); mb.forgetting = 0; }
     }
-    mb.connected = connected;
-    mb.ready = ready;
-    if (!ready) { mb.tr = mb.tw; mb.rt_r = mb.rt_w; }
+    l->connected = connected;
+    l->ready = ready;
+    if (!ready) { l->tr = l->tw; l->rt_r = l->rt_w; }
 }
 BLE_API void ble_app_bond(const uint8_t rand[8], uint16_t ediv, const uint8_t ltk[16])
 {
-    if (!mb.on || mb.closing) return;
+    if (!mb.on || MBL->closing) return;
     mb_saved.bond[0] = 0xB5u; mb_saved.bond[1] = 1;
     ble_cpy(mb_saved.bond + 2, rand, 8);
     ble_wr16(mb_saved.bond + 10, ediv);
@@ -106,40 +135,77 @@ BLE_API void ble_app_peer_id(const uint8_t irk[16], const uint8_t addr[6], uint8
 { (void)irk; (void)addr; (void)rnd; }
 BLE_API void ble_app_central_keys(const struct ble_keys *k)
 {
-    if (!mb.on || mb.closing || !mb.attempt) return;
+    if (!mb.on || MBL->closing || !mb.attempt) return;
     mb.keys = *k; RING_PUBLISH(); mb.keys_new = 1;
 }
 
-static int mel_ble_ready(void) { return mb.ready && mb.on; }
-static int mel_ble_room(void) { return mb.tw - mb.tr < MBQ; }
-static void mel_ble_sync(uint32_t pkt, uint32_t pulse)
+static int mel_ble_ready(void) { return MB_ANY(ready) && mb.on; }
+/* n slots free on every link that is up (one link: on it, up or not): output is admitted whole or not at all */
+static int mel_ble_room_for(uint32_t n)
 {
-    if (!mb.ready || !mb.on || mb.rt_w - mb.rt_r >= (pulse ? MBRT - 4u : MBRT)) return;
-    mb.rt[mb.rt_w % MBRT] = pkt; mb.rt_ms[mb.rt_w % MBRT] = fm1_ms;
-    RING_PUBLISH(); mb.rt_w++;
-}
-static int mel_ble_emit(uint32_t pkt)
-{
-    if (!mb.ready || !mb.on) return 0;
-    /* All callers are serialized against BLE consumption. Refuse admission
-     * before other transports accept the packet, so retries cannot duplicate it. */
-    if (mb.tw - mb.tr >= MBQ) return 0;
-    mb.tx[mb.tw % MBQ] = pkt; mb.ms[mb.tw % MBQ] = fm1_ms;
-    RING_PUBLISH(); mb.tw++;
+    for (uint32_t i = 0; i < BLE_LINKS; i++) {
+        const struct mb_link *l = &mb.ln[i];
+        if ((BLE_LINKS == 1 || l->ready) && MBQ - (l->tw - l->tr) < n) return 0;
+    }
     return 1;
+}
+static int mel_ble_room(void) { return mel_ble_room_for(1u); }
+/* clock and transport to the links in `links` (bit n: link n) that are up, each admitting it alone */
+static void mel_ble_sync_to(uint32_t pkt, uint32_t pulse, uint32_t links)
+{
+    if (!mb.on) return;
+    for (uint32_t i = 0; i < BLE_LINKS; i++) {
+        struct mb_link *l = &mb.ln[i];
+        if (!(links >> i & 1u) || !l->ready || l->rt_w - l->rt_r >= (pulse ? MBRT - 4u : MBRT)) continue;
+        l->rt[l->rt_w % MBRT] = pkt; l->rt_ms[l->rt_w % MBRT] = fm1_ms;
+        RING_PUBLISH(); l->rt_w++;
+    }
+}
+static void mel_ble_sync(uint32_t pkt, uint32_t pulse) { mel_ble_sync_to(pkt, pulse, ~0u); }
+/* to the links in `links` that are up -> 1 queued on one at least */
+static int mel_ble_emit_to(uint32_t pkt, uint32_t links)
+{
+    int any = 0;
+    if (!mb.on) return 0;
+    /* All callers are serialized against BLE consumption. Refuse admission (mel_ble_room)
+     * before other transports accept the packet, so retries cannot duplicate it. */
+    for (uint32_t i = 0; i < BLE_LINKS; i++) {
+        struct mb_link *l = &mb.ln[i];
+        if (!(links >> i & 1u) || !l->ready || l->tw - l->tr >= MBQ) continue;
+        l->tx[l->tw % MBQ] = pkt; l->ms[l->tw % MBQ] = fm1_ms;
+        RING_PUBLISH(); l->tw++;
+        any = 1;
+    }
+    return any;
+}
+static int mel_ble_emit(uint32_t pkt) { return mel_ble_emit_to(pkt, ~0u); }
+/* MIDI THRU: the links a Bluetooth message midi_enqueue has in hand did not come in on (one link: none) */
+static uint32_t mel_ble_other_links(void)
+{
+#if BLE_LINKS > 1
+    return 3u & ~(1u << mb_in_link);
+#else
+    return 0;
+#endif
 }
 
 static void mel_ble_drain(void) /* TIMER5, the shared input queue's sole producer context */
 {
-    if (mb.lost || mb.overflow) {
-        mb_lock(); mb.rr = mb.rw; mb.lost = mb.overflow = 0; mb_unlock();
-        midi_ble_lost = 1;
-    }
-    for (uint32_t n = 0; mb.rr != mb.rw && n < MBQ; n++) {
-        RING_PUBLISH(); uint32_t at = mb.rr % MBQ;
-        if (!midi_enqueue(mb.rx[at], 3u)) { mb.rr = mb.rw; midi_ble_lost = 1; break; }
-        midi_in_time[(mi_w - 1u) % MQ] = mb.time[at];
-        mb.rr++;
+    for (uint32_t i = 0; i < BLE_LINKS; i++) {
+        struct mb_link *l = &mb.ln[i];
+        if (l->lost || l->overflow) {
+            mb_lock(); l->rr = l->rw; l->lost = l->overflow = 0; mb_unlock();
+            midi_ble_lost = 1;                  /* (every Bluetooth note ends: seq.c knows one source, 3) */
+        }
+#if BLE_LINKS > 1
+        mb_in_link = (uint8_t)i;
+#endif
+        for (uint32_t n = 0; l->rr != l->rw && n < MBQ; n++) {
+            RING_PUBLISH(); uint32_t at = l->rr % MBQ;
+            if (!midi_enqueue(l->rx[at], 3u)) { l->rr = l->rw; midi_ble_lost = 1; break; }
+            midi_in_time[(mi_w - 1u) % MQ] = l->time[at];
+            l->rr++;
+        }
     }
 }
 
@@ -167,12 +233,15 @@ static void mel_ble_boot(void) /* CPU1 held, IRQs off; does not start the radio 
 }
 
 /* Relink: a round every MB_RELINK_MS looks for the last device up to MB_RELINK_SCAN_MS and connects when it is seen
- * (a private address resolves only from a scan). Never a new pairing loop: a refusal ends it, as does Disconnect. */
+ * (a private address resolves only from a scan). Never a new pairing loop: a refusal ends it, as does Disconnect.
+ * One link: Mode CONNECT OUT only. Two links: in VISIBLE too, beside the computer's link (Kerem 2026-11-06: each round's
+ * scan pauses advertising, BLE_IDLE_EXCL, until the device is back) */
 #define MB_RELINK_MS 30000u
 #define MB_RELINK_SCAN_MS 10000u
+#define MB_RELINK_VISIBLE (BLE_LINKS > 1)
 static void mb_relink(int on)
 {
-    mb.relink = (uint8_t)(on && !(mb_saved.flags & MB_VISIBLE) && ble_store_has_last(&mb.store));
+    mb.relink = (uint8_t)(on && (MB_RELINK_VISIBLE || !(mb_saved.flags & MB_VISIBLE)) && ble_store_has_last(&mb.store));
     mb.relink_scan = 0; mb.relink_t = fm1_ms - MB_RELINK_MS;
 }
 
@@ -198,7 +267,7 @@ static int mel_ble_set(int on)
     mb_lock();
     mb.on = (uint8_t)!!on;
     mb.failure[0] = 0;
-    if (!on) { mb.scanning = mb.attempt = 0; mb.lost = 1; }
+    if (!on) { mb.scanning = mb.attempt = 0; for (uint32_t i = 0; i < BLE_LINKS; i++) mb.ln[i].lost = 1; }
     if (mb.started) ble_enable(on);
     mb_unlock(); mb.generation++;
     mb_relink(on);
@@ -208,12 +277,13 @@ static int mel_ble_set(int on)
 static void mel_ble_scan(int on)
 {
     mb_lock();
-    mb.scanning = (uint8_t)(on && mb.on && !(mb_saved.flags & MB_VISIBLE) && !mb.attempt && !ble_connected());
-    if (mb.started) ble_ll_scan(mb.scanning);
+    mb.scanning = (uint8_t)(on && mb.on && !(mb_saved.flags & MB_VISIBLE) && !mb.attempt && !mb_central_up());
+    if (mb.started) ble_ll_scan(mb.scanning || (MB_RELINK_VISIBLE && mb.relink_scan));   /* (two links: a VISIBLE relink
+                                                 * round's scan is not the page's to end) */
     mb_unlock();
 }
-/* Mode: VISIBLE advertises (no scan, no relink), CONNECT OUT stays quiet unless scanning or connecting out.
- * A link up stays up; the mode applies when it ends. */
+/* Mode: VISIBLE advertises (no page scan; one link: no relink), CONNECT OUT stays quiet unless scanning or connecting out.
+ * A link up stays up; the mode applies when it ends (two links: to the link that has none). */
 static void mel_ble_visible(int on)
 {
     uint8_t f = (uint8_t)(on ? mb_saved.flags | MB_VISIBLE : mb_saved.flags & ~MB_VISIBLE);
@@ -226,21 +296,40 @@ static void mel_ble_visible(int on)
     mb_unlock(); mb.generation++;
     mb_relink(mb.on);
 }
-static void mb_drop(void)
+static void mb_drop(void)                       /* every link ends (Disconnect, Forget) */
 {
     mb_lock();
-    mb.closing = (uint8_t)ble_connected(); mb.ready = 0; mb.tr = mb.tw; mb.rt_r = mb.rt_w;
+    for (uint32_t i = 0; i < BLE_LINKS; i++) {
+        struct mb_link *l = &mb.ln[i];
+        l->closing = (uint8_t)mb_link_up(i); l->ready = 0; l->tr = l->tw; l->rt_r = l->rt_w;
+    }
     if (mb.started) { ble_enable(0); ble_enable(mb.on); }
-    mb.attempt = 0; mb.lost = 1;
+    mb.attempt = 0;
+    for (uint32_t i = 0; i < BLE_LINKS; i++) mb.ln[i].lost = 1;
     mb.failure[0] = 0; mb.generation++;
     mb_unlock();
+}
+/* a connection out that did not come up in time ends; two links: the computer's link stays */
+static void mb_drop_out(void)
+{
+#if BLE_LINKS > 1
+    struct mb_link *l = MBC;
+    mb_lock();
+    l->closing = (uint8_t)mb_central_up(); l->ready = 0; l->tr = l->tw; l->rt_r = l->rt_w;
+    if (mb.started) ble_central_cancel();
+    mb.attempt = 0; l->lost = 1;
+    mb.failure[0] = 0; mb.generation++;
+    mb_unlock();
+#else
+    mb_drop();
+#endif
 }
 static void mel_ble_disconnect(void) { mb.relink = 0; mb_drop(); }
 static void mel_ble_forget(void)
 {
     mel_ble_disconnect();
     mb_lock();
-    mb.forgetting = mb.closing;
+    mb.forgetting = MB_ANY(closing);
     memset(mb_saved.bond, 0, sizeof mb_saved.bond);
     ble_store_forget(&mb.store); ble_store_save(&mb.store, mb_saved.dev);
     if (mb.started) { memset(&bhs_key, 0, sizeof bhs_key); ble_smp_reset(); }
@@ -277,13 +366,13 @@ static int mb_connect_target(void)
 }
 static int mel_ble_connect(uint32_t row)
 {
-    if (!mb.on || row >= mb.count || ble_connected() || mb.attempt) return 0;
+    if (!mb.on || row >= mb.count || mb_central_up() || mb.attempt) return 0;
     mb.target = mb.found.e[mb.idx[row]];
     return mb_connect_target();
 }
 static int mel_ble_last(void)
 {
-    if (!mb.on || !ble_store_has_last(&mb.store) || ble_connected() || mb.attempt) return 0;
+    if (!mb.on || !ble_store_has_last(&mb.store) || mb_central_up() || mb.attempt) return 0;
     memset(&mb.target, 0, sizeof mb.target);
     memcpy(mb.target.addr, mb.store.dev.addr, 6);
     mb.target.addr_rand = !!(mb.store.dev.info & BLE_DEV_RANDOM);
@@ -300,7 +389,7 @@ static int mel_ble_last(void)
 
 static void mb_relink_poll(void)
 {
-    if (!mb.relink || !mb.on || mb.attempt || ble_connected() || mb.scanning) {
+    if (!mb.relink || !mb.on || mb.attempt || mb_central_up() || mb.scanning) {
         if (mb.relink_scan && !mb.scanning && mb.started) { mb_lock(); ble_ll_scan(0); mb_unlock(); }   /* (the page's own) */
         mb.relink_scan = 0;
         return;
@@ -331,8 +420,15 @@ static void mel_ble_poll(void)
         ble_scan_add(&mb.found, pdu, n, rssi, fm1_ms);
     if (fm1_ms - mb.aged >= 1000u) { mb.aged = fm1_ms; ble_scan_age(&mb.found, fm1_ms); }
     mb.count = (uint8_t)ble_scan_list(&mb.found, mb.idx);
+#if BLE_LINKS > 1
+    uint8_t up = (uint8_t)MB_READY_BITS;
     if (ble_host_key_refused()) { str_cpy(mb.failure, "FORGET ON PEER", sizeof mb.failure); mb.generation++; }
-    else if (mb.ready) mb.failure[0] = 0;       /* (a peer came in: a refusal shown for an earlier one is over) */
+    else if (up & ~mb.up_seen) mb.failure[0] = 0;   /* (a link came up: what was shown for an earlier one is over) */
+    mb.up_seen = up;
+#else
+    if (ble_host_key_refused()) { str_cpy(mb.failure, "FORGET ON PEER", sizeof mb.failure); mb.generation++; }
+    else if (mb.ln[0].ready) mb.failure[0] = 0; /* (a peer came in: a refusal shown for an earlier one is over) */
+#endif
     if (mb.attempt) {
         uint8_t state = ble_central_state(), pairing = (uint8_t)ble_central_pairing();
         if (pairing != mb.was_pairing) { mb.was_pairing = pairing; mb.deadline = fm1_ms; }
@@ -345,7 +441,7 @@ static void mel_ble_poll(void)
         }
         if (state == BLE_CS_READY && !mb.was_ready) {
             mb.was_ready = 1;
-            mb.relink = (uint8_t)!(mb_saved.flags & MB_VISIBLE); mb.relink_t = fm1_ms;   /* (kept linked from now) */
+            mb.relink = (uint8_t)(MB_RELINK_VISIBLE || !(mb_saved.flags & MB_VISIBLE)); mb.relink_t = fm1_ms;   /* (kept linked from now) */
             mb_remember();
             ble_store_save(&mb.store, mb_saved.dev); mb_dirty(); mb.generation++;
         } else if (state == BLE_CS_IDLE) {
@@ -357,7 +453,7 @@ static void mel_ble_poll(void)
             mb.attempt = 0; mb.generation++;
         } else if (!mb.was_ready && fm1_ms - mb.deadline > (ble_central_pairing() ? 45000u : 10000u)) {
             if (ble_central_pairing()) mb.relink = 0;   /* (a code nobody entered: no second prompt) */
-            mb_drop();
+            mb_drop_out();
             if (!mb.relink) str_cpy(mb.failure, "CONNECTION TIMEOUT", sizeof mb.failure);
         }
     }
@@ -370,12 +466,21 @@ static const char *mel_ble_status(void)
     if (!mb.cal) return "NO CAL";
     if (!mb.on) return "BLE OFF";
     if (mel_ble_code() != BLE_NO_PASSKEY) return "PAIRING CODE";
-    if (mb.ready) return "BLE CONNECTED";
+#if BLE_LINKS > 1
+    if (MB_READY_BITS == 3u) return "COMPUTER + DEVICE";
+    if (MB_ANY(ready) && !mb.attempt && !mb.scanning && !mb.relink_scan) return "BLE CONNECTED";
+#else
+    if (mb.ln[0].ready) return "BLE CONNECTED";
+#endif
     if (mb.failure[0]) return mb.failure;
     if (mb.attempt) return ble_central_pairing() ? "PAIRING" : mb.relink ? "RECONNECTING" : "FINDING MIDI";
-    if (ble_connected()) return "WAITING FOR MIDI";
+    if (ble_connected() && !mb.ln[0].ready) return "WAITING FOR MIDI";   /* (two links: the computer's, MIDI not on) */
     if (mb.scanning) return "SCANNING";
-    if (mb.relink) return "RECONNECTING";
+    if (mb.relink && !(BLE_LINKS > 1 && (mb_central_up() || ((mb_saved.flags & MB_VISIBLE) && !mb.relink_scan))))
+        return "RECONNECTING";                  /* (two links, VISIBLE: only while a round scans; between them, the name) */
+#if BLE_LINKS > 1
+    if (MB_ANY(ready)) return "BLE CONNECTED";
+#endif
     if (!(mb_saved.flags & MB_VISIBLE)) return "BLE AVAILABLE";
     const uint8_t *p; uint32_t n = ble_gap_name(&p), i = n;
     while (i && p[i - 1u] != ' ') i--;          /* (the header has room for the name's address digits only) */
@@ -385,14 +490,14 @@ static const char *mel_ble_status(void)
     return mb.shown;
 }
 static uint32_t mel_ble_signature(void)
-{ return mb.generation + mb.found.gen * 13u + (uint32_t)mb.ready * 997u + mel_ble_code() * 17u + (uint32_t)ble_central_state() * 65537u; }
+{ return mb.generation + mb.found.gen * 13u + MB_READY_BITS * 997u + mel_ble_code() * 17u + (uint32_t)ble_central_state() * 65537u; }
 
 /* USB maintenance only: restore a checked trim copy, never a raw flash sector.
  * Existing valid calibration cannot be replaced by a different unit's copy. */
 static uint32_t mel_ble_import_cal(const uint8_t copy[BLE_RF_COPY_SIZE])
 {
     if (!ble_rf_copy_ok(copy)) return 1;
-    if (mb.on || mb.closing) return 4;
+    if (mb.on || MB_ANY(closing)) return 4;
     if (mb.cal && !fm1_rf_cal_on && memcmp(mb_saved.rf, copy, BLE_RF_COPY_SIZE)) return 2;
     if (mb.cal && !fm1_rf_cal_on) return 0;
     memcpy(mb_saved.rf, copy, BLE_RF_COPY_SIZE);

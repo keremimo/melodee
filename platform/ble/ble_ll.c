@@ -18,7 +18,11 @@
 #include "ble_aes.h"
 #endif
 
-#define LL_RING_MASK (BLE_LL_TX_RING - 1u)
+/* the TX rings (docs/BLE-MULTILINK.md): one per link, the central link's smaller when BLE_LL_TX_RING_CENTRAL says so */
+static uint8_t ll_ring0[BLE_LL_TX_RING] BLE_STATE_MEMORY;
+#if BLE_LINKS > 1
+static uint8_t ll_ring1[BLE_LL_TX_RING_CENTRAL] BLE_STATE_MEMORY;
+#endif
 #define LL_PROC_US 40000000u                       /* the LL response timeout: 40 s */
 enum { LL_OFF, LL_ADV, LL_CONN, LL_SCAN, LL_INIT };
 /* procedures waiting on the peer: ours (lproc) and the peer's (rproc); P_VER: our version exchange (as master) */
@@ -27,12 +31,23 @@ enum { P_NONE, P_FEAT, P_LEN, P_TERM, P_UPD, P_PHY, P_ENC, P_VER };
 #define LL_OUR_FEAT ((BLE_LL_ENC ? BLE_FEAT_ENC | BLE_FEAT_PING : 0u) | BLE_FEAT_CONN_PARAM | BLE_FEAT_EXT_REJECT | \
                      BLE_FEAT_PERIPH_FEAT | (BLE_LL_MAX_OCTETS > 27u ? BLE_FEAT_DLE : 0u))
 
+/* what all links share: the address, the advertisement, and the wishes of the host (docs/BLE-MULTILINK.md) */
 static struct {
-    uint8_t state, enabled, addr_rand;
+    uint8_t enabled, addr_rand;
     uint8_t scan_want;                             /* BLE_CENTRAL: scan instead of advertising (ble_ll_scan) */
     uint8_t adv_off;                               /* Melodee: no advertising when idle (ble_ll_advertise) */
     uint8_t addr[6];
     uint8_t adv[2 + 37], adv_len, sr[2 + 37], sr_len;
+} llg;
+
+/* one link: with BLE_LINKS 2, bank 0 is the peripheral role's (LL_OFF, LL_ADV, LL_CONN) and bank 1 the central's (LL_OFF,
+ * LL_SCAN, LL_INIT, LL_CONN); with 1 there is one bank for both. `bll` is the bank the running entry point works on:
+ * every call the driver or the firmware makes into the link layer selects its link first (ll_enter) and gives the
+ * previous one back (ll_leave), so outside the stack `bll` is the peripheral link: the no-argument getters of the
+ * host API (ble_ll_interval ...) mean the computer's link, as they always did. One context (ble_hw.h): the BLE
+ * interrupts, or the main loop with them held */
+struct ll_link {
+    uint8_t state, id;
     /* the connection */
     uint16_t interval, timeout, last_evt;
     uint8_t win_size, established, chm[5];
@@ -55,22 +70,63 @@ static struct {
                                                     * number, and that it went out */
     /* TX: control PDUs, then L2CAP frames in a byte ring */
     uint8_t ctrl[BLE_LL_CTRL_Q][24], ctrl_len[BLE_LL_CTRL_Q], ctrl_rd, ctrl_n;
-    uint8_t ring[BLE_LL_TX_RING];
+    uint8_t *ring;                                 /* ... the link's ring (ll_ring0 / ll_ring1), rmask its size - 1 */
+    uint16_t rmask;
     uint32_t wr, rd, off;                          /* free-running ring indexes; off: octets of the head frame sent */
 #if BLE_LL_ENC
     uint8_t enc_rx, enc_tx, tx_paused;
     struct ble_ccm ccm_rx, ccm_tx;
     uint8_t rxbuf[BLE_LL_MAX_OCTETS + 4u];
 #endif
-} bll;
+};
+#if BLE_LINKS > 1
+static struct ll_link ll_b[BLE_LINKS] BLE_STATE_MEMORY;
+static struct ll_link *ll_p = &ll_b[0];
+#define bll (*ll_p)
+#define LL_BANK(n) (ll_b[n])
+static uint8_t ll_enter(uint8_t n)
+{
+    uint8_t was = ll_p->id;
+    ll_p = &ll_b[n];
+    return was;
+}
+static void ll_leave(uint8_t was) { ll_p = &ll_b[was]; }
+#else
+static struct ll_link bll;
+#define LL_BANK(n) (bll)
+static uint8_t ll_enter(uint8_t n)
+{
+    (void)n;
+    return 0;
+}
+static void ll_leave(uint8_t was) { (void)was; }
+#endif
+/* the link the running entry point works on (the host's per-link state follows it: ble_host.c, ble_att.c, ble_smp.c) */
+#if BLE_LINKS > 1
+BLE_API uint8_t ble_ll_link(void) { return bll.id; }
+#endif
 
 /* ------------------------------------------------------------------------------------------ advertising --- */
 
 BLE_API void ble_ll_init(const uint8_t addr[6], uint8_t addr_random)
 {
-    ble_zero((uint8_t *)&bll, sizeof bll);
-    ble_cpy(bll.addr, addr, 6);
-    bll.addr_rand = addr_random ? 1u : 0u;
+    uint8_t n;
+    ble_zero((uint8_t *)&llg, sizeof llg);
+    for (n = 0; n < BLE_LINKS; n++) {
+        ble_zero((uint8_t *)&LL_BANK(n), sizeof(struct ll_link));
+        LL_BANK(n).id = n;
+        LL_BANK(n).ring = ll_ring0;
+        LL_BANK(n).rmask = BLE_LL_TX_RING - 1u;
+#if BLE_LINKS > 1
+        if (n == BLE_LINK_CENTRAL) {
+            LL_BANK(n).ring = ll_ring1;
+            LL_BANK(n).rmask = BLE_LL_TX_RING_CENTRAL - 1u;
+        }
+#endif
+    }
+    ll_leave(0);
+    ble_cpy(llg.addr, addr, 6);
+    llg.addr_rand = addr_random ? 1u : 0u;
     ble_ll_set_adv_data(0, 0, 0, 0);
 }
 
@@ -78,9 +134,9 @@ static uint8_t ll_adv_pdu(uint8_t *pdu, uint8_t type, const uint8_t *d, uint8_t 
 {
     if (n > 31u)
         n = 31u;
-    pdu[0] = (uint8_t)(type | bll.addr_rand << 6);   /* TxAdd; ChSel 0: we only know Algorithm #1 */
+    pdu[0] = (uint8_t)(type | llg.addr_rand << 6);   /* TxAdd; ChSel 0: we only know Algorithm #1 */
     pdu[1] = (uint8_t)(6u + n);
-    ble_cpy(pdu + 2, bll.addr, 6);
+    ble_cpy(pdu + 2, llg.addr, 6);
     ble_cpy(pdu + 8, d, n);
     return (uint8_t)(8u + n);
 }
@@ -88,10 +144,10 @@ static uint8_t ll_adv_pdu(uint8_t *pdu, uint8_t type, const uint8_t *d, uint8_t 
 static void ll_adv_start(void)
 {
     struct ble_hw_adv a;
-    a.adv = bll.adv;
-    a.adv_len = bll.adv_len;
-    a.scan_rsp = bll.sr;
-    a.scan_rsp_len = bll.sr_len;
+    a.adv = llg.adv;
+    a.adv_len = llg.adv_len;
+    a.scan_rsp = llg.sr;
+    a.scan_rsp_len = llg.sr_len;
     a.interval = BLE_ADV_INTERVAL;
     a.channels = BLE_ADV_CHANNELS;
     bll.state = LL_ADV;
@@ -100,13 +156,18 @@ static void ll_adv_start(void)
 
 BLE_API void ble_ll_set_adv_data(const uint8_t *ad, uint8_t ad_len, const uint8_t *sr, uint8_t sr_len)
 {
-    bll.adv_len = ll_adv_pdu(bll.adv, 0x0u, ad, ad_len);           /* ADV_IND */
-    bll.sr_len = ll_adv_pdu(bll.sr, 0x4u, sr, sr_len);              /* SCAN_RSP */
+    uint8_t was;
+    llg.adv_len = ll_adv_pdu(llg.adv, 0x0u, ad, ad_len);           /* ADV_IND */
+    llg.sr_len = ll_adv_pdu(llg.sr, 0x4u, sr, sr_len);              /* SCAN_RSP */
+    was = ll_enter(BLE_LINK_PERIPH);
     if (bll.state == LL_ADV)
         ll_adv_start();
+    ll_leave(was);
 }
 
 BLE_API int ble_ll_connected(void) { return bll.state == LL_CONN; }
+/* link n has a connection (from the main loop and from the firmware's hooks, where the running link is another's) */
+BLE_API int ble_ll_link_connected(uint8_t link) { return LL_BANK(link).state == LL_CONN; }
 BLE_API uint16_t ble_ll_interval(void) { return bll.state == LL_CONN ? bll.interval : 0; }
 BLE_API uint16_t ble_ll_timeout(void) { return bll.state == LL_CONN ? bll.timeout : 0; }
 BLE_API uint8_t ble_ll_peer_features(void) { return bll.feat_known ? bll.peer_feat : 0; }
@@ -115,9 +176,9 @@ BLE_API uint16_t ble_ll_peer_len(uint32_t i) { return bll.state == LL_CONN ? bll
 
 BLE_API uint8_t ble_ll_addrs(uint8_t own[6], uint8_t peer[6])
 {
-    ble_cpy(own, bll.addr, 6);
+    ble_cpy(own, llg.addr, 6);
     ble_cpy(peer, bll.peer, 6);
-    return (uint8_t)(bll.addr_rand | bll.peer_rand << 1);
+    return (uint8_t)(llg.addr_rand | bll.peer_rand << 1);
 }
 
 #if BLE_LL_ENC
@@ -180,7 +241,7 @@ static void ll_close_by(uint8_t reason, uint8_t by)
         ble_dgc.m_sup_timeouts += by == BDC_SUPERVISION;
     }
 #endif
-    ble_hw_conn_stop();
+    ble_hw_conn_stop(bll.id);
     bll.state = LL_OFF;
     ble_host_disconnected(reason);
     ll_idle();
@@ -192,49 +253,94 @@ static void ll_close(uint8_t reason) { ll_close_by(reason, BDC_PROTOCOL); }
 static void ll_scan_start(void);        /* (ble_ll_central.c) */
 #endif
 
-/* no link: scan (BLE_CENTRAL, the DEVICES list open), else advertise when enabled, else nothing */
+/* stop what the running link has in hand while it has no connection: advertising, scanning or initiating */
+static void ll_idle_stop(void)
+{
+    if (bll.state == LL_ADV)
+        ble_hw_adv_stop();
+#if BLE_CENTRAL
+    else if (bll.state == LL_SCAN)
+        ble_hw_scan_stop();
+    else if (bll.state == LL_INIT)
+        ble_hw_init_stop();
+#endif
+    else
+        return;
+    bll.state = LL_OFF;
+}
+
+#if BLE_CENTRAL
+/* the central role is about to scan or initiate: with one link (or BLE_IDLE_EXCL) the advertising stops for it; a
+ * peripheral link that is connected is not touched */
+static void ll_pause_adv(void)
+{
+    uint8_t was;
+    if (BLE_LINKS > 1 && !BLE_IDLE_EXCL)
+        return;
+    was = ll_enter(BLE_LINK_PERIPH);
+    if (bll.state == LL_ADV)
+        ll_idle_stop();
+    ll_leave(was);
+}
+/* 1: the central link scans or initiates (and so, with BLE_IDLE_EXCL, keeps advertising off) */
+static int ll_central_busy(void)
+{
+    uint8_t st = LL_BANK(BLE_LINK_CENTRAL).state;
+    return st == LL_SCAN || st == LL_INIT;
+}
+#endif
+
+/* links with no connection: the central link scans when the DEVICES list wants it (BLE_CENTRAL), the peripheral link
+ * advertises when enabled; with BLE_IDLE_EXCL (and with one link) the scan has the radio and advertising waits. A link
+ * that is connected, scanning or advertising already is left as it is */
 static void ll_idle(void)
 {
+    uint8_t was;
 #if BLE_CENTRAL
-    if (bll.enabled && bll.scan_want) {
+    was = ll_enter(BLE_LINK_CENTRAL);
+    if (llg.enabled && llg.scan_want && bll.state == LL_OFF) {
+        ll_pause_adv();
         ll_scan_start();
-        return;
     }
+    ll_leave(was);
 #endif
-    if (bll.enabled && !bll.adv_off)
+    was = ll_enter(BLE_LINK_PERIPH);
+    if (llg.enabled && !llg.adv_off && bll.state == LL_OFF
+#if BLE_CENTRAL
+        && !((BLE_LINKS == 1 || BLE_IDLE_EXCL) && ll_central_busy())
+#endif
+        )
         ll_adv_start();
+    ll_leave(was);
 }
 
 /* Melodee: advertise when idle (on, the default after ble_ll_init) or stay quiet; a connection is left as it is */
 BLE_API void ble_ll_advertise(int on)
 {
-    bll.adv_off = on ? 0u : 1u;
-    if (!on && bll.state == LL_ADV) {
-        ble_hw_adv_stop();
-        bll.state = LL_OFF;
-    } else if (on && bll.enabled && bll.state == LL_OFF)
+    uint8_t was = ll_enter(BLE_LINK_PERIPH);
+    llg.adv_off = on ? 0u : 1u;
+    if (!on && bll.state == LL_ADV)
+        ll_idle_stop();
+    else if (on && llg.enabled && bll.state == LL_OFF)
         ll_idle();
+    ll_leave(was);
 }
 
 BLE_API void ble_ll_enable(int on)
 {
-    bll.enabled = on ? 1u : 0u;
-    ble_diag_ev(BDE_ENABLE, (uint32_t)bll.enabled | (uint32_t)bll.state << 8);
-    if (on && bll.state == LL_OFF)
+    uint8_t n, was = ll_enter(BLE_LINK_PERIPH);
+    llg.enabled = on ? 1u : 0u;
+    ble_diag_ev(BDE_ENABLE, (uint32_t)llg.enabled | (uint32_t)bll.state << 8);
+    if (on)
         ll_idle();
-    else if (!on && bll.state == LL_ADV) {
-        ble_hw_adv_stop();
-        bll.state = LL_OFF;
-#if BLE_CENTRAL
-    } else if (!on && bll.state == LL_SCAN) {
-        ble_hw_scan_stop();
-        bll.state = LL_OFF;
-    } else if (!on && bll.state == LL_INIT) {
-        ble_hw_init_stop();
-        bll.state = LL_OFF;
-#endif
-    } else if (!on && bll.state == LL_CONN)
-        ble_ll_disconnect(BLE_ERR_REMOTE_USER);
+    else
+        for (n = 0; n < BLE_LINKS; n++) {
+            ll_enter(n);
+            ll_idle_stop();
+            if (bll.state == LL_CONN)
+                ble_ll_disconnect(BLE_ERR_REMOTE_USER);
+        }
+    ll_leave(was);
 }
 
 /* timeout x 10 ms must exceed (1 + latency) x interval x 1.25 ms x 2 */
@@ -252,9 +358,9 @@ static uint8_t ll_cind_check(const uint8_t *pdu, uint8_t len, const struct ble_h
         return BDR_NOT_ADV;
     if (len < 2u + 34u || (pdu[0] & 0x0Fu) != 0x5u || pdu[1] != 34u)
         return BDR_FORMAT;
-    if ((pdu[0] >> 7) != bll.addr_rand)
+    if ((pdu[0] >> 7) != llg.addr_rand)
         return BDR_RXADD;
-    if (!ble_eq(p + 6, bll.addr, 6))
+    if (!ble_eq(p + 6, llg.addr, 6))
         return BDR_ADVA;
     if (!ll_params_ok(c->interval, c->latency, c->timeout))
         return BDR_PARAMS;
@@ -313,7 +419,7 @@ static void ll_conn_begin(const struct ble_hw_conn *c, const uint8_t peer[6], ui
     bll.t_start = bll.t_rx = ble_hw_time_us();
 }
 
-BLE_API int ble_ll_hw_connect_ind(const uint8_t *pdu, uint8_t len)
+static int ll_hw_connect_ind(const uint8_t *pdu, uint8_t len)
 {
     const uint8_t *p = pdu + 2;
     struct ble_hw_conn c;
@@ -368,7 +474,7 @@ static int ll_ctrl(uint8_t op, const uint8_t *d, uint8_t n)
     ble_cpy(bll.ctrl[i] + 1, d, n);
     bll.ctrl_len[i] = (uint8_t)(n + 1u);
     bll.ctrl_n++;
-    ble_hw_tx_kick();
+    ble_hw_tx_kick(bll.id);
     return 1;
 }
 
@@ -386,12 +492,15 @@ static void ll_reject(uint8_t op, uint8_t err)
         ll_ctrl(LL_REJECT_IND, d + 1, 1);
 }
 
+/* 1 when nothing is queued on the running link (its ring is empty) */
+BLE_API int ble_ll_tx_idle(void) { return bll.wr == bll.rd; }
+
 BLE_API uint32_t ble_ll_tx_room(void)
 {
     uint32_t used = bll.wr - bll.rd;
-    if (bll.state != LL_CONN || used + 4u >= BLE_LL_TX_RING)
+    if (bll.state != LL_CONN || used + 4u >= bll.rmask + 1u)
         return 0;
-    return BLE_LL_TX_RING - used - 4u;
+    return bll.rmask + 1u - used - 4u;
 }
 
 BLE_API int ble_ll_send(uint16_t cid, const uint8_t *p, uint16_t n)
@@ -403,19 +512,19 @@ BLE_API int ble_ll_send(uint16_t cid, const uint8_t *p, uint16_t n)
     ble_wr16(h, n);
     ble_wr16(h + 2, cid);
     for (i = 0; i < 4u; i++)
-        bll.ring[(bll.wr + i) & LL_RING_MASK] = h[i];
+        bll.ring[(bll.wr + i) & bll.rmask] = h[i];
     for (i = 0; i < n; i++)
-        bll.ring[(bll.wr + 4u + i) & LL_RING_MASK] = p[i];
+        bll.ring[(bll.wr + 4u + i) & bll.rmask] = p[i];
     bll.wr += 4u + n;
     if (cid >= 4u && cid <= 6u)                    /* (blell's protocol ring: ATT, signalling, SMP) */
         ble_diag_pdu((uint8_t)(BDP_TX | (cid - 3u)), p, n);
-    ble_hw_tx_kick();
+    ble_hw_tx_kick(bll.id);
     return 1;
 }
 
 static uint32_t ll_head_len(void)                 /* the head frame's octets, header included */
 {
-    return 4u + (bll.ring[bll.rd & LL_RING_MASK] | (uint32_t)bll.ring[(bll.rd + 1u) & LL_RING_MASK] << 8);
+    return 4u + (bll.ring[bll.rd & bll.rmask] | (uint32_t)bll.ring[(bll.rd + 1u) & bll.rmask] << 8);
 }
 
 static int ll_data_ready(void)
@@ -427,7 +536,7 @@ static int ll_data_ready(void)
     return bll.rd != bll.wr;
 }
 
-BLE_API uint8_t ble_ll_hw_tx(uint8_t *pdu)
+static uint8_t ll_hw_tx(uint8_t *pdu)
 {
     uint32_t n, i, room = bll.max_tx;               /* (the data length counts the payload without the MIC) */
     if (bll.state != LL_CONN)
@@ -450,7 +559,7 @@ BLE_API uint8_t ble_ll_hw_tx(uint8_t *pdu)
         n = ble_min(total - bll.off, room);
         pdu[0] = bll.off ? 1u : 2u;
         for (i = 0; i < n; i++)
-            pdu[2 + i] = bll.ring[(bll.rd + bll.off + i) & LL_RING_MASK];
+            pdu[2 + i] = bll.ring[(bll.rd + bll.off + i) & bll.rmask];
         bll.off += n;
         if (bll.off == total) {
             bll.rd += total;
@@ -471,12 +580,12 @@ BLE_API uint8_t ble_ll_hw_tx(uint8_t *pdu)
     return (uint8_t)(2u + pdu[1]);
 }
 
-BLE_API int ble_ll_hw_tx_pending(void)
+static int ll_hw_tx_pending(void)
 {
     return bll.state == LL_CONN && (bll.ctrl_n || ll_data_ready());
 }
 
-BLE_API void ble_ll_hw_tx_acked(void)
+static void ll_hw_tx_acked(void)
 {
     if (bll.state != LL_CONN || bll.acked == bll.handed)
         return;
@@ -514,7 +623,7 @@ static void ll_lengths(const uint8_t *d)          /* the central's MaxRxOctets, 
     bll.max_tx = (uint8_t)rx_o;                     /* we send at most what the central receives */
     bll.max_rx = (uint8_t)tx_o;
     bll.len_done = 1;
-    ble_hw_set_lengths(bll.max_tx, bll.max_rx);
+    ble_hw_set_lengths(bll.id, bll.max_tx, bll.max_rx);
 }
 
 static void ll_our_lengths(uint8_t *d)
@@ -590,7 +699,7 @@ static void ll_rx_ctrl(const uint8_t *p, uint8_t n)
             return;
         }
         bll.upd_pending = 1;
-        ble_hw_conn_update(&bll.upd);
+        ble_hw_conn_update(bll.id, &bll.upd);
         if (bll.rproc == P_UPD)
             bll.rproc = P_NONE;
         return;
@@ -610,7 +719,7 @@ static void ll_rx_ctrl(const uint8_t *p, uint8_t n)
         }
         bll.chm_instant = instant;
         bll.chm_pending = 1;
-        ble_hw_chmap_update(bll.new_chm, instant);
+        ble_hw_chmap_update(bll.id, bll.new_chm, instant);
         return;
     }
     case LL_TERMINATE_IND:
@@ -733,7 +842,7 @@ static void ll_rx_ctrl(const uint8_t *p, uint8_t n)
     }
 }
 
-BLE_API void ble_ll_hw_rx(const uint8_t *pdu, uint8_t len)
+static void ll_hw_rx(const uint8_t *pdu, uint8_t len)
 {
     uint8_t n, llid;
     const uint8_t *p = pdu + 2;
@@ -800,7 +909,7 @@ static void ll_start_procs(uint32_t now)
     }
 }
 
-BLE_API void ble_ll_hw_event_end(uint16_t counter, uint8_t rx_ok)
+static void ll_hw_event_end(uint16_t counter, uint8_t rx_ok)
 {
     uint32_t now = ble_hw_time_us();
     if (bll.state != LL_CONN)
@@ -849,4 +958,53 @@ BLE_API void ble_ll_hw_event_end(uint16_t counter, uint8_t rx_ok)
     ll_start_procs(now);
     if (bll.lproc != P_TERM)
         ble_host_event();
+}
+
+/* ---------------------------------------------------------------------------------- the driver reports --- */
+/* Each report names its link; the entry point works on that link's bank and gives the previous one back (docs/
+ * BLE-MULTILINK.md). The peripheral's set-up calls (connect_ind) and the central's (adv_report, master_start) are bound
+ * to their role's link */
+
+BLE_API int ble_ll_hw_connect_ind(const uint8_t *pdu, uint8_t len)
+{
+    uint8_t was = ll_enter(BLE_LINK_PERIPH);
+    int r = ll_hw_connect_ind(pdu, len);
+    ll_leave(was);
+    return r;
+}
+
+BLE_API void ble_ll_hw_rx(uint8_t link, const uint8_t *pdu, uint8_t len)
+{
+    uint8_t was = ll_enter(link);
+    ll_hw_rx(pdu, len);
+    ll_leave(was);
+}
+
+BLE_API uint8_t ble_ll_hw_tx(uint8_t link, uint8_t *pdu)
+{
+    uint8_t was = ll_enter(link), r = ll_hw_tx(pdu);
+    ll_leave(was);
+    return r;
+}
+
+BLE_API int ble_ll_hw_tx_pending(uint8_t link)
+{
+    uint8_t was = ll_enter(link);
+    int r = ll_hw_tx_pending();
+    ll_leave(was);
+    return r;
+}
+
+BLE_API void ble_ll_hw_tx_acked(uint8_t link)
+{
+    uint8_t was = ll_enter(link);
+    ll_hw_tx_acked();
+    ll_leave(was);
+}
+
+BLE_API void ble_ll_hw_event_end(uint8_t link, uint16_t counter, uint8_t rx_ok)
+{
+    uint8_t was = ll_enter(link);
+    ll_hw_event_end(counter, rx_ok);
+    ll_leave(was);
 }
