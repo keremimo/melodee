@@ -6,6 +6,9 @@
  * The parts' only: an event's place is its track << 6 | its step, a byte (a MIDI-only track has none).
  * p[] is the sounding value; motion_base_value() is the patch's saved value. */
 static motion_store_t motion;
+#ifndef MELODEE_MOTION_TAP
+#define MELODEE_MOTION_TAP(k, id, v) ((void)0)          /* (web/core/melodee_core.c: every value motion sets) */
+#endif
 /* Main-loop sound design temporarily auditions the base tone. The saved motion
  * enable bits and event pool remain unchanged. */
 static uint8_t motion_design_pause;
@@ -200,7 +203,10 @@ static void motion_restore(track_t *t)
         return;
     f = motion_guard();
     for (id = 0; id < P_COUNT; id++)
-        if ((motion_active[k][id / 32u] >> (id % 32u)) & 1u) t->p[id] = motion_base[k][id];
+        if ((motion_active[k][id / 32u] >> (id % 32u)) & 1u) {
+            t->p[id] = motion_base[k][id];
+            MELODEE_MOTION_TAP(k, id, t->p[id]);
+        }
     memset(motion_active[k], 0, sizeof motion_active[k]);
     motion_native_restore(t);
     motion_unguard(f);
@@ -405,6 +411,7 @@ static __attribute__((noinline)) void motion_step(track_t *t, uint32_t step, con
         }
         const param_desc_t *d = param_desc_of(eng_idx(t->eng_req), e->param);
         t->p[e->param] = (int16_t)clamp(e->value, d->min, d->max);
+        MELODEE_MOTION_TAP(k, e->param, t->p[e->param]);
         motion_active[k][e->param / 32u] |= 1u << (e->param % 32u);
     }
 }

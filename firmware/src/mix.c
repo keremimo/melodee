@@ -46,7 +46,9 @@ static __attribute__((noinline,section(".dsp_text"))) void master_out(int32_t *l
     int32_t al, ar, a;
     *l = dc_block(*l, &dc_l, &dce_l);
     *r = dc_block(*r, &dc_r, &dce_r);
-    
+#ifdef MELODEE_MASTER_RAW
+    if (MELODEE_MASTER_RAW) return;                     /* (web/core/melodee_core.c: an export without the limiter) */
+#endif
     al = *l < 0 ? -*l : *l;
     ar = *r < 0 ? -*r : *r;
     a = al > ar ? al : ar;

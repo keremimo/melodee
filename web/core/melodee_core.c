@@ -12,7 +12,8 @@
  * every 15 ms, ed_service every millisecond (main.c's wait between frames).
  * A wait of the main loop for the ISR (ed_flash_stop, the backup LIST, a kit's settle) feeds the watchdog: here
  * that is a millisecond of the ISR's time (fm1_wdt_feed below), the sound it makes kept for core_render.
- * The firmware's only hook for this file is voice.c's MELODEE_NOTE_TAP (nothing on the device).
+ * The firmware's hooks for this file (nothing on the device): voice.c's MELODEE_NOTE_TAP, motion.c's
+ * MELODEE_MOTION_TAP, mix.c's MELODEE_MASTER_RAW.
  *
  * Sound: stereo float, Q15 full scale = 1.0 (as the USB capture, Melodee In, sends it at USB VOLUME 100), with the
  * MASTER pot all the way up (unity: the core has no pot). core_render plays it; core_render_taps also gives each
@@ -31,6 +32,10 @@ static unsigned char nor[0x100000];                     /* the FM-1's 1 MiB NOR 
 #endif
 static void core_note_tap(uint32_t tr, uint32_t note, uint32_t vel);
 #define MELODEE_NOTE_TAP(tr, note, vel) core_note_tap(tr, note, vel)
+static void core_motion_tap(uint32_t k, uint32_t id, int32_t v);
+#define MELODEE_MOTION_TAP(k, id, v) core_motion_tap(k, id, v)
+static uint8_t master_raw;                              /* core_master_raw: the master without its limiter */
+#define MELODEE_MASTER_RAW master_raw
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
@@ -135,10 +140,13 @@ static void core_drain(void)                           /* USB-MIDI SysEx packets
 /* MIDI events for the page (core_midi_events): 8 bytes each, the frame (of core_render's sound) the block that
  * made it starts at, then a tag and three bytes. Tag 0..7: a note a track played (voice.c trk_note_on/off: the
  * sequencer's, the keys', the arpeggiator's and chords'; before MIDI DELAY), note, velocity (0 = off). Tag 0x80:
- * a message the FM-1 sent over USB (its MIDI tracks, MIDI clock and Start/Stop), status and two data bytes. */
+ * a message the FM-1 sent over USB (its MIDI tracks, MIDI clock and Start/Stop), status and two data bytes.
+ * Tag 0x40 | k: a value motion set on audio track k + 1 (motion.c motion_step, and motion_restore putting the
+ * patch's own back), the parameter id, then the value as int16 (low byte, high byte); the engines' own patch
+ * bytes (MO_NATIVE) are not reported. */
 #define EVQ 8192u
 static struct { uint32_t frame; uint8_t b[4]; } ev_q[EVQ];
-static uint32_t ev_w, ev_r, ev_lost, ev_mask;          /* ev_mask: bit 0 notes, bit 1 USB out (core_midi_tap) */
+static uint32_t ev_w, ev_r, ev_lost, ev_mask;          /* ev_mask: bit 0 notes, 1 USB out, 2 motion (core_midi_tap) */
 static uint32_t frames_made;                            /* frames of sound made so far: the events' clock */
 static void ev_put(uint32_t tag, uint32_t a, uint32_t b, uint32_t c)
 {
@@ -150,6 +158,10 @@ static void ev_put(uint32_t tag, uint32_t a, uint32_t b, uint32_t c)
 static void core_note_tap(uint32_t tr, uint32_t note, uint32_t vel)
 {
     if ((ev_mask & 1u) && tr < NTRK) ev_put(tr, note, vel, 0);
+}
+static void core_motion_tap(uint32_t k, uint32_t id, int32_t v)
+{
+    if ((ev_mask & 4u) && k < NPART) ev_put(0x40u | k, id, (uint32_t)v & 255u, ((uint32_t)v >> 8) & 255u);
 }
 static void usb_out_drain(void)                        /* the IN endpoint's MIDI: what a computer would read */
 {
@@ -320,7 +332,7 @@ static void core_melodee_init(void)                    /* main.c melodee_init */
 /* the page's scratch: requests, records and kits are written here before a call names them */
 static uint8_t scratch[0x20000];
 /* the exports' version: Studio refuses a core whose calls it does not know */
-#define CORE_ABI 1u
+#define CORE_ABI 2u                                     /* 2: motion events (core_midi_tap bit 2), core_master_raw */
 EXPORT(core_abi) uint32_t core_abi(void) { return CORE_ABI; }
 EXPORT(core_scratch) uint8_t *core_scratch(void) { return scratch; }
 EXPORT(core_scratch_size) uint32_t core_scratch_size(void) { return sizeof scratch; }
@@ -490,6 +502,14 @@ EXPORT(core_song_samples) uint32_t core_song_samples(uint32_t row)
     return chain_div_samples(units * 60u * FS + MIDI_BEAT_UNITS * bpm / 2u, MIDI_BEAT_UNITS * bpm, 0);
 }
 EXPORT(core_stop) uint32_t core_stop(void) { return (uint32_t)ed_flash_stop(); }
+/* the master without its limiter and soft clip (1; the DC blocker stays), or as on the FM-1 (0, the default): an
+ * export's choice, so its sound may go past full scale (1.0). The setting it had */
+EXPORT(core_master_raw) uint32_t core_master_raw(uint32_t on)
+{
+    uint32_t was = master_raw;
+    master_raw = (uint8_t)(on != 0u);
+    return was;
+}
 
 /* which tracks sound (bit k: track k + 1), as the editor's TRACKS solo: the latch, never P_MUTE; 0 = all. The mask
  * applied (bits past the tracks in use dropped) */
@@ -529,12 +549,12 @@ EXPORT(core_midi_in) uint32_t core_midi_in(const uint8_t *p, uint32_t n)
     }
     return taken;
 }
-/* what core_midi_events keeps: bit 0 the tracks' notes, bit 1 the FM-1's USB MIDI out; 0 = none (the default).
- * The mask it had */
+/* what core_midi_events keeps: bit 0 the tracks' notes, bit 1 the FM-1's USB MIDI out, bit 2 the values motion
+ * sets; 0 = none (the default). The mask it had */
 EXPORT(core_midi_tap) uint32_t core_midi_tap(uint32_t mask)
 {
     uint32_t was = ev_mask;
-    ev_mask = mask & 3u;
+    ev_mask = mask & 7u;
     if (!ev_mask) ev_r = ev_w;
     return was;
 }

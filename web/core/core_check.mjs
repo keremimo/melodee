@@ -27,7 +27,7 @@ const WASM = resolve(opt("core", join(ROOT, "build/core/melodee_core.wasm")));
 const NATIVE = resolve(opt("native", join(ROOT, "build/core/core_native")));
 const MEL = opt("mel", [join(ROOT, "build/host/studio/mel"), join(ROOT, "build/host/mel")].find((d) => existsSync(join(d, "song.rec"))));
 const SECONDS = Number(opt("seconds", 10));
-const ABI = 1;
+const ABI = 2;
 const hex = (a) => Array.from(a, (b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
 const report = {};
 let failures = 0;
@@ -185,7 +185,7 @@ async function songCore({ taps = false, midi = 0 } = {}) {                      
   }
 
   // the taps: the same sound, each track's share and the FX return beside it; the notes as events
-  const t = await songCore({ taps: true, midi: 1 });
+  const t = await songCore({ taps: true, midi: 1 | 4 });
   const master = new Float32Array(2 * frames), parts = Array.from({ length: TAPS }, () => new Float32Array(2 * frames));
   const evs = [];
   const evBuf = t.c.x.core_scratch();
@@ -197,7 +197,7 @@ async function songCore({ taps = false, midi = 0 } = {}) {                      
     for (let j = 0; j < TAPS; j++) parts[j].set(all.subarray(2 * k * (1 + j), 2 * k * (2 + j)), 2 * f);
     for (let n; (n = t.c.x.core_midi_events(evBuf, 1024)) > 0;) {
       const b = t.c.u8().slice(evBuf, evBuf + 8 * n), v = new DataView(b.buffer);
-      for (let i = 0; i < n; i++) evs.push({ frame: v.getUint32(8 * i, true), tag: b[8 * i + 4], note: b[8 * i + 5], vel: b[8 * i + 6] });
+      for (let i = 0; i < n; i++) evs.push({ frame: v.getUint32(8 * i, true), tag: b[8 * i + 4], note: b[8 * i + 5], vel: b[8 * i + 6], hi: b[8 * i + 7] });
     }
   }
   const tms = performance.now() - tt;
@@ -211,11 +211,42 @@ async function songCore({ taps = false, midi = 0 } = {}) {                      
   for (let i = 0; i < wav.length; i++) { let s = 0; for (const p of parts) s += p[i]; err += (s - wav[i]) ** 2; energy += wav[i] ** 2; }
   report.taps = { peaks: tapPeak.map((p) => +p.toFixed(4)), sumVsMasterDb: +(10 * Math.log10(err / (energy || 1e-24))).toFixed(1) };
   console.log(`core: (the taps' sum against the master, before punch, limiter and DC blocker: ${report.taps.sumVsMasterDb} dB residual)`);
-  const ons = evs.filter((e) => e.vel > 0), offs = evs.filter((e) => e.vel === 0);
+  const moves = evs.filter((e) => (e.tag & 0xF0) === 0x40), notes = evs.filter((e) => e.tag < 8);
+  const ons = notes.filter((e) => e.vel > 0), offs = notes.filter((e) => e.vel === 0);
   const perTrack = Array.from({ length: NTRK }, (_, k) => ons.filter((e) => e.tag === k).length);
   check("MIDI events: the song's notes, on and off, in frame order", ons.length > 10 && offs.length > 0 &&
     evs.every((e, i) => !i || e.frame >= evs[i - 1].frame), `${ons.length} on, ${offs.length} off; per track ${perTrack.join(" ")}`);
-  report.events = { on: ons.length, off: offs.length, perTrack };
+  report.events = { on: ons.length, off: offs.length, perTrack, motion: moves.length };
+  // motion over the whole song (tests/mel_fixture.c's song moves E1 at random steps of some patterns): its values
+  {
+    const m = await songCore({ midi: 4 }), all = m.c.x.core_song_samples(0), got = [];
+    for (let f = 0; f < all; f += 4096) {
+      m.c.x.core_render(Math.min(4096, all - f));
+      for (let n; (n = m.c.x.core_midi_events(evBuf, 1024)) > 0;) {
+        const b = m.c.u8().slice(evBuf, evBuf + 8 * n);
+        for (let i = 0; i < n; i++) got.push({ tag: b[8 * i + 4], id: b[8 * i + 5], v: (b[8 * i + 6] | b[8 * i + 7] << 8) << 16 >> 16 });
+      }
+    }
+    report.events.motion = got.length;
+    check("MIDI events: the values motion sets (core_midi_tap bit 2), int16, audio tracks only", got.length > 0 &&
+      got.every((e) => (e.tag & 0xF0) === 0x40 && (e.tag & 15) < 4 && e.id < 128 && e.v >= -64 && e.v <= 127) && !moves.some((e) => e.tag < 8),
+      `${got.length} values over the song; params ${[...new Set(got.map((e) => e.id))].join(" ")}; ${moves.length} in its first ${SECONDS} s`);
+  }
+
+  // the master without its limiter (an export's choice): the same until the limiter would act, never quieter
+  const r = await songCore();
+  r.c.x.core_master_raw(1);
+  const raw = new Float32Array(2 * frames);
+  for (let f = 0; f < frames; f += 1024) {
+    const k = Math.min(1024, frames - f);
+    raw.set(new Float32Array(r.c.x.memory.buffer, r.c.x.core_render(k), 2 * k), 2 * f);
+  }
+  let rawPeak = 0, before = -1;
+  for (let i = 0; i < raw.length; i++) { rawPeak = Math.max(rawPeak, Math.abs(raw[i])); if (before < 0 && raw[i] !== wav[i]) before = i; }
+  const was = r.c.x.core_master_raw(0);
+  report.masterRaw = { peak: +rawPeak.toFixed(4), limited: +report.render.peak, firstDifference: before >> 1 };
+  check("core_master_raw(1): the limiter and soft clip off, the sound as loud or louder", was === 1 && rawPeak >= report.render.peak - 1e-6,
+    `peak ${rawPeak.toFixed(4)} (limited ${report.render.peak})${before < 0 ? ", never limited here" : `, first difference at frame ${before >> 1}`}`);
 }
 
 // a kit, the NOR kept, a note from core_midi_in
