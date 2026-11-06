@@ -6149,6 +6149,33 @@ static int test_smk_sweep(void)
     ui_power_on();
     return bad;
 }
+/* a user kit on the SMK-37's keybed: its first sixteen white keys (C3 .. D5) are MPC pads 1..16, every other key
+ * silent, at any octave; the 909 keeps its chromatic GM map */
+static int test_smk_user_kit_keys(void)
+{
+    static const uint8_t PAD[16] = {36, 38, 39, 37, 42, 46, 51, 49, 41, 45, 50, 51, 36, 38, 42, 46};
+    static const uint8_t WHITE[12] = {1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1};   /* C .. B */
+    track_t *t = &trk[3];
+    int ok = 1, gm = 1;
+    set_engine_of(t, ENGI_DRUM);
+    for (int32_t oct = -2; oct <= 2; oct++) {
+        t->p[P_E0] = DK_USER0;
+        song.octave = (int8_t)oct; t->mpc_octave = (int8_t)oct;
+        for (int32_t kb = 0, w = 0; kb < (int32_t)FM1_NKEY; kb++) {
+            int32_t ks = kb - (int32_t)SMK_KEY_F3;
+            uint32_t got = ks >= 0 && ks < 27 ? kb_map(t, (uint32_t)ks) : smk_ext_map(t, ks);
+            uint32_t want = WHITE[kb % 12] && w < 16 ? PAD[w] : KB_SILENT;
+            ok &= got == want;
+            w += WHITE[kb % 12];
+        }
+        t->p[P_E0] = DK_909;
+        gm &= kb_map(t, 7) == (uint32_t)clamp(36 + 12 * input_octave(t), 0, 127) && smk_ext_map(t, -5) == kb_map(t, 0) - 5u;
+    }
+    song.octave = 0; t->mpc_octave = 0;
+    set_engine_of(t, trk_def_engine(3));
+    return check("user kit keys: the first 16 white keys (C3..D5) play pads 1..16, the rest silent, any octave", ok) +
+           check("  the 909 keeps its GM keys, the outer ones chromatic", gm);
+}
 int main(void)
 {
     int bad;
@@ -6156,6 +6183,7 @@ int main(void)
     bad = test_smk_pads();
     bad += test_smk_banks();
     bad += test_smk_sweep();
+    bad += test_smk_user_kit_keys();
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
     return bad ? 1 : 0;
 }
