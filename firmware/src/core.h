@@ -12,6 +12,14 @@
 #include "tuning.h"
 #include "audio_profile.h"
 #include "wire_bits.h"
+/* MELODEE_BIG_BSS: a main-loop buffer that may live with the big ones (fm1-base: in .pool, its RAM kept for
+ * Bluetooth's stack; platform/melodee_app.c). Nothing in the classic build */
+#ifndef MELODEE_USB_VOLUME
+#define MELODEE_USB_VOLUME MELODEE_USB_AUDIO     /* the menu's USB VOLUME (fm1-base: without the rest of usb_audio.c) */
+#endif
+#ifndef MELODEE_BIG_BSS
+#define MELODEE_BIG_BSS
+#endif
 
 /* ------------------------------------------------------------ sizes --- */
 #define NVOICE 16                /* voice slots per part (FM6 plays Dexed's 16) */
