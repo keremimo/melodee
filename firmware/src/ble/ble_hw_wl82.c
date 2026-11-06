@@ -137,6 +137,7 @@ static struct {
     uint8_t rx_next, rx_sn, rx_seen, rx_any;
     uint8_t win_wide, upd, sca;
     uint16_t interval, last_evt, wide_from, upd_instant, chm_instant;
+    uint16_t widening;                 /* the link's widening, us: the steady window follows it */
     struct ble_hw_conn_upd u;
     uint8_t chm[5];
     struct ble_hw_adv adv;             /* the advertising set (the link layer's PDUs stay where they are) */
@@ -327,11 +328,16 @@ static void cb_channels(const uint8_t chm[5])
     CB->chmap[2] = (uint16_t)((chm[4] & 0x1Fu) | used << 5);
 }
 
-/* window widening, us (HW §7): 2 + 2 x floor(interval_us x (SCA ppm + 200) x (latency + 1) / 10^6), latency 0 */
+/* window widening, us (HW §7): 2 + 2 x ceil(interval_us x (SCA ppm + 200) x (latency + 1) / 10^6), latency 0,
+ * at least 16 us. Rounded down and without the floor, a central that claims an accurate clock got almost nothing: a CME
+ * WIDI Master (SCA 50 ppm, 7.5 ms) got 4 us, half its packets failed CRC and it dropped the link within seconds; at
+ * 16 us, under 1 % CRC failures and a stable link. The vendor's 200 ppm is kept: 500 widened the long intervals too
+ * (45 ms: 70 us), and a link updated from 30 to 45 ms then received nothing (w0ts/optimist#17) */
 static uint32_t hw_widening(uint16_t interval, uint8_t sca)
 {
     static const uint16_t PPM[8] = {500, 250, 150, 100, 75, 50, 30, 20};   /* Core Vol 6 Part B 2.3.3.1 */
-    return 2u + 2u * ((uint32_t)interval * 1250u * (PPM[sca & 7u] + 200u) / 1000000u);
+    uint32_t w = 2u + 2u * (((uint32_t)interval * 1250u * (PPM[sca & 7u] + 200u) + 999999u) / 1000000u);
+    return w < 16u ? 16u : w;
 }
 
 static void cb_widen(uint32_t us)       /* HW §7 step 10 */
@@ -521,7 +527,8 @@ BLE_API void ble_hw_conn_start(const struct ble_hw_conn *c)
     fm1_ble_col_wr(HW_LINK, 5, 0);                         /* 7: no instant */
     fm1_ble_col_wr(HW_LINK, 4, c->win_offset ? 0x8000u | (2u * c->win_offset - 1u) : 0u);   /* 8 */
     fm1_ble_col_wr(HW_LINK, 2, 7u << 12);                  /* 9: state 7, latency 0 (we listen every event) */
-    cb_widen(hw_widening(c->interval, c->sca));            /* 10 */
+    drv.widening = (uint16_t)hw_widening(c->interval, c->sca);
+    cb_widen(drv.widening);                                /* 10 */
     fm1_ble_col_wr(HW_LINK, 8, 0);                         /* 11: advDelay off */
     fm1_ble_col_wr(HW_LINK, 3, 0);                         /* 12 */
     CB->evtcount = 0;
@@ -949,7 +956,11 @@ static void hw_rx_service(void)
         else
             BLE_DG(ble_dg.rxc_tog_at++);
         drv.rx_next ^= 1u;
-        drv.rx_seen = drv.rx_any = 1;
+        if ((st & 0xFu) == 1u)                             /* only a valid packet (CRC good) is the peer heard: the
+                                                            * supervision timer resets on nothing else (Core Vol 6
+                                                            * Part B 4.5.2); CRC-failed receptions kept a switched-off
+                                                            * central's link CONNECTED for ever */
+            drv.rx_seen = drv.rx_any = 1;
         if (!hwd.first_rx) {                               /* (diagnostics) the first packet of this connection */
             hwd.first_rx = 1;
             BLE_DG(ble_dg.first_rx_us = (fm1_ticks() - hwd.conn_t0) / FM1_TICKS_PER_US);
@@ -1000,6 +1011,7 @@ static void hw_instants(uint16_t counter)
     }
     if ((drv.upd & UPD_CONN) && (int16_t)(drv.upd_instant - counter) <= 1) {
         const struct ble_hw_conn_upd *u = &drv.u;
+        uint32_t w;
         if ((int16_t)(drv.upd_instant - counter) < 1)
             ble_hw_stat.late_instant++;
 #if BLE_CENTRAL
@@ -1019,10 +1031,16 @@ static void hw_instants(uint16_t counter)
             return;
         }
 #endif
-        cb_window((uint32_t)u->win_size * 1250u + 625u);
+        w = hw_widening(u->interval, drv.sca);
+        cb_window((uint32_t)u->win_size * 1250u + 625u + w);   /* + the widening, as the vendor's (HW §9): the window
+                                                                 * opens a slot early (column 4) and the widening earlier
+                                                                 * still; without it the window ended w us before the
+                                                                 * transmit window, and a central sending late in it went
+                                                                 * unheard */
         CB->wincntl2 = HW_WIN_NORMAL;
         fm1_ble_col_wr(HW_LINK, 2, 7u << 12);              /* latency 0 */
-        cb_widen(hw_widening(u->interval, drv.sca));
+        cb_widen(w);
+        drv.widening = (uint16_t)w;
         fm1_ble_col_wr(HW_LINK, 4, u->win_offset ? 0x8000u | (2u * u->win_offset - 1u) : 0u);
         fm1_ble_col_wr(HW_LINK, 1, 2u * u->interval);
         fm1_ble_col_wr(HW_LINK, 15, 0x8000u | (2u * u->interval) >> 16);
@@ -1063,8 +1081,9 @@ static void hw_event_service(void)
     ble_hw_stat.events++;
     BLE_DG(ble_dg.conn_events++);
     BLE_DG(ble_dg.last_evt = counter);
-    /* a reception in this event: an RX interrupt, or EVTCOUNT (also moved by a repeat the engine dropped) */
-    rx_ok = (uint8_t)(drv.rx_seen || (drv.rx_any && CB->evtcount == counter));
+    /* a reception in this event: an RX interrupt with a good CRC. EVTCOUNT is not one: it matched every event after
+     * the peer had gone (rx_irqs stuck at 110, conn_events on to 18,645, no supervision timeout) */
+    rx_ok = drv.rx_seen;
     drv.rx_seen = 0;
     hw_instants(counter);
 #if BLE_CENTRAL
@@ -1087,7 +1106,10 @@ static void hw_event_service(void)
     }
 #endif
     if (drv.win_wide && rx_ok && (int16_t)(counter - drv.wide_from) >= 0 && !drv.upd) {
-        cb_window(HW_WIN_NORMAL);       /* in step: the normal window (WINCNTL2), the offset spent */
+        cb_window(2u * drv.widening + HW_WIN_NORMAL);   /* in step, the offset spent: 2 x widening + 50 (HW §21's table).
+                                                         * The window opens w early, so a flat 50 closed it 50 - w after
+                                                         * the anchor: +34 us at 7.5 ms, +6 at 45 ms (SCA 250), and a link
+                                                         * at 45 ms died within seconds (w0ts/optimist#17) */
         fm1_ble_col_wr(HW_LINK, 4, 0);
         cb_rfprio(28u);
         drv.win_wide = 0;
