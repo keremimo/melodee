@@ -18,7 +18,10 @@ build/studio-bundle/
   scales.json           the SCL catalogue and tunings (tools/gen_scales.py --json)
   prophet_factory.json  Sequential's 200 v1.03 programs (tools/gen_prophet_factory.py --json)
   palettes.json         the UI palettes and their derived colours (tools/gen_ui_palettes.py --json)
-  melodee_core.wasm, melodee_kit.wasm   only when built (build/core, build/kit, or --core / --kit)
+  melodee_core.wasm, melodee_kit.wasm   only when built (build/core, build/kit, or --core / --kit); standalone modules
+                        (no imports, no JS glue); the core's exports and ABI in the manifest ("core")
+  protocol-transcripts.jsonl  the core's replies to Studio's requests from a new device's power-on and with the song
+                        fixture loaded (web/core/core_check.mjs --transcripts: needs the core and node)
   LICENSES/  SOURCE     the licences and where the complete corresponding source is
   manifest.json         firmware version and commit, protocol version and revision, the record magics written and
                         read, every file's size and sha256
@@ -52,6 +55,39 @@ DUMPERS = {
     "settingsdump": ["-DMELODEE_USB_AUDIO=1", "-DMELODEE_USB_HOST=1", "-Itests/ble_fake"],
 }
 WASM = {"melodee_core.wasm": ["build/core/melodee_core.wasm"], "melodee_kit.wasm": ["build/kit/melodee_kit.wasm"]}
+
+
+def wasm_exports(path):
+    """a WebAssembly module's exported names (its export section) and its imports' count"""
+    b = path.read_bytes()
+
+    def uleb(i):
+        v = shift = 0
+        while True:
+            c = b[i]
+            i += 1
+            v |= (c & 0x7F) << shift
+            shift += 7
+            if c < 0x80:
+                return v, i
+
+    i, names, nimports = 8, [], 0
+    while i < len(b):
+        sid = b[i]
+        size, i = uleb(i + 1)
+        end = i + size
+        if sid in (2, 7):
+            n, j = uleb(i)
+            if sid == 2:
+                nimports = n
+            else:
+                for _ in range(n):
+                    k, j = uleb(j)
+                    names.append(b[j:j + k].decode())
+                    j += k + 1                        # the kind
+                    _, j = uleb(j)                    # the index
+        i = end
+    return sorted(names), nimports
 
 
 def fail(msg):
@@ -227,6 +263,18 @@ def build(out, work, wasm_args):
             wasm[name] = True
         else:
             wasm[name] = False
+    core = None
+    if wasm["melodee_core.wasm"]:
+        exports, nimports = wasm_exports(tmp / "melodee_core.wasm")
+        abi = re.search(r"#define CORE_ABI (\d+)u", (ROOT / "web/core/melodee_core.c").read_text())
+        if nimports:
+            fail(f"melodee_core.wasm imports {nimports} functions: Studio gives it none")
+        core = {"abi": int(abi.group(1)) if abi else None, "exports": [e for e in exports if e.startswith("core_")],
+                "transcripts": False}
+        if shutil.which("node"):                      # the core's own replies, for Studio's tests
+            run(["node", "web/core/core_check.mjs", "--core", str(tmp / "melodee_core.wasm"), "--mel", str(mel),
+                 "--transcripts", str(tmp / "protocol-transcripts.jsonl"), "--transcripts-only"])
+            core["transcripts"] = True
 
     lic = tmp / "LICENSES"
     lic.mkdir()
@@ -259,6 +307,7 @@ def build(out, work, wasm_args):
                      "commands": len(proto["commands"]), "info_tags": [t["char"] for t in proto["info_tags"]]},
         "records": {k: magic_names(v) for k, v in consts["records"].items()},
         "wasm": wasm,
+        "core": core,
         "files": files,
     }
     write_json(tmp / "manifest.json", manifest)
@@ -290,6 +339,13 @@ def verify(out):
     for name, present in manifest["wasm"].items():
         if present != (name in listed):
             problems.append(f"wasm {name}: manifest says {present}")
+    core = manifest.get("core")
+    if core and core.get("transcripts") != ("protocol-transcripts.jsonl" in listed):
+        problems.append(f"protocol-transcripts.jsonl: manifest says {core.get('transcripts')}")
+    if core and "melodee_core.wasm" in listed:
+        exports, _ = wasm_exports(out / "melodee_core.wasm")
+        if [e for e in exports if e.startswith("core_")] != core["exports"]:
+            problems.append("melodee_core.wasm: its exports are not the manifest's")
     for need in ("desc.json", "layout.json", "protocol.json", "constants.json", "settings.json", "scales.json",
                  "prophet_factory.json", "palettes.json", "SOURCE", "LICENSES/GPL-3.0-only.txt"):
         if need not in listed:

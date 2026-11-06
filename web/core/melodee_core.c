@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* The virtual FM-1 (spike): the firmware's editor (editor.c), its storage (storage.c on a 1 MiB NOR in RAM), its
- * projects, kits and presets, its engines, mixer and sequencer, without the UI drawing or any hardware. The web
- * page talks to it in the editor's own SysEx, as it talks to an FM-1 over USB.
+/* The virtual FM-1: the firmware's editor (editor.c with the Studio session and song commands), its storage
+ * (storage.c on a 1 MiB NOR in RAM), its projects, kits and presets, its engines, mixer and sequencer, without the
+ * UI drawing or any hardware. Melodee Studio's IN THIS BROWSER mode talks to it in the editor's own SysEx, as it
+ * talks to an FM-1 over USB, and plays its sound.
  * Composition: tests/editor_test.c's (hostsim.c's engines and sequencer, ui.c, the editor) with backup_test.c's
  * NOR flash under MELODEE_FLASH 1, in melodee.c's order (storage, kits, user presets, projects, CZ/FM6 stores,
  * editor). The clock is web/emu/melodee_web.c's: a millisecond at a time, mix_block every CTL frames at FS as the
@@ -11,7 +12,13 @@
  * every 15 ms, ed_service every millisecond (main.c's wait between frames).
  * A wait of the main loop for the ISR (ed_flash_stop, the backup LIST, a kit's settle) feeds the watchdog: here
  * that is a millisecond of the ISR's time (fm1_wdt_feed below), the sound it makes kept for core_render.
- * Nothing of the firmware changes for this file.
+ * The firmware's only hook for this file is voice.c's MELODEE_NOTE_TAP (nothing on the device).
+ *
+ * Sound: stereo float, Q15 full scale = 1.0 (as the USB capture, Melodee In, sends it at USB VOLUME 100), with the
+ * MASTER pot all the way up (unity: the core has no pot). core_render plays it; core_render_taps also gives each
+ * audio track's share (its post-fader, post-pan, post-solo sum into the mix, mix.c mix_part) and the shared FX
+ * return (mix.c master_samples), both before punch, the limiter and the DC blocker, so they do not sum to the
+ * master exactly.
  *   web/core/build.sh  ->  build/core/melodee_core.wasm
  *   cc -DCORE_NATIVE_MAIN ... web/core/melodee_core.c: the same core natively, replaying SysEx frames (stdin) */
 #include <stdint.h>
@@ -22,6 +29,8 @@ static unsigned char nor[0x100000];                     /* the FM-1's 1 MiB NOR 
 #ifndef MELODEE_VERSION
 #define MELODEE_VERSION "CORE"
 #endif
+static void core_note_tap(uint32_t tr, uint32_t note, uint32_t vel);
+#define MELODEE_NOTE_TAP(tr, note, vel) core_note_tap(tr, note, vel)
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
@@ -39,6 +48,31 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #include "../firmware/src/panel.c"
 #include "../firmware/src/ui.c"
 static void panel_setup(void) {}
+/* ui_draw.c's (not built here): the name the device shows for a track's sound; Prophet's patch name as
+ * ui_graph.c p5_short_name has it */
+static void sound_name(const track_t *t, char *b)
+{
+    if (song_picker.active && t == &trk[song_picker.track] && browse_loads == browse_mark) {
+        const song_sound_t *s = song_sound_get(song_picker.pattern ? pattern_sound_id(song_picker.track, song_picker.row) : resolved_sound_id(song_picker.row, song_picker.track));
+        if (s) { str_cpy(b, s->name, 16); return; }
+    }
+    if (song.playing && !song_picker.active) {
+        const song_sound_t *s = song_sound_get(song_sounds.active[t - trk]);
+        if (s) { str_cpy(b, s->name, 16); return; }
+    }
+    const engine_t *e = ENGINES[t->eng_req % NENGINES];
+    b[0] = 0;
+    if (t->eng_req == ENGI_PROPHET) {
+        char full[P5_NAME_LEN + 1u];
+        p5_patch_name(full, p5_patch_of((track_t *)t));
+        str_cpy(b, full, 16);
+    } else if (t->user_native && user_of(t) < USER_NONE) native_name(t->eng_req, user_of(t), b);
+    else if (user_of(t) < UP_SLOTS) up_name(user_of(t), b);
+    else if (e->npresets) str_cpy(b, eng_preset(e, t->preset % e->npresets)->name, 16);
+}
+/* ui_layer.c's: the layers play unless a menu, a dialog or the UBOOT countdown is up (NAME, NEW SONG, the popups
+ * and the section map never open here: nobody holds the panel) */
+static int layer_allowed(void) { return !ui.menu && !ui.confirm && !ui.uboot; }
 
 /* the NOR: reads as XIP, 4 KiB erases, programming only clears bits (as the part) */
 static uint8_t flash_ok;
@@ -98,27 +132,121 @@ static void core_drain(void)                           /* USB-MIDI SysEx packets
     }
 }
 
+/* MIDI events for the page (core_midi_events): 8 bytes each, the frame (of core_render's sound) the block that
+ * made it starts at, then a tag and three bytes. Tag 0..7: a note a track played (voice.c trk_note_on/off: the
+ * sequencer's, the keys', the arpeggiator's and chords'; before MIDI DELAY), note, velocity (0 = off). Tag 0x80:
+ * a message the FM-1 sent over USB (its MIDI tracks, MIDI clock and Start/Stop), status and two data bytes. */
+#define EVQ 8192u
+static struct { uint32_t frame; uint8_t b[4]; } ev_q[EVQ];
+static uint32_t ev_w, ev_r, ev_lost, ev_mask;          /* ev_mask: bit 0 notes, bit 1 USB out (core_midi_tap) */
+static uint32_t frames_made;                            /* frames of sound made so far: the events' clock */
+static void ev_put(uint32_t tag, uint32_t a, uint32_t b, uint32_t c)
+{
+    if (ev_w - ev_r >= EVQ) { ev_lost++; return; }
+    uint32_t i = ev_w++ % EVQ;
+    ev_q[i].frame = frames_made;
+    ev_q[i].b[0] = (uint8_t)tag; ev_q[i].b[1] = (uint8_t)a; ev_q[i].b[2] = (uint8_t)b; ev_q[i].b[3] = (uint8_t)c;
+}
+static void core_note_tap(uint32_t tr, uint32_t note, uint32_t vel)
+{
+    if ((ev_mask & 1u) && tr < NTRK) ev_put(tr, note, vel, 0);
+}
+static void usb_out_drain(void)                        /* the IN endpoint's MIDI: what a computer would read */
+{
+    while (mo_r != mo_w) {
+        uint32_t p = midi_out_q[mo_r % MQ];
+        mo_r++;
+        if (ev_mask & 2u) ev_put(0x80u, p >> 8, p >> 16, p >> 24);
+    }
+    while (rt_r != rt_w) {
+        uint32_t p = midi_rt_q[rt_r % RTQ];
+        rt_r++;
+        if (ev_mask & 2u) ev_put(0x80u, p >> 8, p >> 16, p >> 24);
+    }
+}
+
 /* the sound: stereo float, made a millisecond at a time and kept until core_render takes it */
 #define RING 32768u                                     /* frames: 0.74 s (an ed_flash_stop waits 100 ms at most) */
+#define TAPS (NPART + 1u)                               /* core_render_taps: each audio track, then the FX return */
+#define OUT_SCALE (1.0f / 32768.0f)                     /* Q15 full scale = 1.0 */
 static float ring[RING * 2u], rendered[4096u * 2u];
+static float tap_ring[RING][TAPS * 2u], tapped[4096u * 2u * (1u + TAPS)];
 static uint32_t ring_w, ring_r, owed, ring_lost;
-static uint8_t in_isr, in_loop;
+static uint8_t in_isr, in_loop, taps_on;
+static int32_t master_peak[2];                          /* |sample| since core_meters last read them */
+
+/* mix.c mix_block with each track's share and the FX return measured on the way (the same calls in the same order,
+ * so the sound is the same: web/core/core_check.mjs compares) */
+static int32_t tap_pre_l[CTL], tap_pre_r[CTL];
+static void core_mix_block_taps(int32_t *out, uint32_t n, int32_t tap[TAPS][2u * CTL])
+{
+#if MELODEE_USB_AUDIO
+    {int cap=ua_capture_active();track_capture_on=(uint8_t)(cap==4);master_capture_on=(uint8_t)(cap==2);}
+    if(track_capture_on)memset(track_capture,0,n*NPART*sizeof *track_capture);
+#endif
+    memset(mix_l,0,n*sizeof *mix_l);memset(mix_r,0,n*sizeof *mix_r);
+    dither_block();
+    events_block(n);
+    fx_bus_select();fx_send_on=(uint8_t)fx_bus_active();if(fx_send_on){memset(fx_send_l,0,n*sizeof *fx_send_l);memset(fx_send_r,0,n*sizeof *fx_send_r);
+        if(fx_bus_separate){memset(fx_send_extra_l,0,sizeof fx_send_extra_l);memset(fx_send_extra_r,0,sizeof fx_send_extra_r);}}
+    uint32_t nt=trk_parts();
+#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+    mix_prepare_batch(n,nt);
+#endif
+    memset(tap, 0, TAPS * 2u * CTL * sizeof tap[0][0]);
+    for(uint32_t i=0;i<nt;i++){
+        memcpy(tap_pre_l, mix_l, n * sizeof *mix_l); memcpy(tap_pre_r, mix_r, n * sizeof *mix_r);
+        mix_part(&trk[i],n);
+        for (uint32_t j = 0; j < n; j++) { tap[i][2u * j] = mix_l[j] - tap_pre_l[j]; tap[i][2u * j + 1u] = mix_r[j] - tap_pre_r[j]; }
+    }
+#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+    batch_ready=0;part_buf=part_storage;spread_buf=spread_storage;
+#endif
+    fx_bus_start(n);
+    fx_bus_join();
+    if (fx_bus_result) {                                /* master_samples' return, its ramp as it runs it */
+        int32_t gain = fx_bus_mix, target = fx_bus_target;
+        for (uint32_t i = 0; i < n; i++) {
+            if (gain != target) gain += clamp(target - gain, -128, 128);
+            uint32_t ret = (uint32_t)gain * 2u;
+            tap[NPART][2u * i] = fx_scale(fx_left[i], ret);
+            tap[NPART][2u * i + 1u] = fx_scale(fx_right[i], ret);
+        }
+    }
+    void (*volatile run)(int32_t *,uint32_t)=master_samples;
+    run(out,n);
+}
+
 static void isr_ms(void)                               /* TIMER5's millisecond, then the ALNK0 blocks it owes */
 {
     fm1_ms++;
     owed += FS;
     while (owed >= 1000u * CTL) {
-        int32_t o[2 * CTL];
+        int32_t o[2 * CTL], tap[TAPS][2u * CTL];
+        float master = (float)song.master_q12 / 4096.0f * OUT_SCALE;
         owed -= 1000u * CTL;
         in_isr = 1;
-        mix_block(o, CTL);
+        if (taps_on) core_mix_block_taps(o, CTL, tap);
+        else mix_block(o, CTL);
+        usb_out_drain();
         in_isr = 0;
         for (uint32_t i = 0; i < CTL; i++) {
             if (ring_w - ring_r >= RING) { ring_r++; ring_lost++; }   /* nobody listening: the oldest goes */
-            uint32_t r = (ring_w++ % RING) * 2u;
-            ring[r] = (float)o[2u * i] / 65536.0f;      /* Q15, 6 dB down as audio.c sends it to the codec */
-            ring[r + 1u] = (float)o[2u * i + 1u] / 65536.0f;
+            uint32_t at = ring_w++ % RING, r = at * 2u;
+            int32_t l = o[2u * i], rr = o[2u * i + 1u];
+            ring[r] = (float)l * OUT_SCALE;
+            ring[r + 1u] = (float)rr * OUT_SCALE;
+            if (l < 0) l = -l;
+            if (rr < 0) rr = -rr;
+            if (l > master_peak[0]) master_peak[0] = l;
+            if (rr > master_peak[1]) master_peak[1] = rr;
+            if (taps_on)                                /* (taps are the bus's: MASTER scales them as the output) */
+                for (uint32_t k = 0; k < TAPS; k++) {
+                    tap_ring[at][2u * k] = (float)tap[k][2u * i] * master;
+                    tap_ring[at][2u * k + 1u] = (float)tap[k][2u * i + 1u] * master;
+                }
         }
+        frames_made += CTL;
     }
 }
 static uint32_t wdt_feeds;
@@ -191,15 +319,22 @@ static void core_melodee_init(void)                    /* main.c melodee_init */
 
 /* the page's scratch: requests, records and kits are written here before a call names them */
 static uint8_t scratch[0x20000];
+/* the exports' version: Studio refuses a core whose calls it does not know */
+#define CORE_ABI 1u
+EXPORT(core_abi) uint32_t core_abi(void) { return CORE_ABI; }
 EXPORT(core_scratch) uint8_t *core_scratch(void) { return scratch; }
 EXPORT(core_scratch_size) uint32_t core_scratch_size(void) { return sizeof scratch; }
 EXPORT(core_nor_ptr) uint8_t *core_nor_ptr(void) { return nor; }
 EXPORT(core_nor_len) uint32_t core_nor_len(void) { return sizeof nor; }
 EXPORT(core_now) uint32_t core_now(void) { return fm1_ms; }
 EXPORT(core_fs) uint32_t core_fs(void) { return FS; }
+EXPORT(core_ntrk) uint32_t core_ntrk(void) { return NTRK; }
+EXPORT(core_taps_count) uint32_t core_taps_count(void) { return TAPS; }
+/* the NOR's write count (erases + programs): the page saves it when this moves */
+EXPORT(core_nor_writes) uint32_t core_nor_writes(void) { return nor_erases + nor_progs; }
 
 /* power on (fm1_main's order, without the screen, the input and the audio hardware). keep: the NOR holds a
- * previous session's flash (written to core_nor_ptr), else it is erased as a new device's */
+ * previous session's flash (written to core_nor_ptr), else it is erased as a new device's. 1 = the flash works */
 EXPORT(core_boot) uint32_t core_boot(uint32_t keep)
 {
     if (!keep) memset(nor, 0xFF, sizeof nor);
@@ -210,6 +345,7 @@ EXPORT(core_boot) uint32_t core_boot(uint32_t keep)
     core_melodee_init();
     glo_restore();
     project_boot();
+    midi_master_physical(4096u);                        /* the MASTER pot all the way up */
     usb.config = 1;                                     /* the editor's port is open */
     return flash_ok;
 }
@@ -249,6 +385,15 @@ EXPORT(core_poll) void core_poll(uint32_t ms)
     ring_r = ring_w;
     core_drain();
 }
+/* sound made but not taken yet (frames): a wait of the main loop (a save stopping the song) makes some ahead.
+ * core_ring_trim drops all but keep of them (a live page holds its latency; a render keeps every frame) */
+EXPORT(core_ring_fill) uint32_t core_ring_fill(void) { return ring_w - ring_r; }
+EXPORT(core_ring_trim) uint32_t core_ring_trim(uint32_t keep)
+{
+    uint32_t over = ring_w - ring_r > keep ? ring_w - ring_r - keep : 0u;
+    ring_r += over;
+    return over;
+}
 /* n frames (<= 4096) of stereo, interleaved float; the device runs as long as they take */
 EXPORT(core_render) float *core_render(uint32_t n)
 {
@@ -263,21 +408,61 @@ EXPORT(core_render) float *core_render(uint32_t n)
     core_drain();
     return rendered;
 }
+/* the taps on (1) or off (0): from now on core_render_taps can take them (sound made before has none: dropped) */
+EXPORT(core_taps) uint32_t core_taps(uint32_t on)
+{
+    uint32_t was = taps_on;
+    if (on && !taps_on) ring_r = ring_w;
+    taps_on = (uint8_t)(on != 0u);
+    return was;
+}
+/* n frames (<= 4096) as core_render, then each tap: n interleaved stereo frames for the master, then n for each
+ * audio track 1..NPART (silent when not in use or a MIDI-only one), then n for the FX return. 0: taps are off */
+EXPORT(core_render_taps) float *core_render_taps(uint32_t n)
+{
+    if (!taps_on) return 0;
+    if (n > 4096u) n = 4096u;
+    while (ring_w - ring_r < n) core_tick();
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t at = ring_r++ % RING;
+        tapped[2u * k] = ring[2u * at];
+        tapped[2u * k + 1u] = ring[2u * at + 1u];
+        for (uint32_t t = 0; t < TAPS; t++) {
+            float *d = tapped + 2u * n * (1u + t) + 2u * k;
+            d[0] = tap_ring[at][2u * t];
+            d[1] = tap_ring[at][2u * t + 1u];
+        }
+    }
+    core_drain();
+    return tapped;
+}
 
-/* a project record (the expanded form, BANK_STORE_SIZE bytes; mel_file.js pjExpand) saved to slot as SAVE would,
- * then loaded as LOAD would. 0 = loaded, 1 = not a record or no such slot, 2 = not written, 3 = not loaded, 4 = busy.
- * Slots 0..3 only for now: project.c's host mirrors (proj_slot[4], proj_bank_slot[4], built without FM1_IRQ_TARGET)
- * are indexed by slots up to 31 in proj_write_slot / proj_read_slot / proj_publish_slot, past their end from slot 4 */
-#define CORE_SLOTS 4u
+/* a project record (the expanded form, BANK_STORE_SIZE bytes; mel_file.js pjExpand) saved to slot (0..31: projects
+ * 1..32) as SAVE would, then loaded as LOAD would. 0 = loaded, 1 = not a record or no such slot, 2 = not written,
+ * 3 = not loaded, 4 = busy (the transport would not stop) */
 EXPORT(core_load_record) uint32_t core_load_record(const uint8_t *p, uint32_t n, uint32_t slot)
 {
-    if (n != BANK_STORE_SIZE || !bank_valid(p, n) || slot >= CORE_SLOTS) return 1;
+    if (n != BANK_STORE_SIZE || !bank_valid(p, n) || slot >= PROJ_SLOTS) return 1;
     if (ed_flash_stop()) return 4;
     if (proj_write_slot(slot, p, n)) return 2;
     project_load(slot);
     if (proj_cur != slot) return 3;
     song.g[G_SLOT] = (int16_t)(slot + 1u);
     return 0;
+}
+/* a kit record (KIT1, as drum_enc.c / melodee_kit.wasm write it) into user kit slot u (0..7: KIT 9..16), as the
+ * editor's BACKUP PUT of ids 92..99 commits it; n 0 empties the slot. 0 = done, 1 = not a kit the player could
+ * play (or no such slot), 2 = the flash refused it */
+EXPORT(core_load_kit) uint32_t core_load_kit(const uint8_t *p, uint32_t n, uint32_t u)
+{
+    st_stream_t w;
+    int rc;
+    if (u >= ST_NKIT) return 1;
+    if (!n) return kit_delete(u) ? 2u : 0u;
+    if (n < DRK_KIT_BYTES || n > DRK_KIT_MAX) return 1;
+    if (kit_put_begin(&w, u, n) || kit_put_write(&w, p, n)) return 2;
+    rc = kit_put_commit(&w, u);
+    return rc == -2 ? 1u : rc ? 2u : 0u;
 }
 
 /* SONG from row (as SONG's PLAY): the internal clock, no loop, so it ends. 0 = started, else chain_prepare_from's */
@@ -295,17 +480,101 @@ EXPORT(core_song_state) uint32_t core_song_state(void)
     return (uint32_t)song.playing | (uint32_t)chain.running << 1 | (uint32_t)chain.armed << 2 | ended << 3 |
            (uint32_t)chain.row << 8;
 }
+/* the song from row to its end, in frames of sound at its tempo (song_chain.c chain_row_samples: repeats included);
+ * a render of it takes this long, then the tails */
+EXPORT(core_song_samples) uint32_t core_song_samples(uint32_t row)
+{
+    uint64_t units = 0;
+    uint32_t bpm = (uint32_t)clamp(song.g[G_BPM], 1, 999);
+    for (uint32_t r = row; r < chain_config.count; r++) units += chain_row_samples(r);
+    return chain_div_samples(units * 60u * FS + MIDI_BEAT_UNITS * bpm / 2u, MIDI_BEAT_UNITS * bpm, 0);
+}
 EXPORT(core_stop) uint32_t core_stop(void) { return (uint32_t)ed_flash_stop(); }
 
-/* counters for the spike's report: [0] ISR ms, [1] watchdog feeds, [2] NOR erases, [3] NOR programs,
- * [4] reply bytes lost, [5] frames dropped unheard, [6] the flash state (flash_ok), [7] projects used */
-static uint32_t stats[8];
+/* which tracks sound (bit k: track k + 1), as the editor's TRACKS solo: the latch, never P_MUTE; 0 = all. The mask
+ * applied (bits past the tracks in use dropped) */
+EXPORT(core_solo) uint32_t core_solo(uint32_t mask)
+{
+    track_solo_latch = (uint8_t)(mask & ((1u << trk_n()) - 1u));
+    track_solo = track_solo_latch;
+    return track_solo;
+}
+/* CLK INT (the FM-1 makes its own tempo): a browser has no USB or TRS clock to follow. The clock it had */
+EXPORT(core_clock_internal) uint32_t core_clock_internal(void)
+{
+    uint32_t was = (uint32_t)song.g[G_CLOCK];
+    song.g[G_CLOCK] = 0;
+    return was;
+}
+
+/* MIDI to the FM-1 as from a computer over USB (usb.c midi_in_event): channel messages, real time; running status
+ * kept across calls. SysEx goes to core_sysex_in. The messages taken */
+static uint8_t mi_status, mi_data[2], mi_have;
+EXPORT(core_midi_in) uint32_t core_midi_in(const uint8_t *p, uint32_t n)
+{
+    uint32_t taken = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t b = p[i];
+        if (b >= 0xF8u) { midi_in_event(0xFu | b << 8); taken++; continue; }
+        if (b >= 0xF0u) { mi_status = 0; mi_have = 0; continue; }   /* (system common, SysEx: not here) */
+        if (b & 0x80u) { mi_status = (uint8_t)b; mi_have = 0; continue; }
+        if (!mi_status) continue;
+        mi_data[mi_have++] = (uint8_t)b;
+        uint32_t need = (mi_status & 0xE0u) == 0xC0u ? 1u : 2u;     /* program change, channel pressure: one */
+        if (mi_have < need) continue;
+        midi_in_event((uint32_t)(mi_status >> 4) | (uint32_t)mi_status << 8 | (uint32_t)mi_data[0] << 16 |
+                      (need > 1u ? (uint32_t)mi_data[1] << 24 : 0u));
+        mi_have = 0;
+        taken++;
+    }
+    return taken;
+}
+/* what core_midi_events keeps: bit 0 the tracks' notes, bit 1 the FM-1's USB MIDI out; 0 = none (the default).
+ * The mask it had */
+EXPORT(core_midi_tap) uint32_t core_midi_tap(uint32_t mask)
+{
+    uint32_t was = ev_mask;
+    ev_mask = mask & 3u;
+    if (!ev_mask) ev_r = ev_w;
+    return was;
+}
+/* up to max events (8 bytes each, as ev_q above) into p; the count */
+EXPORT(core_midi_events) uint32_t core_midi_events(uint8_t *p, uint32_t max)
+{
+    uint32_t k = 0;
+    while (k < max && ev_r != ev_w) {
+        memcpy(p + 8u * k, &ev_q[ev_r++ % EVQ], 8u);
+        k++;
+    }
+    return k;
+}
+
+/* the meters since the last read: each track's peak (after level, solo and mute; 1.0 = Q15 full scale; the screen's
+ * reader of mix.c trk_peak_take, so the editor's METERS keep theirs), the master's left and right, then the
+ * transport as TRANSPORT's state (1 playing, 2 the song, 4 counting in, 8 armed) | the song's row << 8, and track 1's
+ * step */
+static float meters[NTRK + 4u];
+EXPORT(core_meters) float *core_meters(void)
+{
+    for (uint32_t k = 0; k < NTRK; k++) meters[k] = (float)trk_peak_take(k, 0) * OUT_SCALE;
+    meters[NTRK] = (float)master_peak[0] * OUT_SCALE;
+    meters[NTRK + 1u] = (float)master_peak[1] * OUT_SCALE;
+    master_peak[0] = master_peak[1] = 0;
+    meters[NTRK + 2u] = (float)(ed_tp_state() | (uint32_t)chain.row << 8);
+    meters[NTRK + 3u] = (float)trk[0].seq_idx;
+    return meters;
+}
+
+/* counters: [0] ISR ms, [1] watchdog feeds, [2] NOR erases, [3] NOR programs, [4] reply bytes lost, [5] frames
+ * dropped unheard, [6] the flash state (flash_ok), [7] projects used, [8] MIDI events lost, [9] frames made */
+static uint32_t stats[10];
 EXPORT(core_stats) uint32_t *core_stats(void)
 {
     uint32_t used = 0;
     for (uint32_t i = 0; i < PROJ_SLOTS; i++) used += proj_meta[i].used != 0;
     stats[0] = fm1_ms; stats[1] = wdt_feeds; stats[2] = nor_erases; stats[3] = nor_progs;
     stats[4] = out_lost; stats[5] = ring_lost; stats[6] = flash_ok; stats[7] = used;
+    stats[8] = ev_lost; stats[9] = frames_made;
     return stats;
 }
 
@@ -314,7 +583,7 @@ EXPORT(core_stats) uint32_t *core_stats(void)
  *   core_native < frames       SysEx frames (F0 .. F7, one after another), each reply as a hex line: "> frame",
  *                              then "< reply" for every frame the core sent back before the next request
  *   core_native render REC SECONDS OUT   a project record (expanded) loaded to slot 0, its song from row 0, SECONDS
- *                              of it as interleaved float (raw) in OUT, as web/core/spike.mjs renders it in WASM */
+ *                              of it as interleaved float (raw) in OUT, as web/core/core_check.mjs renders it in WASM */
 static int render_main(const char *rec, uint32_t secs, const char *out)
 {
     static uint8_t r[BANK_STORE_SIZE + 1u];

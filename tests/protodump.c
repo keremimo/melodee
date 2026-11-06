@@ -42,6 +42,13 @@ static const struct { uint32_t id; const char *name, *group, *when; } CMDS[] = {
     {ED_UI_STATE, "UI_STATE", "preferences", ""}, {ED_UI_SET, "UI_SET", "preferences", ""},
     {ED_UI_PALETTES, "UI_PALETTES", "preferences", ""}, {ED_FAV_GET, "FAV_GET", "preferences", ""},
     {ED_FAV_SET, "FAV_SET", "preferences", ""},
+    {ED_CAPS, "CAPS", "studio session", ""}, {ED_TRACKS, "TRACKS", "studio session", ""},
+    {ED_TRANSPORT, "TRANSPORT", "studio session", ""}, {ED_PROJECTS, "PROJECTS", "studio session", ""},
+    {ED_STORAGE, "STORAGE", "studio session", ""},
+    {ED_SONG2, "SONG2", "studio song", ""}, {ED_SONG_SOUND, "SONG_SOUND", "studio song", ""}, {ED_PUNCH, "PUNCH", "studio song", ""},
+    {ED_METERS, "METERS", "studio session (push)", ""}, {ED_TRACKS_CHANGED, "TRACKS_CHANGED", "studio session (push)", ""},
+    {ED_TRANSPORT_CHANGED, "TRANSPORT_CHANGED", "studio session (push)", ""},
+    {ED_SONG_CHANGED, "SONG_CHANGED", "studio song (push)", ""},
     {ED_MOTION, "MOTION", "motion", ""}, {ED_BACKUP_LIST, "BACKUP_LIST", "backup", ""},
     {ED_BACKUP_GET, "BACKUP_GET", "backup", ""}, {ED_BACKUP_PUT, "BACKUP_PUT", "backup", ""},
     {ED_FM6_GET, "FM6_GET", "fm6", ""}, {ED_FM6_PUT, "FM6_PUT", "fm6", ""}, {ED_FM6_LIST, "FM6_LIST", "fm6", ""},
@@ -81,6 +88,7 @@ static const struct { uint8_t tag, ver; const char *name, *cmds, *fields[8]; } T
                                          "user_native_p5", "flags", "native_version"}},
     {0x4e, 1, "native pools", "78", {"fm6_capacity_lo", "fm6_capacity_hi", "cz_capacity_lo", "cz_capacity_hi"}},
     {0x55, 1, "shared library", "80", {"capacity_lo", "capacity_hi"}},
+    {0x53, 1, "studio", "39-43, 47-49, 55-58", {"caps_command"}},
 };
 
 static uint32_t nfields(uint32_t k) { uint32_t n = 0; while (n < 8u && TAGS[k].fields[n]) n++; return n; }
