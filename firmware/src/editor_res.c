@@ -17,7 +17,7 @@ static int ed_res_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         rc = k ? (uint32_t)res_write(off, ed_transfer_buf, k) : 1u;
     } else if (n == 1u && a[0] == 3u) rc = (uint32_t)res_commit();
     ed_b(rc); ed_b(res_ok);
-    for (uint32_t i = 0; i < 5u; i++) ed_b(res_want[1] >> 7u * i);
-    for (uint32_t i = 0; i < 5u; i++) ed_b(res_want[2] >> 7u * i);
+    ed_u35(res_want[1]);
+    ed_u35(res_want[2]);
     return 1;
 }

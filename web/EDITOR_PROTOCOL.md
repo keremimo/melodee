@@ -1375,3 +1375,66 @@ track, and assignment edits preserve notes and automation. Copy carries the
 assignment; Delete removes it with the pattern and supports the existing undo.
 The assignment map participates in project hashes, compact storage, backups and
 track removal. No new editor wire command is introduced.
+
+## Paging and argument checks (firmware helpers for new commands)
+
+New commands (numbers 39–63, see "Flash ledger" below) reuse the shared helpers in `firmware/src/editor_wire.h`
+(`ed_v`, `ed_left` and `ED_ARGN` are in `editor.c`); the wire rules they implement are the ones the existing
+commands already follow:
+
+- **Fixed argument lengths:** `ED_ARGN[cmd]` holds one bit per accepted length (bit n: n argument bytes,
+  n ≤ 15). A request whose length has no bit gets no reply, as before. An entry of 0 means the handler checks its
+  own lengths (variable payloads, sub-operations): commands 39–63 add an entry, or check in their handler.
+- **Absent bytes are echoed as 127:** a reply that starts with the request's operation / target / index bytes
+  echoes 127 for each one the request did not carry (`ed_arg`, `ed_echo`), as FM6 (68–71), CZ (75–77),
+  native (78), library (80), Prophet (95) and BACKUP_GET / BACKUP_PUT do.
+- **Names:** a name sent to the device is printable ASCII, 32–126, nothing else (`ed_text`; any other byte: rc 1).
+  A stored name read back shows anything not printable as a space (`ed_shown`).
+- **Paged replies:** a reply holds at most 1024 bytes, F0 to F7. A paged reply carries `first, count, total`
+  and then `count` items; `count` is the number of the requested items that exist (`ed_page(first, want,
+  total)`), cut further where the next item would not fit (`ed_left()`: payload bytes left before the F7). The
+  editor asks again from `first + count` until it has `total`. New commands send `first`, `count` and `total` as
+  14-bit values (`ed_u14`: low 7 bits, then the next 7).
+- **Numbers:** a parameter value is a v14 (offset 8192, `ed_v`); a count or index past 127 is a plain 14-bit
+  value (`ed_u14`); a 32-bit value is five 7-bit groups, low first (`ed_u35`); native CZ-1 bytes travel as nibble
+  pairs, low first (`ed_nibbles` / `ed_unnibble`).
+- **Command families** with their own file answer through `ED_HANDLERS[]` (each returns 1 when the command is
+  its own); a new family is one more entry.
+
+## Flash ledger (editor commands)
+
+Melodee Studio needs new editor commands (branches F0–F5) in an app body that is nearly full. Every change that
+touches the editor records its cost here, measured on both boards from a full build (`./build.sh`, the build's
+`image` line). The app body is the image minus the 3,808-byte boot stub and must stay at or below `BODY_MAX`
+(`tools/fm1pkg_make.py`, 0x8C000 = 573,440 B; the commit marker's sector follows). Editor code = the `ed_*`,
+`p5_native_frame` and `p5_accept_patch` functions in `build/melodee.elf`.
+
+Boards: **FM-1** = plain build (`./build.sh`); **SMK** = SMK-37 Elite (`BOARD=smk37 MODEL=elite ./build.sh`).
+
+### Baseline (nightly 5a4005ef, 2026-11-06)
+
+| | FM-1 | SMK |
+|---|---:|---:|
+| image | 573,220 B | 573,696 B |
+| app body (image − 3,808) | 569,412 B | 569,888 B |
+| free under `BODY_MAX` | **4,028 B** | **3,552 B** |
+| editor code | 20,270 B | 20,182 B |
+| RAM .data+.bss (of 98,304) | 95,304 B | 95,880 B |
+| audio pool (of 357,888) | 139,556 B | 141,176 B |
+
+Other room (not app-body code): the resource region holds 53,852 B in 14 of its 15 (FM-1) / 16 (SMK) sectors; the
+SMK-37's app tail (0x93000..0x9CFFF) has 30,200 B free after `.smkx`.
+
+### Changes
+
+| Branch / commit | Change | FM-1 | SMK |
+|---|---|---:|---:|
+| F0 `chore/editor-flash-room` | `editor_res.c` and `editor_wire.h` built for size (the other `editor*.c` already were); shared helpers: 7-bit writers (`ed_n7` / `ed_u14` / `ed_u35` / `ed_u35s`), request echo (`ed_arg` / `ed_echo`), names (`ed_text` / `ed_shown`), paging (`ed_page` / `ed_left`), nibbles, table-driven argument lengths (`ED_ARGN`), handler table, INFO from a constant table, STEP + TRACK_STEP and SONG + BANK_SONG share their code, FAV kind limits, backup object source. No command retired, every reply byte for byte as before | **−1,644 B** | **−1,604 B** |
+
+After F0: FM-1 image 571,576 B, **5,672 B free**; SMK image 572,092 B, **5,156 B free**. Editor code 18,484 B
+(FM-1) / 18,462 B (SMK). RAM unchanged (the new tables are constants in flash).
+
+How F0 was checked: `tests/run_tests.sh` (editor_test, backup_test, the old editor's `web/test_web.mjs`), and a
+differential run of the old and new `editor*.c` on the host: 200,000 random and well-formed requests to every
+command (including all sub-operations of 33, 37/38, 64, 68–80 and 95), every reply and the device state after
+it compared byte for byte, identical.
