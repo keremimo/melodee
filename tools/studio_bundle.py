@@ -19,7 +19,9 @@ build/studio-bundle/
   prophet_factory.json  Sequential's 200 v1.03 programs (tools/gen_prophet_factory.py --json)
   palettes.json         the UI palettes and their derived colours (tools/gen_ui_palettes.py --json)
   melodee_core.wasm, melodee_kit.wasm   only when built (build/core, build/kit, or --core / --kit); standalone modules
-                        (no imports, no JS glue); the core's exports and ABI in the manifest ("core")
+                        (no JS glue; the core imports nothing, the kit maker only env.emscripten_notify_memory_growth);
+                        the core's exports and ABI in the manifest ("core"), the kit maker's exports, its kit_max and
+                        whether web/kit/check.mjs made the fixture's kits again byte for byte ("kit")
   protocol-transcripts.jsonl  the core's replies to Studio's requests from a new device's power-on and with the song
                         fixture loaded (web/core/core_check.mjs --transcripts: needs the core and node)
   LICENSES/  SOURCE     the licences and where the complete corresponding source is
@@ -275,6 +277,18 @@ def build(out, work, wasm_args):
             run(["node", "web/core/core_check.mjs", "--core", str(tmp / "melodee_core.wasm"), "--mel", str(mel),
                  "--transcripts", str(tmp / "protocol-transcripts.jsonl"), "--transcripts-only"])
             core["transcripts"] = True
+    kit = None
+    if wasm["melodee_kit.wasm"]:
+        exports, nimports = wasm_exports(tmp / "melodee_kit.wasm")
+        if nimports != 1:                             # (env.emscripten_notify_memory_growth: Studio gives a no-op)
+            fail(f"melodee_kit.wasm imports {nimports} functions: Studio gives it one (memory growth)")
+        kit = {"exports": [e for e in exports if e.startswith("kit_")], "kit_max": consts["kits"]["kit_max"], "checked": False}
+        if shutil.which("node"):                      # the fixture's kits made again from its takes, byte for byte
+            said = run(["node", "web/kit/check.mjs"],
+                       env={**os.environ, "MEL_DIR": str(mel), "KIT_WASM": str(tmp / "melodee_kit.wasm")})
+            if "kit: all ok" not in said:
+                fail(f"web/kit/check.mjs:\n{said[-2000:]}")
+            kit["checked"] = True
 
     lic = tmp / "LICENSES"
     lic.mkdir()
@@ -308,6 +322,7 @@ def build(out, work, wasm_args):
         "records": {k: magic_names(v) for k, v in consts["records"].items()},
         "wasm": wasm,
         "core": core,
+        "kit": kit,
         "files": files,
     }
     write_json(tmp / "manifest.json", manifest)
@@ -346,6 +361,11 @@ def verify(out):
         exports, _ = wasm_exports(out / "melodee_core.wasm")
         if [e for e in exports if e.startswith("core_")] != core["exports"]:
             problems.append("melodee_core.wasm: its exports are not the manifest's")
+    kit = manifest.get("kit")
+    if kit and "melodee_kit.wasm" in listed:
+        exports, _ = wasm_exports(out / "melodee_kit.wasm")
+        if [e for e in exports if e.startswith("kit_")] != kit["exports"]:
+            problems.append("melodee_kit.wasm: its exports are not the manifest's")
     for need in ("desc.json", "layout.json", "protocol.json", "constants.json", "settings.json", "scales.json",
                  "prophet_factory.json", "palettes.json", "SOURCE", "LICENSES/GPL-3.0-only.txt"):
         if need not in listed:
