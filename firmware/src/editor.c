@@ -111,8 +111,8 @@ static struct {
     uint8_t v4;                                          /* WATCH bit 1: TRACK_CHANGED pushes too */
     uint8_t bits;                                        /* the WATCH bits known (2: eight tracks, 3: TRACKS / TRANSPORT
                                                           * pushes, 4: METERS), 0 when not watching */
-    uint32_t psig[3], m_ms;                              /* (editor_session.c: what TRACKS_CHANGED, TRANSPORT_CHANGED and
-                                                          * SONG_CHANGED last said; the song: its signature) */
+    uint32_t psig[4], m_ms;                              /* (editor_session.c: what TRACKS_CHANGED, TRANSPORT_CHANGED,
+                                                          * SONG_CHANGED and PATTERN_CHANGED last said: signatures) */
     uint32_t pos, last_ms, run_ms, resets;
     int16_t v[ED_NV];                                    /* TSEL->p[], then song.g[] */
     uint16_t t[ED_NV];                                   /* ms (low 16 bits) of the last push */
@@ -326,18 +326,21 @@ static int ed_flash_stop(void)
 #include "editor_prophet.c"
 #include "editor_cpu_lab.h"
 #include "editor_song.c"
+#include "editor_patterns.c"
 #include "editor_session.c"
 #include "editor_projects.c"
 
-static void ed_motion_reply(uint32_t k, uint32_t rc)
+static void ed_motion_reply(uint32_t k, uint32_t bank, uint32_t rc)   /* (the count: of the bank's, after them) */
 {
-    track_t *t = &trk[k];
-    ed_b(k); ed_b(rc); ed_b(motion_enabled(t)); ed_b(motion_count(t)); ed_b(MOTION_MAX);
+    uint32_t at, c = 0;
+    ed_b(k); ed_b(rc); ed_b(motion_enabled(&trk[k])); at = ed_n; ed_b(0); ed_b(MOTION_MAX);
     for (uint32_t i = 0; i < motion.count; i++) {
         const motion_event_t *e = &motion.event[i];
-        if ((e->place >> 6) != k || motion_pattern[i] != t->pattern) continue;
+        if ((e->place >> 6) != k || motion_pattern[i] != bank) continue;
         ed_b((e->place & 63u) | ((e->param & 128u) >> 1)); ed_b(e->param); ed_v(e->value);
+        c++;
     }
+    ed_out[at] = (uint8_t)c;
 }
 /* argument lengths: bit n set = n argument bytes accepted (n <= 15); 0 = the handler checks its own (variable
  * payloads, sub-operations). Commands past the table check their own too. */
@@ -364,9 +367,15 @@ static int ed_args_ok(uint32_t cmd, const uint8_t *a, uint32_t n)
         return n != 13u || a[12] <= 100u;           /* the chance */
     case ED_TRACK_STEP:
         return n != 14u || a[13] <= 100u;
-    case ED_MOTION:
+    case ED_MOTION: {
+        uint32_t k = a[0];
+        if (n > 2u && a[1] == 5u) {                   /* (Studio: track, 5, bank, then as for the bank playing) */
+            if (a[2] >= NPAT) return 0;
+            a += 2; n -= 2;
+        }
         return (n == 1u || (n == 2u && a[1] == 2u) || (n == 3u && a[1] == 1u && a[2] <= 1u) ||
-                (n == 6u && a[1] == 3u) || ((n == 4u || n == 6u) && a[1] == 4u)) && a[0] < NPART;
+                (n == 6u && a[1] == 3u) || ((n == 4u || n == 6u) && a[1] == 4u)) && k < NPART;
+    }
     case ED_BANK_SONG:
         if (n && a[0] == 4u) return n == 2u;
         /* fall through */
@@ -388,7 +397,7 @@ static int (*const ED_HANDLERS[])(uint32_t cmd, const uint8_t *a, uint32_t n) = 
     ed_res_handle,
 #endif
     ed_ui_handle, ed_backup_handle, ed_fm6_handle, ed_cz_handle, ed_library_handle, ed_native_handle,
-    ed_session_handle, ed_projects_handle, ed_song_handle,
+    ed_session_handle, ed_projects_handle, ed_song_handle, ed_patterns_handle,
 };
 static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0 and F7 */
 {
@@ -724,23 +733,25 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         break;
     }
 #endif
-    case ED_MOTION: {
-        track_t *t = &trk[a[0]]; uint32_t rc = 0;
+    case ED_MOTION: {                                      /* (track, 5, bank, ..: another bank, ed_args_ok) */
+        track_t *t = &trk[a[0]]; uint32_t rc = 0, k = a[0], bk = t->pattern;
+        if (na > 2u && a[1] == 5u) { bk = a[2]; a += 2; na -= 2; }
         if (na > 1u && chain_busy()) rc = 3;
         else if (na > 1u) {
             if (a[1] == 1u) motion_set_enabled(t, a[2]);
-            else if (a[1] == 2u) { load_begin(t, UNDO_PAT); motion_clear(t); load_end(t); }
-            else if (a[1] == 3u) rc = motion_set_event(t, a[2] & 63u, a[3] | ((a[2] & 64u) << 1), (int16_t)ed_rv(a + 4));
+            else if (a[1] == 2u) { load_begin(t, UNDO_PAT); motion_clear_bank(t, bk); load_end(t); }
+            else if (a[1] == 3u) rc = motion_set_event_at(t, bk, a[2] & 63u, a[3] | ((a[2] & 64u) << 1), (int16_t)ed_rv(a + 4));
             else if (a[1] == 4u) {
                 uint32_t id = a[3] | ((a[2] & 64u) << 1);
                 if (motion_param(id) || (id >= MO_NATIVE && id < MO_NATIVE + MO_NATIVE_N))
-                    motion_delete_event(t, a[2] & 63u, na==6u ? id|(motion_native_event(id,ed_rv(a+4))?256u:0u) : id|512u);
+                    motion_delete_event_at(t, bk, a[2] & 63u, na==6u ? id|(motion_native_event(id,ed_rv(a+4))?256u:0u) : id|512u);
                 else rc = 1;
             }
             else rc = 1;
             ui.force = 1;
+            ed_pat_own();
         }
-        ed_motion_reply(a[0], rc);
+        ed_motion_reply(k, bk, rc);
         break;
     }
     case ED_INFO: {
@@ -985,13 +996,15 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         uint32_t was = ed_w.on ? ed_w.bits : 0u;          /* (3 s without a request: not watching) */
         ed_w.on = a[0] & 1u;
         ed_w.v4 = (uint8_t)(ed_w.on && (a[0] & 2u));     /* v4: also TRACK_CHANGED; the reply says it is known */
-        ed_w.bits = (uint8_t)(ed_w.on ? a[0] & 63u : 0u); /* Studio: bits 2..4 (editor_session.c), 5 (editor_song.c) */
+        ed_w.bits = (uint8_t)(ed_w.on ? a[0] & 127u : 0u); /* Studio: bits 2..4 (editor_session.c), 5 (editor_song.c),
+                                                           * 6 (editor_patterns.c) */
         ed_w.resets = usb.resets;
         if (ed_w.on && (!(was & 1u) || a[0] < 4u)) {     /* (Studio's WATCH while watching: no push is lost) */
             ed_shadow();
             ed_w.psig[0] = ed_tracks_body(0);              /* (what the pushes compare with; then the reply) */
             ed_w.psig[1] = ed_tp_body();
             ed_w.psig[2] = se.signature;
+            ed_w.psig[3] = ed_pat_sig();
             ed_begin(ED_WATCH);
         }
         if (ed_w.bits & ~was & 16u)
@@ -1067,11 +1080,14 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_xyv(a[0], a[1], t->p[a[1]]);
         break;
     }
-    case ED_PATTERN: {
-        if (na < 2u || a[0] >= NTRK || a[1] > 2u || na != (a[1] == 0u ? 2u : a[1] == 1u ? 3u : 4u)) return;
+    case ED_PATTERN: {          /* (Studio: 3 clears bank a[2], 4 halves it, 5 doubles it, as SEQ's dialog: pattern_dialog.c) */
+        if (na < 2u || a[0] >= NTRK || a[1] > 5u || na != (a[1] == 0u ? 2u : a[1] == 2u ? 4u : 3u)) return;
         track_t *t = &trk[a[0]]; uint32_t rc = 0;
         if (a[1] == 1u) rc = pattern_request(t, a[2]);
         if (a[1] == 2u) rc = pattern_copy(t, a[2], a[3]);
+        if (a[1] > 2u)
+            rc = a[2] >= trk_npat(a[0]) ? 1u : (uint32_t)(a[1] == 3u ? pattern_key_delete(a[0], a[2]) : pattern_key_len(a[0], a[2], a[1] == 5u));
+        ed_pat_own();
         ed_bytes(a, 2u); ed_b(rc); ed_b(t->pattern); ed_b(t->pattern_next < NPAT ? t->pattern_next : 127u); ed_b(trk_npat(a[0]));
         ui.force = 1;
         break;

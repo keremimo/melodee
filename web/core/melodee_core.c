@@ -281,6 +281,7 @@ static void loop_services(void)                        /* main.c's loop, without
     fm6_service();
     ed_service();
     frame_done();
+    dq_poll();                                          /* (ui_input.c's frame: edits waiting for a loop end) */
     glo_poll();
     settings_poll();
     in_loop = 0;

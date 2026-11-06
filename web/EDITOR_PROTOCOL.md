@@ -1442,9 +1442,10 @@ printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies e
 | `P` (0x50) | 3 | `PROJECTS` version 1, slots (32), name length (12) |
 | `G` (0x47) | 1 | `STORAGE` version 1 |
 | `K` (0x4B) | 1 | 1: `BACKUP_LIST 1` (an inventory) and `BACKUP_GET` while playing |
-| `W` (0x57) | 1 | the `WATCH` bits known (31: bits 0..4; 63 with F3's bit 5, "Studio song") |
+| `W` (0x57) | 1 | the `WATCH` bits known (31: bits 0..4; 63 with F3's bit 5, "Studio song"; 127 with F2's bit 6, "Studio patterns") |
 | `M` (0x4D) | 2 | `METERS` version 1, milliseconds between pushes (66, ~15 Hz) |
 | `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
+| `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
 
 Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
 
@@ -1549,6 +1550,7 @@ answer and pushes as before.
 | 3 | `TRACKS_CHANGED` (56) when the tracks in use, the selection, solo, armed or a track's sound change on the device (not level or mute: `CHANGED` / `TRACK_CHANGED` carry those), and `TRANSPORT_CHANGED` (57) when the transport changes but its step (play, stop, a song row, a repeat, the loop, the clock) |
 | 4 | `METERS` (55) every 66 ms (~15 Hz) while watching. Studio sets the bit only while Stage or Mixer is open and its tab visible |
 | 5 | (F3) `SONG_CHANGED` (58) when the song changes on the device: see "Studio song" |
+| 6 | (F2) `PATTERN_CHANGED` (59) when patterns change on the device: see "Studio patterns" |
 
 A `WATCH` with bits 2..4 while watching only changes the bits: the shadows stay, so no push is lost (a `WATCH` of 0..3,
 or one that starts watching, takes the device's values as known, as before). The editor's own `TRACKS` /
@@ -1678,6 +1680,125 @@ repeated with each repeat (FBKN). The later start wins where two overlap; a held
 repeats, loop, block sounds or punch events (an edit, an undo, a project load, a new song). Studio then reads it again.
 The editor's own writes push nothing. The device notices a change within one screen pass.
 
+## Studio patterns (commands 44, 45, 59; 64 and 73 extended)
+
+Melodee Studio's patterns (branch F2 `feat/editor-patterns-any-bank`, on F3 and the virtual FM-1 core): any track's
+pattern bank, the one playing or another: its steps and timing, its timed notes, its motion, and the edits of SEQ's
+pattern dialog. The commands only add: every earlier command answers byte for byte as before; `MOTION` and `PATTERN`
+take operations that got no reply before. Code: `firmware/src/editor_patterns.c` (44, 45, 59), `editor.c` (64, 73),
+`firmware/src/pattern_dialog.c` (the dialog's delete, half and double, moved out of `ui_input.c` so the editor and the
+virtual FM-1 have them). Tests: `tests/editor_test.c` `studio_patterns`.
+
+**Finding out.** `CAPS` (39) has a tag `D`: `44 04` version 1 (all of the below), the steps a pattern holds (64), the
+timed notes a project holds (1,024, 14 bits); `W` is 127 (bits 0..6). Firmware without the tag never answers 44 and
+45, ignores `MOTION` op 5 and `PATTERN` ops 3..5, and knows no bit 6.
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 44 PATTERN_DATA | track, bank, half (read); track, bank, half, LEN, DIV, SWING, GATE, 32 × step (write) | track, bank, half, rc, then (a bank the track has) LEN, DIV, SWING, GATE, 32 × step |
+| 45 NOTES | track, bank, 0, first (14 bits), count (list); track, bank, 1, m, m × note (write) | track, bank, op, rc, then 0: first, count, total (14 bits each), count × note; 1: the m notes' ids (14 bits each) |
+| 64 MOTION | track, 5, bank, then a `MOTION` request's bytes after its track: — (query), 1 on, 2 clear, 3 set, 4 delete | as `MOTION`: track, rc, on, count, max, the events, all of that bank |
+| 73 PATTERN | track, 3, bank (clear); track, 4, bank (halve); track, 5, bank (double) | as `PATTERN`: track, op, rc, active bank, queued bank (127 none), the track's banks |
+| 59 PATTERN_CHANGED (push) | — | NTRK, then per track: the bank playing, the bank queued (127 none) |
+
+Tracks and banks count from 0 on the wire (16 banks on tracks 1..4, 8 on the MIDI-only tracks 5..8); half 0 is steps
+1..32, half 1 steps 33..64. Every reply fits one 1024-byte frame (`PATTERN_DATA` 398 bytes; `NOTES` pages are cut to
+fit: 59 notes); the longest request is a `NOTES` write of 37 notes (639 bytes with the frame).
+
+rc: 0 done; 1 malformed or invalid (nothing changed); 2 no room (`NOTES`: the 1,024 timed notes in use, or no edit
+memory on the device; `PATTERN`: PATTERN DATA FULL, or the loop-end queue full); 3 busy (a song plays or is about to:
+STOP TO EDIT; `NOTES` also while the track records live); 4 PATTERN STORAGE FULL (the project could not be saved:
+nothing changed); 5 (`PATTERN` 3) waits for the track's loop end. Like F1 / F3, a 44 or 45 request of the wrong length
+still gets its reply, with rc 1.
+
+### PATTERN_DATA (44)
+
+The bank's timing as stored with it (`P_SLEN` .. `P_SGATE`; the bank playing: the track's own): LEN 1..64, DIV
+(`P_SDIV`, as `SONG2`: 0 1/4, 1 1/8, 2 1/16, 3 1/32, 4 8T, 5 16T, 6 1/2, 7 1/1, 8 2BAR, 9 4BAR), SWING 0..100, GATE
+1..127. Then 32 steps of 12 bytes: the step's 11 bytes as the device keeps them (`step_t`), the eighth bits last.
+
+| byte | field |
+| --- | --- |
+| 0..3 | notes, 0..127 (the first n are in use) |
+| 4 | n, the notes in use (0..4) |
+| 5 | time: 0 NOTE, 1 TIE, 2 REST |
+| 6 | flags: 1 accent, 2 slide, 4 the view of timed notes (below) |
+| 7 | velocity (0: the track's) |
+| 8 | the drum lanes hit, lanes 1..7 (bits 0..6) |
+| 9 | with hits: their accents (bits 0..6); without: the step's own gate, 1..255 of a step (0: the track's GATE) |
+| 10 | chance: 0 always (a pattern from before chance), 1..100 %, 101 never |
+| 11 | bit 0: lane 8 hit, bit 1: bit 7 of byte 9 |
+
+A write replaces the half's 32 steps and the timing (the other half stays; the timing is clamped into its ranges). Each
+step must be one the device can hold (n ≤ 4, time ≤ 2, flags ≤ 7, chance ≤ 101, accents only on lanes hit): else rc 1,
+nothing changed. On the bank playing the track hears it at once (as `STEP_SET`). A step written without flag 4 where
+timed notes were drops them (as clearing it on the device does); flag 4 on a step without timed notes plays nothing.
+Not undoable on the device (as `STEP_SET`). rc 3 while a song plays; rc 4 when the project would not save.
+
+### NOTES (45)
+
+Timed notes are notes played in live (or turned into timed notes on the NOTES page): each keeps its onset inside its
+step, its own length and its velocity. The bank's steps are their views: flag 4, the notes whose onset rounds to that
+step (up to four pitches, the highest velocity, accent above 110; on a DRUM track the lanes' hits).
+
+A note, 17 bytes:
+
+| bytes | field |
+| --- | --- |
+| 2 | id: its slot, 0..1023 (14 bits; kept until the next write, take or load) |
+| 1 | step, 0..63 |
+| 5 | onset in the step, 0..65,535 of the step's span (32 bits, five 7-bit groups, low first) |
+| 5 | length: 65,536 a step (unswung), 1..8,388,480 (32 bits) |
+| 1 | note, 0..127 |
+| 1 | velocity, 1..127 |
+| 1 | pitch + 64: a drum hit's own tune, −24..24 (64 for every other note) |
+| 1 | flags: bit 0 a gated drum hit; read only: bit 1 shown on the next step (an onset in the step's second half), bit 2 shown on step 1 (the last step's second half) |
+
+Time: a note starts `onset × span / 65,536` after its step's start, the span being the step's own (its division, swung
+as `SONG2`'s timing describes); its length counts straight steps of the bank's division.
+
+- **List** (op 0): `first, count, total` (14 bits each), then `count` notes of the bank in slot order (`count` cut to
+  fit). Notes past LEN are listed too (they stay hidden, as steps past LEN do).
+- **Write** (op 1): m ≥ 1 notes, all checked before anything changes: an id that is one of the bank's notes, or 16383
+  for a new one (velocity ≥ 1); velocity 0 removes the note; step, onset, length, pitch and flags in their ranges; a
+  note may not land on a step that holds its own notes (rc 1: clear the step, or turn it into timed notes on the
+  device, first). rc 2 when the new notes need more than the free slots (RECORDING FULL); rc 4 when the views would
+  not save; rc 3 while a song plays or the track records live. The notes are then written in order (a later one in the
+  request wins) and the bank's views are made again from its notes: a step that loses its last note becomes a rest; a
+  view keeps its chance and slide. The reply: the m notes' ids (a new note's slot). On the bank playing, stopped: one
+  edit the device's EDIT held undoes (whichever track is selected); on another bank or while playing it is not
+  undoable (as the device's own edits there).
+
+### MOTION (64) on any bank
+
+`track, 5, bank`, then the bytes a `MOTION` request has after its track (none: the query; `1, on`; `2`; `3, step, id,
+v14`; `4, step, id[, v14]`), acts on that bank's events instead of the bank playing's. On / off stays the track's (all
+of its banks). The reply is `MOTION`'s with that bank's count and events. A clear on another bank is the device's
+MOTION CLEARED (undoable as a load). The rules are `MOTION`'s (64 events shared by the parts' banks: rc 2 full; tracks
+5..8 have no motion: no reply; bank ≥ 16: no reply).
+
+### PATTERN (73): clear, halve, double
+
+SEQ's pattern dialog on the device (SEQ held, then a pattern key held), with its messages on the device's screen:
+
+- **3 clear** (the dialog's Delete): the bank's steps, timed notes, motion and its own sound (FBKQ); LEN and DIV stay.
+  Stopped: at once; playing: at the track's loop end (rc 5: DELETE AT LOOP END on the device; `PATTERN_CHANGED`
+  follows). An empty bank: rc 0, nothing done.
+- **4 halve**: LEN halved (an odd LEN keeps its middle step); the steps past it stay, hidden. rc 3 at 1 step.
+- **5 double**: LEN doubled, steps 1..LEN copied after themselves with their timed notes and motion (what lay hidden
+  there goes). rc 3 past 32 steps (64 STEPS MAX), rc 2 when the timed notes or the motion do not fit, rc 4 storage.
+
+On the bank playing they are undoable (EDIT held), on another bank not (as on the device). rc 1: a song plays, or a
+bank past the track's.
+
+### WATCH bit 6: PATTERN_CHANGED (59)
+
+`WATCH` with bit 6 (64) pushes `PATTERN_CHANGED` (17 bytes, 23 with the frame) when patterns change on the device: a
+track's steps or timing of the bank playing, a bank written (copied, cleared, halved, doubled, loaded), the banks
+playing or queued, the motion, the timed notes. Studio then reads again what it shows. `PATTERN_DATA`, `NOTES`,
+`MOTION` and `PATTERN` push nothing for the editor's own changes; other commands' do (`STEP_SET`, `TRACK_STEP`, a
+`SET` of LEN, ...). The device looks every push pass (~5 ms) while the bit is set (a hash of ~6 KB).
+
 ## Flash ledger (editor commands)
 
 Melodee Studio needs new editor commands (branches F0–F5) in an app body that is nearly full. Every change that
@@ -1761,3 +1882,31 @@ harness against F1's `editor*.c` (012c7ed5): 200,000 random and shaped requests 
 them, every reply and the state after it identical, leaving out only what F3 changes on purpose (`CAPS`, commands
 47–49, `WATCH` bit 5).
 
+| F2 `feat/editor-patterns-any-bank` | Studio patterns (see "Studio patterns"), per command: the full build minus a build without it (first build; the total: the final one) | **+3,144 B** | **+1,956 B** |
+|---|---|---:|---:|
+| — PATTERN_DATA 44 | any bank's steps and timing in 32-step halves, read and write (checked, saveable) | +480 B | +504 B |
+| — NOTES 45, list | a bank's timed notes, paged | +404 B | +416 B |
+| — NOTES 45, write | add / change / remove, all checked first; the bank's views made again from its notes; undoable on the bank playing (the edit memory) | +1,508 B | +1,532 B |
+| — MOTION 64 on a bank | `track, 5, bank, ..`: query, set, delete, clear on any bank | +16 B | +48 B |
+| — PATTERN 73 ops 3..5 | clear, halve, double through SEQ's dialog code | +72 B | +96 B |
+| — push 59 | PATTERN_CHANGED on WATCH bit 6 (the signature, the banks) | +504 B | −640 B |
+| — shared | the CAPS `D` tag, `W` 127, the handler entry, `motion_set_event_at` / `motion_delete_event_at`, SEQ's pattern dialog moved out of `ui_input.c` into `pattern_dialog.c` (built for size with `editor_patterns.c`; left at `-Os` they cost ~0.7 KB more) | +176 B | +128 B |
+| — savings found | NOTES reuses `recording_remove` (−40 / −68 B); `installer_report.c`, `note_history.c`, `ui_midi_learn.c` built for size: main-loop only (−60 / −56 B; SMK RAM +32 B from the regrouped globals) | −100 B | −124 B |
+
+After F2: FM-1 image 579,440 B, **2,192 B over** `BODY_MAX` (577,248); SMK image 578,800 B, **1,552 B over**. The
+build fails its size check ("app body overlaps the commit-marker sector") on both boards: **F2 does not fit**, and the
+cuts are Kerem's (see the options in the side-session note `editor-patterns-any-bank.md`). RAM .data+.bss +16 B
+(FM-1, 95,464) / +32 B (SMK, 95,992). Over the F2 estimate (1.5–2.5 KB) on FM-1: the timed notes' write is most of it.
+Without it (NOTES read-only) F2 measured +1,696 B on FM-1 (744 B over) and +480 B on SMK (76 B over).
+
+The per-command differences are not additive; on SMK-37 they are mostly layout: the merged globals
+(`.L_MergedGlobals*`, 512-byte groups addressed from one base) regroup whenever a static variable is added or grows,
+and the interrupt and main-loop code that reads them grows or shrinks with it. F2's SMK build has ~1 KB of such gains
+outside the editor (`fm1_main` −246 B, `fm1_timer5_irq` −214 B, `mix_block` −86 B, ...); the build without the push
+loses them again, so the push's "−640 B" there is layout, not the push (on FM-1 its code is ~270 B).
+
+How F2 was checked: `editor_test` `studio_patterns` (also under ASan/UBSan), the virtual FM-1 core (`core_check`: the
+F2 transcripts natively and in WebAssembly byte for byte), `tests/run_tests.sh` once, and F0's differential harness
+against the branch tip (`feat/studio-export` de24e07a, F1 and F3 included): 200,000 random and shaped requests (4
+seeds), every reply and the state after it identical, leaving out only what F2 changes on purpose (`CAPS`, commands 44
+and 45, `MOTION` op 5, `PATTERN` ops 3..5, `WATCH` bit 6).

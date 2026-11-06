@@ -1096,11 +1096,164 @@ static int studio_song(void)
                  !se.range);
     return bad;
 }
+
+/* F2: PATTERN_DATA (44), NOTES (45), MOTION on a bank (64), PATTERN 3..5 (73), WATCH bit 6 -> PATTERN_CHANGED (59) */
+static uint32_t pd_half(uint32_t k, uint32_t b, uint32_t h) { uint8_t q[3] = {(uint8_t)k, (uint8_t)b, (uint8_t)h}; return request(ED_PATTERN_DATA, q, 3); }
+static uint32_t nt_note(uint8_t *q, uint32_t id, uint32_t step, uint32_t on, uint32_t du, uint32_t note, uint32_t vel)
+{
+    uint32_t i;
+    q[0] = id & 127u; q[1] = id >> 7; q[2] = (uint8_t)step;
+    for (i = 0; i < 5u; i++) { q[3 + i] = (on >> 7 * i) & 127u; q[8 + i] = (du >> 7 * i) & 127u; }
+    q[13] = (uint8_t)note; q[14] = (uint8_t)vel; q[15] = 64; q[16] = 0;
+    return ED_NOTE_N;
+}
+static uint32_t wire14(uint32_t i) { return host_wire[i] | host_wire[i + 1] << 7; }
+static int studio_patterns(void)
+{
+    int bad = 0;
+    uint8_t a[640] = {0}, *q;
+    uint32_t n, i, id0, id1;
+    reset();
+    n = request(ED_CAPS, a, 0);
+    for (i = 6; i + 1u < n && host_wire[i] != 'D'; i += 2u + host_wire[i + 1]) ;
+    bad += check("CAPS: tag D (patterns v1, 64 steps, 1,024 timed notes), W 127", host_wire[i + 1] == 4 && host_wire[i + 2] == 1 &&
+                 host_wire[i + 3] == NSTEP && host_wire[i + 4] + (host_wire[i + 5] << 7) == RECORD_MAX);
+    n = pd_half(1, 3, 1);
+    bad += check("PATTERN_DATA track 2 bank 4, steps 33..64: rc 0, LEN 16, DIV 1/16, 32 rests of 12 bytes", n == 13u + 32u * ED_STEP_N + 1u &&
+                 !host_wire[8] && host_wire[9] == 16 && host_wire[10] == 2 && host_wire[13 + 5] == ST_REST);
+    a[0] = 1; a[1] = 3; a[2] = 1; a[3] = 48; a[4] = 1; a[5] = 20; a[6] = 90;
+    for (i = 0; i < 32u; i++) { q = a + 7 + i * ED_STEP_N; q[5] = ST_REST; }
+    q = a + 7;                                                  /* step 33: two notes, accent, 100, hits 1 + 8 accented on 8, 41 % */
+    q[0] = 60; q[1] = 64; q[4] = 2; q[5] = ST_NOTE; q[6] = SF_ACCENT; q[7] = 100; q[8] = 1; q[9] = 0; q[10] = 41; q[11] = 3;
+    request(ED_PATTERN_DATA, a, 7u + 32u * ED_STEP_N);
+    step_t s = pattern_step(1, 3, 32);
+    bad += check("PATTERN_DATA writes bank 4 (not playing): the step, its hits past bit 7, LEN 48 / DIV 1/8 / SWING 20 / GATE 90",
+                 !host_wire[8] && s.note[1] == 64 && s.n == 2 && s.hit == 0x81 && s.acc == 0x80 && s.probability == 41 &&
+                 pattern_timing(1, 3, 0) == 48 && pattern_timing(1, 3, 3) == 90 && trk[1].pattern == 0 && trk[1].p[P_SLEN] == 16 &&
+                 host_wire[9] == 48 && host_wire[13] == 60 && host_wire[13 + 8] == 1 && host_wire[13 + 11] == 3);
+    q[4] = 5; request(ED_PATTERN_DATA, a, 7u + 32u * ED_STEP_N);
+    bad += check("PATTERN_DATA five notes in a step: rc 1, unchanged", host_wire[8] == 1 && pattern_step(1, 3, 32).n == 2);
+    q[4] = 2; a[1] = 0; a[2] = 0; chain.armed = 1; request(ED_PATTERN_DATA, a, 7u + 32u * ED_STEP_N);
+    bad += check("PATTERN_DATA write while the song plays: rc 3", host_wire[8] == 3 && trk[1].step[0].n == 0);
+    chain.armed = 0; request(ED_PATTERN_DATA, a, 7u + 32u * ED_STEP_N);
+    bad += check("PATTERN_DATA writes the bank playing: the track's own steps and LEN", !host_wire[8] && trk[1].step[0].note[1] == 64 &&
+                 trk[1].p[P_SLEN] == 48);
+    n = pd_half(4, 8, 0);
+    bad += check("PATTERN_DATA bank 9 of a MIDI-only track (8 banks): rc 1, no data", n == 10u && host_wire[8] == 1);
+    n = request(ED_PATTERN_DATA, a, 5);
+    bad += check("PATTERN_DATA of a wrong length: rc 1, the half still read", n == 13u + 32u * ED_STEP_N + 1u && host_wire[8] == 1);
+
+    /* PATTERN 73: 3 clears, 4 halves, 5 doubles (SEQ's pattern dialog) */
+    a[0] = 1; a[1] = 4; a[2] = 3; request(ED_PATTERN, a, 3);
+    bad += check("PATTERN halve track 2 bank 4: LEN 24, the steps past it kept hidden", !host_wire[7] && pattern_timing(1, 3, 0) == 24 &&
+                 pattern_step(1, 3, 32).n == 2);
+    a[1] = 5; request(ED_PATTERN, a, 3);
+    bad += check("PATTERN double it: LEN 48, steps 1..24 copied after themselves", !host_wire[7] && pattern_timing(1, 3, 0) == 48 &&
+                 pattern_step(1, 3, 32).time == ST_REST);
+    request(ED_PATTERN, a, 3);
+    bad += check("PATTERN double 48 steps: rc 3 (64 STEPS MAX)", host_wire[7] == 3 && pattern_timing(1, 3, 0) == 48);
+    a[0] = 1; a[2] = 0; a[1] = 4; request(ED_PATTERN, a, 3);
+    bad += check("PATTERN halve the bank playing (48 -> 24)", !host_wire[7] && trk[1].p[P_SLEN] == 24);
+    undo_swap();
+    bad += check("  the device's EDIT held undoes it", trk[1].p[P_SLEN] == 48);
+    a[1] = 3; a[2] = 3; request(ED_PATTERN, a, 3);
+    bad += check("PATTERN clear bank 4 (stopped: at once)", !host_wire[7] && pattern_empty(1, 3));
+    song.playing = 1; a[2] = 0; request(ED_PATTERN, a, 3);
+    bad += check("PATTERN clear the bank playing while playing: rc 5, waits for the loop end", host_wire[7] == 5 && dq_n == 1 &&
+                 trk[1].step[0].n == 2);
+    song.playing = 0; dq_poll();
+    bad += check("  stopped: done", !dq_n && !trk[1].step[0].n);
+    a[2] = NPAT; request(ED_PATTERN, a, 3);
+    bad += check("PATTERN clear bank 17: rc 1", host_wire[7] == 1);
+    a[1] = 6; bad += check("PATTERN op 6: no reply", !request(ED_PATTERN, a, 3));
+
+    /* MOTION 64 on another bank: track, 5, bank, then as before */
+    reset();
+    a[0] = 0; a[1] = 5; a[2] = 3; a[3] = 3; a[4] = 4; a[5] = P_LEVEL; a[6] = (90 + 8192) & 127; a[7] = (90 + 8192) >> 7;
+    request(ED_MOTION, a, 8);
+    bad += check("MOTION bank 4: an event set there, none on the bank playing", !host_wire[6] && host_wire[8] == 1 && motion.count == 1 &&
+                 motion_pattern[0] == 3 && motion_count(&trk[0]) == 0);
+    n = request(ED_MOTION, a, 3);
+    bad += check("MOTION bank 4 query: step 5, LEVEL, 90", n == 15u && host_wire[8] == 1 && host_wire[10] == 4 && host_wire[11] == P_LEVEL &&
+                 ed_rv(host_wire + 12) == 90);
+    n = request(ED_MOTION, a, 1);
+    bad += check("MOTION query (the bank playing): none, as before", n == 11u && !host_wire[8]);
+    a[3] = 4; request(ED_MOTION, a, 6);
+    bad += check("MOTION bank 4 delete", !host_wire[6] && !host_wire[8] && !motion.count);
+    a[2] = NPAT; bad += check("MOTION bank 17: no reply", !request(ED_MOTION, a, 3));
+
+    /* NOTES 45 */
+    reset();
+    a[0] = 1; a[1] = 2; a[2] = 1; a[3] = 2;
+    n = 4u + nt_note(a + 4, ED_NOTE_NEW, 3, 16384, 65536, 60, 100);
+    n += nt_note(a + n, ED_NOTE_NEW, 3, 40000, 32768, 67, 120);
+    n = request(ED_NOTES, a, n);
+    id0 = wire14(9); id1 = wire14(11);
+    s = pattern_step(1, 2, 3);
+    step_t s4 = pattern_step(1, 2, 4);
+    bad += check("NOTES adds two timed notes to track 2 bank 3: ids back, the views on steps 4 and 5 (rounded)", !host_wire[8] &&
+                 n == 14u && id0 != id1 && recorded_owner(&recording[id0]) == 1u * NPAT + 2u && (s.flags & SF_RECORDED) &&
+                 s.n == 1 && s.note[0] == 60 && s.vel == 100 && (s4.flags & SF_RECORDED) && s4.note[0] == 67 && (s4.flags & SF_ACCENT));
+    a[2] = 0; a[3] = 0; a[4] = 0; a[5] = 100; n = request(ED_NOTES, a, 6);
+    bad += check("NOTES lists them: two of two, onset, length, note, velocity, the rounded flag", !host_wire[8] && wire14(11) == 2 &&
+                 wire14(13) == 2 && n == 16u + 2u * ED_NOTE_N);
+    for (i = 15; i < n - 1u && wire14(i) != id1; i += ED_NOTE_N) ;
+    bad += check("  the second: step 4, onset 40000, length 32768, 67, 120, flags 2", host_wire[i + 2] == 3 &&
+                 u35_at(i + 3) == 40000u && u35_at(i + 8) == 32768u &&
+                 host_wire[i + 13] == 67 && host_wire[i + 14] == 120 && host_wire[i + 15] == 64 && host_wire[i + 16] == 2);
+    a[2] = 1; a[3] = 1; nt_note(a + 4, id1, 5, 0, 65536, 67, 50);
+    request(ED_NOTES, a, 4u + ED_NOTE_N);
+    bad += check("NOTES moves the second to step 6 at 50: step 5 empty again, step 6 its view", !host_wire[8] &&
+                 pattern_step(1, 2, 4).time == ST_REST && pattern_step(1, 2, 5).note[0] == 67 && !(pattern_step(1, 2, 5).flags & SF_ACCENT) &&
+                 pattern_step(1, 2, 3).note[0] == 60);
+    nt_note(a + 4, id0, 3, 0, 0, 60, 0); request(ED_NOTES, a, 4u + ED_NOTE_N);
+    bad += check("NOTES velocity 0 removes the first: step 4 empty", !host_wire[8] && !recording[id0].vel && pattern_step(1, 2, 3).time == ST_REST);
+    nt_note(a + 4, id1, 5, 0, 65536, 67, 50); a[1] = 3; request(ED_NOTES, a, 4u + ED_NOTE_N);
+    bad += check("NOTES an id of another bank: rc 1", host_wire[8] == 1);
+    a[1] = 2; a[4 + 15] = 100; request(ED_NOTES, a, 4u + ED_NOTE_N);
+    bad += check("NOTES a pitch past +24: rc 1", host_wire[8] == 1);
+    trk[0].step[7] = (step_t){{48}, 1, ST_NOTE, 0, 96};
+    a[0] = 0; a[1] = 0; nt_note(a + 4, ED_NOTE_NEW, 7, 0, 65536, 50, 90); request(ED_NOTES, a, 4u + ED_NOTE_N);
+    bad += check("NOTES on a step holding its own notes: rc 1", host_wire[8] == 1 && trk[0].step[7].note[0] == 48);
+    nt_note(a + 4, ED_NOTE_NEW, 9, 0, 65536, 50, 90); request(ED_NOTES, a, 4u + ED_NOTE_N);
+    bad += check("NOTES on the bank playing: its view in the track's steps", !host_wire[8] && (trk[0].step[9].flags & SF_RECORDED) &&
+                 trk[0].step[9].note[0] == 50);
+    undo_swap();
+    bad += check("  the device's EDIT held undoes it", !(trk[0].step[9].flags & SF_RECORDED) && !trk[0].step[9].n);
+    a[0] = 1; a[1] = 2; a[3] = 37;                              /* 75 notes: two pages */
+    for (i = 0; i < 37u; i++) nt_note(a + 4 + i * ED_NOTE_N, ED_NOTE_NEW, 20u + i % 40u, i * 1000u, 4096, 40u + i, 64);
+    request(ED_NOTES, a, 4u + 37u * ED_NOTE_N); i = host_wire[8];
+    request(ED_NOTES, a, 4u + 37u * ED_NOTE_N);
+    a[2] = 0; a[3] = 0; a[4] = 0; a[5] = 127; n = request(ED_NOTES, a, 6);
+    uint32_t c = wire14(11);
+    bad += check("NOTES 75 notes (a 639-byte write twice): read in two pages", !i && !host_wire[8] && wire14(13) == 75 && c < 75 && c > 50 &&
+                 n <= sizeof ed_out && (a[3] = (uint8_t)(c & 127u), a[4] = (uint8_t)(c >> 7), request(ED_NOTES, a, 6), wire14(11) == 75 - c));
+
+    /* WATCH bit 6: PATTERN_CHANGED */
+    reset();
+    a[0] = 65; request(ED_WATCH, a, 1);
+    bad += check("WATCH 65: bit 6 known", host_wire[5] == 65);
+    bad += check("nothing changed: no PATTERN_CHANGED", !pushed(ED_PATTERN_CHANGED, 10));
+    memset(a, 0, sizeof a); a[0] = 2; a[1] = 5; a[2] = 0; for (i = 0; i < 32u; i++) a[7 + i * ED_STEP_N + 5] = ST_REST;
+    a[3] = 16; a[4] = 2; a[5] = 0; a[6] = 64; a[7] = 72; a[11] = 1; request(ED_PATTERN_DATA, a, 7u + 32u * ED_STEP_N);
+    bad += check("the editor's own write: no PATTERN_CHANGED", !host_wire[8] && !pushed(ED_PATTERN_CHANGED, 10));
+    trk[3].step[2].n = 1; trk[3].step[2].note[0] = 62; trk[3].step[2].time = ST_NOTE;
+    i = pushed(ED_PATTERN_CHANGED, 10);
+    bad += check("a step changed on the device: PATTERN_CHANGED with the banks", i && host_wire[i] == NTRK && !host_wire[i + 1] &&
+                 host_wire[i + 2] == 127 && host_wire[i + 1u + 2u * NTRK] == 0xF7);
+    bad += check("PATTERN_CHANGED once", !pushed(ED_PATTERN_CHANGED, 10));
+    pattern_request(&trk[2], 4);
+    i = pushed(ED_PATTERN_CHANGED, 10);
+    bad += check("track 3 switched to bank 5 on the device: PATTERN_CHANGED says so", i && host_wire[i + 5] == 4);
+    pattern_copy(&trk[2], 4, 6);
+    bad += check("a bank copied on the device: PATTERN_CHANGED", pushed(ED_PATTERN_CHANGED, 10) != 0);
+    return bad;
+}
 int main(void)
 {
     int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
               native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol() + studio_session() +
-              studio_song();
+              studio_song() + studio_patterns();
     printf("%s\n", bad ? "EDITOR TEST FAILED" : "editor test passed");
     return bad != 0;
 }

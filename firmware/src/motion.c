@@ -261,7 +261,8 @@ static void motion_clear(track_t *t)
     motion_unguard(f);
 }
 static void motion_reset(track_t *t) { motion_clear(t); }
-static int motion_set_event(track_t *t, uint32_t step, uint32_t id, int16_t value)
+/* an event on track t's pattern bank (motion_set_event: the one playing; the editor's MOTION reaches any) */
+static int motion_set_event_at(track_t *t, uint32_t bank, uint32_t step, uint32_t id, int16_t value)
 {
     uint32_t k = trk_index(t), i, f;
     const param_desc_t *d;
@@ -275,11 +276,11 @@ static int motion_set_event(track_t *t, uint32_t step, uint32_t id, int16_t valu
     }
     f = motion_guard();
     for (i = 0; i < motion.count; i++)
-        if (motion_pattern[i] == t->pattern && motion.event[i].place == (k << 6 | step) && motion.event[i].param == id && motion_native_event(id,motion.event[i].value)==motion_native_event(id,value)) break;
+        if (motion_pattern[i] == bank && motion.event[i].place == (k << 6 | step) && motion.event[i].param == id && motion_native_event(id,motion.event[i].value)==motion_native_event(id,value)) break;
     if (i == MOTION_MAX) { motion_full = 1; motion_unguard(f); return 2; }
     if(rec_on(t)&&(i==motion.count||motion.event[i].value!=value||!motion_enabled(t)))recording_undo_capture(t);
-    if (t->pattern) motion.rsv[0] = 1;
-    motion_pattern[i] = t->pattern;
+    if (bank) motion.rsv[0] = 1;
+    motion_pattern[i] = (uint8_t)bank;
     motion.event[i].place = (uint8_t)(k << 6 | step);
     motion.event[i].param = (uint8_t)id;
     motion.event[i].value = value;
@@ -289,18 +290,20 @@ static int motion_set_event(track_t *t, uint32_t step, uint32_t id, int16_t valu
     motion_unguard(f);
     return 0;
 }
-static void motion_delete_event(track_t *t, uint32_t step, uint32_t id)
+#define motion_set_event(t, step, id, value) motion_set_event_at((t), (t)->pattern, step, id, value)
+static void motion_delete_event_at(track_t *t, uint32_t bank, uint32_t step, uint32_t id)
 {
     uint32_t f = motion_guard(), place = trk_index(t) << 6 | step, i, n = 0;
     motion_restore(t);
     for (i = 0; i < motion.count; i++)
-        if (motion_pattern[i] != t->pattern || motion.event[i].place != place || (id&512u ? motion.event[i].param!=(id&255u) : motion_token(&motion.event[i])!=id)) {
+        if (motion_pattern[i] != bank || motion.event[i].place != place || (id&512u ? motion.event[i].param!=(id&255u) : motion_token(&motion.event[i])!=id)) {
             motion_pattern[n] = motion_pattern[i]; motion.event[n++] = motion.event[i];
         }
     memset(motion.event + n, 0, (MOTION_MAX - n) * sizeof motion.event[0]);
     motion.count = (uint8_t)n;
     motion_unguard(f);
 }
+#define motion_delete_event(t, step, id) motion_delete_event_at((t), (t)->pattern, step, id)
 /* one lane (MOTION's sheet): every event of id on the track's pattern; none left there: the track's motion off */
 static void motion_clear_param(track_t *t, uint32_t id)
 {

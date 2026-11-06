@@ -36,6 +36,10 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "editor_session.c", "editor_projects.c",
               # .. and its song commands (SONG2, SONG_SOUND, PUNCH, SONG_CHANGED)
               "editor_song.c",
+              # .. and its pattern commands (PATTERN_DATA, NOTES, PATTERN_CHANGED); SEQ's pattern dialog (out of ui_input.c)
+              "editor_patterns.c", "pattern_dialog.c",
+              # main-loop only: the installer's log frames (ed_service), the NOTES edit memory's packing (note_tools.c), MIDI LEARN's page
+              "installer_report.c", "note_history.c", "ui_midi_learn.c",
               # the user's drum kits: their store and record check, a take's processing, Record kit's sheet (drum_enc.c,
               # the take's encoder, stays at -Os: its speed is the wait on "Saving")
               "kit_store.c", "kit_take.c", "kit_rec_ui.c"]
