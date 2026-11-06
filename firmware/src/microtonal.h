@@ -75,6 +75,13 @@ static int32_t scale_pitch(const track_t *t, int32_t note)   /* (scale_tuned) hu
     int32_t pitch = micro_active(t) ? micro_pitch(t, note) : note * 10000 + tune_off(t, note);
     return pitch < 0 ? 0 : pitch > 1270000 ? 1270000 : pitch;
 }
+/* (micro_active) The semitone a note sounds nearest and the cents off it: what the player reads, the note stays a degree */
+static uint32_t micro_nearest(const track_t *t, int32_t note, int32_t *cents)
+{
+    int32_t pitch = scale_pitch(t, note), nearest = (pitch + 5000) / 10000, off = pitch - nearest * 10000;
+    *cents = off < 0 ? -((50 - off) / 100) : (off + 50) / 100;
+    return (uint32_t)nearest;
+}
 /* A maqam picked brings its tuning; leaving one takes that tuning along, unless it was changed since */
 static void scale_tuning_follow(track_t *t, uint32_t was, uint32_t now)
 {

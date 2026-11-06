@@ -281,8 +281,9 @@ static void graph_recorded_notes(const track_t *t, uint16_t c)
     for (int32_t row = 0; row < PR_ROWS; row++) {      /* the C keys named (the label face, on their row's middle) */
         int32_t note = (int32_t)proll.lo + PR_ROWS - 1 - row, y = PR_Y0 + row * PR_RH;
         if (micro_active(t) ? ((note - 60) % (int32_t)scale_note_period(t) == 0) : note % 12 == 0) {
-            char name[8];
-            if (micro_active(t)) str_cpy(name, "D1", sizeof name); else note_name(name, (uint32_t)note);
+            char name[8], cents[6];
+            note_card(name, cents, (uint32_t)note, 0);   /* (a period's first degree: no cents but on a non-octave scale, and
+                                                          * they would lie under the first step's notes) */
             uint16_t lf = (held >> row) & 1u ? T_ACCENT : T_RAISE;   /* (held: the accent, as the key) */
             cv_rrect(3, ty_y(y + PR_RH / 2, TY_LB) + TY_LB->asc - TY_LB->cap - 3, text_w(TY_LB, name) + 8, TY_LB->cap + 6, 4,
                      lf, T_PANEL);
@@ -422,10 +423,11 @@ static void graph_chord(const track_t *t, uint16_t c)
             n = chord_last[k].n;
             for (i = 0; i < n; i++) nn[i] = chord_last[k].note[i];
         } else n = chord_make(t, 60u, nn, &r, &mask);
-        cv_text_c(120, ty_y(16, TY_LB), TY_LB, "SCALE DEGREES", T_MID, T_SURF);
-        for (i = 0; i < n; i++) {
+        cv_text_c(120, ty_y(16, TY_LB), TY_LB, "NOTES", T_MID, T_SURF);
+        for (i = 0; i < n; i++) {                    /* (two by two: four names with their cents are wider than a row) */
             note_name(b, nn[i]);
-            cv_text_c(30 + (int32_t)i * 60, ty_y(60, TY_TX), TY_TX, b, i ? c : T_ACCENT, T_SURF);
+            cv_text_c(60 + (int32_t)(i & 1u) * 120, ty_y(n > 2u ? 46 + (int32_t)(i / 2u) * 36 : 60, TY_TX), TY_TX, b,
+                      i ? c : T_ACCENT, T_SURF);
         }
         return;
     }
@@ -944,7 +946,8 @@ static const char *chord_of(uint32_t pcs, uint32_t bass, uint32_t *root)
 }
 
 /* the lowest of n notes (note[] holds the first 8) that fit in w px of font f, "C4 E4 G4",
- * " .." when some are left out; returns how many are shown */
+ * " .." when some are left out; returns how many are shown. b: NOTES_FIT_B, eight names of 7 and what joins them */
+#define NOTES_FIT_B 68
 static uint32_t notes_fit(char *b, const uint8_t *note, uint32_t n, const aafont_t *f, int32_t w)
 {
     uint32_t m, i;

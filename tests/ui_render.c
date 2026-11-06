@@ -448,6 +448,12 @@ static void drum(uint32_t kit)
     trk[3].p[P_SLEN] = 32;
 }
 static void eng(uint32_t e) { set_engine_of(TSEL, e); }
+/* the widest note names: a microtonal key on a black key */
+static void micro_key(track_t *t, const char *name, int32_t root)
+{
+    for (uint32_t i = 0; i < SCALE_TOTAL; i++) if (!strcmp(N_SCALE[i], name)) t->p[P_SCALE] = (int16_t)i;
+    t->p[P_ROOT] = (int16_t)root; t->p[P_TRANS] = 0; t->p[P_QUANT] = Q_ALL;
+}
 /* the FM engine of the FM screens: FM6 (DIGITAL's own screens, the OP ENV / OP LEVEL pages and the algorithm charts,
  * went with it: skipped) */
 #define E_FM ENGI_FM6
@@ -483,7 +489,8 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_NOTE, S_HOME_CHORD, S_HOME_INVERSION, S_HOME_
        S_REF_SHEET_MOTION, S_REF_MOD, S_REF_PICKER_MOD, S_REF_ARP, S_REF_PATTERN,
        S_REF_FMEG, S_REF_GRID, S_REF_SCALES, S_FX_PHASER, S_FX_WIDTH, S_FX_FORMANT, S_FX_TAPE, S_FX_SPIT, S_FX_ROOM, S_FX_CHORUS, S_FX_FULL, S_FX_SLOT2, S_FX_SLOT3, S_FX_RACK, S_FX_RACK_SPLIT, S_FX_RACK_PICK, S_FX_RACK_LIST, S_FX_BUS1, S_FX_BUS2, S_FX_BUS3, S_FX_SHARED, S_FX_SHARED_SPLIT, S_FX_SHARED_SHEET, S_FX_TONE_DARK, S_FX_TONE_THIN, S_BOOT_MIGRATION, S_BOOT_UPDATE, S_BOOT_ERROR, S_BOOT_COMPLETE, S_BOOT_WIPE_CONFIRM, S_BOOT_WIPING, S_BOOT_UPDATE_ERROR, S_BOOT_SETUP, S_MAP_DRUM_KIT, S_MAP_DRUM_HIT, S_MAP_DRUM_CATEGORY,
        S_STAGE_UNUSED1, S_STAGE_UNUSED3, S_MIXER_UNUSED2, S_MENU_TRACKS,
-       S_FX_MIDIVERB, S_FX_MIDIDELAY, S_FX_MIDI_RACK, S_FX_MIDI_LIST, S_PUNCH_PEEK, S_PUNCH_ACTIVE, S_PUNCH_LOCK, S_PUNCH_MEMORY, S_PUNCH_END, S_REVERB, S_PEDAL_DRIVE, S_PEDAL_CRUSH, S_PEDAL_PHASER, S_PEDAL_CHORUS, S_PEDAL_FLANGER, S_PUNCH_LOOP, S_PEDAL_FOLD, S_STAGE_MIDI, S_STAGE_MIDI_PARTIAL, S_MIXER_MIDI, S_PATGRID_MIDI, S_SONG_MIDI, S_GLO_MIDI, S_MENU_MIDI_GENERAL, S_MENU_MIDI_MINILAB, S_MENU_MIDI_MODE, S_MENU_MLEARN, S_MENU_MLEARN_ROW, S_MLEARN, S_MLEARN_KNOB, S_MLEARN_BUTTON, S_MLEARN_FORGET, S_PATGRID_PRESET, S_PATGRID_PRESET_PENDING, S_SONG_LONG, S_SONG_CELL, S_SONG_COPY, S_SONG_RANGE, S_SONG_LOOP, S_SONG_PUNCH, S_SONG_PUNCH_ACTIVE, S_SONG_PUNCH_MEMORY, S_SONG_PRESET, S_SONG_PRESET_SHEET, S_SONG_PRESET_BROWSE, S_PATTERN_SOUND_SHEET, S_PATTERN_SOUND_BROWSE, S_COUNT };
+       S_FX_MIDIVERB, S_FX_MIDIDELAY, S_FX_MIDI_RACK, S_FX_MIDI_LIST, S_PUNCH_PEEK, S_PUNCH_ACTIVE, S_PUNCH_LOCK, S_PUNCH_MEMORY, S_PUNCH_END, S_REVERB, S_PEDAL_DRIVE, S_PEDAL_CRUSH, S_PEDAL_PHASER, S_PEDAL_CHORUS, S_PEDAL_FLANGER, S_PUNCH_LOOP, S_PEDAL_FOLD, S_STAGE_MIDI, S_STAGE_MIDI_PARTIAL, S_MIXER_MIDI, S_PATGRID_MIDI, S_SONG_MIDI, S_GLO_MIDI, S_MENU_MIDI_GENERAL, S_MENU_MIDI_MINILAB, S_MENU_MIDI_MODE, S_MENU_MLEARN, S_MENU_MLEARN_ROW, S_MLEARN, S_MLEARN_KNOB, S_MLEARN_BUTTON, S_MLEARN_FORGET, S_PATGRID_PRESET, S_PATGRID_PRESET_PENDING, S_SONG_LONG, S_SONG_CELL, S_SONG_COPY, S_SONG_RANGE, S_SONG_LOOP, S_SONG_PUNCH, S_SONG_PUNCH_ACTIVE, S_SONG_PUNCH_MEMORY, S_SONG_PRESET, S_SONG_PRESET_SHEET, S_SONG_PRESET_BROWSE, S_PATTERN_SOUND_SHEET, S_PATTERN_SOUND_BROWSE,
+       S_MICRO_HOME_NOTE, S_MICRO_HOME_CHORD, S_MICRO_VIEW_NOTE, S_MICRO_VIEW_CHORD, S_MICRO_NOTES, S_MICRO_NOTES_BP, S_MICRO_STEP, S_MICRO_ARP, S_MICRO_CHORD, S_COUNT };
 static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_note", "home_chord", "home_inversion", "home_wide", "home_released", "home_fm6", "message", "message_key", "presets", "presets_nofav", "presets_cat", "presets_pending", "presets_recent", "user",
     "project", "project_boot", "tempo", "song_empty", "song", "step", "pattern", "motion", "drum",
     "mixer", "mixer_pan", "env", "env_dest", "lfo", "mod", "scl", "chord", "chord_wide", "chord_off", "chord_kit", "chord_auto", "chord_auto_set", "chord_auto_micro", "chord_melody", "chord_melody_open", "arp",
@@ -509,7 +516,8 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_note", "h
     "stage_long", "stage_3tracks_long", "stage_2tracks_long", "stage_1track_long",
     "ref_stage_held", "ref_stage_released", "ref_stage_cutoff", "ref_stage_drum", "ref_browser", "ref_patterns", "ref_song", "ref_env", "ref_lfo", "ref_edit_osc", "ref_mixer", "ref_notes", "ref_settings", "ref_dialog", "ref_sheet_sound", "ref_sheet_song", "ref_picker_wave", "ref_picker_mode", "ref_sections_p5", "ref_map_p5", "ref_map_fm6", "ref_scl_list", "ref_sheet_project", "ref_sheet_note", "ref_sheet_hit", "ref_motion", "ref_sheet_motion", "ref_mod", "ref_picker_mod", "ref_arp", "ref_pattern", "ref_fmeg", "ref_grid", "ref_scales", "fx_phaser", "fx_width", "fx_formant", "fx_tape", "fx_spit", "fx_room", "fx_chorus", "fx_full", "fx_slot2", "fx_slot3", "fx_rack", "fx_rack_split", "fx_rack_pick", "fx_rack_list", "fx_bus1", "fx_bus2", "fx_bus3", "fx_shared", "fx_shared_split", "fx_shared_sheet", "fx_tone_dark", "fx_tone_thin", "boot_migration", "boot_update", "boot_error", "boot_complete", "boot_wipe_confirm", "boot_wiping", "boot_update_error", "boot_setup", "map_drum_kit", "map_drum_hit", "map_drum_category",
     "stage_unused_1track", "stage_unused_3tracks", "mixer_unused_2tracks", "menu_unused_tracks",
-    "fx_midiverb", "fx_mididelay", "fx_midi_rack", "fx_midi_list", "punch_peek", "punch_active", "punch_lock", "punch_memory", "punch_end", "fx_reverb", "fx_pedal_drive", "fx_pedal_crush", "fx_pedal_phaser", "fx_pedal_chorus", "fx_pedal_flanger", "punch_loop", "fx_pedal_fold", "stage_midi", "stage_midi_partial", "mixer_midi", "patterns_midi", "song_midi", "layer_glo_midi", "menu_midi_general", "menu_midi_minilab", "menu_midi_mode", "menu_mlearn", "menu_mlearn_forget", "mlearn", "mlearn_knob", "mlearn_button", "confirm_mlearn_forget", "patterns_preset", "patterns_preset_pending", "song_long", "song_cell", "song_copy", "song_range", "song_loop", "song_punch", "song_punch_active", "song_punch_memory", "song_preset", "song_preset_sheet", "song_preset_browse", "pattern_sound_sheet", "pattern_sound_browse"};
+    "fx_midiverb", "fx_mididelay", "fx_midi_rack", "fx_midi_list", "punch_peek", "punch_active", "punch_lock", "punch_memory", "punch_end", "fx_reverb", "fx_pedal_drive", "fx_pedal_crush", "fx_pedal_phaser", "fx_pedal_chorus", "fx_pedal_flanger", "punch_loop", "fx_pedal_fold", "stage_midi", "stage_midi_partial", "mixer_midi", "patterns_midi", "song_midi", "layer_glo_midi", "menu_midi_general", "menu_midi_minilab", "menu_midi_mode", "menu_mlearn", "menu_mlearn_forget", "mlearn", "mlearn_knob", "mlearn_button", "confirm_mlearn_forget", "patterns_preset", "patterns_preset_pending", "song_long", "song_cell", "song_copy", "song_range", "song_loop", "song_punch", "song_punch_active", "song_punch_memory", "song_preset", "song_preset_sheet", "song_preset_browse", "pattern_sound_sheet", "pattern_sound_browse",
+    "micro_home_note", "micro_home_chord", "micro_view_note", "micro_view_chord", "micro_notes", "micro_notes_bp", "micro_step", "micro_arp", "micro_chord"};
 
 /* the scenes of the UI design screens: the state the UI-redesign
  * prototype drew them from (its setup(): two pattern tracks, the drum pattern on track 4, a synthetic scope),
@@ -1362,6 +1370,48 @@ static void setup(int s)
     case S_SCL_MICRO_CHORD:
         for (uint32_t i = 0; i < SCALE_TOTAL; i++) if (!strcmp(N_SCALE[i], "24EDO")) TSEL->p[P_SCALE] = (int16_t)i;
         TSEL->p[P_QUANT] = Q_ALL; TSEL->p[P_CHRD] = CH_DIA7; TSEL->p[P_VOICE] = V_POLY; go_title("CHORD"); break;
+    case S_MICRO_HOME_NOTE: micro_key(TSEL, "31EDO", 1); input_on(TSEL, 63, 100); break;
+    case S_MICRO_HOME_CHORD:
+        micro_key(TSEL, "31EDO", 1);
+        input_on(TSEL, 61, 100); input_on(TSEL, 63, 100); input_on(TSEL, 66, 100); input_on(TSEL, 70, 100); break;
+    case S_MICRO_VIEW_NOTE:
+    case S_MICRO_VIEW_CHORD: {
+        uint32_t k;
+        song.ntrk = 3; go_home(); ui.home_pg = 1;
+        memset(&view, 0, sizeof view);
+        for (k = 0; k < NPART; k++) trk[k].engine = trk[k].eng_req;
+        track_select(1); micro_key(TSEL, "31EDO", 1); TSEL->p[P_VOICE] = V_POLY;
+        input_on(TSEL, 63, 100);
+        if (s == S_MICRO_VIEW_CHORD) { input_on(TSEL, 61, 100); input_on(TSEL, 66, 100); input_on(TSEL, 70, 100); }
+        break;
+    }
+    case S_MICRO_NOTES:
+    case S_MICRO_NOTES_BP:
+    case S_MICRO_STEP: {
+        track_t *t = TSEL;
+        song.sel = 0; song.rec = 0; song.playing = 0;
+        recording_reset(); track_defaults_steps(t); t->p[P_SLEN] = 16; t->p[P_SDIV] = 2;
+        for (uint32_t i = 0; i < NSTEP; i++) step_clear(&t->step[i]);
+        micro_key(t, s == S_MICRO_NOTES_BP ? "BP-ET" : "31EDO", 1);
+        for (uint32_t i = 0; i < 4u; i++) {
+            step_t *st = &t->step[i * 4u];
+            st->time = ST_NOTE; st->n = s == S_MICRO_STEP ? 3 : 1; st->vel = 96;
+            st->note[0] = (uint8_t)((s == S_MICRO_NOTES_BP ? 73 : 63) + i);
+            st->note[1] = (uint8_t)(66 + i); st->note[2] = (uint8_t)(70 + i);
+            step_note_resize(t, i * 4u, 2);
+        }
+        if (s == S_MICRO_STEP) { song.rec = 1; go_page(GR_ROLL); ui.cursor = 4; break; }
+        go_page(GR_ROLL); cursor_set(4); ui.note_zoom = 0;
+        break;
+    }
+    case S_MICRO_ARP:
+        micro_key(TSEL, "31EDO", 1);
+        TSEL->p[P_AMODE] = 1; TSEL->p[P_AOCT] = 2; go_title("ARP");
+        arp_add(TSEL, 61); arp_add(TSEL, 63); arp_add(TSEL, 66); arp_add(TSEL, 70); TSEL->nheld = 4;
+        break;
+    case S_MICRO_CHORD:
+        micro_key(TSEL, "31EDO", 1);
+        TSEL->p[P_CHRD] = CH_DIA7; TSEL->p[P_VOICE] = V_POLY; go_title("CHORD"); break;
     case S_CHORD:                                    /* A minor DIA7, the last chord on B: Bm7b5 */
     case S_CHORD_WIDE: {                             /* A harmonic minor DIA7 +OCT on G#: G#dim7 over three octaves */
         uint8_t out[CHORD_MAX];

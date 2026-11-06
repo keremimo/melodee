@@ -540,21 +540,35 @@ static void cursor_fix(void)                           /* LEN got shorter: onto 
         cursor_set(TSEL->p[P_SLEN] - 1);
 }
 
+/* "E4"; a microtonal key's by the semitone it sounds nearest and the cents off it, "E4-14" (8 B at most: "C#-1-14") */
 static void note_name(char *b, uint32_t n)
 {
-    if (micro_active(TSEL)) {
-        int32_t d = (int32_t)n - 60, count = micro_scale(TSEL)->count, cycle = micro_floor(d, count);
-        b[0] = 'D';
-        fmt_int(b + 1, d - cycle * count + 1);
-        if (cycle) {
-            uint32_t at = str_len(b);
-            b[at] = cycle < 0 ? '-' : '+';
-            fmt_int(b + at + 1, cycle < 0 ? -cycle : cycle);
-        }
-        return;
-    }
+    int32_t cents = 0;
+    if (micro_active(TSEL))
+        n = micro_nearest(TSEL, (int32_t)n, &cents);
     str_cpy(b, N_NOTE[n % 12u], 4);
     fmt_int(b + str_len(b), (int32_t)(n / 12u) - 1);
+    if (cents) {
+        uint32_t at = str_len(b);
+        b[at] = cents < 0 ? '-' : '+';
+        fmt_int(b + at + 1, cents < 0 ? -cents : cents);
+    }
+}
+
+/* A note on a card: its name the value; a name with cents is wider than a card, so they take the label's row ("-14c" over
+ * "D#4"). Returns the label */
+static const char *note_card(char *val, char *cents, uint32_t n, const char *label)
+{
+    uint32_t at;
+    note_name(val, n);
+    at = 1u + (val[1] == '#');                          /* (past the note and its octave: -1 .. 9) */
+    at += 1u + (val[at] == '-');
+    if (!val[at])
+        return label;
+    str_cpy(cents, val + at, 4);
+    str_cpy(cents + str_len(cents), "c", 2);
+    val[at] = 0;
+    return cents;
 }
 
 /* SELECT: the open section's pages, both ways (wraps; pages the track does not show skipped) */
