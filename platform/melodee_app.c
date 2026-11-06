@@ -213,6 +213,12 @@ enum { UH_MSG_NONE, UH_MSG_MIDI, UH_MSG_LOST, UH_MSG_NOMIDI, UH_MSG_LOW, UH_MSG_
 
 #if MELODEE_BLE
 #include "midi_ble_base.h"
+#else
+#include "ble_saved.h"                          /* (a build without Bluetooth: the platform's calls find nothing kept) */
+static ml_ble_saved_t ml_ble_none;
+ml_ble_saved_t *mlb_ble_saved(void) { return &ml_ble_none; }
+void mlb_ble_dirty(void) {}
+int mlb_ble_at_boot(void) { return 0; }
 #endif
 #include "../firmware/src/song_chain.c"
 #include "../firmware/src/seq.c"
