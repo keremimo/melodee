@@ -7,9 +7,11 @@
  * at boot and after every write or delete, then waits until the audio side has left any sectors it no longer owns,
  * so that a later save may erase them. */
 #define KIT_STORE 1                              /* (project.c: the boot scan) */
+#ifndef DRK_CODEC_ONLY                           /* (web/kit: the record's helpers alone, below) */
 _Static_assert(DRK_SECBYTES == ST_LIN_PAYLOAD_MAX && DRK_SECOFF == ST_POOL_PAYLOAD_OFF && DK_NUSER == ST_NKIT &&
                DRK_RUN0 * 8u == ST_RUN0 && DRK_SLOTS * 8u == ST_SECTOR - ST_POOL_PAYLOAD_OFF &&
                DRK_KSEC <= ST_PROJECT_SECTORS && DRK_KIT_MAX <= ST_PROJECT_MAX, "a user kit is a pool record");
+#endif
 /* ------------------------------------------------------------ a user kit's record --- */
 /* slice k's first word, sector by sector (0 past the payload) */
 static const uint32_t *drk_slice_at(const uint32_t *const *secs, uint32_t nsec, uint32_t k)
@@ -65,6 +67,7 @@ static int drk_kit_check(const uint32_t *const *secs, uint32_t nsec, uint32_t le
     }
     return 0;
 }
+#ifndef DRK_CODEC_ONLY
 static uint16_t kit_len[ST_NKIT];                /* each slot's payload bytes (0: empty), as drk_user[] has it */
 static uint32_t kit_obj(uint32_t u) { return ST_KFILE0 + u; }
 
@@ -166,3 +169,4 @@ static int kit_put_commit(st_stream_t *w, uint32_t u)
     kit_settle();
     return 0;
 }
+#endif
