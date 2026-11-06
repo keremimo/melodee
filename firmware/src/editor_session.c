@@ -23,7 +23,8 @@ static const uint8_t ED_CAPS_TLV[] = {
     'W', 1, 127,                                          /* the WATCH bits known */
     'M', 2, 1, ED_METER_MS,                               /* METERS v1, ms between pushes */
     'S', 6, 1, 1, 1, CHAIN_ROWS, CHAIN_SOUNDS, PUNCH_NFX,  /* SONG2, SONG_SOUND, PUNCH v1; sections, sounds, effects */
-    'D', 4, 1, NSTEP, RECORD_MAX & 127u, RECORD_MAX >> 7,  /* the patterns (44, 45, 64's bank, 73's 3..5) v1; steps, notes */
+    'D', 4, 2, NSTEP, RECORD_MAX & 127u, RECORD_MAX >> 7,  /* the patterns (44, 45, 64's bank, 73's 3..5) v1, v2 73's copy to
+                                                            * another track; steps, notes */
 };
 
 static uint32_t ed_sig(uint32_t at) { return fnv(2166136261u, ed_out + at, ed_n - at); }   /* the reply's bytes from at */

@@ -1116,7 +1116,7 @@ static int studio_patterns(void)
     reset();
     n = request(ED_CAPS, a, 0);
     for (i = 6; i + 1u < n && host_wire[i] != 'D'; i += 2u + host_wire[i + 1]) ;
-    bad += check("CAPS: tag D (patterns v1, 64 steps, 1,024 timed notes), W 127", host_wire[i + 1] == 4 && host_wire[i + 2] == 1 &&
+    bad += check("CAPS: tag D (patterns v2, 64 steps, 1,024 timed notes), W 127", host_wire[i + 1] == 4 && host_wire[i + 2] == 2 &&
                  host_wire[i + 3] == NSTEP && host_wire[i + 4] + (host_wire[i + 5] << 7) == RECORD_MAX);
     n = pd_half(1, 3, 1);
     bad += check("PATTERN_DATA track 2 bank 4, steps 33..64: rc 0, LEN 16, DIV 1/16, 32 rests of 12 bytes", n == 13u + 32u * ED_STEP_N + 1u &&
@@ -1152,6 +1152,16 @@ static int studio_patterns(void)
                  pattern_step(1, 3, 32).time == ST_REST);
     request(ED_PATTERN, a, 3);
     bad += check("PATTERN double 48 steps: rc 3 (64 STEPS MAX)", host_wire[7] == 3 && pattern_timing(1, 3, 0) == 48);
+    {   /* op 2 with a fifth byte: to another track, as PATTERNS' Copy to (v2) */
+        pattern_t ps, pd;
+        uint8_t c[5] = {1, 2, 3, 6, 2};
+        n = request(ED_PATTERN, c, 5);
+        pattern_read(1, 3, &ps); pattern_read(2, 6, &pd);
+        bad += check("PATTERN copy track 2 bank 4 to track 3 bank 7: rc 0, steps and LEN 48 there", n == 12u && !host_wire[7] &&
+                     host_wire[5] == 1 && !memcmp(&ps, &pd, sizeof ps) && pattern_timing(2, 6, 0) == 48 && !pattern_sound[2][6]);
+        c[4] = NTRK; bad += check("PATTERN copy to track 9: no reply", !request(ED_PATTERN, c, 5));
+        c[1] = 1; c[4] = 2; bad += check("PATTERN select with a fifth byte: no reply", !request(ED_PATTERN, c, 5));
+    }
     a[0] = 1; a[2] = 0; a[1] = 4; request(ED_PATTERN, a, 3);
     bad += check("PATTERN halve the bank playing (48 -> 24)", !host_wire[7] && trk[1].p[P_SLEN] == 24);
     undo_swap();

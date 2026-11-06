@@ -1080,11 +1080,13 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_xyv(a[0], a[1], t->p[a[1]]);
         break;
     }
-    case ED_PATTERN: {          /* (Studio: 3 clears bank a[2], 4 halves it, 5 doubles it, as SEQ's dialog: pattern_dialog.c) */
-        if (na < 2u || a[0] >= NTRK || a[1] > 5u || na != (a[1] == 0u ? 2u : a[1] == 2u ? 4u : 3u)) return;
+    case ED_PATTERN: {          /* (Studio: 2 with a 5th byte copies to that track, as PATTERNS' Copy to; 3 clears bank a[2],
+                                 * 4 halves it, 5 doubles it, as SEQ's dialog: pattern_dialog.c) */
+        uint32_t to = a[1] == 2u && na == 5u ? a[4] : NTRK;
+        if (na < 2u || a[0] >= NTRK || a[1] > 5u || na != (a[1] == 0u ? 2u : a[1] == 2u ? (to < NTRK ? 5u : 4u) : 3u)) return;
         track_t *t = &trk[a[0]]; uint32_t rc = 0;
         if (a[1] == 1u) rc = pattern_request(t, a[2]);
-        if (a[1] == 2u) rc = pattern_copy(t, a[2], a[3]);
+        if (a[1] == 2u) rc = (uint32_t)pattern_copy_to(t, a[2], &trk[to < NTRK ? to : a[0]], a[3], 0);
         if (a[1] > 2u)
             rc = a[2] >= trk_npat(a[0]) ? 1u : (uint32_t)(a[1] == 3u ? pattern_key_delete(a[0], a[2]) : pattern_key_len(a[0], a[2], a[1] == 5u));
         ed_pat_own();
