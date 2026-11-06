@@ -111,7 +111,8 @@ static struct {
     uint8_t v4;                                          /* WATCH bit 1: TRACK_CHANGED pushes too */
     uint8_t bits;                                        /* the WATCH bits known (2: eight tracks, 3: TRACKS / TRANSPORT
                                                           * pushes, 4: METERS), 0 when not watching */
-    uint32_t tsig, xsig, m_ms;                           /* (editor_session.c: what TRACKS / TRANSPORT last said) */
+    uint32_t psig[3], m_ms;                              /* (editor_session.c: what TRACKS_CHANGED, TRANSPORT_CHANGED and
+                                                          * SONG_CHANGED last said; the song: its signature) */
     uint32_t pos, last_ms, run_ms, resets;
     int16_t v[ED_NV];                                    /* TSEL->p[], then song.g[] */
     uint16_t t[ED_NV];                                   /* ms (low 16 bits) of the last push */
@@ -324,6 +325,7 @@ static int ed_flash_stop(void)
 #include "editor_library.c"
 #include "editor_prophet.c"
 #include "editor_cpu_lab.h"
+#include "editor_song.c"
 #include "editor_session.c"
 #include "editor_projects.c"
 
@@ -386,7 +388,7 @@ static int (*const ED_HANDLERS[])(uint32_t cmd, const uint8_t *a, uint32_t n) = 
     ed_res_handle,
 #endif
     ed_ui_handle, ed_backup_handle, ed_fm6_handle, ed_cz_handle, ed_library_handle, ed_native_handle,
-    ed_session_handle, ed_projects_handle,
+    ed_session_handle, ed_projects_handle, ed_song_handle,
 };
 static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0 and F7 */
 {
@@ -983,12 +985,13 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         uint32_t was = ed_w.on ? ed_w.bits : 0u;          /* (3 s without a request: not watching) */
         ed_w.on = a[0] & 1u;
         ed_w.v4 = (uint8_t)(ed_w.on && (a[0] & 2u));     /* v4: also TRACK_CHANGED; the reply says it is known */
-        ed_w.bits = (uint8_t)(ed_w.on ? a[0] & 31u : 0u); /* Studio: bits 2..4 (editor_session.c) */
+        ed_w.bits = (uint8_t)(ed_w.on ? a[0] & 63u : 0u); /* Studio: bits 2..4 (editor_session.c), 5 (editor_song.c) */
         ed_w.resets = usb.resets;
         if (ed_w.on && (!(was & 1u) || a[0] < 4u)) {     /* (Studio's WATCH while watching: no push is lost) */
             ed_shadow();
-            ed_w.tsig = ed_tracks_body(0);                 /* (what the pushes compare with; then the reply) */
-            ed_w.xsig = ed_tp_body();
+            ed_w.psig[0] = ed_tracks_body(0);              /* (what the pushes compare with; then the reply) */
+            ed_w.psig[1] = ed_tp_body();
+            ed_w.psig[2] = se.signature;
             ed_begin(ED_WATCH);
         }
         if (ed_w.bits & ~was & 16u)
@@ -1150,6 +1153,8 @@ static void ed_service(void)
     const uint8_t *p;
     uint32_t n;
     ed_sync();                                             /* v2 pushes (while watched) */
+    if (fm1_ms - ed_w.last_ms > 3000u)
+        ed_punch_release();                                /* (PUNCH: 3 s without a request, the editor's effect stops) */
     if(!ota_frame_get(&p,&n))return;
 #ifdef INSTALLER_REPORT_FRAME
     if (INSTALLER_REPORT_FRAME(p,n)) { ota_frame_done();return; }

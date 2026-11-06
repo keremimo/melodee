@@ -52,6 +52,7 @@ static void sound_name(const track_t *t, char *b)        /* (ui_draw.c's, not bu
 }
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
+static int layer_allowed(void) { return !ui.menu && !ui.confirm; }   /* (ui_layer.c's, not built here) */
 
 static uint32_t flash_ok = 1;
 static void audio_silence(void) {}
@@ -925,10 +926,181 @@ static int studio_session(void)
     wire_release(); proj_cur = PROJ_NO_SLOT; track_solo = track_solo_latch = 0;   /* (a main-loop turn) */
     return bad;
 }
+/* Melodee Studio's song (F3): SONG2 (whole song, timing, write keeping the punch events and block sounds, section
+ * operations), SONG_SOUND (the song's sounds, a block's sound from a preset / user slot / id), PUNCH (live, events),
+ * the SONG_CHANGED push */
+static uint32_t u35_at(uint32_t i) { return host_wire[i] | host_wire[i + 1] << 7 | host_wire[i + 2] << 14 | (uint32_t)host_wire[i + 3] << 21; }
+static int studio_song(void)
+{
+    int bad = 0;
+    uint8_t a[600] = {0}, cell[2][NTRK + 1u] = {{2, 0, 1, CHAIN_REST, 3, CHAIN_REST, CHAIN_REST, 7, CHAIN_REST},
+                                               {1, CHAIN_HOLD, 2, CHAIN_REST, CHAIN_HOLD, CHAIN_REST, CHAIN_REST, CHAIN_HOLD, CHAIN_REST}};
+    uint32_t n, i;
+    reset(); song_sound_reset(); song_edit_sync();
+    n = request(ED_SONG2, a, 0);
+    bad += check("SONG2 query: no sections, no loop, 120 BPM, no song sounds", n == 13u && host_wire[5] == 127 && !host_wire[6] &&
+                 !host_wire[7] && !host_wire[8] && host_wire[9] == 120 && !host_wire[10] && !host_wire[11]);
+    a[0] = 2; a[1] = 2; a[2] = 1; memcpy(a + 3, cell, sizeof cell);
+    request(ED_SONG2, a, 3u + sizeof cell);
+    bad += check("SONG2 write: two sections of eight tracks, the loop", !host_wire[6] && host_wire[7] == 2 && host_wire[8] == 1 &&
+                 chain_config.count == 2 && chain_config.rsv[CHAIN_LOOP] && chain_config.row[0].repeat == 2 &&
+                 chain_patterns[0][6] == 7 && chain_patterns[1][6] == CHAIN_HOLD && chain_config.row[1].slot == CHAIN_HOLD);
+    chain_config_t before = chain_config;
+    a[3u + (NTRK + 1u) + 1u + 2u] = CHAIN_HOLD;             /* section 2, track 3: goes on after a rest */
+    request(ED_SONG2, a, 3u + sizeof cell);
+    bad += check("SONG2 write: goes on after a rest: rc 1, unchanged", host_wire[6] == 1 && !memcmp(&before, &chain_config, sizeof before) &&
+                 chain_patterns[1][2] == CHAIN_REST);
+    memcpy(a + 3, cell, sizeof cell); a[3 + 5] = 8;         /* track 5 (MIDI-only, 8 patterns): pattern 9 */
+    request(ED_SONG2, a, 3u + sizeof cell);
+    bad += check("SONG2 write: pattern 9 on a MIDI-only track: rc 1", host_wire[6] == 1 && chain_patterns[0][4] == CHAIN_REST);
+    a[3 + 5] = CHAIN_REST; a[3] = 0; request(ED_SONG2, a, 3u + sizeof cell);
+    bad += check("SONG2 write: 0 repeats: rc 1; a byte short: rc 1", host_wire[6] == 1 && (request(ED_SONG2, a, 2u + sizeof cell), host_wire[6] == 1));
+    a[3] = 2;
+    chain_config.fx[0][1] = (chain_fx_t){5, 2, 4}; chain_config.fx[1][0] = (chain_fx_t){1, 0, 16};
+    chain_config.sound[0][1] = 3; chain_config.sound[0][2] = 4; song_edit_sync();
+    a[3 + 3] = CHAIN_REST; request(ED_SONG2, a, 3u + sizeof cell);   /* track 2 rests in section 1 */
+    bad += check("SONG2 write keeps the punch events and the sounds of the blocks it keeps (FBKN / FBKO)", !host_wire[6] &&
+                 chain_config.fx[0][1].fx == 5 && chain_config.fx[1][0].length == 16 && chain_config.sound[0][1] == 3 && !chain_config.sound[0][2]);
+    a[1] = 1; request(ED_SONG2, a, 3u + NTRK + 1u);
+    bad += check("SONG2 write of one section: section 2's events and sounds go (as a delete)", !host_wire[6] && chain_config.count == 1 &&
+                 !chain_config.fx[1][0].fx && chain_valid(&chain_config));
+    song_edit_history(0);
+    bad += check("the device's EDIT undo takes the editor's write back", chain_config.count == 2 && chain_config.fx[1][0].fx == 1);
+    a[0] = 0; a[1] = 0; a[2] = 64; n = request(ED_SONG2, a, 3);
+    bad += check("SONG2 sections: first 0, two of two, 24 bytes each", !host_wire[6] && !host_wire[12] && host_wire[14] == 2 && host_wire[16] == 2 &&
+                 n == 19u + 2u * ED_SONG_ROW);
+    bad += check("SONG2 section 1: 2 repeats, 16 steps of 1/16, 2 x 16 x 6144 units, cells and sounds", host_wire[18] == 2 && host_wire[19] == 16 &&
+                 host_wire[20] == 2 && u35_at(21) == 2u * 16u * 6144u && !host_wire[25] && host_wire[26] == 0 && !host_wire[27] &&
+                 host_wire[28] == 1 && host_wire[29] == 3 && host_wire[38] == 7);
+    bad += check("SONG2 section 2 (track 1 goes on): one bar of 1/16 (the conductor's four beats)", host_wire[42] == 1 && host_wire[43] == 16 &&
+                 u35_at(45) == 16u * 6144u && host_wire[50] == CHAIN_HOLD && !host_wire[51] && host_wire[52] == 2);
+    trk[0].p[P_SLEN] = 12; trk[0].p[P_SDIV] = 1; trk[0].p[P_SSWING] = 50;
+    request(ED_SONG2, a, 3);
+    bad += check("SONG2 timing follows track 1's pattern: 12 eighths swung, x 2", host_wire[19] == 12 && host_wire[20] == 1 &&
+                 u35_at(21) == 2u * 12u * 12288u);
+    a[0] = 1; n = request(ED_SONG2, a, 1);
+    bad += check("SONG2 timing table: swing, 16 banks a part, 8 a MIDI-only track, (steps, division, swing) each", !host_wire[6] &&
+                 n == 14u + NTRK + 3u * (NPART * NPAT + (NTRK - NPART) * NPAT_MIDI) && host_wire[13] == NPAT && host_wire[14] == 12 &&
+                 host_wire[15] == 1 && host_wire[16] == 50 && host_wire[14u + 1u + 3u * NPAT + 3u * NPAT + 1u] == 16);
+    a[0] = 3; a[1] = 1; request(ED_SONG2, a, 2);
+    bad += check("SONG2 insert at section 2: an empty section, the rest moves on", !host_wire[6] && chain_config.count == 3 &&
+                 chain_patterns[1][0] == CHAIN_REST && chain_config.fx[2][0].fx == 1 && chain_patterns[2][0] == 0);
+    a[0] = 4; a[1] = 0; a[2] = 0; request(ED_SONG2, a, 3);
+    bad += check("SONG2 duplicate section 1: its punch events and sounds come along", !host_wire[6] && chain_config.count == 4 &&
+                 chain_config.fx[1][1].fx == 5 && chain_config.sound[1][1] == 3 && chain_patterns[1][6] == 7);
+    a[0] = 6; a[1] = 0; a[2] = 1; a[3] = 4; request(ED_SONG2, a, 4);
+    bad += check("SONG2 move sections 1..2 to the end", !host_wire[6] && chain_config.count == 4 && chain_patterns[0][0] == CHAIN_REST &&
+                 chain_config.fx[3][1].fx == 5 && !se.range && !se.pending);
+    a[3] = 1; request(ED_SONG2, a, 4);
+    bad += check("SONG2 move onto itself: rc 2 (the page refuses), unchanged", host_wire[6] == 2 && chain_patterns[0][0] == CHAIN_REST && !se.pending);
+    a[0] = 5; a[1] = 0; a[2] = 1; request(ED_SONG2, a, 3);
+    bad += check("SONG2 delete sections 1..2", !host_wire[6] && chain_config.count == 2 && chain_valid(&chain_config));
+    a[2] = 2; request(ED_SONG2, a, 3);
+    bad += check("SONG2 delete past the end: rc 1", host_wire[6] == 1 && chain_config.count == 2);
+    chain.armed = 1; a[0] = 3; a[1] = 0; request(ED_SONG2, a, 2);
+    bad += check("SONG2 insert while the song plays: rc 3", host_wire[6] == 3 && chain_config.count == 2);
+    chain.armed = 0;
+
+    reset(); song_sound_reset(); song_edit_sync();
+    a[0] = 2; a[1] = 2; a[2] = 0; memcpy(a + 3, cell, sizeof cell); request(ED_SONG2, a, 3u + sizeof cell);
+    uint8_t eng = trk[0].eng_req, pre = trk[0].preset;
+    a[0] = 0; a[1] = 0; a[2] = 64; n = request(ED_SONG_SOUND, a, 3);
+    bad += check("SONG_SOUND list: no sounds", !host_wire[8] && !host_wire[9] && n == 17u && !host_wire[14]);
+    a[0] = 1; a[1] = 1; a[2] = 0; a[3] = 3; a[4] = 2; a[5] = 0;
+    request(ED_SONG_SOUND, a, 6);
+    bad += check("SONG_SOUND preset SID 3 on track 1's block (sections 1..2): sound 1, the track's own sound back", !host_wire[8] &&
+                 host_wire[9] == 1 && host_wire[6] == 1 && !host_wire[7] && chain_config.sound[0][0] == 1 &&
+                 chain_config.sound[1][0] == 1 && trk[0].eng_req == eng && trk[0].preset == pre && !song_picker.active);
+    a[0] = 0; a[1] = 0; a[2] = 64; request(ED_SONG_SOUND, a, 3);
+    bad += check("SONG_SOUND list: sound 1 = SID preset 3, named", !host_wire[8] && host_wire[14] == 1 && host_wire[16] == 1 &&
+                 host_wire[17] == 3 && host_wire[18] == 2 && !host_wire[19] && host_wire[20] >= 'A');
+    a[0] = 3; a[1] = 0; a[2] = 3; a[3] = 1; request(ED_SONG_SOUND, a, 4);
+    bad += check("SONG_SOUND sound 1 on track 4's block too", !host_wire[8] && chain_config.sound[0][3] == 1 && chain_config.sound[1][3] == 1);
+    a[3] = 0; request(ED_SONG_SOUND, a, 4);
+    bad += check("SONG_SOUND 0 removes it (the track's own)", !host_wire[8] && !chain_config.sound[0][3] && !chain_config.sound[1][3]);
+    a[2] = 6; a[3] = 1; request(ED_SONG_SOUND, a, 4);
+    bad += check("SONG_SOUND a synth sound on a MIDI-only track: rc 1", host_wire[8] == 1 && !chain_config.sound[0][6]);
+    a[2] = 1; a[3] = 2; request(ED_SONG_SOUND, a, 4);
+    bad += check("SONG_SOUND an id past the song's sounds: rc 1", host_wire[8] == 1);
+    a[0] = 2; a[1] = 0; a[2] = 2; a[3] = 100; a[4] = 2; request(ED_SONG_SOUND, a, 5);
+    bad += check("SONG_SOUND an empty user slot: rc 1, nothing kept", host_wire[8] == 1 && !chain_config.sound[0][2] && !song_picker.active);
+    up_store(5, "MY BASS");
+    a[3] = 5; a[4] = 0; request(ED_SONG_SOUND, a, 5);
+    bad += check("SONG_SOUND user slot 6 on track 3's cell: sound 2 (the slot's sound, no slot kept)", !host_wire[8] && host_wire[9] == 2 &&
+                 chain_config.sound[0][2] == 2 && song_sound_get(2)->engine == up_rec(5)->engine && !song_sound_get(2)->user[0]);
+    a[0] = 1; a[1] = 0; a[2] = 1; a[3] = 3; a[4] = 127; a[5] = 127; request(ED_SONG_SOUND, a, 6);
+    bad += check("SONG_SOUND a preset past the engine's: rc 1", host_wire[8] == 1);
+    a[4] = 2; a[5] = 0; song.playing = 1; request(ED_SONG_SOUND, a, 6);
+    bad += check("SONG_SOUND a preset while playing: rc 3 (as the sheet: STOP TO EDIT)", host_wire[8] == 3);
+    song.playing = 0;
+
+    reset();
+    n = request(ED_PUNCH, a, 0);
+    bad += check("PUNCH query: none held, none from the song, 27 effects", n == 12u && host_wire[5] == 127 && !host_wire[6] &&
+                 host_wire[7] == 127 && !host_wire[8] && host_wire[9] == 127 && host_wire[10] == PUNCH_NFX);
+    a[0] = 0; request(ED_PUNCH, a, 1);
+    bad += check("PUNCH names: LOOP 1/4 first", !memcmp(host_wire + 11, "LOOP 1/4", 9));
+    a[0] = 1; a[1] = PX_REV; request(ED_PUNCH, a, 2);
+    bad += check("PUNCH hold REVERSE: held, the editor's", !host_wire[6] && host_wire[7] == PX_REV && host_wire[8] == 1 && punch.req == PX_REV);
+    a[0] = 2; request(ED_PUNCH, a, 1);
+    bad += check("PUNCH release", !host_wire[6] && host_wire[7] == 127 && punch.req < 0 && !punch.keybit);
+    a[0] = 1; a[1] = PUNCH_NFX; request(ED_PUNCH, a, 2);
+    bad += check("PUNCH effect 28: rc 1", host_wire[6] == 1 && punch.req < 0);
+    a[1] = 0; ui.menu = 1; request(ED_PUNCH, a, 2);
+    bad += check("PUNCH hold while the device's menu is open: rc 3", host_wire[6] == 3 && punch.req < 0);
+    ui.menu = 0; request(ED_PUNCH, a, 2);
+    fm1_ms += 3001u; host_wire_n = 0; ed_service();
+    bad += check("PUNCH: 3 s without a request, the editor's effect stops", punch.req < 0 && !punch.keybit);
+    punch.req = 3; punch.keybit = 1u << 3; a[0] = 2; request(ED_PUNCH, a, 1);
+    bad += check("PUNCH release leaves a key's effect alone", punch.req == 3 && host_wire[7] == 3 && !host_wire[8]);
+    punch.req = -1; punch.keybit = 0;
+    const uint8_t two[] = {1, 2, 0, 1, 0, 1};
+    request(ED_SONG, two, sizeof two);
+    uint8_t ev[3u + 24u] = {4, 0, 2, PX_HPF + 1u, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0,  PX_ECHO + 1u, 12, 4};
+    n = request(ED_PUNCH, ev, sizeof ev);
+    bad += check("PUNCH writes sections 1..2's events; the events back", !host_wire[6] && n == 13u + 24u && host_wire[11] == 2 &&
+                 host_wire[12] == PX_HPF + 1u && host_wire[14] == 8 && host_wire[24] == PX_ECHO + 1u && chain_config.fx[1][0].start == 12);
+    ev[4] = 60; request(ED_PUNCH, ev, sizeof ev);
+    bad += check("PUNCH an event past step 64: rc 1, unchanged", host_wire[6] == 1 && chain_config.fx[0][0].length == 8);
+    ev[4] = 0; ev[1] = 1; request(ED_PUNCH, ev, sizeof ev);
+    bad += check("PUNCH events past the song's end: rc 1", host_wire[6] == 1);
+    a[0] = 3; n = request(ED_PUNCH, a, 1);
+    bad += check("PUNCH reads the song's events", !host_wire[6] && n == 13u + 24u && host_wire[12] == PX_HPF + 1u);
+
+    reset(); song_sound_reset(); song_edit_sync();
+    a[0] = 33; request(ED_WATCH, a, 1);
+    bad += check("WATCH 33: bit 5 known", host_wire[5] == 33);
+    song_edit_sync();
+    bad += check("nothing changed: no SONG_CHANGED", !pushed(ED_SONG_CHANGED, 10));
+    a[0] = 3; a[1] = 0; request(ED_SONG2, a, 2);
+    song_edit_sync();
+    bad += check("the editor's own section insert: no SONG_CHANGED", !pushed(ED_SONG_CHANGED, 10));
+    ui.song_row = 0; song_loop_set(1); song_edit_sync();
+    i = pushed(ED_SONG_CHANGED, 10);
+    bad += check("SONG loop on the device: SONG_CHANGED with the head", i && host_wire[i] == 1 && host_wire[i + 1] == 1 && host_wire[i + 5] == 0xF7);
+    bad += check("SONG_CHANGED once", !pushed(ED_SONG_CHANGED, 10));
+    a[0] = 0; request(ED_WATCH, a, 1);
+    for (i = 0; i < CHAIN_ROWS; i++) {                      /* the largest SONG2 write: 64 sections, 579 bytes */
+        a[3u + i * (NTRK + 1u)] = 16;
+        for (n = 0; n < NTRK; n++) a[4u + i * (NTRK + 1u) + n] = (uint8_t)(i ? CHAIN_HOLD : n % NPAT_MIDI);
+    }
+    a[0] = 2; a[1] = CHAIN_ROWS; a[2] = 0; request(ED_SONG2, a, 3u + CHAIN_ROWS * (NTRK + 1u));
+    a[0] = 0; a[1] = 41; a[2] = 64; n = request(ED_SONG2, a, 3);
+    bad += check("SONG2 64 sections: written in one request, read in two pages (41, then 23)", chain_config.count == CHAIN_ROWS &&
+                 host_wire[14] == 23 && n == 19u + 23u * ED_SONG_ROW && (request(ED_SONG2, (uint8_t[]){0, 0, 64}, 3), host_wire[14] == 41) &&
+                 host_wire_n <= sizeof ed_out);
+    a[0] = 3; a[1] = 0; request(ED_SONG2, a, 2);
+    bad += check("SONG2 insert into 64 sections: rc 2 (SONG FULL), unchanged", host_wire[6] == 2 && chain_config.count == CHAIN_ROWS);
+    a[0] = 4; a[1] = 0; a[2] = 0; request(ED_SONG2, a, 3);
+    bad += check("SONG2 duplicate into 64 sections: rc 2, no range left on the page", host_wire[6] == 2 && chain_config.count == CHAIN_ROWS &&
+                 !se.range);
+    return bad;
+}
 int main(void)
 {
     int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
-              native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol() + studio_session();
+              native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol() + studio_session() +
+              studio_song();
     printf("%s\n", bad ? "EDITOR TEST FAILED" : "editor test passed");
     return bad != 0;
 }

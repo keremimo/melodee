@@ -20,8 +20,9 @@ static const uint8_t ED_CAPS_TLV[] = {
     'P', 3, 1, PROJ_SLOTS, PROJ_NAME_LEN,                 /* PROJECTS v1: slots, name length */
     'G', 1, 1,                                            /* STORAGE v1 */
     'K', 1, 1,                                            /* BACKUP_LIST 1 (an inventory), BACKUP_GET while playing */
-    'W', 1, 31,                                           /* the WATCH bits known */
+    'W', 1, 63,                                           /* the WATCH bits known */
     'M', 2, 1, ED_METER_MS,                               /* METERS v1, ms between pushes */
+    'S', 6, 1, 1, 1, CHAIN_ROWS, CHAIN_SOUNDS, PUNCH_NFX,  /* SONG2, SONG_SOUND, PUNCH v1; sections, sounds, effects */
 };
 
 static uint32_t ed_sig(uint32_t at) { return fnv(2166136261u, ed_out + at, ed_n - at); }   /* the reply's bytes from at */
@@ -80,25 +81,32 @@ static uint32_t ed_db8(int32_t a)                         /* |sample| (Q15) as 8
     return lg > 127u ? 127u : lg;
 }
 
-/* ed_sync's last part (while watching): TRACKS_CHANGED, TRANSPORT_CHANGED (bit 3), METERS (bit 4) */
+/* ed_sync's last part (while watching): TRACKS_CHANGED, TRANSPORT_CHANGED (bit 3), SONG_CHANGED (bit 5), METERS (bit 4) */
 static uint32_t ed_session_push(uint32_t n, uint32_t now)
 {
     uint32_t s, k;
     if ((ed_w.bits & 8u) && n < ED_PUSH_MAX && ed_room()) {   /* (built to compare: sent when it differs) */
         ed_begin(ED_TRACKS_CHANGED);
-        if ((s = ed_tracks_body(0)) != ed_w.tsig) {
-            ed_w.tsig = s;
+        if ((s = ed_tracks_body(0)) != ed_w.psig[0]) {
+            ed_w.psig[0] = s;
             ed_send();
             n++;
         }
     }
     if ((ed_w.bits & 8u) && n < ED_PUSH_MAX && ed_room()) {
         ed_begin(ED_TRANSPORT_CHANGED);
-        if ((s = ed_tp_body()) != ed_w.xsig) {
-            ed_w.xsig = s;
+        if ((s = ed_tp_body()) != ed_w.psig[1]) {
+            ed_w.psig[1] = s;
             ed_send();
             n++;
         }
+    }
+    if ((ed_w.bits & 32u) && se.signature != ed_w.psig[2] && n < ED_PUSH_MAX && ed_room()) {
+        ed_w.psig[2] = se.signature;
+        ed_begin(ED_SONG_CHANGED);
+        ed_song_head();
+        ed_send();
+        n++;
     }
     if ((ed_w.bits & 16u) && now - ed_w.m_ms >= ED_METER_MS && n < ED_PUSH_MAX && ed_room()) {
         ed_w.m_ms = now;                                  /* state, the song's row, the parts' peaks, every step */
@@ -159,7 +167,7 @@ static int ed_session_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
                 ed_shadow();                              /* another track selected: the editor re-reads it, no RELOAD */
         }
         ed_echo(a, n, 1u); ed_b(rc);
-        ed_w.tsig = ed_tracks_body(1);                    /* (the editor's own change: no push) */
+        ed_w.psig[0] = ed_tracks_body(1);                 /* (the editor's own change: no push) */
         return 1;
     }
     if (cmd == ED_TRANSPORT) {        /* [op: 1 play, 2 play the song from row k, 3 stop, 4 song loop k] -> op, rc, the state */
@@ -190,7 +198,7 @@ static int ed_session_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         while (n && transport_req && fm1_ms - t0 < 100u)  /* the audio ISR takes the request at its next block */
             fm1_wdt_feed();
         ed_echo(a, n, 1u); ed_b(rc);
-        ed_w.xsig = ed_tp_body();
+        ed_w.psig[1] = ed_tp_body();
         return 1;
     }
     return 0;

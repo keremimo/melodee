@@ -1442,8 +1442,9 @@ printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies e
 | `P` (0x50) | 3 | `PROJECTS` version 1, slots (32), name length (12) |
 | `G` (0x47) | 1 | `STORAGE` version 1 |
 | `K` (0x4B) | 1 | 1: `BACKUP_LIST 1` (an inventory) and `BACKUP_GET` while playing |
-| `W` (0x57) | 1 | the `WATCH` bits known (31: bits 0..4) |
+| `W` (0x57) | 1 | the `WATCH` bits known (31: bits 0..4; 63 with F3's bit 5, "Studio song") |
 | `M` (0x4D) | 2 | `METERS` version 1, milliseconds between pushes (66, ~15 Hz) |
+| `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
 
 Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
 
@@ -1547,6 +1548,7 @@ answer and pushes as before.
 | 2 | the eight tracks: `RELOAD` and `STEP_CHANGED` carry the real selected track (0..7, not clamped to 3), `TRACK` reports it too, and `TRACK_CHANGED` follows tracks 5..8 as well |
 | 3 | `TRACKS_CHANGED` (56) when the tracks in use, the selection, solo, armed or a track's sound change on the device (not level or mute: `CHANGED` / `TRACK_CHANGED` carry those), and `TRANSPORT_CHANGED` (57) when the transport changes but its step (play, stop, a song row, a repeat, the loop, the clock) |
 | 4 | `METERS` (55) every 66 ms (~15 Hz) while watching. Studio sets the bit only while Stage or Mixer is open and its tab visible |
+| 5 | (F3) `SONG_CHANGED` (58) when the song changes on the device: see "Studio song" |
 
 A `WATCH` with bits 2..4 while watching only changes the bits: the shadows stay, so no push is lost (a `WATCH` of 0..3,
 or one that starts watching, takes the device's values as known, as before). The editor's own `TRACKS` /
@@ -1557,6 +1559,124 @@ or one that starts watching, takes the device's values as known, as before). The
 track its step (0..63). A peak is 8 × log2 of the largest |sample| (Q15, after level, solo and mute), 0..127: 120 is
 full scale, each 8 is 6 dB (dBFS ≈ (peak − 120) × 0.75), 0 silence. The device's own meters and `METERS` each get
 every peak (`trk_peak_take`: two readers).
+
+## Studio song (commands 47–49, 58)
+
+Melodee Studio's song (branch F3 `feat/editor-song-full`, on F1): the whole song with all eight tracks, the
+sections' lengths, the block sounds, the punch-in effects and a push when the song changes on the device. The
+commands only add: every earlier command answers byte for byte as before (`SONG` 33 and `BANK_SONG` 74 keep
+their four-track rows, and their writes still clear the punch events and block sounds). Code:
+`firmware/src/editor_song.c`; the song page's own operations (`ui_song.c`, `ui_song_sound.c`) do the edits. Tests:
+`tests/editor_test.c` `studio_song`.
+
+**Finding out.** `CAPS` (39) has a tag `S`: `53 06` SONG2 version 1, SONG_SOUND version 1, PUNCH version 1, the
+sections a song holds (64), the song's sounds (64), the punch effects (27); `W` is 63 (bits 0..5). Firmware without
+the tag never answers 47–49.
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 47 SONG2 | — (head); 0, first, count (sections); 1 (the banks' timing); 2, rows, loop, rows × (repeats, 8 cells) (write); 3, at (insert); 4, first, last (duplicate); 5, first, last (delete); 6, first, last, to (move) | op (127: head), rc, the head (below), then 0: the sections; 1: the timing table |
+| 48 SONG_SOUND | 0, first, count (the song's sounds); 1, row, track, engine, preset lo, preset hi; 2, row, track, slot lo, slot hi; 3, row, track, id | op, row, track (0: first, count), rc, the song's sounds (count), then 0: the sounds |
+| 49 PUNCH | — (state); 0 (names); 1, effect (hold); 2 (release); 3 (the song's events); 4, first, n, n × 4 × (effect, start, length) | op (127: state), rc, held, the editor's, the song's, effects (27), then 0: names; 3, 4: the events |
+| 58 SONG_CHANGED (push) | — | the head |
+
+Sections and tracks count from 0 on the wire. A cell is a pattern (0..15 on tracks 1..4; 0..7 on the MIDI-only
+tracks 5..8), 16 a rest, 17 goes on (the block above continues: never on section 1, never after a rest). Every reply
+fits one 1024-byte frame (the paged ones are cut to fit: 41 sections, 50 sounds a reply); the longest request is a
+64-section `SONG2` write, 579 argument bytes (585 with the frame).
+
+rc: 0 done; 1 malformed or invalid (nothing changed); 2 refused by the device (nothing changed: no edit memory,
+the song full, a move onto itself, a sound that could not be kept); 3 busy (the song plays or is about to: STOP TO
+EDIT; SONG_SOUND 1 and 2 also while anything plays, PUNCH 1 while a menu, dialog or NAME is open on the device).
+Unlike the older commands, a request of the wrong length still gets its reply, with rc 1.
+
+### SONG2 (47)
+
+The head (also the whole of `SONG_CHANGED`): the sections (0..64), loop (0/1), BPM (14 bits: 40..240), the song's
+sounds (0..64).
+
+- **Sections** (op 0): `first, count, total` (14 bits each), then `count` sections of 24 bytes:
+
+  | bytes | field |
+  | --- | --- |
+  | 1 | repeats, 1..16 |
+  | 1 | steps: the conductor's (track 1's) pattern length, 1..64; 16 when track 1 rests or goes on |
+  | 1 | division of those steps (`P_SDIV`: 0 1/4, 1 1/8, 2 1/16, 3 1/32, 4 8T, 5 16T, 6 1/2, 7 1/1, 8 2BAR, 9 4BAR); 2 when track 1 rests or goes on |
+  | 5 | the section's length in sequencer units, repeats included (32 bits, five 7-bit groups, low first) |
+  | 8 × 2 | per track: the cell, the block sound id stored on it (0: none) |
+
+  **Time.** A beat (quarter note) is 24,576 units at any tempo; the section lasts `units × 60 / (24,576 × BPM)`
+  seconds and the song the sum of its sections (the device's own `chain_row_samples` / `chain_seconds`, swing
+  included: an odd-length conductor pattern carries its swung step). The device clocks a section by track 1: its
+  pattern's steps × division (with track 1's swing plus global swing), × repeats; a section where track 1 rests or
+  goes on lasts four beats (16 sixteenths) a repeat. The other tracks restart their pattern at each section start
+  (unless they go on) and loop or are cut at its end.
+
+  **Sounds.** A block's sound is the id on its first cell; a goes-on cell with id 0 plays the sound of the block it
+  continues (older songs named only the first section), one with its own id plays that one. 0 on a block's first
+  cell: the track's own sound (or the pattern's, see FBKQ).
+- **Timing** (op 1): global swing (0..100), then per track (8): its patterns (16 or 8), then per pattern its steps
+  (1..64), division (as above), swing (0..100). With them Studio draws each cell's pattern inside its section: a
+  pattern lasts `steps × division + (steps odd ? swing' × division / 250 : 0)` units, `swing'` = the pattern's swing
+  + global swing, at most 100, and the division in units: 1/4 24,576, 1/8 12,288, 1/16 6,144, 1/32 3,072, 8T 8,192,
+  16T 4,096, 1/2 49,152, 1/1 98,304, 2BAR 196,608, 4BAR 393,216.
+- **Write** (op 2): replaces the cells, repeats and loop. The punch events and the block sounds of the sections
+  kept stay (FBKN / FBKO): a cell written as a rest loses its sound; sections past `rows` lose theirs (as a delete).
+  Everything is checked first (repeats 1..16, a pattern the track has, goes-on after a block); any fault: rc 1,
+  nothing changed.
+- **Insert / duplicate / delete / move** (ops 3–6) are the song page's own: insert puts an empty section (all rests,
+  1 repeat) at `at` (past the end: at the end); duplicate copies sections `first..last` right after `last`; delete
+  removes them; move puts them before section `to` (0..rows). Punch events and sounds move with their sections; a
+  block cut by the edit becomes its own block, its first cell named by the pattern it played (as on the device). The
+  device shows the page's message ("SECTION DUPLICATED", ...) and its song cursor moves there. rc 1: `first > last`,
+  `last` past the song, `to` past the end; rc 2 (the page refuses, nothing changed): the song would pass 64
+  sections, a move inside or right after its own range, no edit memory.
+
+Every write is one of the song page's undoable edits: EDIT on the device undoes and redoes it. All writes answer rc 3
+while the song plays or is about to (TRANSPORT bit 1); reads work while playing.
+
+### SONG_SOUND (48)
+
+A block's sound is an immutable snapshot in the song's pool (up to 64; FBKO), as the song sheet's "Set preset" makes
+it. The song's sounds (op 0): `first, count, total` (14 bits each), then `count` sounds: id (1..64), engine, preset
+(low 7 bits, then bit 7), name (≤ 15 characters, 0-terminated): what the sound was made from. A snapshot keeps
+no user slot (as on the device): a sound made from a user slot shows that slot's name and preset 0.
+
+| op | does | rc |
+| --- | --- | --- |
+| 1 | the factory preset `engine, preset` (14 bits) on the block of `track` at `row`: the track auditions it, its snapshot is stored (an identical one is reused) and the block's cells get its id, then the track's own sound comes back | 1: row past the song, a MIDI-only track, engine or preset unknown; 2: the sound could not be kept (an engine this firmware does not play, the pool full, PROJECT FULL, no memory); 3: the transport runs, or the device's own Set preset is open |
+| 2 | as 1 from user slot `slot` (14 bits, 0..383) | 1: as 1, or the slot empty; 2, 3 as 1 |
+| 3 | sound `id` of the pool on the block (0: none, the track's own: "Remove preset") | 1: row past the song, id past the pool, an id on a MIDI-only track; 2: no edit memory; 3: the song plays |
+
+The block is the cell's: from the block's first section (its origin) through every goes-on cell after it. The reply's
+count tells whether a new sound was stored; Studio reads the sections again for the ids.
+
+### PUNCH (49)
+
+The punch-in effects of the FX layer: 27 effects (0..26, as the keyboard F3..G5 maps them: 16 white keys, then 11
+black), the master mix through one at a time.
+
+The state after `op, rc`: held (the effect the keys or the editor hold, 127 none), the editor's (1: the editor's
+hold), the song's (the effect a song section plays now, 127 none), effects (27).
+
+| op | does | rc |
+| --- | --- | --- |
+| 0 | the names follow: 27 × name (0-terminated) | 0 |
+| 1 | holds `effect` (as a held key); a key pressed on the device takes over | 1: effect ≥ 27; 3: a menu, dialog or NAME is open on the device (no layer plays) |
+| 2 | releases the editor's hold (a key's stays) | 0 |
+| 3 | the song's events follow | 0 |
+| 4 | writes the events of sections `first..first+n-1` (n ≥ 1), 4 per section, then the events follow | 1: past the song, an event invalid; 2: no edit memory; 3: the song plays |
+
+The editor's hold ends with STOP, when the device opens a menu, dialog or NAME, and 3 s after the editor's last request
+(Studio sends `PING` while a pad is held). The events: the sections (count), then per section 4 × (effect + 1, 0
+none; start step 0..63; length 1..64 − start; 0, 0, 0 for none), in conductor steps from the section's start,
+repeated with each repeat (FBKN). The later start wins where two overlap; a held effect wins over the song's.
+
+### WATCH bit 5: SONG_CHANGED (58)
+
+`WATCH` with bit 5 (32) pushes `SONG_CHANGED` (the head: 5 bytes, 11 with the frame) when the song changes on the device: its cells,
+repeats, loop, block sounds or punch events (an edit, an undo, a project load, a new song). Studio then reads it again.
+The editor's own writes push nothing. The device notices a change within one screen pass.
 
 ## Flash ledger (editor commands)
 
@@ -1617,3 +1737,27 @@ How F0 was checked: `tests/run_tests.sh` (editor_test, backup_test, the old edit
 differential run of the old and new `editor*.c` on the host: 200,000 random and well-formed requests to every
 command (including all sub-operations of 33, 37/38, 64, 68–80 and 95), every reply and the device state after
 it compared byte for byte, identical.
+
+| F3 `feat/editor-song-full` | Studio song (see "Studio song"), per command: the full build minus a build without it | **+2,132 B** | **+2,124 B** |
+|---|---|---:|---:|
+| — SONG2 47 | head, sections paged (cells, sound ids, steps, division, length in units), the banks' timing table, write keeping the punch events and sounds, insert / duplicate / delete / move through the song page | +812 B | +816 B |
+| — SONG_SOUND 48 | the song's sounds paged, a block's sound from a factory preset or user slot (audition, keep, restore), a pool id or none | +460 B | +428 B |
+| — PUNCH 49 | state, names, the editor's hold (and its 3 s release), the song's events read and write | +436 B | +420 B |
+| — push 58 | SONG_CHANGED on WATCH bit 5 | +168 B | +156 B |
+| — shared | the head and paging helpers the commands share, the CAPS `S` tag, WATCH bit 5, the edit counter (`se.edits`), the handler entry, `editor_song.c` built for size; the song sheet's audition and keep split out for the editor (`song_preview_begin`, `song_preset_keep`, `song_block_sound`, `song_rows_clear`: flash-neutral, −1,002 / +962 B on FM-1) | +256 B | +304 B |
+
+After F3: FM-1 image 576,296 B, **952 B free**; SMK image 576,844 B, **404 B free**. RAM .data+.bss +16 B (FM-1,
+95,448 of 98,304) / +0 B (SMK, 95,960): the SONG_CHANGED signature and the edit counter. Within the F3 estimate
+(1.5–2.5 KB). F2 and F4 (est. 2.5–4.5 KB) do not fit what is left on either board without further room.
+
+The commands' costs are not additive to the byte: the board's global layout moves with the code (the compiler merges
+static variables and addresses them from a shared base; a variable pushed past the short offsets costs 4 bytes at every
+access), so a build can grow or shrink by ~150 B with no change of its own. A table of push bodies (56–58 in one loop)
+measured 264 B larger on FM-1 for that reason and was left out.
+
+How F3 was checked: `tests/run_tests.sh` once, `editor_test` `studio_song` (also under ASan/UBSan), the song page's own
+tests (`song_mode_test`, `song_preset_test`, `song_punch_test`: the split-out audition and keep), and F0's differential
+harness against F1's `editor*.c` (012c7ed5): 200,000 random and shaped requests (4 seeds), F1's commands 40–43 among
+them, every reply and the state after it identical, leaving out only what F3 changes on purpose (`CAPS`, commands
+47–49, `WATCH` bit 5).
+

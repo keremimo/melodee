@@ -34,6 +34,8 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "editor_res.c", "editor_wire.h",
               # Melodee Studio's session commands (CAPS, TRACKS, TRANSPORT, PROJECTS, STORAGE, the pushes)
               "editor_session.c", "editor_projects.c",
+              # .. and its song commands (SONG2, SONG_SOUND, PUNCH, SONG_CHANGED)
+              "editor_song.c",
               # the user's drum kits: their store and record check, a take's processing, Record kit's sheet (drum_enc.c,
               # the take's encoder, stays at -Os: its speed is the wait on "Saving")
               "kit_store.c", "kit_take.c", "kit_rec_ui.c"]
