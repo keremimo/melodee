@@ -51,6 +51,8 @@ static struct {
 #define MELODEE_VERSION "v1.7.0-base-dev"
 #endif
 #define MELODEE_RES __attribute__((section(".mres"), aligned(4)))
+/* drum_real.c's user kits read their sectors in place: through the bridge (Melodee's windows; the host's image) */
+#define DRK_XIP(off) ml_flash(off)
 /* NOINIT also holds the base's crash record and radio log here (1.8 KB with Bluetooth): fewer pattern chunks there, the
  * rest in the pool (pattern.c) */
 #define PAT_RETAINED_MAX 880u
@@ -379,6 +381,11 @@ static const uint8_t *fm1_xip_ptr(uint32_t off) { return ml_flash(off); }
 #include "../firmware/src/storage.c"
 #include "../firmware/src/res.c"
 #include "../firmware/src/upreset.c"
+#if BOARD_SMK37
+/* firmware/src/smkx.c is the classic build's (its icons in the app area tail 0x93000..): here the base's SMK slot reaches
+ * 0x9CFFF, the icons are in the image (no MELODEE_SMKX section, icons.c SMKX_OK() 1), nothing to check */
+static void smkx_check(void) {}
+#endif
 #include "../firmware/src/project.c"
 #include "../firmware/src/cz_store.c"
 #include "../firmware/src/fm6_store.c"

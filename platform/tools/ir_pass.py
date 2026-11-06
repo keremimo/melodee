@@ -22,13 +22,17 @@ if unit:
     src=sized
 tc('cc','-mcpu=r3','-mfprev1','-ffp-contract=off','-fno-builtin','-O2' if unit else '-Os','-S','-emit-llvm',src,'-o',optimized)
 roots=audio_ram.engine_roots(ROOT/'firmware/src')
+low=()
 if unit:
     roots|={'mlb_render','mlb_deadline','mlb_overload','mlb_sysex_byte'}   # (the base's audio and USB interrupts call these)
     required='mlb_render'
+    # The drum kits' render in the low SRAM's DSP section (app.ld .ram_text: the second core's window), not the pool:
+    # the engines' worst-case states keep their 48 KiB there (the user kits' player made the resident code 3.2 KB longer)
+    low=('drk_render','drk_run','drum_render_into','drum_amp','drum_source')
 else:
     roots|={'ml_ms','ml_ticks','ml_lock','ml_unlock','ml_watchdog','ml_midi_out'}
     required='fm1_alnk0_irq'
-s,selected,far=audio_ram.relocate(optimized.read_text(),roots,required_root=required)
+s,selected,far=audio_ram.relocate(optimized.read_text(),roots,required_root=required,low=low)
 dst.write_text(s)
 dst.with_suffix('.json').write_text(json.dumps({'resident':selected,'far_calls':far},indent=2))
 print(f'{unit or "base"}: {len(selected)} resident functions, {len(far)} flash/RAM boundaries')
