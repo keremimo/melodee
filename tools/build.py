@@ -368,8 +368,10 @@ def build_app(stub):
     return bytes(img), syms, dis, rt
 
 
-BOARD_RES = {"fm1": (0xCB000, 21), "smk37": (0x9F000, 16)}   # the resource region per board (hal/fm1_flash_map.h FL_RES)
-RES_BASE, RES_SECTORS, RES_HEAD = 0xCB000, 21, 32     # firmware/src/res.c (set per board in main)
+# the resource region per board (hal/fm1_flash_map.h FL_RES, FL_RES_RESERVE): base, sectors, the window every build
+# keeps (written into the header: the update loader writes and blanks only inside it, the store takes the rest)
+BOARD_RES = {"fm1": (0xCB000, 21, 15), "smk37": (0x9F000, 16, 16)}
+RES_BASE, RES_SECTORS, RES_RESERVE, RES_HEAD = 0xCB000, 21, 15, 32   # firmware/src/res.c (set per board in main)
 
 
 # the SMK-37's app area tail (firmware/src/smkx.c): flash 0x93000 (the FM-1's PRCT end) up to the SMK's (0x9D000)
@@ -410,17 +412,17 @@ def resources(img, symv):
     if img[at:at + 4] != struct.pack("<I", 0x544E5752):
         raise SystemExit("res_want: no RWNT marker in the image")
     img[at + 4:at + 12] = struct.pack("<II", len(payload), crc)
-    head = struct.pack("<7I", 0x3153524D, len(payload), crc, 0, 0, 0, 0)
+    head = struct.pack("<7I", 0x3153524D, len(payload), crc, RES_RESERVE, 0, 0, 0)
     region = head + struct.pack("<I", zlib.crc32(head)) + payload
-    if len(region) > RES_SECTORS * 4096:
-        raise SystemExit(f"resources: {len(region)} B over the {RES_SECTORS * 4096} B region")
+    if len(region) > RES_RESERVE * 4096:
+        raise SystemExit(f"resources: {len(region)} B over the {RES_RESERVE * 4096} B the build keeps (FL_RES_RESERVE)")
     # the SPL and the update loader act on a sector whose last 256 bytes are an update record (ota.c UPDATA_PARM)
     for s in range(0, len(region), 4096):
         tail = region[s + 0xF00:s + 0xF08]
         if len(tail) == 8 and tail[2:8] == struct.pack("<3H", 0x5A0D, 0x5A01, 0x5441):
             raise SystemExit(f"resources: sector {RES_BASE + s:#x}'s tail reads as an update record")
     (OUT / "melodee-res.bin").write_bytes(region)
-    print(f"resources: {len(payload)} B at {RES_BASE + RES_HEAD:#x} ({-(-len(region) // 4096)} of {RES_SECTORS} sectors), "
+    print(f"resources: {len(payload)} B at {RES_BASE + RES_HEAD:#x} ({-(-len(region) // 4096)} of {RES_RESERVE} sectors), "
           f"crc {crc:08x} -> build/melodee-res.bin")
 
 
@@ -624,7 +626,7 @@ def mmio_check():
 
 
 def main():
-    global PRODUCT, VERSION, BOARD, MODEL, RES_BASE, RES_SECTORS
+    global PRODUCT, VERSION, BOARD, MODEL, RES_BASE, RES_SECTORS, RES_RESERVE
     ap = argparse.ArgumentParser()
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--nightly", action="store_true", help="development package from the current Git commit")
@@ -646,7 +648,7 @@ def main():
     if MODEL not in fm1pkg_make.MODELS or (MODEL != "pro" and BOARD != "smk37"):
         raise SystemExit(f"MODEL={MODEL}: pro, elite or mke, with BOARD=smk37")
     fm1pkg_make.set_board(BOARD)
-    RES_BASE, RES_SECTORS = BOARD_RES[BOARD]
+    RES_BASE, RES_SECTORS, RES_RESERVE = BOARD_RES[BOARD]
     stem = BOARD_STEM[BOARD]
     model = fm1pkg_make.MODELS[MODEL] if BOARD == "smk37" else "FM-1"
     if BOARD == "smk37":            # the model's name: identity, loader, update record, the stub's record

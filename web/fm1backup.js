@@ -17,7 +17,7 @@ const BACKUP_IDS_KITS = [...BACKUP_IDS_PROJECTS, ...Array.from({length:8},(_,i)=
 const isProject = id => id === 0 || (id >= 2 && id <= 5) || (id >= 64 && id < 92);
 const isSample = id => id >= 32 && id < 64;
 const isKit = id => id >= 92 && id < 100;
-const KIT_MAX = 26656;   // seven pool sectors (kit_store.c)
+const KIT_MAX = 28392;   // seven 4,056-byte list-record sectors (kit_store.c DRK_KIT_MAX)
 const maxSize = id => isProject(id) ? 27936 : isKit(id) ? KIT_MAX : id >= 32 ? 81920 : 3840;
 const idsOf = (n) => (n === BACKUP_IDS.length ? BACKUP_IDS : n === BACKUP_IDS_V1.length ? BACKUP_IDS_V1 : n === 9 ? BACKUP_IDS_BANKS : n === 17 ? BACKUP_IDS_CZ : n === 21 ? BACKUP_IDS_OWN : n === 23 ? BACKUP_IDS_NATIVE : n === 28 ? BACKUP_IDS_P5 : n===29?BACKUP_IDS_SHARED:n===57?BACKUP_IDS_PROJECTS:n===65?BACKUP_IDS_KITS:null);
 export const BACKUP_CMD = { LIST: 65, GET: 66, PUT: 67 };

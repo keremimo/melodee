@@ -23,6 +23,11 @@ static int ed_bk_kit(uint32_t id) { (void)id; return 0; }
 #endif
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
 #define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a compact one (project_stream.c PJ_HEAD) */
+#ifdef KIT_STORE                            /* a user kit streams into its record (no staging): its own bound */
+#define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? DRK_KIT_MAX : ED_BK_MAX)
+#else
+#define ED_BK_LEN_MAX(id) ED_BK_MAX
+#endif
 #define ED_BK_RAW (wire_take())             /* reuse the existing serialized main-loop scratch */
 #define ed_bk_set set_rec    /* id 1: the settings record (+ the template), in the settings save's staging (project.c):
                              * a save while a backup runs rewrites it, and the archive's CRC then fails */
@@ -332,7 +337,7 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
     if (a[0] == 0u) {
         if (n != 12u || a[6] > 15u || a[11] > 15u) return 1;
         uint32_t len = ed_bk_r32(a + 2);
-        if (len > ED_BK_MAX || (a[1] == 0u && !len) ||
+        if (len > ED_BK_LEN_MAX(a[1]) || (a[1] == 0u && !len) ||
             (a[1] == 1u && len != sizeof(persist_t) && !tmpl_param_count(len - sizeof(persist_t))) ||
             (!ed_bk_project(a[1]) && len > BANK_STORE_SIZE) ||
             (ed_bk_preset_bank(a[1])<UP_BANKS && len>3840u) ||
