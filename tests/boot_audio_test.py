@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-"""Independent LZMA fixtures, malformed decoder inputs and the real packed image."""
+"""Independent LZMA fixtures, malformed decoder inputs, the filters and the real packed image."""
 import lzma
 import os
 from pathlib import Path
@@ -35,6 +35,15 @@ def elf_symbol(path, wanted):
     raise AssertionError('missing ELF symbol ' + wanted)
 
 
+def call_like_bytes(rng, n):
+    """words that are often calls, near the ends of the 22-bit range too, among others that nearly are"""
+    out = bytearray()
+    while len(out) < n:
+        out += bytes((rng.choice((0x80, 0xBF, 0xA2, 0x7F, 0xC0)), rng.choice((0xEA, 0xEA, 0xEB)),
+                      rng.randrange(256), rng.randrange(256)))
+    return bytes(out[:n])
+
+
 class BootAudio(unittest.TestCase):
     def test_record_and_round_trip(self):
         for raw in (b'', b'A', bytes(random.Random(741).randbytes(512))):
@@ -43,40 +52,71 @@ class BootAudio(unittest.TestCase):
             self.assertEqual((magic, size, reserved), (boot_audio.MAGIC, len(raw), 0))
             self.assertEqual(len(data), 16 + n + (-n % 4))
             self.assertEqual(lzma.decompress(data[16:16 + n], format=lzma.FORMAT_RAW, filters=boot_audio.FILTERS), raw)
-        images = [b'', b'xyz', bytes(range(256)) * 4]
-        self.assertEqual([size for size, _ in boot_audio.unpack_images(boot_audio.pack_images(images), 3)],
-                         [len(i) for i in images])
+        sections = [b'abcd', b'', bytes(range(256)) * 4, b'wxyz' * 2, b'\x80\xea\x10\x00' * 8]
+        size, stream = boot_audio.unpack_image(boot_audio.pack_images(sections))
+        self.assertEqual(size, sum(map(len, sections)))
+        raw = lzma.decompress(stream, format=lzma.FORMAT_RAW, filters=boot_audio.FILTERS)
+        self.assertEqual(boot_audio.sections_of(raw, [len(s) for s in sections]), sections)
         with self.assertRaisesRegex(ValueError, 'no load image'):
-            boot_audio.unpack_images(b'\0' * 16, 1)
+            boot_audio.unpack_image(b'\0' * 16)
+        with self.assertRaisesRegex(ValueError, 'not whole words'):
+            boot_audio.pack_images([b'abc', b'', b'', b'', b''])
+
+    def test_filters(self):
+        rng = random.Random(1200)
+        for raw in (b'', b'\xff' * 8, bytes(rng.randbytes(1024)), struct.pack('<4I', 0xFFFFFFFF, 0, 0xFFFFFFFF, 1)):
+            self.assertEqual(boot_audio.undelta2(boot_audio.delta2(raw)), raw)
+        for raw in (b'', b'\x80\xea', b'\x80\xea\x00\x00', b'\xbf\xea\xff\xff\xbf\xea\xff\xff', call_like_bytes(rng, 4096),
+                    call_like_bytes(rng, 4098), bytes(rng.randbytes(4096))):
+            self.assertEqual(boot_audio.calls_relative(boot_audio.calls_absolute(raw)), raw)
+        # two calls to one target read the same; each call stays a call
+        call = lambda at, target: bytes(((target - at - 4) >> 17 & 0x3F | 0x80, 0xEA,
+                                         (target - at - 4) >> 1 & 255, (target - at - 4) >> 9 & 255))
+        code = call(0, 0x1000) + b'\0' * 12 + call(16, 0x1000)
+        made = boot_audio.calls_absolute(code)
+        self.assertEqual(made[:4], made[16:20])
+        self.assertEqual(boot_audio.calls_relative(made), code)
 
     def test_dependency_gate(self):
         syms = '02001000 l F .text 00000020 boot_lzma\n02001040 l F .text 00000020 helper\n'
         dis = 'boot_lzma:\n 2001000: 00 00 \tcall 64 <helper : 2001040 >\nhelper:\n 2001040: 00 00 \trts\n'
-        self.assertEqual(boot_audio.check_decoder(syms, dis, 0x2001000, 0x208d000), [])
-        self.assertTrue(boot_audio.check_decoder(syms.replace('02001040', '01c01040'), dis, 0x2001000, 0x208d000))
-        self.assertTrue(boot_audio.check_decoder(syms, dis.replace('call 64 <helper : 2001040 >', 'call r3'), 0x2001000, 0x208d000))
-        self.assertTrue(boot_audio.check_decoder(syms + '01c01000 l O .data 00000020 boot_lzma.table\n', dis, 0x2001000, 0x208d000))
+        roots = ('boot_lzma',)
+        self.assertEqual(boot_audio.check_decoder(syms, dis, 0x2001000, 0x208d000, roots), [])
+        self.assertTrue(boot_audio.check_decoder(syms.replace('02001040', '01c01040'), dis, 0x2001000, 0x208d000, roots))
+        self.assertTrue(boot_audio.check_decoder(syms, dis.replace('call 64 <helper : 2001040 >', 'call r3'), 0x2001000, 0x208d000, roots))
+        self.assertTrue(boot_audio.check_decoder(syms + '01c01000 l O .data 00000020 boot_lzma.table\n', dis, 0x2001000, 0x208d000, roots))
+        self.assertTrue(boot_audio.check_decoder(syms, dis, 0x2001000, 0x208d000), 'the default roots are all required')
 
     def test_decoder(self):
         rng = random.Random(9025)
         payloads = [b'', b'A', bytes(range(256)), b'ABCD' * 32768,
                     bytes(rng.randrange(256) for _ in range(8192))]
-        for name in boot_audio.SECTIONS:
-            p = Path('build') / name
-            if p.exists() and p.stat().st_size:
-                payloads.append(p.read_bytes())
         with tempfile.TemporaryDirectory(prefix='melodee-lzma-') as temp:
             root = Path(temp)
             exe = root / 'lzma'
             flags = shlex.split(os.environ.get('BOOT_SANITIZE', '-fsanitize=address,undefined'))
             subprocess.run([*shlex.split(os.environ.get('CC', 'cc')), '-O1', '-g', *flags, '-fno-omit-frame-pointer',
                             'tests/boot_lzma_test.c', '-o', str(exe)], check=True)
-            for raw in payloads:
-                data = boot_audio.pack(raw)
-                n = struct.unpack_from('<I', data, 4)[0]
-                (root / 'packed').write_bytes(data[16:16 + n])
+
+            def decode(stream, raw):
+                (root / 'packed').write_bytes(stream)
                 (root / 'raw').write_bytes(raw)
                 subprocess.run([str(exe), str(root / 'packed'), str(root / 'raw'), str(len(raw))], check=True)
+
+            def filtered(kind, stored, raw):
+                (root / 'stored').write_bytes(stored)
+                (root / 'raw').write_bytes(raw)
+                subprocess.run([str(exe), '-' + kind, str(root / 'stored'), str(root / 'raw')], check=True)
+
+            for raw in payloads:
+                data = boot_audio.pack(raw)
+                decode(data[16:16 + struct.unpack_from('<I', data, 4)[0]], raw)
+            # the C filters against the Python ones, on bytes made to look like calls
+            for n in (0, 2, 4, 6, 4096, 4098):
+                raw = call_like_bytes(rng, n)
+                filtered('c', boot_audio.calls_absolute(raw), raw)
+            raw = bytes(rng.randbytes(1024))
+            filtered('d', boot_audio.delta2(raw), raw)
             # Check bytes actually emitted by the packager, not another compressor invocation.
             sections = [Path('build') / name for name in boot_audio.SECTIONS]
             if all(p.exists() for p in sections) and Path('build/melodee.bin').exists():
@@ -91,15 +131,17 @@ class BootAudio(unittest.TestCase):
                         raw = (Path('build') / name).read_bytes()
                         self.assertEqual(image[at:at + len(raw)], raw)
                     return
-                records = boot_audio.unpack_images(image[offset:], len(sections))
-                self.assertLessEqual(offset + len(boot_audio.pack_images([p.read_bytes() for p in sections])), len(image))
-                for (size, data), p in zip(records, sections):
-                    raw = p.read_bytes()
-                    self.assertEqual(size, len(raw))
-                    self.assertEqual(lzma.decompress(data, format=lzma.FORMAT_RAW, filters=boot_audio.FILTERS), raw)
-                    (root / 'packed').write_bytes(data)
-                    (root / 'raw').write_bytes(raw)
-                    subprocess.run([str(exe), str(root / 'packed'), str(root / 'raw'), str(size)], check=True)
+                blobs = [p.read_bytes() for p in sections]
+                size, data = boot_audio.unpack_image(image[offset:])
+                self.assertLessEqual(offset + 16 + len(data), len(image))
+                self.assertEqual(size, sum(map(len, blobs)))
+                stream = lzma.decompress(data, format=lzma.FORMAT_RAW, filters=boot_audio.FILTERS)
+                # the proof: what the image holds comes back as the linker's sections, byte for byte
+                self.assertEqual(boot_audio.sections_of(stream, [len(b) for b in blobs]), blobs)
+                decode(data, stream)
+                held = dict(zip(boot_audio.SECTIONS, blobs))
+                filtered('d', boot_audio.delta2(held['dsptables.bin']), held['dsptables.bin'])
+                filtered('c', boot_audio.calls_absolute(held['audiotext.bin']), held['audiotext.bin'])
 
 
 if __name__ == '__main__':
