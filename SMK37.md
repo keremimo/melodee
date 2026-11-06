@@ -54,6 +54,13 @@ SMK-37's TRS jack is MIDI OUT: it sends what USB MIDI sends (the keys' and pads'
 wheel's CC1), with or without a computer. HOME menu > TRS MIDI OUT turns it ON (default) or OFF. There is no TRS MIDI IN;
 MIDI IN works over USB.
 
+A MIDI Track keeps its own account for the jack, so its notes reach the jack and end there exactly once, whether USB and
+BLE are gone, full or fine. On a microtonal scale the jack sends the same nearest semitone as USB and BLE. MIDI OUT keeps
+32 held microtonal presses across all tracks, and with a computer attached a MIDI Track's press takes two of those, one
+for the jack and one for USB and BLE. So at about 16 held notes, a sustain pedal's included, new microtonal notes send
+nothing until one ends; a tuned 12-tone scale has no such limit. Turning TRS MIDI OUT OFF while a note sounds sends no
+note-off for it. None of this has run on hardware yet.
+
 ## Build
 
 See [BUILDING.md](BUILDING.md) for the toolchain.
