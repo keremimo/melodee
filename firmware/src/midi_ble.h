@@ -29,7 +29,7 @@ static int mel_ble_room(void);
 static void mel_ble_sync(uint32_t pkt, uint32_t pulse);
 static int mel_ble_emit(uint32_t pkt);
 /* per link (bit n: link n; BLE_LINKS 2): MIDI THRU sends a Bluetooth message on to mel_ble_other_links() only */
-static int mel_ble_room_for(uint32_t n);
+static int mel_ble_room_for(uint32_t n, uint32_t links);
 static void mel_ble_sync_to(uint32_t pkt, uint32_t pulse, uint32_t links);
 static int mel_ble_emit_to(uint32_t pkt, uint32_t links);
 static uint32_t mel_ble_other_links(void);

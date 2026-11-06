@@ -191,14 +191,22 @@ int ml_usb_host_msg(void){
 }
 void ml_usb_full(int on){plat_usb_audio_full(on);}
 void ml_usb_play_gain(uint32_t q12){plat_usb_play_gain(q12);}
-/* MIDI THRU: a message from port (ml_midi_in's) out where it did not come from. TO_BLE is both links, so BLE in goes
- * to USB only (it would echo to its own link); TRS has no out. Continuous streams leave a busy ring's last slots to
- * the notes and the keys. */
-void ml_midi_thru(uint32_t p,int port){
-    uint32_t to=port==PORT_USB?TO_BLE:port==PORT_TRS?TO_USB|TO_BLE:TO_USB,st=(p>>8)&0xF0u,cc=(p>>16)&127u;
-    int stream=st==0xA0u||st==0xD0u||st==0xE0u||(st==0xB0u&&cc!=64u&&cc!=120u&&cc!=123u);
-    if(stream&&plat_midi_out_room(to)<16u)return;
-    plat_midi_send(p,to);
+/* MIDI THRU (melodee_app.c midi_thru): the message ml_midi_in just gave, out where it did not come from. The base says
+ * where (plat_midi_in_from: USB, a Bluetooth link, 0 the TRS jack), so a link never hears itself back, and with two
+ * links one would play to the other. Channel messages; clock, Start, Continue, Stop and Song Position (F8 FA FB FC F2,
+ * by status: some parsers give a whole F2 CIN 0xF) only with clock_in, from the input CLK follows; nothing else
+ * (SysEx, MTC, active sensing, reset). Nobody listening: nothing sent. Continuous streams (A0 B0 D0 E0, but the pedal
+ * and the all-off controllers) leave a busy ring's last slots to the notes and the keys. Called before the next
+ * ml_midi_in. Returns the message as it went (its CIN put right), 0: not a thru message */
+uint32_t ml_midi_thru(uint32_t p,int clock_in){
+    uint32_t to=(TO_USB|TO_BLE)&~plat_midi_in_from(),st=(p>>8)&255u,cin=p&15u,cc=(p>>16)&127u,room;
+    if(st>=0xF0u){
+        if(!clock_in||!(0x1D04u>>(st&15u)&1u))return 0;
+        p=(p&~15u)|(st==0xF2u?3u:15u);
+    }else if(st>>4!=cin||cin<8u)return 0;
+    room=plat_midi_out_room(to);
+    if(room>=((0x6C00u>>cin&1u)&&!(cin==11u&&(cc==64u||cc==120u||cc==123u))?16u:1u))plat_midi_send(p,to);
+    return p;
 }
 int ml_sysex_send(const uint8_t *p,uint32_t n){
 #ifdef PLAT_HOST

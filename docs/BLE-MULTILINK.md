@@ -70,8 +70,9 @@ beside whichever one runs. That is what the radio has to share, and the part the
 - `fm1_ble_link_irqs_on` read-modify-writes the second-group enables (`0x2804C`), so starting link 1 does not clear link 0's.
 - A stop waits for the engine's busy flag (`0x28038` bit1) at most `HW_STOP_SHARED_US` (2 ms) while the other link has
   something running, instead of the 3-40 ms it waits alone: the flag may stay set for the other link's events. A guess.
-- The classic driver keeps its own differences from `platform/ble` (it predates the w0ts/optimist#17 window-widening and
-  CRC-valid supervision fixes the platform copy has); the two-link port did not bring those over.
+- The window widening and supervision follow w0ts/optimist#17 (ceil widening with a 16 us floor, supervision on CRC-good
+  packets only, the widening in the update and steady windows: nightly `dd17bc2c`), per link (`drv.widening`). The classic
+  driver is the platform copy's but for the two header lines.
 
 ## Melodee's glue (`firmware/src/midi_ble.c`)
 
@@ -84,9 +85,10 @@ beside whichever one runs. That is what the radio has to share, and the part the
 - **MIDI in from both links** is source 3 (Bluetooth). `midi_ble_lost` (a link went, or its ring overflowed) ends every
   Bluetooth note: seq.c knows one Bluetooth source, so a keyboard leaving also releases a note the computer holds, and a
   Bluetooth clock source stops. Rare, kept simple.
-- **MIDI THRU** (the menu setting being built in the main checkout, `midi_thru.c`) gets the link mask API:
-  `mel_ble_emit_to(pkt, links)`, `mel_ble_sync_to(pkt, pulse, links)`, `mel_ble_room_for(n)`, and `mel_ble_other_links()` (the
-  links the Bluetooth message in hand did not come in on: 0 with one link). A keyboard on link 1 then reaches the iPad on link 0.
+- **MIDI THRU** (the menu's, `midi_thru.c`) sends with link masks: `mel_ble_emit_to(pkt, links)`,
+  `mel_ble_sync_to(pkt, pulse, links)`, `mel_ble_room_for(n, links)`; a Bluetooth message goes to `mel_ble_other_links()`, the
+  links it did not come in on (0 with one link: as before, not back to Bluetooth). So the keyboard's notes and, with CLK BLE,
+  its clock reach the iPad, the iPad's reach the keyboard, and a full queue on a link a message is not for holds nothing up.
 - **Mode** keeps its meaning, applied to the link that has nothing to do: VISIBLE = link 0 advertises (no page scan),
   CONNECT OUT = link 1 scans on the page. **Both relink the last device** (Kerem 2026-11-06; one link: CONNECT OUT only): a
   relink round in VISIBLE scans 10 s every 30 s while the device is away, and advertising pauses for those 10 s
@@ -103,7 +105,7 @@ beside whichever one runs. That is what the radio has to share, and the part the
   connecting: then that), the rest as before.
 - Not done: a page scan in Mode VISIBLE (needs `BLE_IDLE_EXCL 0` or time-slicing), per-link note ownership.
 
-## What it costs (classic builds of 2026-11-06, nightly `351d77eb` as the baseline, `./build.sh` default settings)
+## What it costs (classic builds of 2026-11-06, nightly `dd17bc2c` as the baseline, `./build.sh` default settings)
 
 Limits, from the build itself: the app body (image minus the 3,808-B stub) ends below the commit marker's sector,
 `BODY_MAX` 573,440 B (`tools/fm1pkg_make.py`; both boards); `.data` + `.bss` in the 96 KiB `RAM` region (`firmware/app.ld`);
@@ -112,27 +114,28 @@ default) (`app.ld`, checked by the linker and by `tools/build.py`); 8 KiB of poo
 
 | build | image | body free | RAM `.data`+`.bss` (of 98,304) | pool | audio arena (min 49,152) | all audio resources |
 |---|---|---|---|---|---|---|
-| FM-1 nightly | 569,892 B | 7,356 B | 97,480 | 133,028 | 79,296 | 81,536 |
-| FM-1 `BLE_LINKS 1` | 567,404 B | 9,844 B | 97,496 | 133,028 | 79,328 | 81,584 |
-| FM-1 `BLE_LINKS 2` | 570,472 B | 6,776 B | 95,256 | 139,556 | 72,736 | 77,232 |
-| SMK-37 Elite nightly | 566,488 B | 10,760 B | 98,008 | 134,648 | 74,400 | 76,016 |
-| SMK-37 Elite `BLE_LINKS 1` | 567,532 B | 9,716 B | 98,024 | 134,648 | 74,336 | 75,936 |
-| SMK-37 Elite `BLE_LINKS 2` | 571,084 B | 6,164 B | 95,832 | 141,176 | 67,712 | 71,504 |
+| FM-1 nightly | 570,932 B | 6,316 B | 97,480 | 133,028 | 78,784 | 81,024 |
+| FM-1 `BLE_LINKS 1` | 568,320 B | 8,928 B | 97,496 | 133,028 | 78,816 | 81,072 |
+| FM-1 `BLE_LINKS 2` | 571,340 B | 5,908 B | 95,256 | 139,556 | 72,192 | 76,688 |
+| SMK-37 Elite nightly | 567,244 B | 10,004 B | 98,024 | 134,648 | 73,856 | 75,456 |
+| SMK-37 Elite `BLE_LINKS 1` | 568,532 B | 8,716 B | 98,056 | 134,648 | 73,792 | 75,360 |
+| SMK-37 Elite `BLE_LINKS 2` | 571,904 B | 5,344 B | 95,864 | 141,176 | 67,136 | 70,896 |
 
-- **Where the room is:** the classic FM-1 body has 7.3 KB free (the fm1-base image had 0.3 KB), so the code (+3,068 B against
-  `BLE_LINKS 1`, +580 B against nightly) fits with 6.8 KB to spare. `.data` + `.bss` is the tight one (824 B free on nightly), so
-  the banked state of both links goes to `.pool` (`BLE_STATE_MEMORY`), which comes off the audio arena; the arena keeps
-  23.6 KB over its 48 KiB floor. Net SRAM cost of the second link: 4,304 B of audio resources (81,536 -> 77,232). The
-  SMK-37 Elite the same way: 6.2 KB of body left, `.data` + `.bss` 2,472 B free (296 on nightly), arena 18.5 KB over the
-  floor. (The fm1-base figures that looked like "no room", an FM-1 image 2 KB over and an SMK-37 arena under 48 KiB, were the
+- **Where the room is:** the classic FM-1 body has 6.3 KB free on nightly (the fm1-base image had 0.3 KB), so the code
+  (+3,020 B against `BLE_LINKS 1`, +408 B against nightly) fits with 5.9 KB to spare. `.data` + `.bss` is the tight one (824 B
+  free on nightly), so the banked state of both links goes to `.pool` (`BLE_STATE_MEMORY`), which comes off the audio arena;
+  the arena keeps 23.0 KB over its 48 KiB floor. Net SRAM cost of the second link: 4,336 B of audio resources
+  (81,024 -> 76,688). The SMK-37 Elite the same way: 5.3 KB of body left, `.data` + `.bss` 2,440 B free (280 on nightly),
+  arena 18.0 KB over the floor. (The fm1-base figures that looked like "no room", an FM-1 image 2 KB over and an SMK-37 arena under 48 KiB, were the
   base port's own layout; the classic build has neither problem.)
 - RAM moved or added by `BLE_LINKS 2`: link 1's engine block 1,444 B (`bb`), its MIDI rings 1,188 B (`mb`), the link layer
   banks 936 B and TX rings 1,024 + 512 B (`BLE_LL_TX_RING_CENTRAL` 512, `midi_ble.h`), L2CAP 536 B, ATT 560 B, SMP 352 B,
   driver 280 B; link 0's share of these left `.bss` (-2,224 B).
-- Code: BLE +2,744 B (the interrupt handlers' link loops `ble_wl82_event_irq` +560 B, `ble_wl82_rx_irq` +326 B, the
+- Code (the breakdown measured on `351d77eb`): BLE +2,744 B (the interrupt handlers' link loops `ble_wl82_event_irq` +560 B, `ble_wl82_rx_irq` +326 B, the
   pointer-selected banks and wrappers), +286 B elsewhere (the TIMER5 drain over two links, `fm1_main` inlining); the VISIBLE relink added 24 B after these were taken.
-  Stack audit: `isr_ble_event` 752 B, `isr_ble_rx` 784 B (one link: 712 / 752).
-- `BLE_LINKS 1` against nightly: FM-1 BLE code -212 B and the rest -2.2 KB, SMK-37 BLE code -1,136 B and the rest +2.1 KB.
+  Stack audit: `isr_ble_event` 744 B, `isr_ble_rx` 780 B (one link: 712 / 752).
+- `BLE_LINKS 1` against nightly: image -2,612 B on the FM-1, +1,288 B on the SMK-37 (first measured on `351d77eb`: FM-1 BLE code
+  -212 B and the rest -2.2 KB, SMK-37 BLE code -1,136 B and the rest +2.1 KB).
   The rest is code generation, not source: LLVM's global merging regrouped once `bll` / `batt` / `bhs` / `bsmp` / `drv`
   became bank arrays, and the same untouched functions move both ways (`mix_block` -138 B on the FM-1, +78 B on the SMK-37;
   `ui_input` -74 / +88 ...). No function was dropped or added beyond the renames (symbol tables compared).
@@ -160,7 +163,8 @@ The classic build has no BLE counters to read (`BLE_DIAG 0`, no console in the U
 device's status line (header and Settings > Bluetooth), the peers (Audio MIDI Setup / a MIDI monitor on the Mac, the iPad
 app), the Mac's `bluetoothd` log (`log show --predicate 'process == "bluetoothd"'`, "LE ConnManager disconnection", reason =
 700 + the HCI code: 0x08 supervision timeout, 0x3E failed to establish, 0x22 LL timeout) and the audio load (editor
-command 33, AUDIO_STATS). Images (2026-11-06, FM-1 identity `FM-1_900`, in the worktree's `build/ble-multilink/`):
+command 33, AUDIO_STATS). Images (2026-11-06, nightly `dd17bc2c` merged in, FM-1 identity `FM-1_900`, in the worktree's
+`build/ble-multilink/`):
 `melodee-fm1-links1.fwsc` (the default, one link) and `melodee-fm1-links2.fwsc`; the SMK-37 Elite's beside them.
 `tools/flash.sh build/ble-multilink/<package>`; the resources are nightly's (crc `e637e329`), nothing to push again.
 
@@ -173,7 +177,8 @@ command 33, AUDIO_STATS). Images (2026-11-06, FM-1 identity `FM-1_900`, in the w
    fill while the Mac stays connected and its notes keep playing for a minute? A Mac drop here (0x08) or an empty list = the
    second instance does not run beside a live connection.
 4. **Computer, then the keyboard** (questions 3, 4): pick the keyboard from the list. The status must reach `COMPUTER + DEVICE`;
-   keyboard -> sound, Mac -> sound, the sequencer's MIDI out on both. Repeated 0x3E / FINDING MIDI that times out with the
+   keyboard -> sound, Mac -> sound, the sequencer's MIDI out on both. MIDI THRU on (menu): the keyboard's notes arrive at the
+   Mac's MIDI monitor, the Mac's at the keyboard (if it takes MIDI in), nothing comes back to where it was played. Repeated 0x3E / FINDING MIDI that times out with the
    Mac up, but not alone, is fm1-base#10's trap (the master's first anchor or an interval clash).
 5. **Keyboard, then the computer** (the other order): CONNECT OUT, keyboard up; Mode VISIBLE: the Mac connects beside it.
 6. **Five minutes of both** (questions 4, 5): a pattern playing, CLK INT (clock out to both), keys on the keyboard, notes from

@@ -741,8 +741,14 @@ static void rec_begin_held(track_t *t)
 static void countin_note(track_t *t,uint32_t note,uint32_t vel);
 static int rec_note_start(track_t *t);
 static void seq_advance(uint32_t n);
+#if KIT_REC
+static void kit_rec_hear(const track_t *t, uint32_t note, uint32_t vel);   /* Record kit's sheet: the pad struck */
+#else
+#define kit_rec_hear(t, note, vel) ((void)0)
+#endif
 static void input_on(track_t *t, uint32_t note, uint32_t vel)
 {
+    kit_rec_hear(t, note, vel);
     if (vel) chord_auto_observe(t, note);
     uint32_t started = vel && rec_note_start(t);
     countin_note(t,note,vel);
@@ -766,6 +772,7 @@ static void input_off(track_t *t, uint32_t note)
 {
     if (midi_note_held(t, note))
         return;
+    kit_rec_hear(t, note, 0);
     live_held[trk_index(t)][note >> 5] &= ~(1u << (note & 31u));
     cap_off(t, note);
     rec_release(t, note);

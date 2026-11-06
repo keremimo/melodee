@@ -439,10 +439,15 @@ static void sheet_input(int32_t k1, int32_t k2, uint32_t oct)
     if (oct & 1u) {
         pop_close();
     } else if (oct & 2u) {
+        const sheet_row_t *rows = pop.rows;
+        uint8_t force = ui.force;
         pop_close();
-        if (r->act)
+        if (r->act) {
             r->act();
-        else if (r->cf && !cf_refused(r->cf))
+            if (pop.on == POP_SHEET && pop.rows == rows)   /* the same sheet again (Record kit's Pad): its card alone
+                                                            * redraws (sheet_draw's sig), not the page under it */
+                ui.force = force;
+        } else if (r->cf && !cf_refused(r->cf))
             confirm_open(r->cf, r->cf == CF_DEL_ROW ? ui.song_row : song.sel);
         else if (r->turn)
             r->turn(1);
@@ -739,7 +744,7 @@ static void sheet_row(uint32_t i, int32_t y)
 }
 static void sheet_draw(void)
 {
-    uint32_t i, vis = pop.n < POP_VIS ? pop.n : POP_VIS, first, sig = str_hash(pop.sel * 7u + pop.n * 131u + ux.gen * 977u + ux.pal * 31u, pop.title);
+    uint32_t i, vis = pop.n < POP_VIS ? pop.n : POP_VIS, first, sig = str_hash(str_hash(pop.sel * 7u + pop.n * 131u + ux.gen * 977u + ux.pal * 31u, pop.title), pop.sub);
     char v[20];
     for (i = 0; i < pop.n; i++)
         if (pop.rows[i].value) {

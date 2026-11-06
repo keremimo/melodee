@@ -140,16 +140,17 @@ BLE_API void ble_app_central_keys(const struct ble_keys *k)
 }
 
 static int mel_ble_ready(void) { return MB_ANY(ready) && mb.on; }
-/* n slots free on every link that is up (one link: on it, up or not): output is admitted whole or not at all */
-static int mel_ble_room_for(uint32_t n)
+/* n slots free on every link in `links` (bit n: link n) that is up (one link: on it, up or not): output is admitted
+ * whole or not at all */
+static int mel_ble_room_for(uint32_t n, uint32_t links)
 {
     for (uint32_t i = 0; i < BLE_LINKS; i++) {
         const struct mb_link *l = &mb.ln[i];
-        if ((BLE_LINKS == 1 || l->ready) && MBQ - (l->tw - l->tr) < n) return 0;
+        if ((links >> i & 1u) && (BLE_LINKS == 1 || l->ready) && MBQ - (l->tw - l->tr) < n) return 0;
     }
     return 1;
 }
-static int mel_ble_room(void) { return mel_ble_room_for(1u); }
+static int mel_ble_room(void) { return mel_ble_room_for(1u, ~0u); }
 /* clock and transport to the links in `links` (bit n: link n) that are up, each admitting it alone */
 static void mel_ble_sync_to(uint32_t pkt, uint32_t pulse, uint32_t links)
 {

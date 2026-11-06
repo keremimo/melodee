@@ -1001,6 +1001,7 @@ static void draw_cards(void)
     }
 }
 
+#if MELODEE_UPDATE_COUNTDOWN
 /* UPDATE MODE countdown (main.c: OCT- + OCT+ held): over everything, the menu and the dialogs too */
 static void draw_uboot(void)
 {
@@ -1026,6 +1027,7 @@ static void draw_uboot(void)
     ui.force = 0;
     scr_shown();
 }
+#endif
 
 /* the OCT- / OCT+ dialog: what it does (ui.confirm, ui.confirm_trk) on two lines, on a surface */
 #define DLG_X 8                                         /* (large type: 224 wide, as tall as its words, centred) */
@@ -1375,11 +1377,13 @@ static void ui_draw_frame(void)
         ui.force = 1;
     }
 
+#if MELODEE_UPDATE_COUNTDOWN
     if (ui.uboot) {
         draw_uboot();
         draw_head();
         return;
     }
+#endif
     if (ui.menu) {
         draw_menu();
         ui.force = 0;
