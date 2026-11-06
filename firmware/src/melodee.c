@@ -128,6 +128,10 @@ static uint8_t smkx_ok;                 /* smkx.c: the app area tail is this bui
 #if MELODEE_BLE
 #include "midi_ble.h"
 #endif
+#if MELODEE_MIDI_THRU
+static void midi_thru(uint32_t pkt, uint32_t source);   /* midi_thru.c, after the UI (GLO_SELECT) */
+#define MIDI_THRU(pkt, source) midi_thru(pkt, source)
+#endif
 #include "usb.c"
 #if MELODEE_BLE
 #include "midi_ble.c"
@@ -146,6 +150,9 @@ static uint8_t smkx_ok;                 /* smkx.c: the app area tail is this bui
 #include "ui_graph.c"
 #include "ui_draw.c"
 #include "ui_menu.c"
+#if MELODEE_MIDI_THRU
+#include "midi_thru.c"           /* the menu's MIDI THRU (usb.c midi_enqueue's hook) */
+#endif
 #include "ui_input.c"
 #include "ui_layer.c"              /* the quick layers (GLO SCL held) */
 

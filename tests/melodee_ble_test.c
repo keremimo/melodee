@@ -206,6 +206,34 @@ int main(void)
             for(uint32_t row=0;row<ble_found_n()+5;row++) {ble_row=(uint8_t)row;ui.menu=3;ui.force=1;draw_ble_page();}
         }
     }
+    /* MIDI THRU (midi_thru.c): OFF nothing; ON out where it did not come from, clock only from CLK's input */
+    reset_ble(); usb.up = usb.config = 1; mb.ready = 1; rt_r = rt_w = 0; mb.rt_r = mb.rt_w = 0;
+    p = packet(0x95, 60, 100);
+    assert(midi_enqueue(p, 2u) && mo_w == mo_r && mb.tw == mb.tr);           /* OFF: Melodee plays it, no copy */
+    GLO_SELECT |= MIDI_THRU_ON;
+    mi_r = mi_w;
+    assert(midi_enqueue(p, 2u) && mo_w - mo_r == 1u && midi_out_q[mo_r % MQ] == p);   /* TRS -> USB and BLE */
+    assert(mb.tw - mb.tr == 1u && mb.tx[mb.tr % MBQ] == p);
+    mo_r = mo_w; mb.tr = mb.tw;
+    assert(midi_enqueue(p, 1u) && mo_w == mo_r && mb.tw - mb.tr == 1u);   /* USB -> BLE only */
+    mb.tr = mb.tw;
+    assert(midi_enqueue(p, 3u) && mo_w - mo_r == 1u && mb.tw == mb.tr);   /* BLE -> USB only */
+    mo_r = mo_w;
+    (void)midi_enqueue(0x04u | 0xF0u << 8 | 0x7Du << 16 | 0x01u << 24, 1u);   /* SysEx: never through */
+    assert(mo_w == mo_r && mb.tw == mb.tr);
+    song.g[G_CLOCK] = 0;                                                       /* INT: no clock through */
+    assert(midi_enqueue(0x0Fu | 0xF8u << 8, 2u) && rt_w == rt_r && mb.rt_w == mb.rt_r);
+    song.g[G_CLOCK] = 2;                                                       /* TRS: its clock through */
+    assert(midi_enqueue(0x0Fu | 0xF8u << 8, 2u) && rt_w - rt_r == 1u && mb.rt_w - mb.rt_r == 1u);
+    assert(midi_enqueue(0x0Fu | 0xF8u << 8, 1u) && rt_w - rt_r == 1u);   /* USB's clock while CLK is TRS: no */
+    mo_r = mo_w; mb.tr = mb.tw;
+    mo_w = mo_r + MQ - 8u;                                                     /* a busy USB ring: 8 slots free */
+    assert(midi_enqueue(packet(0xE5, 0, 64), 2u) && mo_w - mo_r == MQ - 8u);   /* bend waits for 16 */
+    assert(midi_enqueue(packet(0xB5, 64, 0), 2u) && mo_w - mo_r == MQ - 7u);   /* the pedal goes */
+    assert(midi_enqueue(packet(0x85, 60, 0), 2u) && mo_w - mo_r == MQ - 6u);   /* so does a note-off */
+    GLO_SELECT &= (uint8_t)~MIDI_THRU_ON; song.g[G_CLOCK] = 0;
+    puts("MIDI THRU: off, routes, clock from CLK's input, busy ring passed");
+
     puts("Melodee BLE integration: all passed");
     return 0;
 }
