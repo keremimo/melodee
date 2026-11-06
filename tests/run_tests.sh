@@ -193,7 +193,9 @@ old_to_new() {                                    # a package of another app (th
         "$OUT/ldr_test" "$OUT/old.fwsc" build/melodee.fwsc
 }
 smk_packages() {                                  # SMK-37 layout packages of this build's binaries (BOARD_SMK37 tests)
-    "$PY" tools/fm1pkg_make.py --board smk37 --res build/melodee-res.bin build/melodee.bin build/loader/ota.bin "$OUT/smk_new.fwsc" >/dev/null &&
+    # (a resource region the SMK-37's 16 sectors hold: the FM-1's, cut short, its header remade)
+    "$PY" -c 'import struct,sys,zlib; d=open(sys.argv[1],"rb").read()[32:60032]; h=struct.pack("<7I",0x3153524D,len(d),zlib.crc32(d),0,0,0,0); open(sys.argv[2],"wb").write(h+struct.pack("<I",zlib.crc32(h))+d)' build/melodee-res.bin "$OUT/smk_res.bin" &&
+    "$PY" tools/fm1pkg_make.py --board smk37 --res "$OUT/smk_res.bin" build/melodee.bin build/loader/ota.bin "$OUT/smk_new.fwsc" >/dev/null &&
         head -c 200000 build/melodee.bin > "$OUT/smk_old_app.bin" &&
         "$PY" tools/fm1pkg_make.py --board smk37 "$OUT/smk_old_app.bin" build/loader/ota.bin "$OUT/smk_old.fwsc" >/dev/null
 }
@@ -530,6 +532,10 @@ if sound && [ $TABLES = 1 ]; then
         "$OUT/drum_sid_test" build/sid_kit_demo
     t "DRUM CR78/FM: eight lanes on one voice, retriggers, choke, length, knobs, levels, corners" drum_kits_test -O2 $FW -- \
         "$OUT/drum_kits_test" build/drum_kits_demo
+    t "USER KITS: pool record == one RAM block, sector edges, empty/rewritten/deleted silent, refused records, boot scan" \
+        user_kit_test -O2 $FW
+    t "RECORD KIT: USB take trigger/end, device encoder == tools/drum_codec.c, 22/44 kHz, cymbal loop, 11 pads fit, clear" \
+        kit_take_test -O2 -DMELODEE_USB_AUDIO=1 $FW -- "$OUT/kit_take_test" build/kit_take_demo
     t "NOISE: colour slopes, key-tracked filter and clock, META period, DC, clipping, retrigger, cost, demos" noise_test \
         -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -- "$OUT/noise_test" build/noise_demo
     t "FM6: the DX7's algorithms, pitch, levels, envelopes, modulation; DC, clipping, macros, patches, voices, cost, demos" \

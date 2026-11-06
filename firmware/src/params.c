@@ -529,7 +529,12 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
             v = clamp(v, d->min, d->max);
             /* The panel's compact card fits "13-16"; editor/picker names retain the CH prefix. */
             str_cpy(val, d->names[v] + (v == 1 ? 0 : 2), 6);
-        } else
+        }
+#if MELODEE_USER_KITS
+        else if (d->names == N_DRUM_KIT && v >= DK_USER0 && v <= DK_KIT_MAX)
+            drk_user_name((uint32_t)(v - DK_USER0), val);   /* a user kit: its own name */
+#endif
+        else
             str_cpy(val, d->names==N_ENGNAME && v==ENGI_PROPHET ? "P5" : d->names[v < d->min ? d->min : v > d->max ? d->max : v], 6);
         if (d->unit)
             *unit = d->unit;
