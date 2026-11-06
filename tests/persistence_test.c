@@ -66,13 +66,12 @@ static int32_t ed_rv(const uint8_t *a) { return (int32_t)(a[0] | (uint32_t)a[1] 
 static void ed_str(const char *s, uint32_t n) { (void)s; (void)n; }
 #include "../firmware/src/editor_preferences.c"
 
-/* slot 1's current record as the loader reads it (a compact image expanded) */
+/* slot 1's current record as the loader reads it (a packed or compact image expanded) */
 static int flash_image(uint8_t *dst)
 {
     st_hdr_t h; int copy = st_current(OBJ_BANK0, &h);
     if (copy < 0) return -1;
-    pj.on = !st_read_range(OBJ_BANK0, (uint32_t)copy, 0, &pj.h, PJ_HEAD) && pj.h.magic == PJ_MAGIC;
-    return pj_read(OBJ_BANK0, (uint32_t)copy, 0, dst, BANK_STORE_SIZE) ? -1 : (int)BANK_STORE_SIZE;
+    return pj_image(OBJ_BANK0, (uint32_t)copy, dst) ? -1 : (int)BANK_STORE_SIZE;
 }
 
 static int check(const char *what, int ok)
