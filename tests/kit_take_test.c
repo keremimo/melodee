@@ -79,6 +79,15 @@ static const drk_kit_t *head(uint32_t u)
     const uint32_t *secs[DRK_KSEC];
     return kt_secs(u, secs) ? (const drk_kit_t *)(const void *)secs[0] : 0;
 }
+/* contiguous slices (words) laid out as the player finds them in flash: per sector 476, the guard's place, 31 more */
+static uint32_t phys[8][DRK_SLOTS * 2u];
+static void phys_secs(const uint32_t *words, uint32_t bytes, drk_part_t *P)
+{
+    memset(phys, 0xFF, sizeof phys);
+    for (uint32_t k = 0; k < bytes / 8u && k / DRK_SECSLICES < 8u; k++)
+        memcpy(&phys[k / DRK_SECSLICES][DRK_SLOT(k % DRK_SECSLICES)], words + 2u * k, 8u);
+    for (uint32_t k = 0; k < DRK_KSEC; k++) P->sec[k] = phys[k];
+}
 /* pad d of slot u decoded through the player's channel */
 static uint32_t decode(uint32_t u, uint32_t d, int16_t *y)
 {
@@ -161,7 +170,7 @@ int main(int argc, char **argv)
         for (uint32_t q = 0; q < 3u; q++) {
             uint32_t bytes = dke_encode(src, n, snrs[q], 0, words, &o), at = 0, k;
             drk_ch_t c; static drk_part_t P;
-            for (k = 0; k * DRK_SECSLICES * 2u < bytes / 4u; k++) P.sec[k] = words + k * DRK_SECSLICES * 2u;
+            phys_secs(words, bytes, &P); k = 0;
             drk_sample_t s = {0, (uint16_t)n, 0, 0, 32768, 0, 0};
             memset(&c, 0, sizeof c); c.secs = P.sec;
             drk_stream_start(&c, &s);
@@ -190,7 +199,7 @@ int main(int argc, char **argv)
             fseek(f, 0, SEEK_END); uint32_t tb = (uint32_t)ftell(f); fclose(f);
             uint32_t bytes = dke_encode(src, m, 18, 0, words, &o);
             drk_ch_t c; static drk_part_t P;
-            for (uint32_t k = 0; k * DRK_SECSLICES * 2u < bytes / 4u; k++) P.sec[k] = words + k * DRK_SECSLICES * 2u;
+            phys_secs(words, bytes, &P);
             drk_sample_t s = {0, (uint16_t)m, 0, 0, 32768, 0, 0};
             memset(&c, 0, sizeof c); c.secs = P.sec;
             drk_stream_start(&c, &s);
@@ -250,7 +259,7 @@ int main(int argc, char **argv)
             ok &= r == KM_KEPT;
         }
         const drk_kit_t *H = head(1);
-        check("eleven pads of long takes all fit the kit's 26,656 bytes", ok && H && H->nsmp == DRK_NDRUM && kit_len[1] <= DRK_KIT_MAX);
+        check("eleven pads of long takes all fit the kit's 28,392 bytes", ok && H && H->nsmp == DRK_NDRUM && kit_len[1] <= DRK_KIT_MAX);
         printf("KIT TAKE:   eleven pads: %u bytes in %u sectors\n", kit_len[1], drk_user[1].n);
         if (argc > 1) {
             static int32_t out[FS * 6u];

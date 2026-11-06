@@ -23,14 +23,19 @@ typedef struct {
 
 /* A user kit's record (kit_store.c writes it, any host checks it with drk_kit_check before it plays): this header at
  * the start of the first sector's payload, then the slices, two little-endian 32-bit words each, the high one first.
- * Slice k of the payload is at payload byte 8 k: a sector's 3,808 payload bytes hold 476 slices, so none straddles. */
+ * Slice k of the payload is at payload byte 8 k: a sector's 4,056 payload bytes hold 507 slices, so none straddles;
+ * in flash they sit in two runs, 476 from byte 32, then the 8-byte guard at 0xF00 (storage.c: erased), then 31. */
 #define DRK_KIT_MAGIC 0x3154494Bu               /* KIT1 */
 #define DRK_NDRUM 11u                            /* the 909's eleven drums (D9_*) */
 #define DRK_NAMELEN 5u                              /* the card's value: a name never cut short */
-#define DRK_KSEC 7u                              /* a kit's sectors at most: 26,656 bytes */
-#define DRK_SECBYTES 3808u                       /* a pool sector's payload (storage.c ST_POOL_PAYLOAD_MAX) */
+#define DRK_KSEC 7u                              /* a kit's sectors at most: 28,392 bytes */
+#define DRK_SECBYTES 4056u                       /* a list record's payload per sector (storage.c ST_LIN_PAYLOAD_MAX) */
 #define DRK_SECOFF 32u                           /* where it starts (ST_POOL_PAYLOAD_OFF) */
-#define DRK_SECSLICES (DRK_SECBYTES / 8u)
+#define DRK_SECSLICES (DRK_SECBYTES / 8u)        /* 507 */
+#define DRK_RUN0 476u                            /* the slices before the guard (storage.c ST_RUN0 / 8) */
+#define DRK_SLOTS (DRK_SECSLICES + 1u)           /* 8-byte places from byte 32 to the sector's end, the guard's one too */
+/* slice j of a sector: its words from the sector's payload start (the guard's place skipped) */
+#define DRK_SLOT(j) (2u * ((j) + ((j) >= DRK_RUN0)))
 typedef struct {
     uint32_t magic;
     uint16_t bytes;                              /* this header's bytes: the slices begin there (a multiple of 8) */
@@ -153,10 +158,10 @@ static drk_ch_t *drk_channel(drk_part_t *K)
 /* the stream from slice, sector by sector */
 static void drk_seek(drk_ch_t *c, uint32_t slice)
 {
-    uint32_t k = slice / DRK_SECSLICES;
+    uint32_t k = slice / DRK_SECSLICES, j = slice % DRK_SECSLICES;
     c->sec = (uint8_t)k;
-    c->src = c->secs[k] + 2u * (slice % DRK_SECSLICES);
-    c->end = c->secs[k] + 2u * DRK_SECSLICES;
+    c->src = c->secs[k] + DRK_SLOT(j);
+    c->end = c->secs[k] + 2u * (j < DRK_RUN0 ? DRK_RUN0 : DRK_SLOTS);
 }
 
 static void drk_stream_start(drk_ch_t *c, const drk_sample_t *s)
@@ -258,10 +263,15 @@ static inline __attribute__((always_inline)) int32_t drk_next(drk_ch_t *restrict
 {
     uint32_t hi = c->hi, lo = c->lo, b = c->bits;
     if (!c->nleft) {
-        if (c->src == c->end) {                  /* a user kit's next sector */
-            uint32_t k = ++c->sec;
-            c->src = c->secs[k];
-            c->end = c->src + 2u * DRK_SECSLICES;
+        if (c->src == c->end) {                  /* a user kit's second run past the guard, or its next sector */
+            const uint32_t *b = c->secs[c->sec];
+            if (c->end == b + 2u * DRK_RUN0) {
+                c->src = b + 2u * (DRK_RUN0 + 1u);
+                c->end = b + 2u * DRK_SLOTS;
+            } else {
+                c->src = c->secs[++c->sec];
+                c->end = c->src + 2u * DRK_RUN0;
+            }
         }
         hi = c->src[0];
         lo = c->src[1];
