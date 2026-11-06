@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import fm1_install as I  # noqa: E402
 
-I.DELAY.update(open=0, start=0.01, reply=0, loader=0.01, reboot=0.01, retry=0.02, poll=0.05, hs=0.1,
+I.DELAY.update(open=0, start=0.01, reply=0, loader=0.01, reboot=0.01, retry=0.02, poll=0.05, hs=0.1, hs_full=0.05,
                idle_check=0.4, idle_write=0.4, wait_loader=2, wait_reboot=2)
 failed = 0
 
@@ -65,15 +65,26 @@ class FakeLink:
         self.closed = True
 
 
+def ident_frame(text, flash=0):
+    """a handshake answer as the firmware sends it (00 59 11, 27 bytes, checksum): the text, zeros and, from
+    fm1-base firmware, the flash's JEDEC ID in bytes 24..26"""
+    body = text.encode("latin-1").ljust(24, b"\0")[:24] + flash.to_bytes(3, "big")
+    return b"\xF0" + I.pack7(bytes([0, 0x59, 0x11, len(body), 0, 0]) + body + bytes([~sum(body) & 0xFF])) + b"\xF7"
+
+
 class FakeFM1:
-    """a MIDI backend with one FM-1 on it"""
+    """a MIDI backend with one FM-1 on it. base: it runs firmware built on fm1-base (felucca-bsp chip/ota.c): HS_QUERY
+    gets the name, '_' and three digits, HS_FULL the whole identity (not from the loader), both with the flash's
+    JEDEC ID; otherwise HS_FULL goes unanswered (classic Melodee, M-VAVE's firmware). base_after: what runs after the
+    write (default: the same)"""
 
     def __init__(self, image, identity="FM-1_015", name="FM-1", unplug_after=None, after_write="FM-1_900",
-                 stall_after=None, bad_addr=None, loader=I.MELODEE_LOADER):
+                 stall_after=None, bad_addr=None, loader=I.MELODEE_LOADER, base=False, base_after=None, flash=0x856014):
         self.image, self.unplug_after, self.after_write = image, unplug_after, after_write
         self.loader = loader        # the loader step 1 starts (the package's own)
         self.stall_after, self.bad_addr = stall_after, bad_addr
-        self.served = self.bad = self.upgrades = 0
+        self.base, self.base_after, self.flash = base, base_after, flash
+        self.served = self.bad = self.upgrades = self.full_asked = 0
         self.sent, self.links, self.gen, self.lock = [], [], 0, threading.Lock()
         self.boot(identity, name)
 
@@ -100,10 +111,22 @@ class FakeFM1:
             if link.gen == self.gen and not link.closed:
                 link.q.put(bytes(pkt))
 
+    def answer(self, full):
+        t, ota = self.identity, self.identity.startswith("ota-")
+        if not self.base:
+            return ident_frame(t)
+        i = t.find("_")
+        if not full and not ota and 0 <= i and i + 4 < len(t):
+            t = t[:i + 4]               # "FM-1_9001613" -> "FM-1_900"; "FM-1_900" stays
+        return ident_frame(t, self.flash)
+
     def rx(self, d):
         if d == I.HS_QUERY:
-            t = self.identity.encode()
-            self.tx(b"\xF0" + I.pack7(bytes([0, 0x59, 0x11, 0, 0, 0]) + t + bytes(28 - len(t))) + b"\xF7")
+            self.tx(self.answer(False))
+        elif d == I.HS_FULL:
+            self.full_asked += 1
+            if self.base and not self.identity.startswith("ota-"):
+                self.tx(self.answer(True))
         elif d == I.UPGRADE:
             self.upgrades += 1
             first = self.bad_addr if self.bad_addr is not None else 0
@@ -128,9 +151,14 @@ class FakeFM1:
             if addr == I.FINISH_CHECK:
                 threading.Timer(0.05, self.boot, (self.loader, "Melodee Update")).start()
             elif addr == I.FINISH_WRITE:
-                threading.Timer(0.05, self.boot, (self.after_write, "Melodee")).start()
+                threading.Timer(0.05, self.restart).start()
             else:
                 self.next()
+
+    def restart(self):
+        if self.base_after is not None:
+            self.base = self.base_after
+        self.boot(self.after_write, "Melodee")
 
     def next(self):
         if not self.queue:
@@ -304,6 +332,57 @@ def loaders():
        "step 1 starts the official loader -> exit 6, nothing sent to it")
 
 
+def base():
+    """firmware built on fm1-base (tools/build_base.py): the flash's JEDEC ID after the identity's zeros, the plain
+    handshake's name and three digits, the whole identity on HS_FULL; classic Melodee and stock never answer HS_FULL"""
+    reply = bytes.fromhex("f000324558010000234d5a447915070c180000000000000000000000000000000000001404462207f7")
+    ident = I.parse_identity(reply)
+    ok(ident and ident.text == "FM-1_900" and ident.model == "FM-1" and ident.version == 900 and not ident.loader
+       and ident.flash == 0x856014, "fm1-base FM-1's reply (2026-11-06): FM-1_900, flash 856014")
+    ok(ident_frame("FM-1_900", 0x856014) == reply, "... the simulated fm1-base FM-1 answers those very bytes")
+    ok(I.unpack7(I.HS_FULL[1:-1]) == bytes([0, 0x59, 0x11, 1, 0, 0, 1, 0xFE]), "HS_FULL: the handshake with the body 01")
+    loader = I.parse_identity(ident_frame("ota-FM-1_900", 0xB36014))
+    ok(loader and loader.loader and loader.text == I.MELODEE_LOADER and loader.flash == 0xB36014,
+       "fm1-base loader's reply with a flash ID: ota-FM-1_900")
+
+    raw = package()
+    image = I.logical_image(raw)
+    p = pkgfile("ok.fwsc", raw)
+    dev = FakeFM1(image, identity="FM-1_900", name="FM-1", base=True)
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and out.startswith("FM-1_900  [running]") and "flash: Puya P25Q80 (856014)" in out and dev.full_asked == 1,
+       "--info on an fm1-base FM-1: FM-1_900 and its flash")
+    dev = FakeFM1(image, identity="FM-1_900", name="Melodee", base=True)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2 and "done: the FM-1 runs FM-1_900" in out,
+       "install over an fm1-base FM-1: loader, back as FM-1_900")
+    dev = FakeFM1(image, identity="FM-1_91041", name="Melodee", base_after=True)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and "done: the FM-1 runs FM-1_900" in out, "classic -> fm1-base package: it comes back")
+    dev = FakeFM1(image, identity="FM-1_900", name="Melodee", base=True, after_write="FM-1_015")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 6 and "reports FM-1_015" in err, "fm1-base: another identity after the restart -> exit 6")
+
+    rel = package("FM-1_9001613")
+    p = pkgfile("rel.fwsc", rel)
+    image = I.logical_image(rel)
+    dev = FakeFM1(image, identity="FM-1_9001613", name="FM-1", base=True)
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and out.startswith("FM-1_9001613  [running]"), "fm1-base release: HS_FULL gives the whole FM-1_9001613")
+    dev = FakeFM1(image, identity="FM-1_900", name="Melodee", base=True, after_write="FM-1_9001613")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and "done: the FM-1 runs FM-1_9001613" in out, "... and the install's check after the restart sees it")
+
+    for identity, name, asked, what in (("FM-1_900", "Melodee", 1, "classic FM-1_900: HS_FULL unanswered, plain kept"),
+                                        ("FM-1_91041", "Melodee", 0, "classic release FM-1_91041: no HS_FULL"),
+                                        ("FM-1_015", "FM-1", 0, "stock FM-1_015: no HS_FULL"),
+                                        ("SMK-37 Pro_016", "SMK-37 Pro Midi", 0, "stock SMK-37 Pro_016: no HS_FULL"),
+                                        (I.MELODEE_LOADER, "Melodee Update", 0, "update loader: no HS_FULL")):
+        dev = FakeFM1(image, identity=identity, name=name)
+        rc, out, err = cli(["--info"], dev)
+        ok(rc == 0 and out.startswith(identity + "  [") and "flash:" not in out and dev.full_asked == asked, what)
+
+
 def smk():
     """SMK-37: identities, port names, the 36-block stock package, the SMK loader, exactly the model"""
     ok(I.PORT_RE.search("SMK-37 Pro Midi") and I.PORT_RE.search("SMK-37 Pro-MCP 2") and I.PORT_RE.search("FM-1")
@@ -449,6 +528,7 @@ wire()
 installs()
 errors()
 loaders()
+base()
 smk()
 against_js()
 official()

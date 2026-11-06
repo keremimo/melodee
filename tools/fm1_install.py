@@ -40,6 +40,12 @@ import time
 from pathlib import Path
 
 HS_QUERY = bytes([0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7])
+# the handshake with the one-byte body 01 (00 59 11, length 1, 01, checksum FE), as fm1-base's installer asks: a
+# firmware built on fm1-base (felucca-bsp chip/ota.c, tools/build_base.py) answers HS_QUERY with its name, '_' and
+# three digits only ("FM-1_9001613" -> "FM-1_900": M-UPGRADE 3.11 refuses more) and this one with its whole identity.
+# Classic Melodee (firmware/src/ota.c answers 7-byte handshakes only), M-VAVE's firmware and the update loaders don't
+# answer it; it is never sent to a stock identity (NAME_0dd: nothing more to tell) or to a loader
+HS_FULL = bytes([0xF0, 0x00, 0x32, 0x45, 0x08, 0x00, 0x00, 0x40, 0x00, 0x7E, 0x01, 0xF7])
 UPGRADE = bytes([0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7])
 FINISH_CHECK, FINISH_WRITE = 0xE0000000, 0xF0000000
 MAXDATA = 512
@@ -64,7 +70,7 @@ PORT_RE = re.compile(r"fm-1|smk|elite|mke-p37|starry|melodee|felucca|ota|composi
 
 # seconds; the tests shorten them
 DELAY = {"open": 0.3, "start": 2.0, "reply": 0.01, "loader": 3.0, "reboot": 3.0, "retry": 1.0,
-         "poll": 1.0, "hs": 1.0, "idle_check": 8.0, "idle_write": 180.0,
+         "poll": 1.0, "hs": 1.0, "hs_full": 0.6, "idle_check": 8.0, "idle_write": 180.0,
          "wait_loader": 30.0, "wait_reboot": 40.0}
 
 EXIT = {"usage": 2, "badpkg": 2, "notfound": 3, "model": 6, "lost": 4, "stopped": 4, "badreq": 4,
@@ -124,12 +130,16 @@ def parse_request(pkt):
 
 
 class Identity:
-    def __init__(self, text, model, version):
+    def __init__(self, text, model, version, flash=0):
         self.text, self.model, self.version = text, model, version
+        self.flash = flash          # the flash's JEDEC ID (fm1-base firmware: bytes 24..26), 0: not sent
 
     @property
     def loader(self):
         return self.model.lower().startswith("ota-")
+
+
+FLASH_PARTS = {0x856014: "Puya P25Q80", 0xB36014: "UC25HQ80"}
 
 
 def parse_identity(pkt):
@@ -138,9 +148,11 @@ def parse_identity(pkt):
     d = unpack7(pkt[1:-1])
     if len(d) != 34 or d[:3] != b"\x00\x59\x11":
         return None
-    txt = d[6:33].rstrip(b"\0").decode("latin-1")
+    # the text up to its first zero: after the zeros, fm1-base firmware sends the flash's JEDEC ID in bytes 24..26
+    txt = d[6:33].split(b"\0", 1)[0].decode("latin-1")
+    flash = int.from_bytes(d[30:33], "big") if len(txt) < 24 else 0
     m = re.fullmatch(r"([^_]+)_(\d+)", txt)
-    return Identity(txt, m[1], int(m[2])) if m else None
+    return Identity(txt, m[1], int(m[2]), flash) if m else None
 
 
 # --------------------------------------------------------------- package ---
@@ -290,19 +302,35 @@ class Device:
         self.link, self.id, self.name = link, ident, name
 
 
+def ask(link, query, secs):
+    """send a handshake -> the identity answered, None (no answer in secs), False (the send failed)"""
+    if not link.send(query):
+        return False
+    end = time.monotonic() + secs
+    while (left := end - time.monotonic()) > 0:
+        p = link.read(left)
+        if p is None:
+            break
+        ident = parse_identity(p)
+        if ident:
+            return ident
+    return None
+
+
 def handshake(link, tries=3):
+    """the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits, not 0dd (fm1-base firmware
+    tells its whole identity so); the plain answer when nothing answers HS_FULL (classic Melodee)"""
     link.drain()
     for _ in range(tries):
-        if not link.send(HS_QUERY):
+        ident = ask(link, HS_QUERY, DELAY["hs"])
+        if ident is False:
             return None
-        end = time.monotonic() + DELAY["hs"]
-        while (left := end - time.monotonic()) > 0:
-            p = link.read(left)
-            if p is None:
-                break
-            ident = parse_identity(p)
-            if ident:
-                return ident
+        if ident is None:
+            continue
+        if ident.loader or not re.fullmatch(r"[^_]+_[1-9]\d\d", ident.text):
+            return ident
+        full = ask(link, HS_FULL, DELAY["hs_full"])
+        return full if full and full.model == ident.model and full.text.startswith(ident.text) else ident
     return None
 
 
@@ -545,7 +573,8 @@ def run(a, backend, out, ask):
             raise not_found(up)
         dev.link.close()
         mode = "update loader (update not finished)" if dev.id.loader else "running"
-        print(f"{dev.id.text}  [{mode}]  port: {dev.name}", file=out)
+        flash = f"  flash: {FLASH_PARTS.get(dev.id.flash, 'unknown')} ({dev.id.flash:06X})" if dev.id.flash else ""
+        print(f"{dev.id.text}  [{mode}]  port: {dev.name}{flash}", file=out)
         return 0
     product, image, loader = load_package(a.package, a.force)
     print(f"package: {product}  ({a.package})", file=out)
