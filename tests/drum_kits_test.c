@@ -114,7 +114,7 @@ int main(int argc, char **argv)
     static int32_t a[FS * 2], b[FS * 2];
     static const uint32_t KITS[2] = {P_CR78, P_FM};
     uint32_t s, k, i, j;
-    check("KIT 7 is CR78, 8 FM: factory kits CR78 KIT and FM KIT", ENG_DRUM.edit[0].max == DK_FM &&
+    check("KIT 7 is CR78, 8 FM: factory kits CR78 KIT and FM KIT", ENG_DRUM.edit[0].max == DK_KIT_MAX &&
           !strcmp(N_DRUM_KIT[DK_CR78], "CR78") && !strcmp(N_DRUM_KIT[DK_FM], "FM") && ENG_DRUM.npresets == 6u &&
           !strcmp(ENG_DRUM.presets[P_CR78].name, "CR78 KIT") && ENG_DRUM.presets[P_CR78].e[0] == DK_CR78 &&
           !strcmp(ENG_DRUM.presets[P_FM].name, "FM KIT") && ENG_DRUM.presets[P_FM].e[0] == DK_FM);

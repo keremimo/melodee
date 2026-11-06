@@ -14,6 +14,9 @@ enum { RES_ENGINE0, RES_NOTE_HISTORY = RES_ENGINE0 + NPART, RES_FX0,
 #if MELODEE_USB_AUDIO
        RES_USB_TRACKS,
 #endif
+#if MELODEE_USB_AUDIO && MELODEE_USER_KITS
+       RES_KIT_TAKE,                                  /* a drum take while the kit's sheet is open (kit_take.c) */
+#endif
        RES_PUNCH, RES_COUNT };
 static uint8_t recording_undo_lost;
 static uint8_t recording_undo_active, recording_undo_skip;

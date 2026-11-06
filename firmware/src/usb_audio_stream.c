@@ -204,6 +204,49 @@ static uint32_t ua_transmit(uint8_t *p)
     return n * width * ua_cap_channels;
 }
 
+#if MELODEE_USER_KITS
+/* A drum take from the computer's or phone's playback (kit_take.c): armed, it keeps the last KT_PRE samples; the
+ * first above KT_ON starts the take with them in front; KT_END samples below KT_QUIET in a row, or a full buffer,
+ * end it. Mono, before the host's volume: its slider does not set the take's level. */
+enum { KT_OFF, KT_ARMED, KT_REC, KT_DONE };
+#define KT_PRE 128u                                   /* ~3 ms before the trigger */
+#define KT_ON 328                                     /* -40 dBFS */
+#define KT_QUIET 33                                   /* -60 dBFS */
+#define KT_END (FS * 15u / 100u)
+static struct {
+    int16_t *buf;                                     /* RES_KIT_TAKE */
+    uint32_t cap, n, quiet, pw;                       /* its samples (64 zeros kept after them); taken; below */
+    volatile uint8_t state;
+} kt;
+static void kt_reverse(int16_t *a, uint32_t i, uint32_t j)
+{
+    while (i + 1u < j) { int16_t t = a[i]; a[i++] = a[--j]; a[j] = t; }
+}
+static void kt_hear(uint32_t pr, uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t pi = ((pr + i) & (UA_RING - 1u)) * 2u;
+        int32_t s = (ua.play[pi] + ua.play[pi + 1u]) >> 1, a = s < 0 ? -s : s;
+        if (kt.state == KT_ARMED) {
+            kt.buf[kt.pw++ % KT_PRE] = (int16_t)s;
+            if (a < KT_ON) continue;
+            kt.n = kt.pw < KT_PRE ? kt.pw : KT_PRE;
+            if (kt.pw > KT_PRE) {                     /* the ring in order, the oldest first */
+                uint32_t k = kt.pw % KT_PRE;
+                kt_reverse(kt.buf, 0, k); kt_reverse(kt.buf, k, KT_PRE); kt_reverse(kt.buf, 0, KT_PRE);
+            }
+            kt.quiet = 0;
+            kt.state = KT_REC;
+        } else if (kt.state == KT_REC) {
+            kt.buf[kt.n++] = (int16_t)s;
+            kt.quiet = a < KT_QUIET ? kt.quiet + 1u : 0u;
+            if (kt.n >= kt.cap || kt.quiet >= KT_END) { kt.state = KT_DONE; return; }
+        } else
+            return;
+    }
+}
+#endif
+
 /* Stereo Q15 post-FX/limiter mix, or four mono stems, both before MASTER: the
  * volume pot never sets the recording's level (#103). Stereo reads the mixer's
  * unity copy (tracks: L, R per frame), or the output for a block collected while
@@ -263,6 +306,12 @@ static void ua_audio(int32_t *out, const int32_t *tracks, uint32_t n, uint32_t v
     }
     if (capture)
         ua.cw += n;
+#if MELODEE_USER_KITS
+    if (playback && kt.state)
+        kt_hear(ua.pr, n);
+    else if (kt.state == KT_REC && (kt.quiet += n) >= KT_END)   /* the stream stopped (a player closes it right after */
+        kt.state = KT_DONE;                                       /* the sound): its silence ends the take as well */
+#endif
     if (playback)
         ua.pr += n;
     ua_host_gain_q15 = playback ? gain : target; /* opening a muted stream never starts at unity */

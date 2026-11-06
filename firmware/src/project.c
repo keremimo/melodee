@@ -1463,6 +1463,9 @@ static void persist_boot(void)                    /* before settings_init / pane
 #else
     (void)moved;
 #endif
+#ifdef KIT_STORE
+    kit_scan();                                    /* the user's drum kits, for the player (kit_store.c) */
+#endif
 #if MELODEE_SLICE
     slc_store_boot();                              /* (the scans read each slot's stored slices) */
 #endif

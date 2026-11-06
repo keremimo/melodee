@@ -50,6 +50,14 @@ static void slot_save_sheet(void);
 static int track_remove(uint32_t k);                    /* tracks.c */
 static void track_add(void);
 static int track_create_to(uint32_t k);
+#if KIT_REC
+static void kit_rec_open(void);                         /* kit_rec_ui.c */
+static void kit_rec_poll(void);
+static void kit_rec_delete(uint32_t u);
+#define KIT_ROW , {"Record kit\x85", 0, 0, kit_rec_open, 0}   /* the last row: a drum track's only */
+#else
+#define KIT_ROW
+#endif
 
 static void pop_close(void)
 {
@@ -113,7 +121,7 @@ static void ps_fav(void) { preset_mark(!preset_favorite()); }
 static void ps_undo(void) { undo_step(0); }
 static const sheet_row_t SHEET_SOUND[] = {
     {"Init sound", 0, 0, 0, CF_INIT_SOUND}, {"Save as user\x85", 0, 0, ps_save, 0}, {"Favourite", ps_fav_v, 0, ps_fav, 0},
-    {"Undo last load", 0, 0, ps_undo, 0}, {"Sound designer", 0, 0, designer_open, 0}};
+    {"Undo last load", 0, 0, ps_undo, 0}, {"Sound designer", 0, 0, designer_open, 0} KIT_ROW};
 /* Stage's: the sound's, then the tracks: the one added (the next), the one removed (the selected: its question) */
 static void ps_trk_v(char *b, uint32_t k, int none)
 {
@@ -138,6 +146,9 @@ static const sheet_row_t SHEET_STAGE[] = {
     {"Add track", ps_add_v, 0, track_add, 0}, {"Remove track", ps_remove_v, 0, 0, CF_DEL_TRACK},
 #if BOARD_SMK37
     {"Pads", ps_pads_v, ps_pads_turn, ps_pads, 0},
+#endif
+#if KIT_REC
+    {"Record kit\x85", 0, 0, kit_rec_open, 0},             /* the last row: a drum track's only */
 #endif
 };
 /* the song's (SONG) */
@@ -354,6 +365,7 @@ static uint32_t page_sheet(void)
         return 5;
     return fam == FAM_EDIT || fam == FAM_ENV || fam == FAM_LFO || fam == FAM_FX ? 1u : 0u;
 }
+#define KIT_ROWS_OFF (KIT_REC && TSEL->eng_req != ENGI_DRUM ? 1u : 0u)   /* Record kit: drum tracks only */
 static void page_sheet_open(void)
 {
     char nm[20];
@@ -361,9 +373,9 @@ static void page_sheet_open(void)
     case 1:
         sound_name(TSEL, nm);
         if (ui.home)
-            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_STAGE, NELEM(SHEET_STAGE));
+            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_STAGE, NELEM(SHEET_STAGE) - KIT_ROWS_OFF);
         else
-            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_SOUND, NELEM(SHEET_SOUND));
+            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_SOUND, NELEM(SHEET_SOUND) - KIT_ROWS_OFF);
         break;
     case 2:
         fmt_int(nm, chain_config.count);

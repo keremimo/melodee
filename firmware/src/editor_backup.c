@@ -9,8 +9,18 @@
 #ifndef ED_BK_FLASH_PTR
 #define ED_BK_FLASH_PTR(off) fm1_xip_ptr(off)
 #endif
-/* 2..5: projects 1..4; 64..91: projects 5..32 (project.c PROJ_SLOTS) */
-static const uint8_t ED_BK_IDS[57] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91};
+/* 2..5: projects 1..4; 64..91: projects 5..32 (project.c PROJ_SLOTS); 92..99: the user's drum kits (kit_store.c) */
+static const uint8_t ED_BK_IDS[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91
+#ifdef KIT_STORE
+    , 92, 93, 94, 95, 96, 97, 98, 99
+#endif
+};
+#define ED_BK_KIT0 92u
+#ifdef KIT_STORE
+static int ed_bk_kit(uint32_t id) { return id >= ED_BK_KIT0 && id < ED_BK_KIT0 + ST_NKIT; }
+#else
+static int ed_bk_kit(uint32_t id) { (void)id; return 0; }
+#endif
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
 #define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a compact one (project_stream.c PJ_HEAD) */
 #define ED_BK_RAW (wire_take())             /* reuse the existing serialized main-loop scratch */
@@ -77,6 +87,15 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
         return ED_BK_RAW;
     }
     if (id == 1u) { *len = ed_bk_set_len; return (const uint8_t *)&ed_bk_set; }
+#ifdef KIT_STORE
+    if (ed_bk_kit(id)) {                    /* a user kit: GET reads its record range by range */
+        st_hdr_t h;
+        uint32_t obj = kit_obj(id - ED_BK_KIT0);
+        int copy = st_current(obj, &h);
+        if (copy >= 0) { *len = h.len; ed_bk_source_obj = obj; ed_bk_source_copy = (uint32_t)copy; ed_bk_source_crc = h.crc; }
+        return ED_BK_RAW;
+    }
+#endif
     if (id && ed_bk_project(id)) {
         uint32_t slot = ed_bk_slot(id);
 #if MELODEE_FLASH
@@ -180,6 +199,15 @@ static uint32_t ed_bk_commit_inner(void)
 {
     uint8_t *raw = ED_BK_RAW;
     uint32_t obj;
+#ifdef KIT_STORE
+    if(ed_bk_kit(ed_bk_id)){                         /* a user kit: none in the archive empties the slot */
+        uint32_t u=ed_bk_id-ED_BK_KIT0;
+        if(!ed_bk_len)return kit_delete(u)?4u:0u;
+        if(ed_bk_pos!=ed_bk_len || ~ed_bk_stage.crc!=ed_bk_crc)return 2;
+        int rc=kit_put_commit(&ed_bk_stage,u);
+        return rc==-2?2u:rc?4u:0u;
+    }
+#endif
 #if MELODEE_FLASH
     if(ed_bk_project(ed_bk_id) && ed_bk_len && !ed_bk_ram_only()){
         if(ed_bk_pos!=ed_bk_len || ~ed_bk_stage.crc!=ed_bk_crc || st_stream_check(&ed_bk_stage) ||
@@ -299,7 +327,7 @@ static uint32_t ed_bk_commit_inner(void)
 static uint32_t ed_bk_commit(void) { return ed_bk_commit_inner(); }
 static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
 {
-    if (n < 2u || a[0] > 3u || (a[1] > 28u && !ed_bk_project(a[1]))) return 1;
+    if (n < 2u || a[0] > 3u || (a[1] > 28u && !ed_bk_project(a[1]) && !ed_bk_kit(a[1]))) return 1;
     if (ed_flash_stop()) return 3;
     if (a[0] == 0u) {
         if (n != 12u || a[6] > 15u || a[11] > 15u) return 1;
@@ -312,6 +340,12 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
         ed_bk_valid=ed_bk_put=0;
         ed_bk_gen=++proj_wire_gen;
 #if MELODEE_FLASH
+#ifdef KIT_STORE
+        if(ed_bk_kit(a[1])){                         /* a user kit: streamed into its record, checked at commit */
+            if(ed_bk_ram_only())return 4;
+            if(len && (!flash_ok || kit_put_begin(&ed_bk_stage,a[1]-ED_BK_KIT0,len)))return len>DRK_KIT_MAX||len<DRK_KIT_BYTES?1:4;
+        }else
+#endif
         if(ed_bk_project(a[1]) && len && !ed_bk_ram_only()){
             uint32_t slot=a[1]?ed_bk_slot(a[1]):proj_cur<PROJ_SLOTS?proj_cur:0u;
             if(!flash_ok || st_stream_begin(&ed_bk_stage,st_proj_obj(slot),len))return 4;
@@ -336,7 +370,7 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
     uint32_t count = ed_unpack7(a + 7, n - 7u, ed_transfer_buf, 256u);
     if (!count || count > ed_bk_len - ed_bk_pos) return 1;
 #if MELODEE_FLASH
-    if(ed_bk_project(ed_bk_id) && !ed_bk_ram_only()){
+    if((ed_bk_project(ed_bk_id) || ed_bk_kit(ed_bk_id)) && !ed_bk_ram_only()){
         if(st_stream_write(&ed_bk_stage,ed_transfer_buf,count)){ed_bk_put=0;return 4;}
     }else
 #endif

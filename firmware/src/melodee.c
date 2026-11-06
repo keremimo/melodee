@@ -145,6 +145,13 @@ static uint8_t res_ok;                  /* res.c: installed and this build's; el
 #include "storage_hw.c"
 #include "storage.c"
 #include "res.c"                 /* the resource region (needs the storage hooks) */
+#if MELODEE_USER_KITS
+#include "kit_store.c"           /* the user's drum kits in the pool (drum_real.c plays them) */
+#endif
+#if KIT_REC
+#include "kit_take.c"            /* a drum take from USB audio, encoded and kept */
+#include "kit_rec_ui.c"          /* Record kit: the drum track's sheet */
+#endif
 #endif
 #include "upreset.c"             /* user presets (RAM mirror; flash with MELODEE_FLASH) */
 #include "project.c"
