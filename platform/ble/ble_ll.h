@@ -39,11 +39,21 @@ BLE_API void ble_ll_set_adv_data(const uint8_t *ad, uint8_t ad_len, const uint8_
 /* advertise whenever not connected (1), or stop advertising and leave any connection (0) */
 BLE_API void ble_ll_enable(int on);
 BLE_API void ble_ll_advertise(int on);                    /* Melodee: 0 = no advertising when idle (called like ble_ll_enable) */
+/* Which link the stack is working on: BLE_LINK_PERIPH or BLE_LINK_CENTRAL. Meaningful inside the stack's own calls and the
+ * firmware's hooks (ble_app_*, called from them); from the main loop it is always the peripheral link (BLE_LINKS 2:
+ * every call into the stack selects its link and gives the previous one back; docs/BLE-MULTILINK.md). One link: 0 */
+#if BLE_LINKS > 1
+BLE_API uint8_t ble_ll_link(void);
+#else
+#define ble_ll_link() 0u
+#endif
 BLE_API int ble_ll_connected(void);
+BLE_API int ble_ll_link_connected(uint8_t link);          /* ... link n's, whichever link is running */
 /* queue one L2CAP basic frame for channel cid (payload n octets): 1 queued, 0 no room (nothing queued) */
 BLE_API int ble_ll_send(uint16_t cid, const uint8_t *p, uint16_t n);
 /* the payload octets a frame queued now could carry (0 when not connected) */
 BLE_API uint32_t ble_ll_tx_room(void);
+BLE_API int ble_ll_tx_idle(void);                          /* nothing queued on the running link */
 /* leave the connection: LL_TERMINATE_IND with reason, then ble_host_disconnected(BLE_ERR_LOCAL_HOST) */
 BLE_API void ble_ll_disconnect(uint8_t reason);
 BLE_API uint16_t ble_ll_interval(void);                   /* connInterval in use (x 1.25 ms), 0 when not connected */

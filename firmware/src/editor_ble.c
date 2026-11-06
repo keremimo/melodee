@@ -22,7 +22,7 @@ static int ed_ble_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             if (!rc) rc = ed_ui_save();
         }
     }
-    ed_b(rc); ed_b(1); ed_b(mb.cal); ed_b(mb.on); ed_b(mb.ready);
+    ed_b(rc); ed_b(1); ed_b(mb.cal); ed_b(mb.on); ed_b(MB_ANY(ready));
     ed_b(mb_revision == mb_committed && ble_rf_copy_ok(mb_saved.rf));
     uint32_t crc = ble_rf_copy_ok(mb_saved.rf) ? ble_rd16(mb_saved.rf + 98) : 0;
     ed_b(crc); ed_b(crc >> 7); ed_b(crc >> 14);

@@ -15,10 +15,13 @@ static struct {
     uint32_t ticks;                     /* TIMER4 */
     uint32_t tick_per_read;             /* TIMER4 moves this much on every read (the driver's busy waits end) */
     uint32_t col[17];                   /* what was last written to each column */
+    uint32_t lcol[2][17];               /* ... per link (tests/ble_multilink_driver_test.c) */
+    uint32_t lcol3[2];                  /* column 3 as read per link, with pend_set */
+    uint32_t lwr[2], lstops[2];         /* column writes and stops per link */
     uint32_t col3;                      /* column 3 as read: event counter + 1 (0: no connection event yet) */
     uint32_t slots;                     /* the slot clock columns 0 / 14 read */
     uint32_t col_reads[17];             /* op-2 reads per column */
-    uint32_t irqs, rx_pending;
+    uint32_t irqs, rx_pending, event_pending, pend_set;   /* bit n: link n has one pending; pend_set: column 3 per link (lcol3) */
     uint32_t log[64], log_n;            /* every column write, (column << 16 | data), the last 64 */
 } fk;
 
@@ -27,18 +30,18 @@ static inline void fm1_ble_sync(void) {}
 static inline uint32_t fm1_ticks(void) { return fk.ticks += fk.tick_per_read; }
 static inline void fm1_ble_col_wr(uint32_t link, uint32_t col, uint32_t data)
 {
-    (void)link;
     fk.col[col <= 16u ? col : 16u] = data & 0xFFFFu;
+    fk.lcol[link & 1u][col <= 16u ? col : 16u] = data & 0xFFFFu;
+    fk.lwr[link & 1u]++;
     fk.log[fk.log_n++ & 63u] = col << 16 | (data & 0xFFFFu);
     if (col == 0u || col == 14u)
         fk.slots = 0;                   /* the start (column 0 / 14 written) restarts the clock */
 }
 static inline uint32_t fm1_ble_col_rd(uint32_t link, uint32_t col)
 {
-    (void)link;
     fk.col_reads[col <= 16u ? col : 16u]++;
     if (col == 3u)
-        return fk.col3;
+        return fk.pend_set ? fk.lcol3[link & 1u] : fk.col3;
     if (col == 0u)
         return fk.slots & 0xFFFFu;
     if (col == 14u)
@@ -49,15 +52,18 @@ static inline uint32_t fm1_ble_clock(uint32_t link) { return fm1_ble_col_rd(link
 static inline void fm1_ble_step(uint32_t s) { (void)s; }
 static struct { uint32_t stop; } fm1_ble_bc;      /* the link-stop breadcrumb (hal/fm1_ble_rf.h: the rest unused here) */
 static inline uint32_t fm1_ble_rng32(void) { static uint32_t x = 0x12345678u; x ^= x << 13; x ^= x >> 17; x ^= x << 5; return x; }
-static struct { uint32_t busy_us, stops, last_max, busy_max_us; } fkb;   /* the engine busy this long after the next
+static struct { uint32_t busy_us, stops, last_max, busy_max_us, max_seen; } fkb;   /* the engine busy this long after the next
                                                                            * stop; that stop's bound */
 static inline uint32_t fm1_ble_link_stop(uint32_t link, uint32_t max_us)
 {
     uint32_t w = fkb.busy_us < max_us ? fkb.busy_us : max_us;
-    (void)link;
     fk.col[14] = 0;
+    fk.lcol[link & 1u][14] = 0;
+    fk.lstops[link & 1u]++;
     fkb.stops++;
     fkb.last_max = max_us;
+    if (max_us > fkb.max_seen)
+        fkb.max_seen = max_us;     /* the longest bound any stop was given since the test cleared it */
     if (fkb.busy_us)
         fkb.busy_max_us = max_us;
     fkb.busy_us = 0;
@@ -67,7 +73,9 @@ static inline uint32_t fm1_ble_link_stop(uint32_t link, uint32_t max_us)
 static inline void fm1_ble_link_irqs_on(uint32_t link) { (void)link; }
 static inline void fm1_ble_rx_ack(uint32_t link) { (void)link; }
 static inline void fm1_ble_event_ack(uint32_t link) { (void)link; }
-static inline int fm1_ble_rx_pending(uint32_t link) { (void)link; return (int)fk.rx_pending; }
+/* the pending bits a test names, bit n for link n (none: nothing pending, as the single-link tests always had it) */
+static inline int fm1_ble_rx_pending(uint32_t link) { return (int)(fk.rx_pending >> link & 1u); }
+static inline int fm1_ble_event_pending(uint32_t link) { return (int)(fk.event_pending >> link & 1u); }
 static inline void fm1_ble_event_tail(uint32_t link) { (void)link; }
 static inline void fm1_ble_irqs_hold(int hold) { (void)hold; }
 static inline void fm1_ble_irq_attach(uint32_t prio) { (void)prio; }

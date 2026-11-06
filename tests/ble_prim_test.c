@@ -23,8 +23,8 @@
 #include <time.h>
 #define BLE_LL_ENC 1
 #define BLE_SMP_LEGACY 1
-#include "../firmware/src/ble/ble_prim.c"
-#include "../firmware/src/ble/ble_aes.c"
+#include "ble/ble_prim.c"
+#include "ble/ble_aes.c"
 
 static int fails;
 static void check(const char *what, int ok)

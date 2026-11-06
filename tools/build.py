@@ -284,6 +284,13 @@ def build_app(stub):
         flags.append(f'-DFELUCCA_DATA_FAMILY="{fam}"')
     if os.environ.get("P5_OVERSAMPLE") in ("1", "2"):
         flags.append("-DP5_OVERSAMPLE=" + os.environ["P5_OVERSAMPLE"])
+    links = os.environ.get("MELODEE_BLE_LINKS", "1")   # Bluetooth links at once: 2 = a computer's and a device's (docs/BLE-MULTILINK.md)
+    if links not in ("1", "2"):
+        raise SystemExit("MELODEE_BLE_LINKS: 1 or 2")
+    if links == "2":
+        if os.environ.get("MELODEE_BLE") == "0":
+            raise SystemExit("MELODEE_BLE_LINKS=2 needs Bluetooth (MELODEE_BLE=1)")
+        flags.append("-DBLE_LINKS=2")
     flags.append(f'-DMELODEE_ID="{PRODUCT}"')
     if VERSION:
         flags.append(f'-DMELODEE_VERSION="{VERSION}"')

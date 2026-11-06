@@ -305,5 +305,8 @@ static int smp_init_timed_out(uint32_t now)
 
 BLE_API uint32_t ble_central_passkey(void)
 {
-    return bsmp.init && smp_init_busy() ? smp_passkey : BLE_NO_PASSKEY;
+    uint8_t was = ll_enter(BLE_LINK_CENTRAL);         /* (the central link's pairing, whichever link the caller is on) */
+    uint32_t pk = bsmp.init && smp_init_busy() ? smp_passkey : BLE_NO_PASSKEY;
+    ll_leave(was);
+    return pk;
 }

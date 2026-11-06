@@ -151,7 +151,8 @@ Local adapter, UI, settings and integration-test code is Copyright (C) 2026
 Kerem Kilic (Ellic Studio), GPL-3.0-only. Modified upstream files identify the
 Melodee changes while retaining their Optimist provenance. Stack changes cover
 the optional initial read, bounded security settling, exact CCC acknowledgement,
-and SRAM placement. Saadet was consulted at local branch `test/native48-saadet`;
+SRAM placement, and the per-link banks of `BLE_LINKS 2` (a computer's link and a
+device's at once, Melodee's own, not upstream: [BLE-MULTILINK.md](BLE-MULTILINK.md)). Saadet was consulted at local branch `test/native48-saadet`;
 its SDK-specific helper was not copied into this stack.
 
 ## Validation

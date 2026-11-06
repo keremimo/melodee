@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "../firmware/src/ble/ble_vm.c"
+#include "ble/ble_vm.c"
 
 static int fails;
 static void check(const char *what, int ok)
