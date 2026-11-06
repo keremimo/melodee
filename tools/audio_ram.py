@@ -91,7 +91,7 @@ def call_arguments(line, begin):
     raise ValueError('Unterminated LLVM memory intrinsic')
 
 
-def relocate(ir, roots):
+def relocate(ir, roots, required_root="fm1_alnk0_irq"):   # fm1-base (platform/tools/ir_pass.py): its render's root
     functions = {m[2]: m for m in FUNCTION.finditer(ir)}
     selected = set()
     pending = list(roots)
@@ -106,7 +106,7 @@ def relocate(ir, roots):
         # Backend lowering can turn these intrinsics into libc calls after
         # this pass. Their implementation must join an audio caller's closure.
         pending.extend(re.findall(r'@llvm\.(memcpy|memset)\.', functions[name][5]))
-    if 'fm1_alnk0_irq' not in selected:
+    if required_root not in selected:
         raise ValueError('Audio ISR is missing from the optimized module')
 
     sections = {name: (re.search(r'\bsection "([^"]+)"', m[4]) or [None, ''])[1]

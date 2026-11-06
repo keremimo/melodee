@@ -1135,7 +1135,7 @@ static void fm6_post(track_t *t, int32_t *out, uint32_t n, uint32_t nr)
 #define WIRE_SCRATCH_BYTES 27904u                       /* a whole bank record (project.c asserts it fits) */
 #endif
 /* In data SRAM, not the pool: the saving enlarges the contiguous engine arena */
-static union { uint32_t align; uint8_t raw[WIRE_SCRATCH_BYTES]; } proj_wire_u;
+static union { uint32_t align; uint8_t raw[WIRE_SCRATCH_BYTES]; } proj_wire_u MELODEE_BIG_BSS;
 #define fm6_rx proj_wire_u.raw
 static uint8_t proj_wire_gen;                /* +1 when a scratch client invalidates an archive snapshot/upload */
 static volatile uint8_t wire_job;            /* a main-loop job holds the scratch this turn */

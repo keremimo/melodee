@@ -26,7 +26,7 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "editor.c", "editor_cz.c", "cz_bank.c", "cz_patch.h", "pattern_store.c", "editor_fm6.c", "editor_preferences.c", "editor_backup.c", "console.c",
               # main-loop only too: the boot and the main loop (main.c, not its ISR), parameters and their text, the
               # browser, the screen saver, calibration, the CZ / Prophet editing helpers, the update entry
-              "main.c", "boot_lzma.h", "params.c", "browse.c", "screen.c", "panel.c", "cz_edit.h", "prophet_edit.h", "ota.c", "favorites.c",
+              "main.c", "smk_controls.h", "boot_lzma.h", "params.c", "browse.c", "screen.c", "panel.c", "cz_edit.h", "prophet_edit.h", "ota.c", "favorites.c",
               "cz_panel.h",
               # the song, punch, section sound and Bluetooth screens and the editor's radio command
               "ui_song.c", "ui_song_punch.c", "ui_song_sound.c", "ui_ble.c", "editor_ble.c",
