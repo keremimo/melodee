@@ -142,12 +142,16 @@ static void hexs(char *b, uint32_t v)
 }
 
 #if BOARD_SMK37
-/* the menu's TRS MIDI OUT to the jack's queue (settings load, restore, the menu): ON again tries the UART again */
+/* the menu's TRS MIDI OUT to the jack's queue (settings load, restore, the menu): OFF ends what the jack sounds first,
+ * ON again tries the UART again. The note paths and the ring are the audio ISR's: the IRQs are off meanwhile */
 static void smo_sync(void)
 {
     uint32_t on = !(GLO_SELECT & TRS_OUT_OFF);
-    if (on != trs_out)
-        smo_on(on);
+    if (on == trs_out)
+        return;
+    fm1_irq_off();
+    midi_trs_set(on);
+    fm1_irq_on();
 }
 
 /* the SMK-37's 4 faders (ui_smk.c: FADER BANK, smk_fbank): each fader its bank's parameter (LEVELS: track i's

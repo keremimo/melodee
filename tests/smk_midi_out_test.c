@@ -132,6 +132,40 @@ int main(void)
     tick(100);
     check(ut_len == 3, "set ON again: sent");
 
+    reset();                                           /* what has no books: its channel owes pedal up, all notes off */
+    smo_put(PKT(9, 0x92, 60, 100));
+    smo_put(PKT(11, 0xB4, 64, 127));
+    smo_put(PKT(11, 0xB5, 64, 0));
+    smo_put(PKT(11, 0xB6, 7, 100));
+    smo_put(PKT(15, 0xF8, 0, 0));
+    check(smo.live == (1u << 2 | 1u << 4), "a note, a pedal down: their channels; a lift, a CC, the clock: none");
+    check(smo_stop() && !smo.live, "ending them: done, none left");
+    tick(1000);
+    {
+        static const uint8_t want[] = {0x92, 60, 100, 0xB4, 64, 127, 0xB5, 64, 0, 0xB6, 7, 100, 0xF8,
+                                       0xB2, 64, 0, 0xB2, 123, 0, 0xB4, 64, 0, 0xB4, 123, 0};
+        check(bytes_are(want, sizeof want), "... pedal up, then all notes off, on each");
+    }
+
+    reset();
+    smo_put(PKT(9, 0x90, 60, 100));
+    for (i = 0; i < 300u; i++)
+        smo_put(PKT(15, 0xF8, 0, 0));
+    n = smo.w;
+    check(!smo_stop() && smo.live == 1u && smo.w == n, "the ring full: not yet, nothing lost, nothing half sent");
+    tick(100000);
+    check(smo_stop() && !smo.live && smo.w == n + 6u, "... room again: both");
+
+    reset();
+    smo_put(PKT(9, 0x90, 60, 100));
+    smo.dead = 1;
+    check(smo_stop() && !smo.live, "no UART: nothing to wait for");
+
+    reset();
+    trs_out = 0;
+    smo_put(PKT(9, 0x90, 60, 100));
+    check(!smo.live, "OFF: a note not sent owes nothing");
+
     reset();                                           /* no UART: the byte never finishes */
     ut_dead = 1;
     for (i = 0; i < 20u; i++)

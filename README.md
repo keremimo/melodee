@@ -74,7 +74,7 @@ On the nightly channel, not yet in a stable release. Everything here but the SMK
 - **Microtonal chords:** fixed chord shapes (MAJ to POW) aim at just ratios instead of equal-tempered intervals, on every microtonal entry, old ones included. So a fixed chord played on an old microtonal project can land on different notes than it did. DIA3, DIA7 and notes already saved stay as they were.
 - **Microtonal note names:** notes read by the semitone they sound nearest and the cents off it, such as E4-14, where they read D3+1. Recordings and projects still store degrees.
 - **Microtonal MIDI OUT:** sends the semitone nearest each pitch instead of a degree address, so an external synth plays the closest twelve-tone notes without sharing the tuning. A receiver set up to share Melodee's degree mapping no longer gets exact degrees.
-- **SMK-37 TRS:** a MIDI Track's notes now end at the jack with no computer attached, and USB or BLE being gone or full no longer holds them back.
+- **SMK-37 TRS:** a MIDI Track's notes now end at the jack with no computer attached, and USB or BLE being gone or full no longer holds them back. Turning TRS MIDI OUT OFF ends what the jack sounds instead of leaving it held.
 - **Recovery:** `tools/fm1_recover.py` now accepts the UC25HQ80 flash (JEDEC 0xB36014). yne ran the branch read-only on a unit on [#110](https://github.com/keremimo/melodee/issues/110) (backup verified, 0 application sectors differ). `--write` has not been tried on this chip, and all SPI work goes through the opaque `wl82loader.bin`, so this does not make UBOOT recovery supported on it.
 
 ## What's new in 1.6.1

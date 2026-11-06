@@ -141,6 +141,17 @@ static void midi_trs_controller(const track_t *t, uint32_t tr, uint32_t st, uint
         smo_put(pkt);
     }
 }
+
+/* TRS MIDI OUT set (main.c smo_sync). Going OFF, what the jack sounds ends first: its releases would find the port shut
+ * and the note hang on the synth. A full ring waits for the next pass, still ON. USB and BLE go on as they were. */
+static void midi_trs_set(uint32_t on)
+{
+    if (!on) {
+        for (uint32_t tr = 0; tr < NTRK; tr++) midi_trs_all_off(tr);
+        if (!smo_stop()) return;
+    }
+    smo_on(on);
+}
 #else
 #define midi_trs_service(t, tr) ((void)0)
 #define midi_trs_note_off(tr, note) ((void)0)
