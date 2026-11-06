@@ -778,6 +778,28 @@ static void input_off(track_t *t, uint32_t note)
 #else
 #define KEY_VEL(k) 100
 #endif
+/* A key's note on MIDI OUT (a MIDI Track's left with input_on / input_off). midi_track.c midi_sent: a microtonal note
+ * leaves as its nearest semitone, its release goes there, and a semitone shared ends with its last degree. */
+static void key_midi_on(track_t *t, uint32_t note, uint32_t vel)
+{
+    if (midi_track_only(t)) return;
+    uint32_t tr = trk_index(t), mc = trk_midi_ch(tr);
+    if (micro_active(t)) {
+        if (midi_sent_n == MIDI_SENT_N) return;
+        uint32_t sent = midi_sent_pitch(t, note);
+        if (midi_sent_shared(tr + NTRK, sent)) midi_out_event(0x08u | (0x80u | mc) << 8 | sent << 16); /* struck again */
+        midi_sent_add(tr + NTRK, note, sent);
+        note = sent;
+    }
+    midi_out_event(0x09u | (0x90u | mc) << 8 | note << 16 | vel << 24);
+}
+static void key_midi_off(track_t *t, uint32_t note)
+{
+    uint32_t tr = trk_index(t);
+    int32_t sent = midi_sent_release(tr + NTRK, note);
+    if (sent >= 0 && !midi_track_only(t)) midi_out_event(0x08u | (0x80u | trk_midi_ch(tr)) << 8 | (uint32_t)sent << 16);
+}
+
 /* Start only this tone's ownership before input_on: note-triggered recording can
  * re-enter seq_advance(0). Shared tones retain the existing single-note policy. */
 static void key_chord_tone(uint32_t k, track_t *t)
@@ -786,7 +808,7 @@ static void key_chord_tone(uint32_t k, track_t *t)
     kb_chn[k]++;
     if (held) return;
     input_on(t, x, KEY_VEL(k));
-    if (!midi_track_only(t)) midi_out_event(0x09u | (0x90u | trk_midi_ch(trk_index(t))) << 8 | x << 16 | KEY_VEL(k) << 24);
+    key_midi_on(t, x, KEY_VEL(k));
 }
 
 static void key_on(uint32_t k, track_t *t)
@@ -803,7 +825,7 @@ static void key_on(uint32_t k, track_t *t)
 /* A release cancels unplayed strings and releases exactly the started tones. */
 static void key_off(uint32_t k, track_t *t)
 {
-    uint32_t n = kb_chn[k], i, mc = trk_midi_ch(trk_index(t));
+    uint32_t n = kb_chn[k], i;
     kb_strum_pending &= ~(1u << k);
     kb_strum[k].total = 0;
     kb_chn[k] = 0;
@@ -811,7 +833,7 @@ static void key_off(uint32_t k, track_t *t)
         uint32_t x = kb_chord[k][i];
         if (midi_local_held(t, x)) continue;
         input_off(t, x);
-        if (!midi_track_only(t)) midi_out_event(0x08u | (0x80u | mc) << 8 | x << 16);
+        key_midi_off(t, x);
     }
 }
 
@@ -897,10 +919,10 @@ static uint32_t sus_t0;
 static void ext_key_release(uint32_t k)
 {
     track_t *t = &trk[ext_trk[k] % NTRK];
-    uint32_t i, mc = trk_midi_ch(trk_index(t));
+    uint32_t i;
     for (i = 0; i < (ext_chn[k] & ~EXT_SUS); i++) {
         input_off(t, ext_chord[k][i]);
-        midi_out_event(0x08u | (0x80u | mc) << 8 | (uint32_t)ext_chord[k][i] << 16);
+        key_midi_off(t, ext_chord[k][i]);
     }
     ext_chn[k] = 0;
 }
@@ -952,7 +974,7 @@ static void ext_keys_block(void)
 {
     int32_t e;
     while ((e = smk_extkey_take()) >= 0) {
-        uint32_t k = (uint32_t)e >> 8, v = (uint32_t)e & 0xFFu, i, n, mc;
+        uint32_t k = (uint32_t)e >> 8, v = (uint32_t)e & 0xFFu, i, n;
         track_t *t;
         if (k >= FM1_NKEY)
             continue;
@@ -973,11 +995,10 @@ static void ext_keys_block(void)
         if (n == KB_SILENT)
             continue;
         ext_trk[k] = (uint8_t)song.sel;
-        mc = trk_midi_ch(trk_index(t));
         n = chord_build(t, n, ext_chord[k]);
         for (i = 0; i < n; i++) {
             input_on(t, ext_chord[k][i], v);
-            midi_out_event(0x09u | (0x90u | mc) << 8 | (uint32_t)ext_chord[k][i] << 16 | v << 24);
+            key_midi_on(t, ext_chord[k][i], v);
         }
         ext_chn[k] = (uint8_t)n;
     }
