@@ -18,7 +18,7 @@ import { join } from "node:path";
 import vm from "node:vm";
 import {mockInstallSession,strip} from "./installer_test_helpers.mjs";
 import { blockCount, logicalImage, productOf, validateStockPackage } from "./fm1pkg.js";
-import { MELODEE_LOADER, STOCK_LOADER, Updater, melodeeLoader, pack7, unpack7 } from "./fm1ota.js";
+import { HS_FULL, MELODEE_LOADER, STOCK_LOADER, Updater, melodeeLoader, pack7, unpack7 } from "./fm1ota.js";
 import { progressModel } from "./install/progress.js";
 
 let failed = 0;
@@ -1522,10 +1522,21 @@ print(ents[0], ents.get(101, 0), end="")`, smk).toString().split(" ").map(Number
 const HS = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
 const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
 
-/* an FM-1 on WebMIDI: identity, then "device asks, host answers" reads of the image */
+/* a handshake answer as the firmware sends it (00 59 11, 27 bytes, checksum): the text, zeros and, from fm1-base
+   firmware, the flash's JEDEC ID in bytes 24..26 */
+function identFrame(text, flash = 0) {
+  const body = [...new TextEncoder().encode(text), ...new Array(24).fill(0)].slice(0, 24);
+  body.push((flash >> 16) & 0xFF, (flash >> 8) & 0xFF, flash & 0xFF);
+  return [0xF0, ...pack7([0, 0x59, 0x11, body.length, 0, 0, ...body, ~body.reduce((a, b) => a + b, 0) & 0xFF]), 0xF7];
+}
+
+/* an FM-1 on WebMIDI: identity, then "device asks, host answers" reads of the image. base: firmware built on fm1-base
+   (HS_QUERY: name, '_' and three digits; HS_FULL: the whole identity, not from the loader; both with the flash ID),
+   otherwise HS_FULL goes unanswered */
 class FakeFM1 {
-  constructor(image, { unplugAfter = Infinity, identity = "FM-1_015", afterWrite = "FM-1_900", loader = MELODEE_LOADER } = {}) {
+  constructor(image, { unplugAfter = Infinity, identity = "FM-1_015", afterWrite = "FM-1_900", loader = MELODEE_LOADER, base = false } = {}) {
     this.afterWrite = afterWrite; this.loader = loader;     // the loader step 1 starts (the package's own)
+    this.base = base; this.fullAsked = 0;
     this.image = image; this.unplugAfter = unplugAfter; this.served = 0; this.bad = 0;
     this.access = { inputs: new Map(), outputs: new Map() };
     this.boot(identity, identity === "FM-1_015" ? "FM-1" : "Melodee");
@@ -1544,10 +1555,14 @@ class FakeFM1 {
   }
   tx(bytes) { const i = this.input; setTimeout(() => { if (i.state === "connected" && i.onmidimessage) i.onmidimessage({ data: Uint8Array.from(bytes) }); }, 1); }
   rx(d) {
+    const ota = this.identity.startsWith("ota-");
     if (eq(d, HS)) {
-      const t = [...new TextEncoder().encode(this.identity)];
-      const body = [0, 0x59, 0x11, 0, 0, 0, ...t, ...new Array(28 - t.length).fill(0)];
-      this.tx([0xF0, ...pack7(body), 0xF7]);
+      const i = this.identity.indexOf("_");
+      const t = this.base && !ota && i >= 0 && i + 4 < this.identity.length ? this.identity.slice(0, i + 4) : this.identity;
+      this.tx(identFrame(t, this.base ? 0x856014 : 0));
+    } else if (eq(d, HS_FULL)) {
+      this.fullAsked++;
+      if (this.base && !ota) this.tx(identFrame(this.identity, 0x856014));
     } else if (eq(d, UPGRADE)) {
       this.queue = this.identity.startsWith("ota-")
         ? [...Array.from({ length: 6 }, (_, k) => [k * 512, 512]), [0xF0000000, 8]]
@@ -1631,6 +1646,25 @@ async function updater() {
   ok(e && e.code === "lost" && e.lastRead === 0x40, "fm1ota.js: unplugged in step 1 -> error code 'lost', last read address");
   const e2 = await new Updater({ inputs: new Map(), outputs: new Map() }).install(image, "FM-1_900", null, MELODEE_LOADER).then(() => null, (x) => x);
   ok(e2 && e2.code === "notfound", "fm1ota.js: no device -> error code 'notfound'");
+
+  /* firmware built on fm1-base: the flash ID after the identity's zeros, HS_FULL for the whole identity */
+  const reply = "f000324558010000234d5a447915070c180000000000000000000000000000000000001404462207f7";
+  ok(Buffer.from(identFrame("FM-1_900", 0x856014)).toString("hex") === reply,
+    "fm1ota.js test: the simulated fm1-base FM-1 answers its 2026-11-06 reply bytes");
+  const onBase = new FakeFM1(image, { identity: "FM-1_900", base: true });
+  const gotBase = await new Updater(onBase.access).install(image, "FM-1_900", null, MELODEE_LOADER);
+  ok(gotBase === "FM-1_900" && onBase.bad === 0, "fm1ota.js: install over an fm1-base FM-1_900 (flash ID in the reply)");
+  const rel = new FakeFM1(image, { identity: "FM-1_900", base: true, afterWrite: "FM-1_9001613" });
+  const gotRel = await new Updater(rel.access).install(image, "FM-1_9001613", null, MELODEE_LOADER);
+  ok(gotRel === "FM-1_9001613" && rel.fullAsked >= 2, "fm1ota.js: an fm1-base release's whole identity through HS_FULL");
+  const asked = [];
+  for (const identity of ["FM-1_900", "FM-1_015", "SMK-37 Pro_016"]) {
+    const d = new FakeFM1(image, { identity });
+    const found = await new Updater(d.access).find();
+    found.link.close();
+    asked.push(found.id.text === identity && d.fullAsked === (identity === "FM-1_900" ? 1 : 0));
+  }
+  ok(asked.every(Boolean), "fm1ota.js: classic FM-1_900 keeps its plain answer; stock FM-1_015 / SMK-37 Pro_016 never get HS_FULL");
 
   /* the SMK-37 models (SMK-37 Pro, SMK-37 Elite, MKE-P37): a package installs only on exactly its model */
   for (const [dev, pkg] of [["SMK-37 Pro_016", "SMK-37 Elite_900"], ["SMK-37 Pro_016", "FM-1_900"], ["FM-1_015", "SMK-37 Pro_900"],
