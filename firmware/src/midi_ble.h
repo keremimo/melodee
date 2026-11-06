@@ -11,7 +11,7 @@
 #define FM1_RF_CAL_MEMORY __attribute__((section(".pool")))
 /* Stock uses 27-octet PDUs. Keep that radio-tested limit until DLE is measured. */
 #define BLE_LL_MAX_OCTETS 27u
-/* BLE_LINKS (ble_cfg.h, build.py MELODEE_BLE_LINKS): 1 by default, 2 = a computer's link and a device's at once
+/* BLE_LINKS (ble_cfg.h, build.py MELODEE_BLE_LINKS): the device build's 2 = a computer's link and a device's at once, 1 one
  * (docs/BLE-MULTILINK.md). The two links' banked stack state lives in .pool (zeroed at boot): .data + .bss has under 1 KB
  * free, the audio arena some 30 KB over its minimum. The device's link frames are small: a 512-B TX ring for it */
 #if BLE_LINKS > 1
