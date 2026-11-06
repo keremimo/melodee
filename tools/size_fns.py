@@ -40,6 +40,8 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "editor_patterns.c", "pattern_dialog.c",
               # main-loop only: the installer's log frames (ed_service), the NOTES edit memory's packing (note_tools.c), MIDI LEARN's page
               "installer_report.c", "note_history.c", "ui_midi_learn.c",
+              # the HOME menu's rows (the menu and the editor's SETTINGS share them)
+              "menu_rows.c",
               # the user's drum kits: their store and record check, a take's processing, Record kit's sheet (drum_enc.c,
               # the take's encoder, stays at -Os: its speed is the wait on "Saving")
               "kit_store.c", "kit_take.c", "kit_rec_ui.c"]
