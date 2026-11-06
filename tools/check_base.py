@@ -76,7 +76,9 @@ assert len(image)<=sym('_app_xip_end')-sym('_start'),'the packed image overruns 
 assert sym('_bss_end')<=0x1c20000
 assert sym('_noinit_end')<=0x1c7fd50,'.noinit overlaps boot_info'
 # The resource region (res.c) is read in place from flash 0xCB020.., never part of the image
-assert sym('_mres_start')==0x020c7020 and sym('_mres_end')<=0x020dc000
+SMK=os.environ.get('MELODEE_BOARD')=='smk37'
+res_lo,res_hi=(0x0209b020,0x020ab000) if SMK else (0x020c7020,0x020dc000)   # flash 0x9F020.. / 0xCB020.. (FL_RES)
+assert sym('_mres_start')==res_lo and sym('_mres_end')<=res_hi
 # and this build's region (melodee-res.bin) is the one the image asks for (res.c res_want: RWNT, length, CRC-32)
 import struct, zlib
 res=(OUT/'melodee-res.bin').read_bytes()

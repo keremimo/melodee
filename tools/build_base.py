@@ -20,11 +20,11 @@ ROOT=Path(__file__).resolve().parents[1]
 # charlesvestal/fm1-base main and its felucca-bsp (hugelton/felucca-bsp main), fetched 2026-11-05
 REV="698e2cba46b33bf14d9bf756675036053535638e"
 BSP_REV="f878800967e66e721dfbc9a4f5fe1835772ae8fc"
-# The SMK-37 board layer: Kerem's unpushed branches smk37-board-24705d (fm1-base) and smk37-board (felucca-bsp), used
-# from their local worktree until they are pushed. The revisions pin it as REV and BSP_REV pin the FM-1's.
-SMK_REV="0868ac55e03896d0fae56f5fbeb0ba11a28174d9"
-SMK_BSP_REV="33878ab51d452beacf9268edc2f6a6a7bec29a79"
-SMK_SOURCE=Path.home()/"code/personal/fm1-base/.claude/worktrees/smk37-board-24705d"
+# The SMK-37 board layer: the two PR branches feat/smk37-board (fm1-base on REV, felucca-bsp on BSP_REV), cloned from
+# the local repositories until they are pushed (SMK_FROM). The revisions pin it as REV and BSP_REV pin the FM-1's.
+SMK_REV="115d3d76d8dde22404b5a969670179357998aebe"
+SMK_BSP_REV="5e4af66a7da9cffae1ddaf45222f6dff55452ac6"
+SMK_FROM=(Path.home()/"code/personal/fm1-base", Path.home()/"code/personal/felucca-bsp")
 SMK_MODELS={"pro":("Pro",""),"elite":("Elite","-elite"),"mke":("MKE","-mke")}  # the product's name, the file's suffix
 parser=argparse.ArgumentParser(add_help=False)
 parser.add_argument("--board",choices=("fm1","smk37"),default="fm1")
@@ -38,14 +38,18 @@ if board=="fm1" and model:
 smk=board=="smk37"
 if smk:
     REV,BSP_REV=SMK_REV,SMK_BSP_REV
-    source=SMK_SOURCE
+    source=ROOT/"build/deps"/("fm1-base-smk-"+REV[:12])
     work=ROOT/"build/fm1-base-smk37-platform"
 else:
     source=ROOT/"build/deps"/("fm1-base-"+REV[:12])
     work=ROOT/"build/fm1-base-platform"
 def run(args,**kw):subprocess.run([str(x) for x in args],check=True,**kw)
 if smk and not source.exists():
-    raise SystemExit(f"No SMK-37 board layer at {source}")
+    source.parent.mkdir(parents=True,exist_ok=True)
+    run(["git","clone","--no-checkout",SMK_FROM[0],source])
+    run(["git","-C",source,"checkout","--detach",REV])
+    run(["git","-C",source,"config","submodule.bsp.url",SMK_FROM[1]])
+    run(["git","-C",source,"-c","protocol.file.allow=always","submodule","update","--init","--recursive"])
 if not source.exists():
     source.parent.mkdir(parents=True,exist_ok=True)
     run(["git","clone","--no-checkout","https://github.com/charlesvestal/fm1-base.git",source])
@@ -104,7 +108,7 @@ if target:
                  REV, BSP_REV)
     res = out/"melodee-res.bin"                      # (the installers push it after an update: tools/fm1_resources.py)
     if res.exists():
-        shutil.copyfile(res, ROOT/"build"/(package.stem.split("-usb")[0] + "-res.bin"))
+        shutil.copyfile(res, ROOT/"build"/(package.stem + "-res.bin"))
     if smk:
         shutil.copyfile(package,ROOT/"build"/package.name)
         print(f"package  {ROOT/'build'/package.name}")
