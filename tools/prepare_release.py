@@ -8,9 +8,10 @@ import json
 from pathlib import Path
 import subprocess
 import zipfile
+import zlib
 
 from fm1_recover import APP_HI, APP_LO, Package, VERSION, sha256
-from fm1pkg_make import BOARDS, MODELS, release_product, sfc
+from fm1pkg_make import BOARDS, MODELS, TAIL_LO, release_product, sfc, tail_wants
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ("windows-x64", "macos-arm64", "macos-x64", "linux-x64")
@@ -36,6 +37,9 @@ def check_firmware(out, version, stem, model, app_hi):
     app_data = app.read_bytes()
     if decoded[0x120:0x120 + len(app_data)] != app_data:
         raise RuntimeError(f"Application binary differs from package: {app}")
+    wants, tail = tail_wants(app_data), decoded[TAIL_LO - APP_LO:]
+    if wants and not any(0 < n <= len(tail) and zlib.crc32(tail[:n]) == c for n, c in wants):
+        raise RuntimeError(f"App area tail differs from what the application wants (SMK-37, smkx.c): {name}")
     return name, {**BUILD_FLAGS, "sha256": package.digest}
 
 

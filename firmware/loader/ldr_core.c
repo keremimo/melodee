@@ -12,9 +12,9 @@
  *   2. checks that the package's app area decrypts with THIS chip's key
  *      (taken from isd_config.ini in the device's own flash head), so a
  *      package for another key is refused before anything is erased;
- *   3. writes the app area [0x4000, 0x93000), sector by sector, skipping
- *      sectors that are already equal, and verifies each one; the flash head
- *      (SPL, isd_config) is never written;
+ *   3. writes the app area [0x4000, 0x93000) (SMK-37: 0x9D000), sector by
+ *      sector, skipping sectors that are already equal, and verifies each one;
+ *      the flash head (SPL, isd_config) is never written;
  *   4. writes the resource region from the package's res.bin (ldr_res), the
  *      app being committed: nothing there decides whether the unit boots;
  *   5. asks 0xF0000000 ("success"), then invalidates the update record (RAM
@@ -28,7 +28,9 @@
  *   b. sector 0x4000 (the directory and the stub), only if it differs from the
  *      flash: the one window without a working stub. It is the same bytes in
  *      every build with the same stub, so normally nothing is written here;
- *   c. the body, 0x5000..0x90FFF and 0x92000..0x92FFF;
+ *   c. the body, 0x5000..0x90FFF and 0x92000..0x92FFF (SMK-37: and the app
+ *      area tail 0x93000..0x9CFFF, the app's data, src/smkx.c: a committed
+ *      body always has its tail);
  *   d. the marker's sector last (its last page holds the marker).
  * A package without the marker is written in address order, as before.
  * Power loss during 3 (the SPL does not start the loader from the flash copy
@@ -43,8 +45,8 @@
 #define LDR_APP_LO 0x4000u
 #if BOARD_SMK37
 /* SMK-37: app area up to the stock PRCT end (the stub, the body and the marker at the FM-1's places; the sectors
- * from 0x93000 up hold what the package holds there); records only in the VM, so the record scan can never erase
- * BTIF / USRTRIM (0xC0000..0xC1FFF, the key calibration) or anything above */
+ * from 0x93000 up are the app area tail, the app's read-only data, firmware/src/smkx.c); records only in the VM, so
+ * the record scan can never erase BTIF / USRTRIM (0xC0000..0xC1FFF, the key calibration) or anything above */
 #define LDR_APP_HI 0x9D000u
 #define LDR_REC_LO 0x9D000u
 #define LDR_REC_HI 0xC0000u

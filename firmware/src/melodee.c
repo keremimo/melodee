@@ -64,10 +64,20 @@
 /* the resource region (res.c): data read in place at 0xEA020 (app.ld .mres), installed after an update */
 #define MELODEE_RES __attribute__((section(".mres"), aligned(4)))
 #define RES_OK() (res_ok != 0u)
+#if BOARD_SMK37
+/* the SMK-37's app area tail (smkx.c): read-only data at flash 0x93000.. (app.ld .smkx, build.py), part of the image */
+#define MELODEE_SMKX __attribute__((section(".smkx")))
+#if MELODEE_FLASH
+#define SMKX_OK() (smkx_ok != 0u)
+#endif
+#endif
 
 /* ------------------------------------------------------------- HAL --- */
 #include <stdint.h>
 static uint8_t res_ok;                  /* res.c: installed and this build's; else the readers fall back */
+#if BOARD_SMK37 && MELODEE_FLASH
+static uint8_t smkx_ok;                 /* smkx.c: the app area tail is this build's; else its readers fall back */
+#endif
 #include "fm1_time.h"
 #include "fm1_sys.h"
 #include "fm1_power.h"
@@ -145,6 +155,9 @@ static uint8_t res_ok;                  /* res.c: installed and this build's; el
 #include "storage_hw.c"
 #include "storage.c"
 #include "res.c"                 /* the resource region (needs the storage hooks) */
+#if BOARD_SMK37
+#include "smkx.c"                /* the SMK-37's app area tail (st_crc32) */
+#endif
 #if MELODEE_USER_KITS
 #include "kit_store.c"           /* the user's drum kits in the pool (drum_real.c plays them) */
 #endif

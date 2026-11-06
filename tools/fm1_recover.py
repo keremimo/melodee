@@ -64,6 +64,7 @@ def sha256(data):
 class Package:
     def __init__(self, path, model="FM-1", app_hi=APP_HI):   # (another model: prepare_release.py checks the SMK-37 packages)
         self.path = Path(path).resolve()
+        self.app_hi = app_hi                                  # the app area's end (SMK-37 0x9D000: its tail included)
         raw = self.path.read_bytes()
         self.product = product_of(raw)
         require(re.fullmatch(re.escape(model) + r"_\d+", self.product), f"Package is not for an {model}")
@@ -255,8 +256,8 @@ class Link:
                 print(f"Reading flash: {off * 100 // length}%", flush=True)
         return bytes(data)
 
-    def write_sector(self, address, data):
-        require(APP_LO <= address < APP_HI and address % SECTOR == 0 and len(data) == SECTOR,
+    def write_sector(self, address, data, app_hi=APP_HI):
+        require(APP_LO <= address < app_hi and address % SECTOR == 0 and len(data) == SECTOR,
                 "Refusing write outside the application region")
         self.command(0xFB01, struct.pack(">I", address))
         for off in range(0, SECTOR, 512):
@@ -281,8 +282,9 @@ def recover(link, package, loader, output, write=False):
     backup = output / "full-flash-before.bin"
     durable_write(backup, before)
     print(f"Full flash backup verified on disk: {backup}", flush=True)
-    expected = before[:APP_LO] + package.flash[APP_LO:] + before[APP_HI:]
-    sectors = [a for a in range(APP_LO, APP_HI, SECTOR) if before[a:a + SECTOR] != expected[a:a + SECTOR]]
+    hi = package.app_hi                                  # the package's app area, whole (an SMK-37's tail too)
+    expected = before[:APP_LO] + package.flash[APP_LO:hi] + before[hi:]
+    sectors = [a for a in range(APP_LO, hi, SECTOR) if before[a:a + SECTOR] != expected[a:a + SECTOR]]
     report = {"package": str(package.path), "product": package.product, "package_sha256": package.digest,
               "device": identity, "chip_key": f"{key:#06x}", "full_backup": str(backup.resolve()),
               "backup_sha256": sha256(before), "application_sectors_differ": len(sectors), "write_requested": write}
@@ -292,13 +294,13 @@ def recover(link, package, loader, output, write=False):
         print("Backup complete. No flash changes. Power-cycle before using USB again; add --write to recover.")
         return report
     for index, address in enumerate(sectors):
-        link.write_sector(address, expected[address:address + SECTOR])
+        link.write_sector(address, expected[address:address + SECTOR], hi)
         print(f"Restored and verified {index + 1}/{len(sectors)} sectors ({address:#x}).", flush=True)
     final = link.read_flash(0, FLASH_SIZE)
     require(final == expected, "Final full-flash verification failed; keep the backup and retry recovery")
     report.update(restored_sectors=len(sectors), full_flash_verified=True,
                   bootloader_unchanged=final[:APP_LO] == before[:APP_LO],
-                  saved_data_unchanged=final[APP_HI:] == before[APP_HI:])
+                  saved_data_unchanged=final[hi:] == before[hi:])
     durable_write(output / "recovery-result.json", (json.dumps(report, indent=2) + "\n").encode())
     print("RESTORE VERIFIED. Bootloader and saved data unchanged. Power-cycle the FM-1 to start it.")
     return report
