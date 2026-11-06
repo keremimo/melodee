@@ -311,11 +311,16 @@ def build_app(stub):
         raise SystemExit("resident audio requires MELODEE_SIZE=1 for the verified IR placement pass")
     elf = OUT / "melodee.elf"
     extra_ld = ["--defsym=AUDIO_RESIDENT=1"] if os.environ.get("MELODEE_RAM_AUDIO") == "1" else []
+    # The SRAM sections' load addresses after .text are their raw sizes; the packager stores them compressed from
+    # _rt_load and enforces the body limit itself. On the SMK-37 the raw extent reaches the resource region's (.mres)
+    # load addresses, an overlap no flash ever holds: no section check (.text stays bounded by the XIP region).
+    extra_ld.append("--no-check-sections")
     tc("pi32v2/bin/ld", "--gc-sections", *extra_ld, "-T", linker_script(), OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o",
        OUT / "melodee.o", "-o", elf)
-    for sect in ("text.bin", "data.bin", "ramtext.bin", "dsptext.bin", "dsptables.bin", "audiotext.bin"):
+    for sect in ("text.bin", "data.bin", "ramtext.bin", "dsptext.bin", "dsptables.bin", "audiotext.bin", "smkx.bin"):
         (OUT / sect).unlink(missing_ok=True)
-    *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
+    tail = [("common/bin/objcopy", "-O", "binary", "-j", ".smkx", elf, OUT / "smkx.bin")] if BOARD == "smk37" else []
+    *_, syms, dis, rt = tc_all(*tail, ("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".data", elf, OUT / "data.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".dsp_text", elf, OUT / "dsptext.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".dsp_tables", elf, OUT / "dsptables.bin"),
@@ -331,6 +336,8 @@ def build_app(stub):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)
     img = bytearray((OUT / "text.bin").read_bytes())
     resources(img, symv)
+    if BOARD == "smk37":
+        app_tail(img, symv)
     loads = (("ramtext.bin", "_rt_load"), ("dsptext.bin", "_dsp_load"), ("dsptables.bin", "_dt_load"),
              ("data.bin", "_data_load"), ("audiotext.bin", "_audio_load"))
     assert tuple(sect for sect, _ in loads) == boot_audio.SECTIONS
@@ -365,8 +372,15 @@ BOARD_RES = {"fm1": (0xCB000, 21), "smk37": (0x9F000, 16)}   # the resource regi
 RES_BASE, RES_SECTORS, RES_HEAD = 0xCB000, 21, 32     # firmware/src/res.c (set per board in main)
 
 
+# the SMK-37's app area tail (firmware/src/smkx.c): flash 0x93000 (the FM-1's PRCT end) up to the SMK's (0x9D000)
+TAIL_LO, TAIL_HI, TAIL_WANT = fm1pkg_make.TAIL_LO, fm1pkg_make.BOARDS["smk37"][0], fm1pkg_make.TAIL_WANT
+
+
 def linker_script():
-    """firmware/app.ld, with the RES memory region at this board's resource region (the FM-1: the file itself)"""
+    """firmware/app.ld, with the RES memory region at this board's resource region (the FM-1: the file itself); the
+    SMK-37's also places .smkx (MELODEE_SMKX) in the app area tail, XIP 0x0208F000.. (the FM-1 has no such section).
+    The SRAM images' nominal load addresses run over it as over .mres (no section check, build_app): the body that
+    holds them packed ends below the marker's sector (check: BODY_MAX), the tail starts two sectors above it"""
     if BOARD == "fm1":
         return FW / "app.ld"
     origin, length = 0x02000000 + RES_BASE + RES_HEAD - 0x4000, RES_SECTORS * 4096 - RES_HEAD
@@ -374,6 +388,14 @@ def linker_script():
                     f"RES    (r)   : ORIGIN = {origin:#010x}, LENGTH = {length:#x}", (FW / "app.ld").read_text())
     if n != 1:
         raise SystemExit("app.ld: the RES region line was not found")
+    tail = 0x02000000 + TAIL_LO - 0x4000
+    ld, n1 = re.subn(r"(\n    RES    \(r\)   : [^\n]*\n(?:[^\n]*\*/\n)?)",
+                     rf"\1    SMKX   (r)   : ORIGIN = {tail:#010x}, LENGTH = {TAIL_HI - TAIL_LO:#x}"
+                     "   /* flash 0x93000..0x9CFFF: the SMK-37's app area tail (build.py) */\n", ld)
+    ld, n2 = re.subn(r"(\n    \.mres : [^\n]*\n)",
+                     r"\1    .smkx : { _smkx_start = .; *(.smkx*) . = ALIGN(4); _smkx_end = .; } > SMKX\n", ld)
+    if n1 != 1 or n2 != 1:
+        raise SystemExit("app.ld: the RES region or the .mres section line was not found")
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "app.ld").write_text(ld)
     return OUT / "app.ld"
@@ -400,6 +422,21 @@ def resources(img, symv):
     (OUT / "melodee-res.bin").write_bytes(region)
     print(f"resources: {len(payload)} B at {RES_BASE + RES_HEAD:#x} ({-(-len(region) // 4096)} of {RES_SECTORS} sectors), "
           f"crc {crc:08x} -> build/melodee-res.bin")
+
+
+def app_tail(img, symv):
+    """the SMK-37's app area tail (smkx.c): .smkx as linked = build/melodee-tail.bin, which the package carries at
+    flash 0x93000; its length and CRC-32 patched into smkx_want"""
+    tail = (OUT / "smkx.bin").read_bytes() if (OUT / "smkx.bin").exists() else b""
+    if len(tail) > TAIL_HI - TAIL_LO:
+        raise SystemExit(f"app tail: {len(tail)} B over the {TAIL_HI - TAIL_LO} B from {TAIL_LO:#x}")
+    at = symv("smkx_want") - APP_XIP
+    if img[at:at + 4] != struct.pack("<I", TAIL_WANT):
+        raise SystemExit("smkx_want: no SXWT marker in the image")
+    img[at + 4:at + 12] = struct.pack("<II", len(tail), zlib.crc32(tail))
+    (OUT / "melodee-tail.bin").write_bytes(tail)
+    print(f"app tail: {len(tail)} B at {TAIL_LO:#x} ({TAIL_HI - TAIL_LO - len(tail)} B free to {TAIL_HI:#x}), "
+          f"crc {zlib.crc32(tail):08x} -> build/melodee-tail.bin")
 
 
 def check(img, syms, dis, rt):
@@ -668,7 +705,8 @@ def main():
         print("  FAIL ", e)
     if errors:
         raise SystemExit("build: checks failed")
-    pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT,
+    tail = (OUT / "melodee-tail.bin").read_bytes() if BOARD == "smk37" else b""
+    pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY, tail=tail), ota, PRODUCT,
                           (OUT / "melodee-res.bin").read_bytes())
     (OUT / name).write_bytes(pkg)
     (OUT / "ATTRIBUTION.txt").unlink(missing_ok=True)

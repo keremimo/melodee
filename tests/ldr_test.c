@@ -7,7 +7,9 @@
  * resource region after the app (ldr_res).
  *   ldr_test OLD.fwsc NEW.fwsc
  * -DBOARD_SMK37=1: the SMK-37's places, on SMK-layout packages (PRCT 0x9D000, the staging at 0xBB000, the resource
- * region in the VM), and every protected range (head, BTIF / USRTRIM, USR, key_mac) and Melodee's SMK store untouched. */
+ * region in the VM), and every protected range (head, BTIF / USRTRIM, USR, key_mac) and Melodee's SMK store untouched;
+ * NEW carries an app area tail (0x93000.., firmware/src/smkx.c): written before the commit marker, a cut there leaves
+ * no marker. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,12 +112,20 @@ static int ldr_erase(uint32_t off)
 }
 static uint32_t prog_fail_after;                    /* a write that fails (the power gone): after this many */
 static int res_prog_fail;                           /* writes into the resource region past its first sector fail */
+static int tail_prog_fail;                          /* writes into the app area tail (SMK 0x93000..) fail */
+static uint32_t prog_seq, tail_seq, mark_seq;       /* the last write into the tail, the marker's page: their order */
 static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     const uint8_t *s = p;
     uint32_t i;
     if (prog_fail_after && !--prog_fail_after) return -1;
     if (res_prog_fail && off >= T_RES_LO + 0x1000u && off < T_RES_HI) return -1;
+    prog_seq++;
+    if (off >= 0x93000u && off < T_APP_HI) {
+        if (tail_prog_fail) return -1;
+        tail_seq = prog_seq;
+    }
+    if (off <= 0x91FE0u && off + n > 0x91FE0u) mark_seq = prog_seq;
     /* Programming is restricted to the application and the resource region. */
     if (off < 0x4000u || (off + n > T_APP_HI && (off < T_RES_LO || off + n > T_RES_HI)) || ((off & 0xFFu) + n) > 256u)
         bad_range++;
@@ -239,7 +249,22 @@ int main(int argc, char **argv)
                  !memcmp(nor,head,sizeof head) && protect_ok());
     bad += check("interrupted update retains the flash resume record", nor[T_OTA + 0x4F06u]==0x41u);
     prog_fail_after = 0;
+    tail_seq = mark_seq = 0;
     rc = ldr_session();
+    {   /* the app area tail (0x93000..0x9CFFF): NEW's, written before the commit marker's page */
+        uint32_t i, any = 0;
+        for (i = 0x93000u; i < T_APP_HI; i++) any |= logical[nfo + i] != 0xFFu;
+        bad += check("SMK tail: the new package carries one", any != 0);
+        bad += check("SMK tail: == the package's, before the commit marker", rc == 0 && tail_seq && mark_seq > tail_seq &&
+                     !memcmp(nor + 0x93000u, logical + nfo + 0x93000u, T_APP_HI - 0x93000u));
+        memcpy(nor + 0x4000u, old + ofo + 0x4000u, LDR_APP_HI - 0x4000u);   /* OLD again, the store as it was */
+        tail_prog_fail = 1;                            /* the power gone while the tail is written */
+        rc = ldr_session();
+        tail_prog_fail = 0;
+        for (i = 0x91000u; i < 0x92000u && nor[i] == 0xFFu; i++);
+        bad += check("SMK tail: a cut there leaves no commit marker", rc == -10 && i == 0x92000u && protect_ok());
+        rc = ldr_session();
+    }
 #else
     /* Musical extension sectors lie above the staged loader and retain erased
      * scan tails. Installing firmware must preserve every byte of them. */
