@@ -511,12 +511,15 @@ EXPORT(core_master_raw) uint32_t core_master_raw(uint32_t on)
     return was;
 }
 
-/* which tracks sound (bit k: track k + 1), as the editor's TRACKS solo: the latch, never P_MUTE; 0 = all. The mask
- * applied (bits past the tracks in use dropped) */
+/* which tracks sound (bit k: track k + 1), as the editor's TRACKS solo: the latch, never P_MUTE; 0 = all. At once:
+ * mix.c's 128-sample solo ramp only moves while a track sounds, so a render's solo would let a silenced track's
+ * first note through for 3 ms. The mask applied (bits past the tracks in use dropped) */
 EXPORT(core_solo) uint32_t core_solo(uint32_t mask)
 {
     track_solo_latch = (uint8_t)(mask & ((1u << trk_n()) - 1u));
     track_solo = track_solo_latch;
+    for (uint32_t k = 0; k < NPART; k++)
+        solo_gain[k] = !trk[k].p[P_MUTE] && (!track_solo || ((track_solo >> k) & 1u)) ? 32768 : 0;
     return track_solo;
 }
 /* CLK INT (the FM-1 makes its own tempo): a browser has no USB or TRS clock to follow. The clock it had */
