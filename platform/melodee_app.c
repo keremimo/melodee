@@ -33,6 +33,7 @@ static struct {
 #define MELODEE_OTA 1           /* the editor's SysEx (editor.c); the update itself is the base's */
 #define MELODEE_OTA_DRYRUN 0
 #define MELODEE_USB_AUDIO 0     /* the streams are the base's */
+#define MELODEE_USB_VOLUME 1    /* (the menu's USB VOLUME alone: plat_usb_play_gain) */
 #define MELODEE_USB_HOST 0      /* the base's (fm1.toml usb_host): uh below is its state for the UI */
 #define MELODEE_CDC 0
 #define MELODEE_UART 0          /* the TRS jack's reader is the base's: its messages come with plat_midi_in */
@@ -211,8 +212,11 @@ static int ota_wire_send(const uint8_t *p, uint32_t n) { return ml_sysex_send(p,
 #define so_w (ml_sysex_queued() / 3u)
 #define so_r 0u
 
-/* the menu's USB AUDIO, USB INPUT and USB VOLUME (usb_audio.c, MELODEE_USB_AUDIO) are not built yet: the base's
- * streams are fixed by platform/fm1.toml (both directions, the stereo mix before MASTER, the computer's at full) */
+/* the menu's USB AUDIO and USB INPUT (usb_audio.c, MELODEE_USB_AUDIO) are not built: the base's streams are fixed by
+ * platform/fm1.toml (both directions, the stereo mix before MASTER). USB VOLUME is: the computer's audio's level
+ * (plat_usb_play_gain, mlb_frame) */
+#define UA_VOLUME_DEFAULT 50u
+static uint8_t settings_usb_volume = UA_VOLUME_DEFAULT;
 
 /* the menu's USB HOST (usb_host.c): the base's (fm1.toml usb_host), its state for the UI */
 static struct { uint8_t want, on, run, msg; } uh;
@@ -491,8 +495,13 @@ void mlb_init(void)
 void mlb_input_only(void) { ml_poll(); ui_input(); }
 void mlb_frame(void)
 {
+    static uint32_t usb_volume = 0xFFFFFFFFu;
     ml_poll();
     wire_release();
+    if (settings_usb_volume != usb_volume) {        /* USB VOLUME: the computer's audio */
+        usb_volume = settings_usb_volume;
+        ml_usb_play_gain((usb_volume > 100u ? 100u : usb_volume) * 4096u / 100u);
+    }
     pattern_poll();
     ml_host_messages();
     {
