@@ -218,7 +218,8 @@ static void packed_images(void)
             blk[i]=c%5u==0?0u:c%5u==1u?noise[i]:c%5u==2u?(uint8_t)(i%(c%130u+1u)):c%5u==3u?(i<len/2u?noise[i]:noise[i-len/2u]):(uint8_t)(noise[i/131u]&3u);
         memcpy(img,blk,len);
         assert(!st_stream_begin_lazy(&w,OBJ_BANK0));at=PJ_HEAD;
-        assert(!pz_store(&w,&at,blk,len,&field));
+        field=pz_size(blk,len);
+        assert(!pz_store(&w,&at,blk,len,field));
         assert(!memcmp(img,blk,len));                   /* (the check reads its RAM, never changes it) */
         assert(field&PZ_RAW?field==(len|PZ_RAW)&&at==PJ_HEAD+len:field<len&&at==PJ_HEAD+field);
         assert(c%5u!=1u||len<8u||(field&PZ_RAW));       /* noise: as it is */
@@ -274,6 +275,54 @@ static void packed_images(void)
 #undef REFUSED
     assert(!ps_saved(OBJ_BANK0+2u,actual)&&!memcmp(actual,rec,sizeof rec));
     puts("Project stream: packed images: blocks at every length, another hand's and compact images loaded, damaged ones refused");
+}
+static uint32_t stored_magic(uint32_t obj){st_hdr_t h;uint32_t m=0;int c=st_current(obj,&h);if(c>=0)st_read_range(obj,(uint32_t)c,0,&m,4);return m;}
+static void power_on(void){memset(proj_meta,0,sizeof proj_meta);memset(proj_saved_hash,0,sizeof proj_saved_hash);proj_boot_scan();}
+/* the boot's pass over projects stored by firmware before the packed form */
+static void boot_repack(void)
+{
+    static uint8_t one[BANK_STORE_SIZE],two[BANK_STORE_SIZE],junk[ST_PROJECT_MAX];
+    uint32_t n,was,hash;st_hdr_t h2,h;
+    workload(64,0,0,1,2);project_capture(&proj_scratch);assert(bank_pack(two,&proj_scratch,1));
+    workload(256,1,1,0,0);project_capture(&proj_scratch);assert(bank_pack(one,&proj_scratch,1));
+    for(uint32_t i=0;i<sizeof junk;i++)junk[i]=(uint8_t)(i*7u+3u);
+    /* project 1 compact, 2 raw, 3 packed already, 4 a record nothing reads */
+    reset();n=test_compact(one);assert(!put_img(2,n)&&stored_magic(OBJ_BANK0)==PJ_MAGIC);
+    uint32_t compact_sectors=stored_sectors(OBJ_BANK0);
+    assert(!put_all(3,two,sizeof two,st_crc32(two,sizeof two))&&stored_len(OBJ_BANK0+1u)==BANK_STORE_SIZE);
+    n=test_image(one,0,0);assert(!put_img(4,n)&&st_current(OBJ_BANK0+2u,&h2)>=0);
+    assert(!st_save(OBJ_BANK0+3u,junk,5000u));
+    assert(proj_read_slot(0)==BANK_STORE_SIZE);hash=proj_source_hash;
+    was=erases;power_on();
+    assert(stored_magic(OBJ_BANK0)==PZ_MAGIC&&stored_magic(OBJ_BANK0+1u)==PZ_MAGIC&&erases>was);
+    assert(stored_sectors(OBJ_BANK0)<compact_sectors&&stored_sectors(OBJ_BANK0+1u)<=2u);
+    assert(!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));          /* (not a byte of the records) */
+    assert(!ps_saved(OBJ_BANK0+1u,actual)&&!memcmp(actual,two,sizeof two));
+    assert(st_current(OBJ_BANK0+2u,&h)>=0&&!memcmp(&h,&h2,sizeof h));             /* the packed one: as it was */
+    assert(stored_len(OBJ_BANK0+3u)==5000u&&proj_meta[3].old&&!proj_meta[3].used);
+    assert(proj_meta[0].used&&proj_meta[1].used&&proj_meta[2].used&&proj_saved_hash[0]==hash);
+    assert(proj_read_slot(0)==BANK_STORE_SIZE&&proj_source_hash==hash&&pj.on==2u);
+    printf("Project stream: at boot a compact project went from %u sectors to %u, a raw one from 7 to %u\n",compact_sectors,stored_sectors(OBJ_BANK0),stored_sectors(OBJ_BANK0+1u));
+    was=erases;power_on();assert(erases==was);                                    /* the next boot: nothing to do */
+    /* a cut before the new copy is published, an erase that fails: the old copy is the project still, and the next boot packs it */
+    reset();n=test_compact(one);assert(!put_img(2,n));
+    {st_stream_t w;int copy=st_current(OBJ_BANK0,&h);assert(proj_read_slot(0)==BANK_STORE_SIZE&&!proj_stream_repack(&w,OBJ_BANK0,(uint32_t)copy));}
+    assert(stored_magic(OBJ_BANK0)==PJ_MAGIC&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
+    erase_error=1;power_on();erase_error=0;
+    assert(stored_magic(OBJ_BANK0)==PJ_MAGIC&&proj_meta[0].used&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
+    power_on();assert(stored_magic(OBJ_BANK0)==PZ_MAGIC&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
+    /* a pool with no room for the new copy beside the old one: nothing is erased, the project stays; room comes, it is packed */
+    reset();n=test_compact(one);assert(!put_img(2,n));
+    uint32_t filler=4;
+    for(int free;(free=st_project_free())>0;filler++){
+        assert(filler<PROJ_SLOTS);
+        assert(!st_save(st_proj_obj(filler),junk,((uint32_t)free<7u?(uint32_t)free:7u)*ST_LIN_PAYLOAD_MAX-100u));
+    }
+    was=erases;power_on();
+    assert(erases==was&&stored_magic(OBJ_BANK0)==PJ_MAGIC&&proj_meta[0].used&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
+    assert(!st_project_delete(st_proj_obj(filler-1u)));
+    power_on();assert(stored_magic(OBJ_BANK0)==PZ_MAGIC&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
+    puts("Project stream: boot pass: compact and raw projects packed with every byte kept, once; a cut, a failed erase and a full pool leave them");
 }
 static void workload(uint32_t count,uint32_t spread,uint32_t tail,uint32_t quant,uint32_t engine)
 {
@@ -350,6 +399,7 @@ int main(void)
     legacy[at+8u]=25;sum=proj_hash(legacy,len-4u);memcpy(legacy+len-4u,&sum,4);
     assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(!proj_read_slot(3)&&proj_meta[3].old);
     packed_images();
+    boot_repack();
     midi_tracks_stream();
     extended_songs_stream(0);
     extended_songs_stream(1);
