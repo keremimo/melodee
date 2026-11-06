@@ -234,24 +234,44 @@ static int pz_block(pz_in_t *in, uint32_t field, uint8_t *o, uint32_t n, int sam
     }
     return in->k == in->n && in->at == in->end ? 0 : -1;
 }
-/* A block into the stage at *at: packed, or as it is when that is not smaller; then read from the stage as the
- * loader will read it, against the RAM it came from. field: its head word. 0 */
-static int pz_store(st_stream_t *w, uint32_t *at, uint8_t *s, uint32_t n, uint32_t *field)
+/* a block's head word: its stored bytes packed, or (| PZ_RAW) as it is when packing does not make it smaller */
+static uint32_t pz_size(const uint8_t *s, uint32_t n)
 {
-    uint16_t *head = (uint16_t *)(void *)proj_wire_u.raw;
+    pz_out_t o;
+    memset(&o, 0, sizeof o);
+    pz_pack(&o, s, n, (uint16_t *)(void *)proj_wire_u.raw);   /* (counted) */
+    return o.at < n ? o.at : n | PZ_RAW;
+}
+/* A block (field: pz_size's word for it) into the stage at *at, then read from the stage as the loader will read
+ * it, against the RAM it came from. 0 */
+static int pz_store(st_stream_t *w, uint32_t *at, uint8_t *s, uint32_t n, uint32_t field)
+{
     pz_out_t o;
     pz_in_t in;
     memset(&o, 0, sizeof o); memset(&in, 0, sizeof in);
-    pz_pack(&o, s, n, head);                     /* (counted) */
-    *field = o.at < n ? o.at : n | PZ_RAW;
     o.w = w; o.at = *at;
-    if (*field & PZ_RAW) o.rc = st_stream_write_at(w, *at, s, n);
-    else pz_pack(&o, s, n, head);
+    if (field & PZ_RAW) o.rc = st_stream_write_at(w, *at, s, n);
+    else pz_pack(&o, s, n, (uint16_t *)(void *)proj_wire_u.raw);
     if (o.rc) return o.rc;
     in.w = w; in.at = *at;
-    if (pz_block(&in, *field, s, n, 1)) return -7;
+    if (pz_block(&in, field, s, n, 1)) return -7;
     *at = in.at;
     return 0;
+}
+/* the head, the image's length and its CRC, read back: the stage ready to publish. 0 */
+static int pz_close(st_stream_t *w, uint32_t obj, const pj_head_t *h, uint32_t at)
+{
+    uint8_t b[64];
+    uint32_t crc = 0xffffffffu;
+    int rc;
+    if ((rc = st_stream_write_at(w, 0, h, sizeof *h)) || (rc = st_stream_end(w, at))) return rc;
+    for (uint32_t off = 0; off < at; off += sizeof b) {
+        uint32_t k = at - off < sizeof b ? at - off : sizeof b;
+        if (st_read_range(obj, w->head.slot, off, b, k)) return -7;
+        crc = st_crc32_update(crc, b, k);
+    }
+    st_stream_seal(w, crc);
+    return st_stream_check(w);
 }
 /* The decoded project (proj_scratch) and its bank tail (proj_image_tail) -> a packed image in w (staged, not
  * published). The tail goes while its RAM holds it, then the FUN record is packed into that RAM and goes; the
@@ -259,32 +279,51 @@ static int pz_store(st_stream_t *w, uint32_t *at, uint8_t *s, uint32_t n, uint32
  * for it. The packer's table is the main loop's scratch (wire_take: a DX7 frame there is dropped, as any job's). */
 static int proj_stream_generate(st_stream_t *w,uint32_t obj)
 {
-    project_t *q=&proj_scratch;uint8_t *tail=proj_image_tail(),b[64];
+    project_t *q=&proj_scratch;uint8_t *tail=proj_image_tail();
     if(!proj_image_valid(q)||!bank_tail_valid(tail))return -1;
     pj_head_t h;memset(&h,0,sizeof h);h.magic=PZ_MAGIC;h.len=BANK_STORE_SIZE;
     wire_take();
     int rc=st_stream_begin_lazy(w,obj);if(rc)return rc;
     uint32_t at=PJ_HEAD;
-    if((rc=pz_store(w,&at,tail,PZ_TAIL,&h.map[2])))return rc;
+    h.map[2]=pz_size(tail,PZ_TAIL);
+    if((rc=pz_store(w,&at,tail,PZ_TAIL,h.map[2])))return rc;
     if(!proj_pack(proj_image_store(),q))return -1;
     uint32_t header[2]={bank_magic(),BANK_STORE_SIZE};
     uint32_t hash=fnv(fnv(2166136261u,header,sizeof header),proj_image_store(),sizeof(project_store_t));
-    if((rc=pz_store(w,&at,(uint8_t *)proj_image_store(),sizeof(project_store_t),&h.map[3])))return rc;
+    h.map[3]=pz_size((const uint8_t *)proj_image_store(),sizeof(project_store_t));
+    if((rc=pz_store(w,&at,(uint8_t *)proj_image_store(),sizeof(project_store_t),h.map[3])))return rc;
     pz_in_t in;memset(&in,0,sizeof in);in.w=w;in.at=PJ_HEAD;
     if(pz_block(&in,h.map[2],tail,PZ_TAIL,0))return -7;
     hash=fnv(hash,tail,PZ_TAIL);
     memcpy(tail+PZ_TAIL,&hash,4u);
     h.map[0]=header[0];h.map[1]=hash;
-    if((rc=st_stream_write_at(w,0,&h,sizeof h))||(rc=st_stream_end(w,at)))return rc;
-    uint32_t crc=0xffffffffu;
-    for(uint32_t off=0;off<at;off+=sizeof b){
-        uint32_t k=at-off<sizeof b?at-off:sizeof b;
-        if(st_read_range(obj,w->head.slot,off,b,k))return -7;
-        crc=st_crc32_update(crc,b,k);
-    }
-    st_stream_seal(w,crc);
     proj_source_hash=fnv(hash,&hash,4u);
-    return st_stream_check(w);
+    return pz_close(w,obj,&h,at);
+}
+/* The record of a copy stored compact or raw (the one proj_stream_load read last: pj tells where its bytes are)
+ * -> the same record packed, staged in w: not a byte of the record itself changes, so its sum, its name and the
+ * music are what they were. Both blocks are sized before anything is written: -5 when the pool has no room for the
+ * new copy beside the old one (nothing erased then). */
+static int proj_stream_repack(st_stream_t *w,uint32_t obj,uint32_t copy)
+{
+    uint8_t *ram=proj_image_work();
+    pj_head_t h;memset(&h,0,sizeof h);h.magic=PZ_MAGIC;h.len=BANK_STORE_SIZE;
+    uint32_t at=PJ_HEAD,room=0;int rc;
+    wire_take();
+    if(pj_read(obj,copy,0,&h.map[0],4u)||pj_read(obj,copy,BANK_STORE_SIZE-4u,&h.map[1],4u)||
+       pj_read(obj,copy,BANK_ACTIVE_OFF,ram,PZ_TAIL))return -7;
+    h.map[2]=pz_size(ram,PZ_TAIL);
+    if(pj_read(obj,copy,8u,ram,sizeof(project_store_t)))return -7;
+    h.map[3]=pz_size(ram,sizeof(project_store_t));
+    if((rc=st_stream_begin_lazy(w,obj)))return rc;
+    for(uint32_t i=0;i<ST_LN;i++)room+=(w->avail[i/32u]>>(i%32u))&1u;
+    at+=h.map[2]&~PZ_RAW;                          /* (the FUN record is in RAM: it goes first, to its place) */
+    if(room*ST_LIN_PAYLOAD_MAX<at+(h.map[3]&~PZ_RAW))return -5;
+    if((rc=pz_store(w,&at,ram,sizeof(project_store_t),h.map[3])))return rc;
+    room=PJ_HEAD;
+    if(pj_read(obj,copy,BANK_ACTIVE_OFF,ram,PZ_TAIL))return -7;
+    if((rc=pz_store(w,&room,ram,PZ_TAIL,h.map[2])))return rc;
+    return pz_close(w,obj,&h,at);
 }
 #if !defined(FM1_IRQ_TARGET)
 /* (host: a stored copy's record whole, whichever way it is stored, into dst[BANK_STORE_SIZE]; 0) */

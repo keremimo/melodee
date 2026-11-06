@@ -1445,6 +1445,29 @@ static void persist_conv_step(uint32_t done, uint32_t total)
     else BOOT_WORK_PROGRESS(done);
 }
 #endif
+#if MELODEE_FLASH
+/* Projects: fill empty RAM slots from flash, so the slot list is right after power-on. A whole record still stored
+ * compact or raw (saved by firmware before the packed form) is stored again packed, once: the record itself is not
+ * touched, the old copy stays current until the new one is whole (a cut, a write that fails or a pool without room
+ * leaves it, for the next boot) */
+static void proj_boot_scan(void)
+{
+    persist_conv_open = 0;
+    for (uint32_t i = 0; i < PROJ_SLOTS; i++) {
+        st_stream_t w;
+        st_hdr_t h;
+        int copy;
+        if (project_used(i) || proj_read_slot(i) != (int)BANK_STORE_SIZE || pj.on == 2u) continue;
+        if (!persist_conv_open) persist_conv_step(0, PROJ_SLOTS);
+        if ((copy = st_current(st_proj_obj(i), &h)) >= 0 && !proj_stream_repack(&w, st_proj_obj(i), (uint32_t)copy))
+            (void)st_stream_publish(&w);
+        persist_conv_step(i + 1u, PROJ_SLOTS);
+        ST_IDLE();
+    }
+    if (persist_conv_open) BOOT_WORK_END(0);
+    proj_space();
+}
+#endif
 static void persist_boot(void)                    /* before settings_init / panel_init */
 {
 #if MELODEE_FLASH
@@ -1548,13 +1571,7 @@ static void persist_boot(void)                    /* before settings_init / pane
             }
         }
     }
-    {   /* projects: fill empty RAM slots from flash, so the slot list is right after power-on */
-        uint32_t i;
-        for (i = 0; i < PROJ_SLOTS; i++)
-            if (!project_used(i))
-                proj_fetch(i);
-        proj_space();
-    }
+    proj_boot_scan();
     settings_init();                               /* maintenance uses the saved palette */
     up_boot();                                     /* user presets */
 #endif
