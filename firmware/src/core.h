@@ -20,6 +20,13 @@
 #ifndef MELODEE_BIG_BSS
 #define MELODEE_BIG_BSS
 #endif
+#ifndef MELODEE_MIDI_THRU
+#define MELODEE_MIDI_THRU 0     /* the menu's MIDI THRU: fm1-base builds (platform/melodee_app.c midi_thru) */
+#endif
+#ifndef MELODEE_UPDATE_COUNTDOWN
+#define MELODEE_UPDATE_COUNTDOWN 1   /* UPDATE MODE's countdown screen (main.c: OCT- + OCT+ held, ui.uboot); fm1-base: 0,
+                                      * its update mode is the base's own (REC held at power-on), ui.uboot never set */
+#endif
 
 /* ------------------------------------------------------------ sizes --- */
 #define NVOICE 16                /* voice slots per part (FM6 plays Dexed's 16) */

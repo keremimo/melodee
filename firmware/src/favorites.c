@@ -13,7 +13,7 @@
  *          30 bit 5 PICKER OFF, bit 6 FONT PIXEL (ui.c PREF_BITS), bit 7 retired (STAGE EFFECTS OFF, 1.4.0-rc.4),
  *          31 the quick layers seen (ui_layer.c), 25 HOME SELECT (ui.c HOME_SELECT), 24 bits 1..4 GLO SELECT (ui.c
  *          GLO_SELECT), 24 bit 5 UNUSED TRACKS HIDE (ui.c TRACKS_HIDE), 24 bit 6 TRS MIDI OUT OFF (SMK-37, ui.c
- *          TRS_OUT_OFF); free: 24 bit 7
+ *          TRS_OUT_OFF), 24 bit 7 MIDI THRU ON (fm1-base, ui.c MIDI_THRU_ON)
  *   row 0 bytes 2..27 hold all 201 Prophet factory stars, tagged in bytes 28..31;
  *         bytes 0..1 held retired ANALOG's stars.
  *   row 1 bytes 24..27 hold tagged CLICK LEVEL (CK + version 1 + percent; FX RATE's FQ until 1.2); 28..31 mark validated Melodee settings (MDS + version 1).

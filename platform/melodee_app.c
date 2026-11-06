@@ -37,6 +37,8 @@ static struct {
 #define MELODEE_USB_HOST 0      /* the base's (fm1.toml usb_host): uh below is its state for the UI */
 #define MELODEE_CDC 0
 #define MELODEE_UART 0          /* the TRS jack's reader is the base's: its messages come with plat_midi_in */
+#define MELODEE_MIDI_THRU 1     /* the menu's MIDI THRU: the base says where each message came from (midi_thru) */
+#define MELODEE_UPDATE_COUNTDOWN 0   /* the base's update mode (REC held at power-on): no OCT- + OCT+ countdown screen */
 #if defined(FM1B_BLE) && FM1B_BLE
 #define MELODEE_BLE 1           /* the base's own stack, Melodee's pages and record (midi_ble_base.h) */
 #else
@@ -564,6 +566,25 @@ static void melodee_init(void)                    /* the parts with their defaul
     ui.home = 1;
     ui.force = 1;
 }
+/* the menu's MIDI THRU (ui.c MIDI_THRU_ON): what comes in also goes on out, as it came (its channel, beside what
+ * Melodee plays with it), where it did not come from (app.c ml_midi_thru; on the SMK-37 the TRS jack's OUT too, unless
+ * it came in on the jack). Clock and transport only from the input CLK follows, so a follower downstream hears one
+ * clock (on INT, Melodee's own). port: ml_midi_in's (1 USB, 2 TRS, 3 Bluetooth) */
+static void midi_thru(uint32_t pkt, uint32_t port)
+{
+    if (!(GLO_SELECT & MIDI_THRU_ON))
+        return;
+    pkt = ml_midi_thru(pkt, port == (uint32_t)song.g[G_CLOCK]);
+#if BOARD_SMK37
+    if (pkt && port != 2u) {                        /* (the jack's queue is the audio ISR's too: smk_midi_out_base.h) */
+        fm1_irq_off();
+        smo_put(pkt);
+        fm1_irq_on();
+    }
+#else
+    (void)pkt;
+#endif
+}
 static void ml_poll(void)
 {
     uint32_t u[5], buttons, keys, packet, i;
@@ -590,6 +611,7 @@ static void ml_poll(void)
 #if MELODEE_BLE
         if (port == 3) mb.epoch_ms = fm1_ms;        /* (the header's BLE activity: ui_draw.c) */
 #endif
+        midi_thru(packet, (uint32_t)port);          /* (where it came from: the base knows until the next ml_midi_in) */
         (void)midi_enqueue_at(packet, (uint32_t)port, ml_midi_t24());
     }
 }
@@ -731,6 +753,7 @@ int mlb_expect(const char *s, int *v)
     if (str_eq(s, "playing")) { *v = song.playing; return 1; }
     if (str_eq(s, "track")) { *v = song.sel; return 1; }
     if (str_eq(s, "clock_source")) { *v = song.g[G_CLOCK]; return 1; }
+    if (str_eq(s, "midi_thru")) { *v = !!(GLO_SELECT & MIDI_THRU_ON); return 1; }
     return 0;
 }
 void mlb_sysex_byte(uint8_t byte) { fm6_sx_byte(byte); cz_sx_byte(byte); }
