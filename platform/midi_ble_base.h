@@ -15,7 +15,11 @@
 typedef ml_ble_saved_t mel_ble_saved_t;
 struct ble_found { uint8_t addr[6], addr_rand; char name[BLE_NAME_MAX + 5u]; };   /* (the base's names: 21 bytes) */
 struct ble_dev_store { uint8_t unused; };
+#if BOARD_SMK37
+static mel_ble_saved_t mb_saved;                /* (the SMK-37: RAM has room, the pool's arena has not) */
+#else
 static mel_ble_saved_t mb_saved __attribute__((section(".pool")));
+#endif
 static volatile uint32_t mb_revision;
 static uint32_t mb_committed;
 static volatile uint8_t midi_ble_lost;

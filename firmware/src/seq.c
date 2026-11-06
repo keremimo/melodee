@@ -914,7 +914,9 @@ static uint8_t ext_chord[FM1_NKEY][CHORD_MAX], ext_chn[FM1_NKEY], ext_trk[FM1_NK
 #define EXT_SUS 0x80u
 static uint32_t kb_sus, kb_phys;                      /* the keys let go under the pedal, held on; the keys down last block */
 static uint8_t sus_down;
+#ifndef SMK_PEDAL_DOWN
 static uint16_t sus_rest;
+#endif
 static uint32_t sus_t0;
 static void ext_key_release(uint32_t k)
 {
@@ -928,6 +930,9 @@ static void ext_key_release(uint32_t k)
 }
 static uint32_t sustain_poll(void)
 {
+#ifdef SMK_PEDAL_DOWN
+    uint32_t down = SMK_PEDAL_DOWN(), k;              /* (fm1-base: the platform's pedal, its rest and re-learn its own) */
+#else
     uint32_t raw = fm1_in.pedal, d, down, k;
     if (fm1_in.frames < 300u) {                       /* (the readings settle) */
         sus_rest = (uint16_t)raw;
@@ -939,6 +944,7 @@ static uint32_t sustain_poll(void)
         sus_rest = (uint16_t)raw;
         down = 0;
     }
+#endif
     if (down != sus_down) {
         sus_down = (uint8_t)down;
         sus_t0 = fm1_ms;

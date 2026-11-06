@@ -179,40 +179,30 @@ def smk37_toml(source, model, name):
 
 
 def smk37_linker(source):
-    """platform/app.ld (Melodee's map) with the SMK's app slot (0x4000..0x9CFFF, as the base's device/app_smk37.ld has
-    it) and its resource region (hal/fm1_flash_map.h FL_RES: 0x9F000..0xAEFFF)."""
-    text = replace(source, 'XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x9DFBC   /* the app slot (0x8DFBC) and 64 KB',
-                   'XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0xA7FBC   /* the app slot (0x97FBC) and 64 KB')
-    text = replace(text, 'RES    (r)   : ORIGIN = 0x020C7020, LENGTH = 0x14FE0', 'RES    (r)   : ORIGIN = 0x0209B020, LENGTH = 0xFFE0')
-    return replace(text, '_app_xip_end = ORIGIN(XIP) + 0x8DFBC;', '_app_xip_end = ORIGIN(XIP) + 0x97FBC;')
+    """platform/app.ld (Melodee's map) with the SMK's resource region (hal/fm1_flash_map.h FL_RES: 0x9F000..0xAEFFF).
+    The app slot (0x4000..0x9CFFF) is the base's to set: its tools/build.py board_script finds the FM-1's XIP and
+    _app_xip_end lines in device/app.ld and gives them the SMK's."""
+    require(source, 'XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x9DFBC   /* the app slot (0x8DFBC) and 64 KB')
+    require(source, '_app_xip_end = ORIGIN(XIP) + 0x8DFBC;')
+    text = replace(source, 'RES    (r)   : ORIGIN = 0x020C7020, LENGTH = 0x14FE0',
+                   'RES    (r)   : ORIGIN = 0x0209B020, LENGTH = 0xFFE0\n'
+                   '    RESLOAD (r)  : ORIGIN = 0x03000000, LENGTH = 0xFFE0   /* (.mres\'s file place: not in the image) */')
+    # the region follows the app area here (0x9F000), inside the XIP region's room for the image before packing: the
+    # resources' load address apart from it (only their own file, melodee-res.bin, is made of them)
+    return replace(text, '_mres_end = .; } > RES\n', '_mres_end = .; } > RES AT > RESLOAD\n')
 
 
 def apply(work, board="fm1", model=None, product="Melodee"):
     smk = board == "smk37"
     if smk:
-        # The main loop starts after the jack's settling window (the boot's own delays are most of it), so the rest level
-        # was never read: it stayed 0, any reading above the step read as the pedal down, sustain on for the first minute.
-        # The first look after settling, as the pitch wheel's centre.
-        p=work/'device/plat_smk37.c';s=p.read_text()
-        s=replace(s,'    if (fm1_in.frames < SMK_SETTLE_FRAMES) {\n        smk_pedal_rest = r;\n        return;\n    }\n    if (!smk_pc) {\n',
-            '    if (fm1_in.frames < SMK_SETTLE_FRAMES)\n        return;\n    if (!smk_pc) {\n        smk_pedal_rest = r;\n')
-        # K5 is the virtual MASTER, except while Melodee's 8 KNOBS bank has it (firmware/src/ui_smk.c): then the app takes
-        # its detents through plat_k5_lend and the level stays where it is.
-        s=replace(s,'static void smk_main_poll(void)','''/* Melodee: K5 lent to the app (on), its detents since the last call; lent, it turns no MASTER */
-static uint8_t smk_k5_lent;
-int32_t plat_k5_lend(int on)
-{
-    smk_k5_lent = (uint8_t)(on != 0);
-    return on ? fm1_enc_take(SMK_MASTER_ENC) : 0;
-}
-static void smk_main_poll(void)''')
-        s=replace(s,'    int32_t s = fm1_enc_take(SMK_MASTER_ENC);\n','    int32_t s = smk_k5_lent ? 0 : fm1_enc_take(SMK_MASTER_ENC);\n')
-        p.write_text('/* Melodee pedal rest fix and K5 lending Copyright (C) 2026 Kerem Kilic (Ellic Studio) */\n'+s)
-        p=work/'include/plat.h';s=p.read_text()
-        s=replace(s,"void plat_master_set(uint32_t q12);    /* the virtual MASTER's level, 0..4096 */\n",
-                  "void plat_master_set(uint32_t q12);    /* the virtual MASTER's level, 0..4096 */\n"
-                  "int32_t plat_k5_lend(int on);         /* Melodee: on, K5 turns no MASTER; its detents since the last call */\n")
-        p.write_text('/* Melodee K5 lending Copyright (C) 2026 Kerem Kilic (Ellic Studio) */\n'+s)
+        # The jack's MIDI OUT is Melodee's alone (app.h APP_TRS_OWN): only what it sends TO_TRS, on its own books
+        # (platform/smk_midi_out_base.h), not a copy of the USB stream, which would play a MIDI Track's notes twice and
+        # leave the jack's endings no room.
+        p=work/'device/plat_fm1.c';s=p.read_text()
+        s=replace(s,'    if (to & (TO_USB | TO_TRS)) {                 /* the jack: MIDI OUT, the computer\'s stream and TO_TRS */\n',
+            '#ifdef APP_TRS_OWN\n    if (to & TO_TRS) {                            /* (the app keeps the jack: app.h) */\n#else\n'
+            '    if (to & (TO_USB | TO_TRS)) {                 /* the jack: MIDI OUT, the computer\'s stream and TO_TRS */\n#endif\n')
+        p.write_text('/* Melodee: APP_TRS_OWN Copyright (C) 2026 Kerem Kilic (Ellic Studio) */\n'+s)
     p=work/'tools/build.py';s=p.read_text()
     s=replace(s,'    img = bytearray((OUT / "text.bin").read_bytes())', '    tc("common/bin/objcopy", "-O", "binary", "-j", ".audio_text", elf, OUT / "audio.bin")\n    img = bytearray((OUT / "text.bin").read_bytes())')
     s=replace(s,'    (OUT / (NAME + ".dis")).write_text(dis)', '    (OUT / (NAME + ".dis")).write_text(dis)\n    (OUT / (NAME + ".symbols")).write_text(syms)')

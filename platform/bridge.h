@@ -102,15 +102,23 @@ void mlb_panel_calibrated(const uint8_t *buttons,const uint8_t *enc,const int8_t
 void ml_usb_state(uint32_t *values);
 
 #ifdef MELODEE_SMK37
-/* the SMK-37's own controls, from the main loop: the 37 keys by keybed position (0 = C3), their last velocities, the
- * wheels, the pedal, and KNOB BANK, FADER BANK, <, > as bits 0..3 of extra */
-typedef struct { uint64_t keys, retrig; uint8_t vel[37]; int32_t bend, mod; uint8_t pedal; uint32_t extra;
+/* the SMK-37's own controls, from the main loop (platform/smk_input_base.h): the 37 keys by keybed position (0 = C3),
+ * held, struck since the last call and struck again while down, their last velocities; the wheels as a bend and a mod;
+ * the pedal; KNOB BANK, FADER BANK, <, > as bits 0..3 of extra; the pads held, hit since, their velocities and
+ * pressures; the faders. ml_input gives the 18 buttons as plat_buttons' bits and the 7 roles' detents there */
+typedef struct { uint64_t keys, keys_hit, retrig; uint8_t vel[37]; int32_t bend, mod; uint8_t pedal; uint32_t extra;
                  uint32_t pads, pads_hit; uint8_t pad_vel[16], pad_press[16], fader[4]; } ml_smk_t;
 void ml_smk_read(ml_smk_t *s);
-void ml_smk_lights(uint32_t extra, const uint32_t *pad_rgb);
-void ml_master_set(uint32_t q12);
-int32_t ml_k5(int lend);   /* K5 lent (1): its detents since the last call, and it turns no MASTER; 0: MASTER's */
-void ml_smk_config(uint32_t vel, uint32_t trs_off);
+/* the button LEDs (bit i: the function i of plat.h's B_* order, KNOB BANK .. > after them; bit 31 SEQ PLAY's red) and the
+ * pads' colours (0xRRGGBB) */
+void ml_smk_lights(uint32_t lit, const uint32_t *pad_rgb);
+void ml_smk_config(uint32_t vel);                    /* VELOCITY: the base's curves (plat_vel_curve) */
+/* the TRS jack's MIDI OUT (smk_midi_out_base.h): a packet whole, with keep bytes left after it, or not at all (off,
+ * the UART quiet, no room); the room left; the UART given up on (until the jack is set on again); on or off */
+int ml_trs_send(uint32_t packet, uint32_t keep);
+uint32_t ml_trs_room(void);
+int ml_trs_dead(void);
+void ml_trs_on(int on);
 #endif
 
 void mlb_deadline(uint32_t us,uint32_t budget);
