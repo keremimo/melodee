@@ -51,6 +51,7 @@ _Static_assert(sizeof(drk_map_t) == 10u && sizeof(drk_sample_t) == 12u && sizeof
 #define DRK_KIT_BYTES ((uint32_t)(sizeof(drk_kit_t) + 7u) & ~7u)
 #define DRK_KIT_MAX (DRK_KSEC * DRK_SECBYTES)
 
+#ifndef DRK_CODEC_ONLY                           /* (web/kit builds the record's format and its decoder alone) */
 /* Each user slot's sectors (4 KB numbers; n 0: empty), set by kit_store.c in the main loop. drk_user_gen is odd
  * while it changes them: the audio side then plays nothing, and a part that took a slot under an older number
  * stops reading its sectors before a later save can erase them (kit_store.c waits two blocks). */
@@ -62,6 +63,7 @@ static volatile uint32_t drk_user_gen;
 #define DRK_XIP(off) fm1_xip_ptr(off)            /* the data flash reads plain (fl_plain_window_init) */
 #else
 #define DRK_XIP(off) ((const uint8_t *)0)        /* (host builds without a flash image: no user kits) */
+#endif
 #endif
 #endif
 
@@ -92,6 +94,7 @@ typedef struct {
     dre_t e;
     uint8_t bits, nleft, map, sec, sound, lane, level, on;
 } drk_ch_t;
+#ifndef DRK_CODEC_ONLY
 struct drk_part {                                /* (drk_part_t: eng_drum.c) */
     drk_ch_t ch[DRK_NCH];
     const drk_kit_t *H;                          /* the kit's header (flash); 0: an empty slot */
@@ -154,6 +157,7 @@ static drk_ch_t *drk_channel(drk_part_t *K)
     }
     return b;
 }
+#endif
 
 /* the stream from slice, sector by sector */
 static void drk_seek(drk_ch_t *c, uint32_t slice)
@@ -177,6 +181,7 @@ static void drk_stream_start(drk_ch_t *c, const drk_sample_t *s)
     c->n = s->n;
 }
 
+#ifndef DRK_CODEC_ONLY
 /* a hit on note at velocity vel */
 static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
 {
@@ -248,6 +253,7 @@ static int drk_tick(track_t *t)
             return 1;
     return 0;
 }
+#endif
 
 static const uint8_t DRK_NS[4] = {58, 29, 19, 14};
 static const uint16_t DRK_SF[16] = {1, 2, 3, 6, 11, 20, 36, 66, 120, 218, 398, 724, 1319, 2400, 4370, 7960};
@@ -341,6 +347,7 @@ static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, u
     return live || s->loop_at;
 }
 
+#ifndef DRK_CODEC_ONLY
 static inline __attribute__((always_inline)) void drk_tone(drk_ch_t *restrict c, int32_t *x, uint32_t n)
 {
     const drk_sample_t *s = c->s;
@@ -429,3 +436,4 @@ static void drk_user_name(uint32_t u, char *b)
     if (drk_user_gen == g)
         str_cpy(b, t, 6);
 }
+#endif
