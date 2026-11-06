@@ -366,6 +366,12 @@
         <button id="backup-import" data-t="backupImport"></button><input id="backup-file" type="file" accept=".json,application/json" hidden></p>
       <p class="dim" id="backup-help"></p>
     </div>
+    <div id="mel-panel" style="margin-top:16px">
+      <h2 data-t="melTitle"></h2>
+      <p class="bar"><select id="mel-source"></select><button id="mel-export" data-t="melExport" data-ic="symbol_download"></button>
+        <button id="mel-import" data-t="melImport" data-ic="symbol_upload"></button><input type="file" id="mel-file" accept=".mel" hidden></p>
+      <p class="dim" data-t="melHelp"></p>
+    </div>
     <div class="group" id="songchain" hidden style="margin-top:16px">
       <h2 data-t="songTitle"></h2>
       <p class="dim" data-t="songHelp"></p>
@@ -2962,6 +2968,7 @@ const TEXT = {
     fm6Exported: "バンクを書き出しました",
     motion: "モーション", motionOn: "再生", motionClear: "モーションを消去", motionConfirm: "選択トラックのモーションを消しますか？", chance: "確率 %", motionStep: "ステップ", motionParam: "パラメーター", motionValue: "値",
     backupTitle: "全体バックアップ", backupExport: "バックアップ保存", backupImport: "バックアップ復元", backupHelp: "現在の曲・A〜D・音色バンク・ユーザーサンプル・設定を、このパソコンへ保存。", backupOld: "全体バックアップには対応版への更新が必要です。", backupConfirm: "全体バックアップを復元しますか？ 現在の曲、保存データとサンプルを置き換えます。USBを抜かないでください。", backupWorking: "バックアップ処理中 ", backupDone: "バックアップを保存しました", backupRestored: "全体バックアップを復元しました",
+    melTitle: "プロジェクトファイル", melExport: "プロジェクトファイルを保存", melImport: "プロジェクトファイルを開く", melHelp: ".melファイルは、1つのプロジェクトと、そのために録音したドラムキットをまとめて保存します。開くと、プロジェクトは最初の空きプロジェクトへ、キットは空きスロットへ入ります（本体に同じキットがあればそれを使います）。本体のデータは置き換えません。", melCurrent: "現在の曲", melProject: "プロジェクト ", melWorking: "プロジェクトファイル ", melSaved: "プロジェクトファイルを保存しました", melKit: "（キット付き）", melKits: "（キット付き）", melOpened: "次のプロジェクトとして開きました: ",
     deviceDisplay: "本体の画面",
     deviceDisplayHelp: "FM-1 の画面に反映し、保存します。再生中の変更は停止後に保存されます。",
     devicePresets: "本体のプリセット",
@@ -3056,6 +3063,7 @@ const TEXT = {
     fm6Exported: "Bank exported",
     motion: "Motion", motionOn: "Play motion", motionClear: "Clear motion", motionConfirm: "Clear this track's motion?", chance: "Chance %", motionStep: "Step", motionParam: "Parameter", motionValue: "Value",
     backupTitle: "Complete backup", backupExport: "Save backup", backupImport: "Restore backup", backupHelp: "Save the current music, A–D, sound banks and settings to this computer.", backupOld: "Complete backups need firmware with archive support.", backupConfirm: "Restore this complete backup? Current music, saved data and samples will be replaced. Keep USB connected.", backupWorking: "Backing up / restoring ", backupDone: "Backup saved", backupRestored: "Complete backup restored",
+    melTitle: "Project file", melExport: "Save project file", melImport: "Open project file", melHelp: "A .mel file holds one project and the drum kits you recorded for it. Opening one puts the project in the first free project and its kits in free kit slots (a kit the device has already is used as it is). Nothing on the device is replaced.", melCurrent: "Current music", melProject: "Project ", melWorking: "Project file ", melSaved: "Project file saved", melKit: " with its kit", melKits: " with its kits", melOpened: "Opened as project ",
     deviceDisplay: "Device display",
     deviceDisplayHelp: "Changes apply to the FM-1 screen and save. Changes made while playing save after STOP.",
     devicePresets: "Device presets",
@@ -3914,6 +3922,12 @@ function renderBackup() {
   $("backup-export").disabled = !(caps & 1);
   $("backup-import").disabled = !(caps & 2);
   $("backup-help").textContent = t(caps & 1 ? "backupHelp" : "backupOld");
+  const from = $("mel-source"), chosen = from.value || "0";    /* the project file: the music as it is, or a saved project */
+  from.replaceChildren(el("option", { value: 0, text: t("melCurrent") }),
+    ...Array.from({ length: 32 }, (_, i) => el("option", { value: i + 1, text: t("melProject") + String(i + 1).padStart(2, "0") })));
+  from.value = chosen;
+  $("mel-panel").hidden = !(caps & 1);
+  $("mel-import").disabled = !(caps & 2);
 }
 const backupModule = () => import("./fm1backup.js");
 const backupProgress = (done, total) => sayK("backupWorking", `${Math.round(done / Math.max(1, total) * 100)}%`);
@@ -3938,6 +3952,35 @@ $("backup-file").addEventListener("change", () => {
     if (!confirm(t("backupConfirm"))) return;
     await restoreBackup((r, o) => sessionRequest(d, r, o), archive, backupProgress);
     await load(d); sayK("backupRestored");
+  });
+});
+
+/* A project file (.mel): one project and the drum kits it plays (mel_file.js). The device keeps its own records; the
+   file is made and read here. Opening one replaces nothing: a free project, free kit slots. */
+const melModule = () => import("./mel_file.js");
+const melProgress = (done, total) => sayK("melWorking", `${Math.round(done / Math.max(1, total) * 100)}%`);
+$("mel-export").addEventListener("click", () => op(async () => {
+  const d = dev, slot = +$("mel-source").value;
+  if (!(d?.info?.backupCaps & 1)) return;
+  const { melExport, melProjectId } = await melModule();
+  assertSession(d);
+  const out = await melExport((r, o) => sessionRequest(d, r, o), slot ? melProjectId(slot - 1) : 0, melProgress);
+  assertSession(d);
+  downloadBytes(`${fileSlug(out.name || (slot ? `project-${slot}` : "melodee-project"))}.mel`, out.file);
+  sayK("melSaved", out.kits.length ? t(out.kits.length > 1 ? "melKits" : "melKit") : "");
+}));
+$("mel-import").addEventListener("click", () => { if (dev?.info?.backupCaps & 2) $("mel-file").click(); });
+$("mel-file").addEventListener("change", () => {
+  const file = $("mel-file").files[0], d = dev; $("mel-file").value = "";
+  if (!file || !(d?.info?.backupCaps & 2)) return;
+  op(async () => {
+    const { melImport, MEL_MAX } = await melModule();
+    if (file.size > MEL_MAX) throw new Error("Not a Melodee project file");
+    const bytes = new Uint8Array(await file.arrayBuffer()); assertSession(d);
+    const r = await melImport((rq, o) => sessionRequest(d, rq, o), bytes, melProgress);
+    await load(d);
+    sayK("melOpened", String(r.slot + 1).padStart(2, "0") + (r.name ? ` ${r.name}` : "") +
+      r.kits.map((k) => ` · KIT ${k.from - 8} → KIT ${k.to - 8}`).join(""));
   });
 });
 

@@ -35,6 +35,9 @@ static uint32_t fl_jedec_ram(void) { return 0; }
 static void fl_plain_window_init(void) {}
 #define FL_FAR(fn) (fn)
 #include "../firmware/src/storage.c"
+#ifdef BACKUP_TEST_KITS                          /* (mel_fixture.c: the user kits, objects 92..99) */
+#include "../firmware/src/kit_store.c"
+#endif
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
 
