@@ -7,13 +7,14 @@
  * at boot and after every write or delete, then waits until the audio side has left any sectors it no longer owns,
  * so that a later save may erase them. */
 #define KIT_STORE 1                              /* (project.c: the boot scan) */
-_Static_assert(DRK_SECBYTES == ST_POOL_PAYLOAD_MAX && DRK_SECOFF == ST_POOL_PAYLOAD_OFF && DK_NUSER == ST_NKIT &&
+_Static_assert(DRK_SECBYTES == ST_LIN_PAYLOAD_MAX && DRK_SECOFF == ST_POOL_PAYLOAD_OFF && DK_NUSER == ST_NKIT &&
+               DRK_RUN0 * 8u == ST_RUN0 && DRK_SLOTS * 8u == ST_SECTOR - ST_POOL_PAYLOAD_OFF &&
                DRK_KSEC <= ST_PROJECT_SECTORS && DRK_KIT_MAX <= ST_PROJECT_MAX, "a user kit is a pool record");
 /* ------------------------------------------------------------ a user kit's record --- */
 /* slice k's first word, sector by sector (0 past the payload) */
 static const uint32_t *drk_slice_at(const uint32_t *const *secs, uint32_t nsec, uint32_t k)
 {
-    return k / DRK_SECSLICES < nsec ? secs[k / DRK_SECSLICES] + 2u * (k % DRK_SECSLICES) : 0;
+    return k / DRK_SECSLICES < nsec ? secs[k / DRK_SECSLICES] + DRK_SLOT(k % DRK_SECSLICES) : 0;
 }
 /* a take's slices, walked by their modes (a checked record) */
 static uint32_t drk_take_slices(const uint32_t *const *secs, uint32_t nsec, const drk_sample_t *s)
@@ -89,15 +90,16 @@ static void kit_settle(void)
         fm1_wdt_feed();
 #endif
 }
-/* a record's sectors as the player reads them; their count (0: none, or not a pool record) */
+/* a record's sectors as the player reads them; their count (0: none, or not a list record: an old form's 3,808-byte
+ * sectors would play wrong, so a kit the converter could not move stays silent) */
 static uint32_t kit_sectors(const st_hdr_t *h, uint8_t sec[DRK_KSEC], const uint32_t *p[DRK_KSEC])
 {
     uint8_t idx[ST_PROJECT_SECTORS];
-    uint32_t n = st_rec_sectors(h, idx);
+    uint32_t n = st_rec_lin(h) ? st_rec_sectors(h, idx) : 0u;
     if (n > DRK_KSEC)
         return 0;
     for (uint32_t k = 0; k < n; k++) {
-        uint32_t at = st_pool_at(idx[k]);
+        uint32_t at = st_rec_addr(h, idx[k]);
         sec[k] = (uint8_t)(at >> 12);
         p[k] = (const uint32_t *)(const void *)DRK_XIP(at + ST_POOL_PAYLOAD_OFF);
     }

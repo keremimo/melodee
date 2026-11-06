@@ -70,6 +70,18 @@ _Static_assert(LDR_APP_HI <= LDR_REC_LO && LDR_REC_HI <= 0xC0000u && LDR_APP_LO 
 #define LDR_RES_HI 0xE0000u                     /* ... to the staged loader */
 #endif
 _Static_assert(LDR_RES_LO >= LDR_REC_LO && LDR_RES_HI <= LDR_REC_HI, "the resource region lies in the loader's record window");
+#define LDR_RES_N ((LDR_RES_HI - LDR_RES_LO) / 0x1000u)
+/* The window of the region every build from the bridge on keeps (hal/fm1_flash_map.h FL_RES_RESERVE, res.c): the
+ * store may hold records in the region above an installed header's window, so the loader writes and blanks only
+ * inside it, and below this floor when no valid header tells (torn, or a unit from before 1.6) */
+#ifdef FL_RES_RESERVE
+#define LDR_RES_FLOOR FL_RES_RESERVE
+#elif BOARD_SMK37
+#define LDR_RES_FLOOR 16u
+#else
+#define LDR_RES_FLOOR 15u
+#endif
+_Static_assert(LDR_RES_FLOOR >= 1u && LDR_RES_FLOOR <= LDR_RES_N, "the resource floor lies in the region");
 #define LDR_RES_MAGIC 0x3153524Du               /* res.c RES_MAGIC "MRS1": its commit record */
 #define LDR_ST_MAGIC 0x554C4546u                /* storage.c ST_MAGIC "FELU": a storage commit record */
 
@@ -216,20 +228,30 @@ static int ldr_blank(const uint8_t *p, uint32_t n)
     return 1;
 }
 
+/* a commit record's window: rsv[0] its sectors from the region's start, 0 (every build before the bridge) the whole */
+static uint32_t ldr_res_window(const uint8_t *h)
+{
+    uint32_t n = ota_rd32(h + 12);
+    return LDR_RES_LO + (n && n <= LDR_RES_N ? n : LDR_RES_N) * 0x1000u;
+}
 /* 4. the resource region (res.c) from the package's res.bin: its commit record, the payload, padded to sectors
  * (off/size: the entry, 0 when the package has none). Left as it is when it holds this build's region whole (a
- * code-only update reads nothing more), or when it holds no region and a sector there holds a storage record: an
- * older layout's preset banks, which the app moves into the pool and then clears (res.c res_boot), so the next
- * install writes it. Otherwise the commit record's sector goes blank first and its first page is written last:
- * a valid record only ever stands over a whole region. Sectors past the package's are left blank, as res.c's
- * begin leaves them. A failure here costs no boot: the app falls back (res_ok 0) and asks for another install */
+ * code-only update reads nothing more), or when it holds no region and a sector below the floor holds a storage
+ * record: an older layout's preset banks, which the app moves into the pool and then clears (res.c res_boot), so the
+ * next install writes it. Written and blanked only inside the installed window (the store may hold records above
+ * it): a package whose window is wider is left for its app to make room first (res_ok 0, another install). Otherwise
+ * the commit record's sector goes blank first and its first page is written last: a valid record only ever stands
+ * over a whole region. Sectors past the package's are left blank up to its window, as res.c's begin leaves them. A
+ * failure here costs no boot: the app falls back (res_ok 0) and asks for another install */
 static void ldr_res(uint32_t off, uint32_t size, uint8_t *sec, uint8_t *cur)
 {
-    uint32_t s, k, c, len, open = 1;
+    uint32_t s, k, c, len, open = 1, hi, want;
     if (!off || !size || (size & 0xFFFu) || size > LDR_RES_HI - LDR_RES_LO || ota_read(off, sec, 512) ||
         !ldr_record(sec, LDR_RES_MAGIC) || (len = ota_rd32(sec + 4)) > size - 32u || ldr_fread(LDR_RES_LO, cur, 32))
         return;
+    want = ldr_res_window(sec);
     if (ldr_record(cur, LDR_RES_MAGIC)) {
+        hi = ldr_res_window(cur);
         if (ota_memeq(sec, cur, 32)) {
             for (s = 0, c = 0xFFFFFFFFu; s < len; s += k) {
                 k = len - s > 0x1000u ? 0x1000u : len - s;
@@ -241,13 +263,17 @@ static void ldr_res(uint32_t off, uint32_t size, uint8_t *sec, uint8_t *cur)
                 return;                                  /* this build's, whole */
         }
     } else {
-        for (s = LDR_RES_LO; s < LDR_RES_HI; s += 0x1000u)
+        hi = LDR_RES_LO + LDR_RES_FLOOR * 0x1000u;
+        for (s = LDR_RES_LO; s < hi; s += 0x1000u)
             if (ldr_fread(s, cur, 32) || ldr_record(cur, LDR_ST_MAGIC))
                 return;                                  /* preset banks the app has not moved yet */
     }
+    if (want > hi || size > want - LDR_RES_LO)
+        return;                                          /* wider than the installed window: the app first */
+    hi = want;
     if (ldr_erase(LDR_RES_LO))
         return;
-    for (s = LDR_RES_LO + 0x1000u; s < LDR_RES_HI; s += 0x1000u) {
+    for (s = LDR_RES_LO + 0x1000u; s < hi; s += 0x1000u) {
         if (s < LDR_RES_LO + size) {
             if (ldr_sector(off - LDR_RES_LO, s, sec, cur, 0u, &open))
                 return;

@@ -58,6 +58,7 @@
  * read in place through the plain window */
 #define FL_RES_LO       0x0009F000u
 #define FL_RES_HI       0x000AF000u
+#define FL_RES_RESERVE  16u                        /* the window every build keeps (res.c, ldr_core.c): the whole region */
 #define FL_OTA_LO       0x000BB000u                /* M-UPGRADE loader staging, ota.c */
 #define FL_OTA_HI       0x000C0000u
 #define FL_UFL_LO       0x000C2000u                /* Melodee store B (storage.c), USRFLASH up to the marker */
@@ -114,12 +115,16 @@ _Static_assert(FL_RES_LO >= FL_DATA_LO && FL_RES_HI <= FL_DATA_HI && FL_RES_LO >
 #define FL_APP_HI       0x00093000u
 #define FL_RES_LO       0x000CB000u                /* the resource region (res.c), written by the update loader */
 #define FL_RES_HI       0x000E0000u
+/* the sectors of the region every build from the bridge on keeps for itself, written into the region's header
+ * (res.c, ldr_core.c); the pool may take the rest of the region. Never lowered: a loader that finds no valid header
+ * writes only below it */
+#define FL_RES_RESERVE  15u
 #define FL_DATA_LO      0x00097000u                /* Melodee main store */
 #define FL_DATA_HI      0x000E0000u
 #define FL_GLOB_LO      0x000FC000u                /* Melodee superblock / globals */
 #define FL_GLOB_HI      0x000FF000u
 #define FL_BANK_EXT_LO  0x000E5000u                /* expanded presets and project extension copies; after OTA staging */
-#define FL_BANK_EXT_HI  0x000FB000u
+#define FL_BANK_EXT_HI  0x000FC000u                /* (0xFB000: stock USR's last sector, list records since the bridge) */
 #define FL_OTA_LO       0x000E0000u                /* M-UPGRADE loader staging, ota.c */
 #define FL_OTA_HI       0x000E5000u
 /* Melodee's own store (projects, user samples; settings) */

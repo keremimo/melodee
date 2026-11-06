@@ -599,7 +599,7 @@ static uint32_t proj_saved_hash[PROJ_SLOTS] __attribute__((section(".pool")));
 #if MELODEE_FLASH
 static void proj_space(void) { int n = flash_ok ? st_project_free() : -1; proj_free = (uint8_t)(n < 0 ? 0xFF : n); }
 /* the shared pool's free room (projects and preset banks share it) in KB of payload (-1 unknown): the SLOTS card */
-static int project_free_pct(void) { return proj_free == 0xFFu ? -1 : (int)(proj_free * ST_POOL_PAYLOAD_MAX / 1024u); }
+static int project_free_pct(void) { return proj_free == 0xFFu ? -1 : (int)(proj_free * ST_LIN_PAYLOAD_MAX / 1024u); }
 #else
 static void proj_space(void) {}
 static int project_free_pct(void) { return -1; }   /* (KB) */
@@ -1438,6 +1438,14 @@ _Static_assert(sizeof set_rec + sizeof mb_saved <= ST_SECTOR - sizeof(st_hdr_t),
 #ifndef FL_JEDEC_OK
 #define FL_JEDEC_OK(id) ((id) == 0x856014u || (id) == 0xB36014u)   /* (host tests without hal/fm1_flash_map.h: the FM-1's parts) */
 #endif
+#if MELODEE_FLASH
+static uint8_t persist_conv_open;                 /* the converter's screen is up */
+static void persist_conv_step(uint32_t done, uint32_t total)
+{
+    if (!done) { BOOT_WORK_BEGIN("UPDATING STORAGE", total); persist_conv_open = 1; }
+    else BOOT_WORK_PROGRESS(done);
+}
+#endif
 static void persist_boot(void)                    /* before settings_init / panel_init */
 {
 #if MELODEE_FLASH
@@ -1459,11 +1467,17 @@ static void persist_boot(void)                    /* before settings_init / pane
         return;
     }
 #endif
-    int moved = st_small_migrate(wire_take(), sizeof proj_wire_u);   /* preset banks still in old pairs: into the pool */
 #ifdef RES_BASE
-    res_boot(moved == 0);                          /* the resource region (res.c) installed? */
-#else
-    (void)moved;
+    (void)res_window();                            /* the resource region's installed window: the pool stays out */
+#endif
+    st_old_scan();                                 /* records in an old form? re-saved as list records, once (storage.c) */
+    if (st_old) {
+        persist_conv_open = 0;
+        (void)st_convert(wire_take(), persist_conv_step);
+        if (persist_conv_open) BOOT_WORK_END(0);
+    }
+#ifdef RES_BASE
+    res_boot(st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR) == 0);   /* the resource region (res.c) installed? */
 #endif
 #ifdef KIT_STORE
     kit_scan();                                    /* the user's drum kits, for the player (kit_store.c) */

@@ -169,11 +169,11 @@ static uint32_t entry_off(const uint8_t *lg, uint32_t type, uint32_t *size)   /*
 static uint32_t flash_off(const uint8_t *lg) { return entry_off(lg, 0, 0); }   /* flash.bin */
 
 static uint32_t res_off, res_size;                  /* NEW's res.bin in the logical image */
-static int res_installed(void)                      /* the region == res.bin, the rest of it blank */
+static int res_installed(void)                      /* the region == res.bin, the rest of its window blank */
 {
-    uint32_t i;
+    uint32_t i, hi = ldr_res_window(logical + res_off);
     if (memcmp(nor + LDR_RES_LO, logical + res_off, res_size)) return 0;
-    for (i = LDR_RES_LO + res_size; i < LDR_RES_HI; i++)
+    for (i = LDR_RES_LO + res_size; i < hi; i++)
         if (nor[i] != 0xFFu) return 0;
     return 1;
 }
@@ -182,6 +182,13 @@ static void st_record(uint32_t at, uint32_t magic)   /* a valid 32-byte commit r
     memset(nor + at, 0x11, 32);
     ota_wr32(nor + at, magic);
     ota_wr32(nor + at + 28, ldr_crc32(nor + at, 28));
+}
+static void res_head(uint32_t window)               /* an installed region's commit record with its window (rsv[0]) */
+{
+    memset(nor + LDR_RES_LO, 0x22, 32);
+    ota_wr32(nor + LDR_RES_LO, LDR_RES_MAGIC);
+    ota_wr32(nor + LDR_RES_LO + 12u, window);
+    ota_wr32(nor + LDR_RES_LO + 28u, ldr_crc32(nor + LDR_RES_LO, 28));
 }
 
 static int check(const char *what, int ok) { printf("%-56s %s\n", what, ok ? "ok" : "FAIL"); return ok ? 0 : 1; }
@@ -344,6 +351,35 @@ int main(int argc, char **argv)
                      !memcmp(nor + 0x4000, logical + nfo + 0x4000, LDR_APP_HI - 0x4000));
         rc = ldr_session();
         bad += check(".. the next install writes it", rc == 0 && res_installed());
+        /* the windows (bridge): the store may hold records in the region above the installed header's window */
+        uint32_t pw = (ldr_res_window(logical + res_off) - LDR_RES_LO) >> 12;
+        bad += check("the package's header carries its window (FL_RES_RESERVE)", pw == LDR_RES_FLOOR);
+        if (pw < LDR_RES_N) {
+            uint32_t above = LDR_RES_LO + pw * 0x1000u;
+            memset(nor + LDR_RES_LO, 0x5A, LDR_RES_HI - LDR_RES_LO);
+            res_head(pw); st_record(above, LDR_ST_MAGIC);
+            static uint8_t tail[LDR_RES_HI - LDR_RES_LO];
+            memcpy(tail, nor + above, LDR_RES_HI - above);
+            rc = ldr_session();
+            bad += check("installed window: written inside it, a pool record above it kept",
+                         rc == 0 && res_installed() && !memcmp(tail, nor + above, LDR_RES_HI - above));
+            memset(nor + LDR_RES_LO, 0x5A, LDR_RES_HI - LDR_RES_LO);
+            res_head(0); memcpy(tail, nor + above, LDR_RES_HI - above);
+            rc = ldr_session();
+            bad += check("a header from before the bridge (0): written, blanked only to the package's window",
+                         rc == 0 && res_installed() && !memcmp(tail, nor + above, LDR_RES_HI - above));
+            memset(nor + LDR_RES_LO, 0xFF, LDR_RES_HI - LDR_RES_LO);
+            st_record(above + 0x1000u, LDR_ST_MAGIC); memcpy(tail, nor + above, LDR_RES_HI - above);
+            rc = ldr_session();
+            bad += check("no header: written below the floor, a record above it kept",
+                         rc == 0 && res_installed() && !memcmp(tail, nor + above, LDR_RES_HI - above));
+            memset(nor + LDR_RES_LO, 0x5A, LDR_RES_HI - LDR_RES_LO);
+            res_head(pw - 1u); memcpy(banks, nor + LDR_RES_LO, sizeof banks);
+            erases = 0;
+            rc = ldr_session();
+            bad += check("a package wider than the installed window: the region left to its app",
+                         rc == 0 && !erases && !memcmp(banks, nor + LDR_RES_LO, sizeof banks));
+        }
     }
     /* a package for another chip key is refused before any erase */
     {

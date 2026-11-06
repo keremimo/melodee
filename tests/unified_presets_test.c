@@ -238,13 +238,13 @@ static int compact_save_parity(void)
     for(uint32_t i=0;i<UP_PER_BANK;i++)success.r[i].used=disk.r[i].head[0];
     static uint8_t flash_before[sizeof nor];memcpy(flash_before,nor,sizeof nor);
     int safe=1;
-    for(int cut=-3;cut<=16;cut++){
+    for(int cut=-3;cut<=17;cut++){              /* a list record: its staged address map, 15 payload pages, its commit record */
         memcpy(nor,flash_before,sizeof nor);*cache=original;
         up_fav_dirty=up_migrate=1u;
         erase_error=cut==-3;inject_readback=cut==-2;readback_error=0;
         fail_after=cut>=0?cut:-1;
         int rc=up_save_bank(0);readback_error=inject_readback=erase_error=0;fail_after=-1;
-        int expected_failure=cut==-3 || cut==-2 || (cut>=0 && cut<16);
+        int expected_failure=cut==-3 || cut==-2 || (cut>=0 && cut<17);
         safe &= !!rc==expected_failure;
         safe &= !memcmp(cache,rc?&original:&success,sizeof original);
         safe &= (up_fav_dirty==!!rc && up_migrate==!!rc);

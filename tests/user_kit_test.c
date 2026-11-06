@@ -127,8 +127,13 @@ static uint32_t decode(uint32_t u, uint32_t d, const uint8_t *ram, int16_t *y)
     static drk_part_t P;
     const uint32_t *secs[DRK_KSEC];
     uint32_t n = drk_user[u].n;
+    static uint32_t phys[DRK_KSEC][DRK_SLOTS * 2u];      /* (the RAM block laid out as in flash: the guard's place skipped) */
+    if (ram) {
+        memset(phys, 0xFF, sizeof phys);
+        for (uint32_t k = 0; k < kit_len[u] / 8u; k++) memcpy(&phys[k / DRK_SECSLICES][DRK_SLOT(k % DRK_SECSLICES)], ram + 8u * k, 8u);
+    }
     for (uint32_t k = 0; k < n; k++)
-        secs[k] = (const uint32_t *)(const void *)(ram ? ram + k * DRK_SECBYTES : DRK_XIP(drk_user[u].sec[k] * 4096u + DRK_SECOFF));
+        secs[k] = ram ? phys[k] : (const uint32_t *)(const void *)DRK_XIP(drk_user[u].sec[k] * 4096u + DRK_SECOFF);
     const drk_kit_t *H = (const drk_kit_t *)(const void *)secs[0];
     const drk_sample_t *s = &H->smp[H->map[d].sample];
     drk_ch_t c;
@@ -148,6 +153,9 @@ static uint32_t decode(uint32_t u, uint32_t d, const uint8_t *ram, int16_t *y)
     return len;
 }
 
+/* a blank store's free sectors (storage.c): the data flash less OTA staging, the settings pair and the resource region
+ * (its whole window: no header in these tests) */
+#define T_FREE0 ((int)(ST_LN - 5u - 2u - (FL_RES_HI - FL_RES_LO) / ST_SECTOR))
 int main(void)
 {
     static int32_t a[GROOVE], b[GROOVE];
@@ -157,7 +165,7 @@ int main(void)
           DK_USER0 == DK_FM + 1 && DK_KIT_MAX == DK_USER0 + 7 && ENG_DRUM.edit[0].max == DK_KIT_MAX &&
           !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && !strcmp(N_DRUM_KIT[DK_KIT_MAX], "KIT 8"));
 
-    uint32_t len = make_record(0, "ROCK", 25000);
+    uint32_t len = make_record(0, "ROCK", 27500);       /* (past six 4,056-byte sectors) */
     check("eleven takes as a record fit seven sectors and cross sector edges", len <= DRK_KIT_MAX && len > 6u * DRK_SECBYTES);
     check("the record is written, checked and published into slot 3", put(2, rec, len) == 0 && drk_user[2].n == 7u &&
           kit_len[2] == len);
@@ -207,7 +215,7 @@ int main(void)
               !rc && pk == 0 && !memcmp(a, b, 200u * CTL * sizeof a[0]));
         kit_delete(4);
         check("the storage counts the kit and nothing else of it",
-              st_project_free() == (int)ST_U_N - (int)((blen + DRK_SECBYTES - 1u) / DRK_SECBYTES));
+              st_project_free() == T_FREE0 - (int)((blen + DRK_SECBYTES - 1u) / DRK_SECBYTES));
     }
 
     {   /* refused records */
@@ -244,7 +252,7 @@ int main(void)
         int32_t pk = run(0, 4u);
         trk_note_on(&trk[0], 38, 120);
         check("a kit deleted while it rings: silent at once and after, the slot empty, its sectors free",
-              !rc && pk == 0 && run(0, 40u) == 0 && !drk_user[2].n && !kit_len[2] && st_project_free() == (int)ST_U_N);
+              !rc && pk == 0 && run(0, 40u) == 0 && !drk_user[2].n && !kit_len[2] && st_project_free() == T_FREE0);
     }
     if (fails) { printf("USER KIT: %d FAILED\n", fails); return 1; }
     printf("USER KIT: all checks ok\n");
