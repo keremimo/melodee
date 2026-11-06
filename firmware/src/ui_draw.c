@@ -983,7 +983,11 @@ static void draw_cards(void)
         } else {
             param_format(d, *vp, val, &unit);
             /* Rows have room for enum names that the compact parameter formatter abbreviates. */
-            if (d->fmt == F_ENUM && col_style == CS_CAPTURE)
+            if (d->fmt == F_ENUM && col_style == CS_CAPTURE
+#if MELODEE_USER_KITS
+                && !(d->names == N_DRUM_KIT && *vp >= DK_USER0)   /* (a user kit: its own name, as formatted) */
+#endif
+                )
                 str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);
             else if (fx_names(d))                       /* a rack's KNOB 1: the effect's family (its row names it) */
                 str_cpy(val, FX_FAM_NAME[fx_family(*vp)], sizeof val);
@@ -1159,6 +1163,13 @@ static void confirm_text(char *a, char *b)
         str_cpy(b, "Again: delete \xB7 other: copy\n" PAT_DLG_WORD ": half \xB7 double", CF_DETAIL);
         break;
     }
+#if KIT_REC
+    case CF_DEL_KIT:                                    /* Record kit's sheet: a user kit, all its takes */
+        str_cpy(a, "DELETE KIT 1?", 24);
+        a[11] = (char)('1' + k % DK_NUSER);
+        str_cpy(b, "Every pad's recording", 32);
+        break;
+#endif
     case CF_DEL_TRACK:                                  /* Stage's sheet: the tracks after it move down a place */
         str_cpy(a, "REMOVE TRACK 1?", 24);
         a[13] = (char)('1' + k % NTRK);

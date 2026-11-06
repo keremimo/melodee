@@ -62,8 +62,15 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
  * are pool records of type ST_PFILE0 + slot. Empty slots own no sector. */
 #define ST_NPROJ 32u
 #define ST_PFILE0 64u
+/* User drum kits (kit_store.c): 8 slots, pool records of type ST_KFILE0 + slot, as slots 5..32 are */
+#ifndef MELODEE_USER_KITS                      /* (eng_drum.c sets it first in the firmware; storage tests alone: on) */
+#define MELODEE_USER_KITS (!BOARD_SMK37)
+#endif
+#define ST_NKIT 8u
+#define ST_KFILE0 (ST_PFILE0 + ST_NPROJ)
 static uint32_t st_proj_obj(uint32_t slot) { return slot < 4u ? OBJ_BANK0 + slot : ST_PFILE0 + slot; }
-static int st_pfile(uint32_t obj) { return obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ; }
+/* a record that lives only in the pool, never in a fixed pair: projects 5..32 and the user kits */
+static int st_pfile(uint32_t obj) { return (obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ) || (obj >= ST_KFILE0 && obj < ST_KFILE0 + ST_NKIT); }
 static int st_obj_ok(uint32_t obj) { return obj < OBJ_COUNT || st_pfile(obj); }
 
 typedef struct {
@@ -543,6 +550,15 @@ static int st_pool_used(uint32_t used[ST_UW], uint32_t obj, uint32_t *seq, uint3
             if (o == obj) *seq = current.seq + 1u;
         }
     }
+#if MELODEE_USER_KITS
+    for (uint32_t o = ST_KFILE0; o < ST_KFILE0 + ST_NKIT; o++) {   /* the user kits */
+        st_hdr_t current; int copy = st_current(o, &current);
+        if (copy >= 0) {
+            st_project_used(used, o, (uint32_t)copy, &current);
+            if (o == obj) *seq = current.seq + 1u;
+        }
+    }
+#endif
     for (uint32_t o = 0; o < OBJ_COUNT; o++) {
         if (!st_small(o)) continue;
         st_hdr_t current; int copy = st_current(o, &current);

@@ -175,7 +175,7 @@ int main(int argc, char **argv)
 {
     static int32_t a[FS * 3], b[FS * 3];
     uint32_t j, s, nd;
-    check("KIT 9 STUDIO, 10 BOOM, 11 TIGHT: factory kits appended", ENG_DRUM.edit[0].max == DK_TIGHT &&
+    check("KIT 9 STUDIO, 10 BOOM, 11 TIGHT: factory kits appended", ENG_DRUM.edit[0].max == DK_KIT_MAX &&
           !strcmp(N_DRUM_KIT[DK_STUDIO], "STUDIO") && !strcmp(N_DRUM_KIT[DK_BOOM], "BOOM") && !strcmp(N_DRUM_KIT[DK_TIGHT], "TIGHT") &&
           ENG_DRUM.npresets == 9u && !strcmp(ENG_DRUM.presets[P_STUDIO].name, "STUDIO KIT") &&
           ENG_DRUM.presets[P_TIGHT].e[0] == DK_TIGHT);
@@ -271,7 +271,7 @@ int main(int argc, char **argv)
     {   /* KICK SWAP */
         kit(P_STUDIO); trk_note_on(&trk[0], 36, 120); run(a, FS / 4u / CTL);
         kit(P_STUDIO); trk[0].p[P_E6] = 1; trk_note_on(&trk[0], 36, 120); run(b, FS / 4u / CTL);
-        check("KICK SWAP plays the other kit's kick", drk_part(0)->ch[0].sample == 2u && memcmp(a, b, (FS / 4u / CTL) * CTL * sizeof a[0]) != 0);
+        check("KICK SWAP plays the other kit's kick", drk_part(0)->ch[0].s == &DRK_SAMPLES[2] && memcmp(a, b, (FS / 4u / CTL) * CTL * sizeof a[0]) != 0);
         check("KICK reads KIT / SWAP on these kits", drum_desc(&trk[0], 6u) == &DRUM_REAL_KICK && drum_desc(&trk[0], 7u) == 0);
     }
     {   /* a recorded hit's length */

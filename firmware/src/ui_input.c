@@ -2582,6 +2582,10 @@ static void ui_confirm_accept(void)
         }
     } else if (kind == CF_DEL_TRACK) {
         track_remove(ui.confirm_trk % NTRK);
+#if KIT_REC
+    } else if (kind == CF_DEL_KIT) {
+        kit_rec_delete(ui.confirm_trk % DK_NUSER);
+#endif
     } else if (kind == CF_TAKE_JAM) {
         jam_take();
     } else if (kind == CF_NEW_SONG) {
@@ -2630,6 +2634,9 @@ static void ui_input(void)
 #endif
     if (designer_on() && !name_on() && !ui.confirm && designer_input(pressed, notes)) return;
     preset_pick_poll();                              /* restore key selection before handling new edges */
+#if KIT_REC
+    kit_rec_poll();                                  /* Record kit: a take's progress, its keeping (kit_rec_ui.c) */
+#endif
     if (notes)
         browse_commit();                              /* a key played while browsing: hear the sound shown */
     browse_poll();

@@ -496,8 +496,8 @@ function mockTables() {
     ok([2,5,6,7,9,11].every((i) => m0.tables.ENG[i].name === "-" && !m0.tables.ENG[i].presets.length),
        "editor: PHASE, VOICE, TRIO, WHEEL, PHYS and NOISE retired with their original IDs reserved");
     ok(dr.name === "DRUM" && dr.edit.map((d) => d.label).join() === "KIT,TUNE,TONE,DECY,SNAP,ACC,KICK,DRV" &&
-       dr.edit[0].names.join() === "808,909,SID,CR78,FM,STUDIO,BOOM,TIGHT" && dr.edit[0].min === 4 && dr.edit[0].max === 11 && dr.presets.length === 9 && dr.presets[0].name === "808 KIT" && dr.presets[2].name === "SID KIT" && dr.presets[3].name === "SID DIGI" && dr.presets[4].name === "CR78 KIT" && dr.presets[5].name === "FM KIT",
-       "editor: DRUM engine 10 (KIT TUNE TONE DECY SNAP ACC KICK DRV, KIT 808), 808, 909, SID, CR78, FM, STUDIO, BOOM and TIGHT kits");
+       dr.edit[0].names.join() === "808,909,SID,CR78,FM,STUDIO,BOOM,TIGHT,KIT 1,KIT 2,KIT 3,KIT 4,KIT 5,KIT 6,KIT 7,KIT 8" && dr.edit[0].min === 4 && dr.edit[0].max === 19 && dr.presets.length === 9 && dr.presets[0].name === "808 KIT" && dr.presets[2].name === "SID KIT" && dr.presets[3].name === "SID DIGI" && dr.presets[4].name === "CR78 KIT" && dr.presets[5].name === "FM KIT",
+       "editor: DRUM engine 10 (KIT TUNE TONE DECY SNAP ACC KICK DRV, KIT 808), 808, 909, SID, CR78, FM, STUDIO, BOOM and TIGHT kits, user kits 1..8");
   }
   const dj = join(HERE, "../build/host/desc.json");
   if (!existsSync(dj)) { console.log("editor: mock tables == firmware (no build/host/desc.json)        skip"); return; }

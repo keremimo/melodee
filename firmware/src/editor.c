@@ -298,6 +298,9 @@ static int ed_flash_stop(void)
 #ifdef RES_BASE                          /* (the firmware: res.c) */
 #include "editor_res.c"
 #endif
+#ifdef KIT_STORE                         /* (the firmware: kit_store.c) */
+#include "editor_kit.c"
+#endif
 #include "editor_backup.c"
 #include "editor_fm6.c"
 #include "editor_cz.c"
@@ -371,6 +374,9 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
 #endif
 #ifdef RES_BASE
     if (ed_res_handle(cmd, a, na)) { ed_send(); return; }
+#endif
+#ifdef KIT_STORE
+    if (ed_kit_handle(cmd, a, na)) { ed_send(); return; }
 #endif
     if (ed_ui_handle(cmd, a, na)) { ed_send(); return; }
     if (ed_backup_handle(cmd, a, na)) { ed_send(); return; }
