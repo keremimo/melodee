@@ -15,6 +15,7 @@ ble_pairing = true
 usb_audio_in = true
 usb_audio_out = true
 usb_host = true                # the menu's USB HOST: a USB-MIDI controller or synth, directly or behind a hub
+cache_ram_ways = 7             # 28 KB of the data cache as RAM: Melodee's audio bank 3 (resources.c), as its own build
 xdata2 = true                  # Melodee's superblock and globals at 0xFC000..0xFEFFF (storage.c), where they always were
 boot_pack = true
 licence = "GPL-3.0-only"

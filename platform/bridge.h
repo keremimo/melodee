@@ -27,6 +27,7 @@ uint32_t ml_midi_t24(void);
 void ml_midi_out(uint32_t packet);
 uint32_t ml_midi_room(void);
 uint32_t ml_sysex_queued(void);
+int ml_cache_ready(void);
 int ml_midi_ready(void);
 int ml_usb_lost(void);
 void ml_usb_host(int on);

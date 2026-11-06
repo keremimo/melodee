@@ -157,6 +157,11 @@ uint32_t ml_midi_t24(void){return plat_midi_in_t24();}
 void ml_midi_out(uint32_t p){plat_midi_send(p,TO_USB|TO_BLE);}
 uint32_t ml_midi_room(void){return plat_midi_out_room(TO_USB);}
 uint32_t ml_sysex_queued(void){return plat_sysex_queued();}
+/* the cache RAM's test passed, all 7 ways Melodee's (no .cache_ram objects: app.ld) */
+int ml_cache_ready(void){
+    const struct plat_cache_ram *c=plat_cache_ram();
+    return c&&c->status==PLAT_CR_OK&&c->bytes>=0x7000u;
+}
 int ml_midi_ready(void){
 #ifdef PLAT_HOST
     return 1;

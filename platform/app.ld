@@ -26,6 +26,7 @@ MEMORY
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
     POOL   (rwx) : ORIGIN = 0x01C20000, LENGTH = 0x57600
     NOINIT (rw)  : ORIGIN = 0x01C7BE00, LENGTH = 0x3F50
+    CACHE  (rw)  : ORIGIN = 0x01F28000, LENGTH = 0x7000     /* data-cache ways 0..6 as RAM (fm1.toml cache_ram_ways) */
 }
 SECTIONS
 {
@@ -71,7 +72,10 @@ SECTIONS
     .noinit (NOLOAD) : { *(.noinit*) . = ALIGN(4); _noinit_end = .; } > NOINIT
     _resource_retained_start = ALIGN(_noinit_end, 4);
     _resource_retained_end = ORIGIN(NOINIT) + LENGTH(NOINIT);
-    _resource_cache_start = 0; _resource_cache_end = 0;   /* (MELODEE_CACHE_RAM 0 on the base, so far) */
+    /* the cache RAM: the base's test at the start (plat_cache_ram); none of the base's objects there, the whole of it
+     * Melodee's audio bank 3 (resources.c) once the test passed */
+    .cache_ram (NOLOAD) : { _cr_start = .; *(.cache_ram .cache_ram.*) . = ALIGN(4); _cr_end = .; } > CACHE
+    _resource_cache_start = _cr_end; _resource_cache_end = ORIGIN(CACHE) + LENGTH(CACHE);
     _guard0 = 0x01C77600; _ustack_lo = 0x01C77700; _ustack_top = 0x01C7A500;
     _guard1 = 0x01C7A500; _sstack_lo = 0x01C7A600; _sstack_top = 0x01C7BE00;
     /DISCARD/ : { *(.comment) *(.note*) }
