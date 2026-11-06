@@ -75,7 +75,8 @@ def ident_frame(text, flash=0):
 class FakeFM1:
     """a MIDI backend with one FM-1 on it. base: it runs firmware built on fm1-base (felucca-bsp chip/ota.c): HS_QUERY
     gets the name, '_' and three digits, HS_FULL the whole identity (not from the loader), both with the flash's
-    JEDEC ID; otherwise HS_FULL goes unanswered (classic Melodee, M-VAVE's firmware). base_after: what runs after the
+    JEDEC ID (flash=0: classic Melodee from 1.7.0, the same two answers without it); otherwise HS_FULL goes unanswered
+    (classic Melodee before 1.7.0, M-VAVE's firmware). base_after: what runs after the
     write (default: the same)"""
 
     def __init__(self, image, identity="FM-1_015", name="FM-1", unplug_after=None, after_write="FM-1_900",
@@ -381,6 +382,23 @@ def base():
         dev = FakeFM1(image, identity=identity, name=name)
         rc, out, err = cli(["--info"], dev)
         ok(rc == 0 and out.startswith(identity + "  [") and "flash:" not in out and dev.full_asked == asked, what)
+
+    # classic Melodee from 1.7.0 (firmware/src/ota.c ota_handshake): the same two answers as fm1-base, no flash ID
+    rel = package("FM-1_91070")
+    p = pkgfile("rel17.fwsc", rel)
+    image = I.logical_image(rel)
+    dev = FakeFM1(image, identity="FM-1_91070", name="Melodee", base=True, flash=0)
+    ok(I.parse_identity(dev.answer(False)).text == "FM-1_910", "classic 1.7.0: the plain handshake answers FM-1_910")
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and out.startswith("FM-1_91070  [running]") and "flash:" not in out and dev.full_asked == 1,
+       "classic 1.7.0 --info: HS_FULL gives the whole FM-1_91070, no flash ID")
+    dev = FakeFM1(image, identity="FM-1_91061", name="Melodee", after_write="FM-1_91070", base_after=True, flash=0)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and "done: the FM-1 runs FM-1_91070" in out,
+       "1.6.1 -> 1.7.0: the install's check after the restart sees FM-1_91070 behind FM-1_910")
+    dev = FakeFM1(image, identity="FM-1_91070", name="Melodee", after_write="FM-1_91070", base=True, flash=0)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and "done: the FM-1 runs FM-1_91070" in out, "1.7.0 over itself")
 
 
 def smk():

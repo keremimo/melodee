@@ -1531,12 +1531,12 @@ function identFrame(text, flash = 0) {
 }
 
 /* an FM-1 on WebMIDI: identity, then "device asks, host answers" reads of the image. base: firmware built on fm1-base
-   (HS_QUERY: name, '_' and three digits; HS_FULL: the whole identity, not from the loader; both with the flash ID),
-   otherwise HS_FULL goes unanswered */
+   (HS_QUERY: name, '_' and three digits; HS_FULL: the whole identity, not from the loader; both with the flash ID;
+   flash 0: classic Melodee from 1.7.0, the same two answers without it), otherwise HS_FULL goes unanswered */
 class FakeFM1 {
-  constructor(image, { unplugAfter = Infinity, identity = "FM-1_015", afterWrite = "FM-1_900", loader = MELODEE_LOADER, base = false } = {}) {
+  constructor(image, { unplugAfter = Infinity, identity = "FM-1_015", afterWrite = "FM-1_900", loader = MELODEE_LOADER, base = false, flash = 0x856014 } = {}) {
     this.afterWrite = afterWrite; this.loader = loader;     // the loader step 1 starts (the package's own)
-    this.base = base; this.fullAsked = 0;
+    this.base = base; this.flash = flash; this.fullAsked = 0;
     this.image = image; this.unplugAfter = unplugAfter; this.served = 0; this.bad = 0;
     this.access = { inputs: new Map(), outputs: new Map() };
     this.boot(identity, identity === "FM-1_015" ? "FM-1" : "Melodee");
@@ -1559,10 +1559,10 @@ class FakeFM1 {
     if (eq(d, HS)) {
       const i = this.identity.indexOf("_");
       const t = this.base && !ota && i >= 0 && i + 4 < this.identity.length ? this.identity.slice(0, i + 4) : this.identity;
-      this.tx(identFrame(t, this.base ? 0x856014 : 0));
+      this.tx(identFrame(t, this.base ? this.flash : 0));
     } else if (eq(d, HS_FULL)) {
       this.fullAsked++;
-      if (this.base && !ota) this.tx(identFrame(this.identity, 0x856014));
+      if (this.base && !ota) this.tx(identFrame(this.identity, this.flash));
     } else if (eq(d, UPGRADE)) {
       this.queue = this.identity.startsWith("ota-")
         ? [...Array.from({ length: 6 }, (_, k) => [k * 512, 512]), [0xF0000000, 8]]
@@ -1657,6 +1657,13 @@ async function updater() {
   const rel = new FakeFM1(image, { identity: "FM-1_900", base: true, afterWrite: "FM-1_9001613" });
   const gotRel = await new Updater(rel.access).install(image, "FM-1_9001613", null, MELODEE_LOADER);
   ok(gotRel === "FM-1_9001613" && rel.fullAsked >= 2, "fm1ota.js: an fm1-base release's whole identity through HS_FULL");
+  /* classic Melodee from 1.7.0 (firmware/src/ota.c ota_handshake): FM-1_910 to HS_QUERY, the whole FM-1_91070 to HS_FULL */
+  const rel17 = new FakeFM1(image, { identity: "FM-1_91070", base: true, flash: 0, afterWrite: "FM-1_91070" });
+  const found17 = await new Updater(rel17.access).find();
+  found17.link.close();
+  ok(found17.id.text === "FM-1_91070" && rel17.fullAsked === 1, "fm1ota.js: Melodee 1.7.0 found as FM-1_91070 behind its plain FM-1_910");
+  const got17 = await new Updater(rel17.access).install(image, "FM-1_91070", null, MELODEE_LOADER);
+  ok(got17 === "FM-1_91070" && rel17.bad === 0, "fm1ota.js: 1.7.0 over itself, the check after the restart sees FM-1_91070");
   const asked = [];
   for (const identity of ["FM-1_900", "FM-1_015", "SMK-37 Pro_016"]) {
     const d = new FakeFM1(image, { identity });
