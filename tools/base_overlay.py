@@ -214,6 +214,15 @@ static void smk_main_poll(void)''')
     p=work/'tools/build.py';s=p.read_text()
     s=replace(s,'    img = bytearray((OUT / "text.bin").read_bytes())', '    tc("common/bin/objcopy", "-O", "binary", "-j", ".audio_text", elf, OUT / "audio.bin")\n    img = bytearray((OUT / "text.bin").read_bytes())')
     s=replace(s,'    (OUT / (NAME + ".dis")).write_text(dis)', '    (OUT / (NAME + ".dis")).write_text(dis)\n    (OUT / (NAME + ".symbols")).write_text(syms)')
+    # Melodee's resource region (firmware/src/res.c): .mres out of the image as platform/build/melodee-res.bin, its
+    # length and CRC patched into res_want before the image is packed (tools/melodee_res.py, tools/build.py's resources)
+    s=replace(s,'    img = bytearray((OUT / "text.bin").read_bytes())\n    if CONF.get("boot_pack"):',
+              '    img = bytearray((OUT / "text.bin").read_bytes())\n'
+              '    tc("common/bin/objcopy", "-O", "binary", "-j", ".mres", elf, OUT / "mres.bin")\n'
+              f'    sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
+              '    import melodee_res\n'
+              f'    melodee_res.patch(img, syms, OUT, APP_XIP, {board!r})\n'
+              '    if CONF.get("boot_pack"):')
     if smk:
         # The generated fm1.toml (tools/build_base.py), and each model's outputs apart from the FM-1's: tests and the
         # FM-1's tools read platform/build's melodee.bin.

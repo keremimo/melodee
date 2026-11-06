@@ -77,6 +77,12 @@ assert sym('_bss_end')<=0x1c20000
 assert sym('_noinit_end')<=0x1c7fd50,'.noinit overlaps boot_info'
 # The resource region (res.c) is read in place from flash 0xCB020.., never part of the image
 assert sym('_mres_start')==0x020c7020 and sym('_mres_end')<=0x020dc000
+# and this build's region (melodee-res.bin) is the one the image asks for (res.c res_want: RWNT, length, CRC-32)
+import struct, zlib
+res=(OUT/'melodee-res.bin').read_bytes()
+want=image[sym('res_want')-sym('_start'):sym('res_want')-sym('_start')+12]
+assert struct.unpack('<I',want[:4])[0]==0x544E5752,'res_want marker missing'
+assert struct.unpack('<II',want[4:12])==(len(res)-32,zlib.crc32(res[32:])),'res_want does not match melodee-res.bin'
 for retired in ('fm1_stub_start','crstub_main','ua_cfg_build','uh_task','ota_boot_cleanup'):   # (usb_audio.c, usb_host.c, ota.c)
     assert not re.search(r'\s'+retired+r'$',syms,re.M),f"Melodee's own boot or update linked: {retired}"
 package=Path(sys.argv[1]) if len(sys.argv)>1 else OUT/'melodee.fwsc'
