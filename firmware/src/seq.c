@@ -17,6 +17,7 @@
  * plays are recorded, not the keys held (what plays back is what was heard). A key or MIDI note plays a
  * chord when the track's CHRD is on (chord.c): its notes go through the same input as so many keys. */
 #define KB_SILENT 255u
+_Static_assert(DRUM_SILENT == KB_SILENT, "a user kit's silent key (eng_drum.c drum_user_key)");
 static volatile uint8_t kb_asleep;
 static uint32_t kb_prev;
 static uint8_t kb_note[27], kb_trk[27];  /* per key: the note it started and on which track */
@@ -954,6 +955,8 @@ static uint32_t smk_ext_map(const track_t *t, int32_t ks)     /* ks: -5..-1 belo
 {
     const engine_t *e = ENGINES[eng_idx(t->eng_req)];
     int32_t n, b;
+    if (e->keys == drum_keys && drum_isuser(t))         /* a user kit: its first sixteen white keys from C3 */
+        return drum_user_key(t, ks);
     if (e->keys && (b = e->keys(t, 0)) >= 0)
         return (uint32_t)clamp(b + ks, 0, 127);
     n = 53 + ks;

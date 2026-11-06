@@ -514,9 +514,31 @@ static void drum_render_into(track_t *t,voice_t *v,int32_t *out,uint32_t n,const
 static void drum_render(track_t *t,voice_t *v,int32_t *out,uint32_t n,const vmod_t *m)
 { drum_render_into(t,v,out,n,m,&dr_scratch,t->p); }
 
-/* the GM drum map, the first C (key 7) is the kick (C2, 36) */
+/* A user kit (KIT 1..8) on the keys: white key n plays MPC pad n (drum_mpc_note: the eleven drums, five again), from
+ * the first white key (the FM-1's F3, the SMK-37's lowest C, so its sixteen reach D5); the black keys and the white
+ * keys past the sixteenth are silent, the octave is not followed. ks: the key from F3 (the SMK-37's outer keys:
+ * -5..-1 below, 27..31 above). DRUM_SILENT: seq.c's KB_SILENT (asserted there) */
+#define DRUM_SILENT 255u
+#if BOARD_SMK37
+#define DRUM_WHITE0 0                                /* the first white key's place from C3: the SMK-37's C3 */
+#else
+#define DRUM_WHITE0 3                                /* (the FM-1's F3) */
+#endif
+static uint32_t drum_user_key(const track_t *t, int32_t ks)
+{
+    static const int8_t W[12] = {0, -1, 1, -1, 2, 3, -1, 4, -1, 5, -1, 6};   /* C .. B: a white key's place */
+    int32_t c = ks + 5, w;                                                   /* (from C3) */
+    if (c < 0 || W[c % 12] < 0)
+        return DRUM_SILENT;
+    w = 7 * (c / 12) + W[c % 12] - DRUM_WHITE0;
+    return w >= 0 && w < 16 ? drum_mpc_note(t, (uint32_t)w) : DRUM_SILENT;
+}
+
+/* the GM drum map, the first C (key 7) is the kick (C2, 36); a user kit: its white keys (drum_user_key) */
 static int32_t drum_keys(const track_t *t, uint32_t k)
 {
+    if (drum_isuser(t))
+        return (int32_t)drum_user_key(t, (int32_t)k);
     return clamp(29 + 12 * input_octave(t) + (int32_t)k, 0, 127);
 }
 

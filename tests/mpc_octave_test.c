@@ -209,9 +209,18 @@ static void drum_pads(void)
                         if (n == MPC_PAD_NOTES[k][p]) want = notes[kit == DK_909 || kit >= DK_USER0][p];
                     assert(midi_map(t, n) == want);
                 }
-                /* Native keys retain their chromatic drum map and bank octave. */
-                for (uint32_t key = 0; key < 27u; key++)
-                    assert(kb_map(t, key) == (uint32_t)clamp(29 + 12 * oct + (int32_t)key, 0, 127));
+                /* Native keys retain their chromatic drum map and bank octave; a user kit: white key n is pad n
+                 * (F3 .. G5), the black keys silent, at any octave. */
+                static const uint8_t WHITE[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
+                for (uint32_t key = 0; key < 27u; key++) {
+                    uint32_t want = (uint32_t)clamp(29 + 12 * oct + (int32_t)key, 0, 127);
+                    if (kit >= DK_USER0) {
+                        want = KB_SILENT;
+                        for (uint32_t p = 0; p < 16u; p++)
+                            if (key == WHITE[p]) want = notes[1][p];
+                    }
+                    assert(kb_map(t, key) == want);
+                }
             }
             for (uint32_t q = Q_OFF; q < Q_MPC; q++) {
                 t->p[P_QUANT] = (int16_t)q;
