@@ -12,12 +12,10 @@ enum { ED_FM6_TRACK, ED_FM6_BANK, ED_FM6_FACTORY, ED_FM6_USER };
 static void ed_fm6_name(const uint8_t *pk)       /* the record's name, trailing spaces off */
 {
     char s[11];
-    uint32_t i, n = 0;
-    for (i = 0; i < 10u; i++) {
-        s[i] = (char)(pk[118 + i] >= 32u && pk[118 + i] <= 126u ? pk[118 + i] : ' ');
-        if (s[i] != ' ')
-            n = i + 1u;
-    }
+    uint32_t n = 10u;
+    ed_shown(s, pk + 118, 10u);
+    while (n && s[n - 1u] == ' ')
+        n--;
     s[n] = 0;
     ed_str(s, 10);
 }
@@ -41,9 +39,9 @@ static int ed_fm6_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             else
                 rc = 1;
         }
-        ed_b(n ? a[0] : 127u); ed_b(n > 1u ? a[1] : 127u); ed_b(rc);
-        for (i = 0; !rc && i < FM6_PACKED; i++)
-            ed_b(pk[i]);
+        ed_echo(a, n, 2u); ed_b(rc);
+        if (!rc)
+            ed_bytes(pk, FM6_PACKED);
         return 1;
     case ED_FM6_PUT:                                       /* target, index, 128 bytes -> target, index, rc */
         rc = n != 2u + FM6_PACKED ? 1u : 0u;
@@ -65,7 +63,7 @@ static int ed_fm6_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         } else {
             rc = 1;
         }
-        ed_b(n ? a[0] : 127u); ed_b(n > 1u ? a[1] : 127u); ed_b(rc);
+        ed_echo(a, n, 2u); ed_b(rc);
         return 1;
     case ED_FM6_LIST:                                      /* -> factory count, bank count (0), then per slot: used, name */
         if (n)
@@ -78,7 +76,7 @@ static int ed_fm6_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         return 1;
     case ED_FM6_ERASE:                                     /* bank index -> index, rc (no bank: 3) */
         rc = n != 1u ? 1u : ED_FM6_NOBANK;
-        ed_b(n ? a[0] : 127u); ed_b(rc);
+        ed_echo(a, n, 1u); ed_b(rc);
         return 1;
     }
     return 0;
