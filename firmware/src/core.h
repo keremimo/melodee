@@ -21,7 +21,7 @@
 #define MELODEE_BIG_BSS
 #endif
 #ifndef MELODEE_MIDI_THRU
-#define MELODEE_MIDI_THRU 0     /* the menu's MIDI THRU: fm1-base builds (platform/melodee_app.c midi_thru) */
+#define MELODEE_MIDI_THRU 1     /* the menu's MIDI THRU (midi_thru.c; fm1-base: platform/melodee_app.c midi_thru) */
 #endif
 #ifndef MELODEE_UPDATE_COUNTDOWN
 #define MELODEE_UPDATE_COUNTDOWN 1   /* UPDATE MODE's countdown screen (main.c: OCT- + OCT+ held, ui.uboot); fm1-base: 0,

@@ -74,6 +74,8 @@ static void smk_fader_momentary(uint32_t id, uint32_t native) { (void)id; (void)
 #define SMO_TX_PUT(b) ((void)(b))
 #include "../firmware/src/smk_midi_out.h"
 #endif
+static void midi_thru(uint32_t pkt, uint32_t source);   /* the menu's MIDI THRU (midi_thru.c, after the UI), as melodee.c */
+#define MIDI_THRU(pkt, source) midi_thru(pkt, source)
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
@@ -114,6 +116,8 @@ static void fm1_wdt_feed(void) {}
 #if !MELODEE_BLE
 static void fm1_irq_off(void) {}
 static void fm1_irq_on(void) {}
+static uint32_t fm1_icfg(void) { return 0x200u; }       /* (midi_thru.c's save and restore) */
+static void fm1_icfg_set(uint32_t v) { (void)v; }
 #endif
 static uint16_t host_screen[240 * 240];
 static int host_blit_trace;                       /* (tests/ui_render.c UI_AUDIT_BLITS: each transfer listed) */
@@ -156,6 +160,7 @@ static struct { uint32_t stage; } melodee_dbg;
 #include "../firmware/src/ui_graph.c"
 #include "../firmware/src/ui_draw.c"
 #include "../firmware/src/ui_menu.c"
+#include "../firmware/src/midi_thru.c"
 #include "../firmware/src/ui_input.c"
 #include "../firmware/src/ui_layer.c"
 #include "../firmware/src/upreset.c"

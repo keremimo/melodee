@@ -122,10 +122,14 @@ static int usb_midi_out_ready(void);
 static uint32_t midi_render_time;
 static uint8_t midi_render_timed;                  /* audio ISR supplies the block's timeline */
 
+#ifndef MIDI_THRU
+#define MIDI_THRU(pkt, source) ((void)0)        /* (melodee.c: the menu's MIDI THRU, midi_thru.c) */
+#endif
 static int midi_enqueue(uint32_t pkt, uint32_t source)
 {
     uint32_t at = mi_w % MQ;
     uint32_t clock_source = source >= 1u && source <= 3u ? source - 1u : 0u;
+    MIDI_THRU(pkt, source);
     if (((pkt >> 8) & 0xFFu) == 0xF8u)
         midi_rx_pulses[clock_source]++;
     if (midi_in_overflow)
