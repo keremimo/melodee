@@ -64,6 +64,7 @@ static uint32_t ed_unpack7(const uint8_t *a, uint32_t na, uint8_t *out, uint32_t
 static void fm1_wdt_feed(void) {}
 static int ed_flash_stop(void) { return transport_busy(); }
 #include "../firmware/src/editor_backup.c"
+#include "../firmware/src/editor_projects.c"           /* Studio's PROJECTS / STORAGE (42, 43) */
 
 static int check(const char *what, int ok)
 {
@@ -277,9 +278,63 @@ static int expanded_recording_archive(void)
     return bad;
 }
 #ifndef BACKUP_TEST_NO_MAIN
+/* Studio's PROJECTS (42) and STORAGE (43) on simulated flash: slots past 4, duplicate, rename, delete, the pool map;
+ * BACKUP_LIST 1 (an inventory) writes nothing */
+static uint32_t studio(uint32_t cmd, const uint8_t *a, uint32_t n) { rep_n = 0; ed_projects_handle(cmd, a, n); return rep_n; }
+static int owners(uint32_t who)                         /* STORAGE: the sectors slot / kit `who` holds (-1: rc) */
+{
+    int k = 0;
+    studio(ED_STORAGE, 0, 0);
+    if (rep[0]) return -1;
+    for (uint32_t i = 0; i < ST_LN; i++) k += rep[7 + i] == who;
+    return k;
+}
+static int studio_projects(void)
+{
+    int bad = 0;
+    uint8_t a[16];
+    uint32_t n, f0, e, i;
+    reset();
+    for (i = NPART; i < NTRK; i++) {                    /* the MIDI-only tracks as melodee_init sets them (a channel) */
+        track_defaults(&trk[i]); set_engine_of(&trk[i], trk_def_engine(i)); apply_preset_to(&trk[i], trk_def_preset(i));
+        trk[i].engine = trk[i].eng_req;
+    }
+    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0};
+    studio(ED_STORAGE, 0, 0);
+    f0 = rep[3] | rep[4] << 7;
+    bad += check("STORAGE: rc 0, every linear sector, free = the pool's, 4,056 B each",
+                 !rep[0] && (rep[1] | rep[2] << 7) == ST_LN && (int)f0 == st_project_free() && (rep[5] | rep[6] << 7) == ST_LIN_PAYLOAD_MAX);
+    a[0] = 3; a[1] = 19; memcpy(a + 2, "TWENTY", 6);
+    n = studio(ED_PROJECTS, a, 8);
+    st_hdr_t h;
+    bad += check("PROJECTS save as slot 20: its item, the stored size", !rep[1] && rep[2] == 19 && rep[3] == 19 && rep[4] == 1 &&
+                 st_current(st_proj_obj(19), &h) >= 0 && (rep[5] | rep[6] << 7 | rep[7] << 14) == h.len && !memcmp(rep + 8, "TWENTY", 7));
+    bad += check("STORAGE: slot 20 owns sectors, the free count fell by as many", owners(20) > 0 && (rep[3] | rep[4] << 7) == f0 - (uint32_t)owners(20));
+    studio(ED_PROJECTS, a, 0);
+    bad += check("PROJECTS status after the save: slot 20, unchanged, TWENTY", rep[0] == 127 && rep[2] == 19 && !rep[3] && !memcmp(rep + 4, "TWENTY", 7));
+    a[0] = 1; a[1] = 19; studio(ED_PROJECTS, a, 2);
+    studio(ED_PROJECTS, a, 0);
+    bad += check("PROJECTS load slot 20, then status: slot 20, unchanged", rep[2] == 19 && !rep[3]);
+    a[0] = 5; a[1] = 19; a[2] = 31; studio(ED_PROJECTS, a, 3);
+    bad += check("PROJECTS duplicate 20 -> 32: a copy with its name, the music still slot 20's", !rep[1] && rep[2] == 19 && rep[3] == 31 &&
+                 rep[4] == 1 && !memcmp(rep + 8, "TWENTY", 7) && project_used(31) && owners(32) > 0);
+    a[0] = 4; a[1] = 31; memcpy(a + 2, "LAST ONE", 8); studio(ED_PROJECTS, a, 10);
+    bad += check("PROJECTS rename slot 32: its name, the music's kept", !rep[1] && !memcmp(rep + 8, "LAST ONE", 9) && !memcmp(proj_name, "TWENTY", 7));
+    a[0] = 0; a[1] = 16; a[2] = 32; studio(ED_PROJECTS, a, 3);
+    bad += check("PROJECTS list from 17: sixteen of 32, slot 20 and 32 used", !rep[1] && (rep[3] | rep[4] << 7) == 16 && (rep[5] | rep[6] << 7) == 16 &&
+                 (rep[7] | rep[8] << 7) == PROJ_SLOTS && rep[9] == 16 && !rep[10]);
+    a[0] = 6; a[1] = 19; studio(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS delete slot 20: empty, its sectors free, the music has no slot", !rep[1] && rep[2] == 127 && !rep[4] && !owners(20) && owners(32) > 0);
+    a[0] = 1; studio(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS load the deleted slot: rc 1", rep[1] == 1);
+    e = erases; a[0] = 1;
+    call(ED_BACKUP_LIST, a, 1);
+    bad += check("BACKUP_LIST 1: an inventory, no flash erased, slot 32 listed with its size", !rep[1] && erases == e);
+    return bad;
+}
 int main(void)
 {
-    int expanded_bad = expanded_recording_archive();
+    int expanded_bad = expanded_recording_archive() + studio_projects();
 
     int bad = 0;
     uint32_t len = 0, crc = 0, before;

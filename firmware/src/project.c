@@ -625,7 +625,7 @@ static int proj_read_slot(uint32_t slot)
     int valid = bank_full((uint32_t)n) ? bank_valid(proj_wire_u.raw, n) : proj_import(&proj_scratch, proj_wire_u.raw, n);
 #endif
 #if MELODEE_FLASH && !defined(FM1_IRQ_TARGET)
-    if (valid) {
+    if (valid && slot < 4u) {                    /* (the host mirrors hold slots 1..4) */
         if (n == BANK_STORE_SIZE) { pj_image(st_proj_obj(slot), (uint32_t)copy, proj_bank_slot[slot]); memcpy(&proj_slot[slot], proj_bank_slot[slot] + 8u, sizeof proj_slot[slot]); }
         else { memset(proj_bank_slot[slot], 0, sizeof proj_bank_slot[slot]); proj_bound(&proj_scratch); proj_pack(&proj_slot[slot], &proj_scratch); }
     }
@@ -652,9 +652,11 @@ static int proj_write_slot(uint32_t slot, const uint8_t *raw, uint32_t len)
     proj_space();
 #endif
 #if !defined(FM1_IRQ_TARGET)
-    memset(proj_bank_slot[slot], 0, sizeof proj_bank_slot[slot]);
-    memset(&proj_slot[slot], 0, sizeof proj_slot[slot]);
-    if (len) { memcpy(proj_bank_slot[slot], raw, len); memcpy(&proj_slot[slot], raw + 8u, sizeof proj_slot[slot]); }
+    if (slot < 4u) {                             /* (the host mirrors hold slots 1..4) */
+        memset(proj_bank_slot[slot], 0, sizeof proj_bank_slot[slot]);
+        memset(&proj_slot[slot], 0, sizeof proj_slot[slot]);
+        if (len) { memcpy(proj_bank_slot[slot], raw, len); memcpy(&proj_slot[slot], raw + 8u, sizeof proj_slot[slot]); }
+    }
 #endif
     proj_meta[slot].used = len != 0;
     proj_meta[slot].old = 0;
@@ -673,8 +675,10 @@ static int proj_publish_slot(uint32_t slot,st_stream_t *w)
     slot %= PROJ_SLOTS;
     proj_space();
 #if !defined(FM1_IRQ_TARGET)
-    if(pj_image(w->obj,w->head.slot,proj_bank_slot[slot]))return 2;   /* (the record as read, not as stored) */
-    memcpy(&proj_slot[slot],proj_bank_slot[slot]+8u,sizeof proj_slot[slot]);
+    if(slot<4u){                                 /* (the host mirrors hold slots 1..4) */
+        if(pj_image(w->obj,w->head.slot,proj_bank_slot[slot]))return 2;   /* (the record as read, not as stored) */
+        memcpy(&proj_slot[slot],proj_bank_slot[slot]+8u,sizeof proj_slot[slot]);
+    }
 #endif
     proj_meta[slot].used=1;proj_meta[slot].old=0;
     proj_saved_hash[slot]=proj_source_hash;
@@ -865,20 +869,24 @@ static int project_name(uint32_t slot, char *b)
     return 1;
 }
 
-/* a stored project renamed in place (nothing else of it changes; the music playing is not touched, but the slot
- * it was loaded from / saved to: its name is the new one, the next SAVE's prefill): 0 done, 1 refused (playing,
- * an empty slot), 2 failed (the slot as it was) */
-static int project_rename(uint32_t slot, const char *name)
+/* a stored project written to slot `to` (nothing else of it changes), named `name` (0: its own name). to = from renames
+ * it in place: the music playing is not touched, but the slot it was loaded from / saved to: its name is the new one,
+ * the next SAVE's prefill. Another slot gets a copy (the editor's duplicate): the music no longer is that slot's.
+ * 0 done, 1 refused (playing, an empty slot), 2 failed (the slot as it was) */
+static int project_copy(uint32_t from, uint32_t to, const char *name)
 {
     project_t *p = &proj_scratch;
+    uint32_t slot = to;
     if (transport_busy()) {
         ui_message("STOP TO SAVE");
         return 1;
     }
-    int n = proj_read_slot(slot);
+    int n = proj_read_slot(from);
     if (!n) { ui_message("EMPTY SLOT"); return 1; }
-    memset(p->name, 0, sizeof p->name);
-    memcpy(p->name, name, str_len(name) < PROJ_NAME_LEN ? str_len(name) : PROJ_NAME_LEN);
+    if (name) {
+        memset(p->name, 0, sizeof p->name);
+        memcpy(p->name, name, str_len(name) < PROJ_NAME_LEN ? str_len(name) : PROJ_NAME_LEN);
+    }
     p->sum = proj_sum(p);
 #if MELODEE_FLASH
     if(n==BANK_STORE_SIZE)memcpy(proj_image_tail()+bank_motion_off()-BANK_ACTIVE_OFF,bank_import_tags,sizeof bank_import_tags);
@@ -899,14 +907,17 @@ static int project_rename(uint32_t slot, const char *name)
     }
     if (proj_write_slot(slot, proj_wire_u.raw, BANK_STORE_SIZE)) { ui_message("SAVE ERROR"); return 2; }
 #endif
-    if (proj_cur == slot % PROJ_SLOTS)
-        proj_name_get(proj_name, (const uint8_t *)p->name);
+    if (proj_cur == slot % PROJ_SLOTS) {
+        if (from != to) proj_cur = PROJ_NO_SLOT;
+        else proj_name_get(proj_name, (const uint8_t *)p->name);
+    }
 #if MELODEE_FLASH
-    if (flash_ok) { ui_message("RENAMED"); return 0; }
+    if (flash_ok) { ui_message(from == to ? "RENAMED" : "COPIED"); return 0; }
 #endif
-    ui_message("RENAMED (RAM)");
+    ui_message(from == to ? "RENAMED (RAM)" : "COPIED (RAM)");
     return 0;
 }
+static int project_rename(uint32_t slot, const char *name) { return project_copy(slot, slot, name); }
 
 /* slot -> empty (PROJECT's Erase, after its question): an empty record, read as no project; 0 done */
 static int project_erase(uint32_t slot)

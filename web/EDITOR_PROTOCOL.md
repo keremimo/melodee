@@ -154,7 +154,7 @@ global `G_CLOCK` (id 2, label "CLK") 3 (INT, USB, TRS). `G_MIDI` (id 12) is an e
 | 19 UP_STORE | slot, name | slot, rc. Stores the current sound: engine, parameters, the first 16 sequencer steps as the pattern (TIE steps → flag 4) |
 | 20 UP_LOAD | slot | slot, rc (0 ok, 1 empty/invalid). Applies its sound (not its pattern; the steps stay) |
 | 21 UP_ERASE | slot | slot, rc |
-| 22 WATCH | on (0/1; v4: 3 = also `TRACK_CHANGED`) | on (0/1; v4 firmware: 3 when 3 was asked for). While on, the device pushes cmds 23, 24, 26 (and 32 with bit 1) |
+| 22 WATCH | on (0/1; v4: 3 = also `TRACK_CHANGED`; Studio: bits 2..4, see "Studio session") | on (0/1; v4 firmware: 3 when 3 was asked for; Studio firmware: the bits it knows of those asked for). While on, the device pushes cmds 23, 24, 26 (and 32 with bit 1; 55..57 with bits 3, 4) |
 | 23 CHANGED (push) | — | scope, id, v14 |
 | 24 RELOAD (push) | — | engine, preset, then (v3) the selected track, then preset >> 7 |
 | 25 PING | — | 0 |
@@ -607,7 +607,7 @@ earlier objects restored; the file is still the source.
 | 0 | ok |
 | 1 | invalid: arguments, id, size, offset, count, or an id `BACKUP_PUT` does not take |
 | 2 | validation failed: CRC, length or content at commit (and a runtime object that cannot be packed) |
-| 3 | stop playback first (`LIST` and `PUT` stop it themselves, and answer 3 if it does not stop in 100 ms; `GET` answers 3 while it plays) |
+| 3 | stop playback first (`LIST` and `PUT` stop it themselves, and answer 3 if it does not stop in 100 ms; `GET` answered 3 while it played until the Studio session, which reads while playing) |
 | 4 | flash write failed |
 | 5 | stale: no `LIST` yet, the USB bus was reset, 15 s with no `PUT` request, or a project save / load reused the staging RAM (for `GET`, of id 0 only). Start again with `LIST` / `BACKUP_PUT` begin |
 
@@ -1401,6 +1401,163 @@ commands already follow:
 - **Command families** with their own file answer through `ED_HANDLERS[]` (each returns 1 when the command is
   its own); a new family is one more entry.
 
+## Studio session (commands 39–43, 55–57)
+
+Melodee Studio's session layer (branch F1 `feat/editor-studio-session`): what the firmware supports, all eight
+tracks, the transport, the 32 project slots, the storage pool, meters and the pushes that keep Studio in step. The
+commands only add: every earlier command answers byte for byte as before, except `BACKUP_GET` while playing (below)
+and the bounds of `TRACK_MIX` / `TRACK_PARAM` on tracks 5..8 (their pushes now have a place; before, the shadow
+overran). Code: `firmware/src/editor_session.c` (39–41, 55–57, the WATCH bits), `firmware/src/editor_projects.c`
+(42, 43), `firmware/src/editor_backup.c` (inventory). Tests: `tests/editor_test.c` `studio_session`,
+`tests/backup_test.c` `studio_projects` (32 slots and the pool on simulated flash).
+
+**Finding out.** `INFO` ends with one more tagged block, `53 01 27` ('S', version 1, the `CAPS` command 39). The old
+editor parses INFO's trailer by position and by `findIndex` from offset 25 (`web/editor.html` 622–640); the new block
+comes after all of them and matches none of its searches. Firmware without it never answers 39–43.
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 39 CAPS | — | revision (1), then TLV entries until the F7: tag, length, length value bytes |
+| 40 TRACKS | — (query); 1, track (select); 2, solo lo, solo hi (14-bit mask); 3, track, on 0/1 (arm); 4 (add a track); 5, track (remove it) | op (127: query), rc, then the tracks (below) and the sounds' names |
+| 41 TRANSPORT | — (query); 1 (play); 2, row (play the song from row); 3 (stop); 4, on 0/1 (song loop) | op (127: query), rc, then the transport (below) |
+| 42 PROJECTS | — (status); 0, first, count (list); 1, slot (load); 2, slot (save); 3, slot, name (save as); 4, slot, name (rename); 5, slot, to (duplicate); 6, slot (delete) | op (127: status), rc, the music's slot (0..31, 127 none), then per op (below) |
+| 43 STORAGE | — | rc, sectors u14, free u14, bytes per sector u14, then (rc 0) one owner byte per sector |
+| 55 METERS (push) | — | state, the song's row, NPART, NPART × peak, NTRK, NTRK × step |
+| 56 TRACKS_CHANGED (push) | — | the tracks, as in `TRACKS` (no names) |
+| 57 TRANSPORT_CHANGED (push) | — | the transport, as in `TRANSPORT` |
+
+Requests of the wrong length get a reply with rc 1 (and the state), except `CAPS` and `STORAGE`: any argument gets no
+reply. Slots and tracks count from 0 on the wire (slot 0 = the device's slot 01, track 0 = track 1). A name is 0..12
+printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies end names with 0. Every reply fits one
+1024-byte frame; the longest is `PROJECTS` list with all 32 slots (≤ 600 bytes).
+
+### CAPS (39)
+
+| tag | length | value |
+| --- | --- | --- |
+| `B` (0x42) | 1 | board: 0 FM-1, 1 SMK-37 |
+| `L` (0x4C) | 4 | the longest reply, then the longest request, F0 to F7, 14 bits each: 1024, 640 |
+| `T` (0x54) | 3 | `TRACKS` version 1, NTRK (8), NPART (4: the tracks that sound; 5..8 are MIDI-only) |
+| `X` (0x58) | 1 | `TRANSPORT` version 1 |
+| `P` (0x50) | 3 | `PROJECTS` version 1, slots (32), name length (12) |
+| `G` (0x47) | 1 | `STORAGE` version 1 |
+| `K` (0x4B) | 1 | 1: `BACKUP_LIST 1` (an inventory) and `BACKUP_GET` while playing |
+| `W` (0x57) | 1 | the `WATCH` bits known (31: bits 0..4) |
+| `M` (0x4D) | 2 | `METERS` version 1, milliseconds between pushes (66, ~15 Hz) |
+
+Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
+
+### TRACKS (40)
+
+The tracks after `op, rc` (and the whole of `TRACKS_CHANGED`):
+
+| bytes | field |
+| --- | --- |
+| 1 | NTRK (8) |
+| 1 | the tracks in use, 1..8 (`trk_n`: always from track 1) |
+| 1 | the selected track, 0..7 (the real one, not `TRACK`'s clamped 0..3) |
+| 2 | solo: the tracks that sound alone, 14 bits (bit k = track k + 1; 0 none) |
+| 2 | armed: the track armed for live recording, 14 bits (REC: one at a time) |
+| NTRK × 5 | per track its sound: engine byte, preset (low 7 bits), preset >> 7, the user slot it came from + 1 (14 bits; 0 none) |
+| NTRK × 3 | per track: level v14 (`P_LEVEL`), mute (0/1) |
+| NTRK × string | (the reply, not the push) the sound's name as the device shows it, ≤ 16 characters |
+
+Tracks past the ones in use keep their place and values (a track added later starts fresh). MIDI-only tracks (5..8)
+report engine 21 (MIDI Track) and no audio.
+
+| op | does | rc |
+| --- | --- | --- |
+| — | nothing (query) | 0 |
+| 1 | selects the track, as ALGORITHM does (no `RELOAD` push for it: the editor re-reads) | 1: not in use |
+| 2 | sets the solo mask (bits past the tracks in use are dropped). It is latched in RAM, not saved; a GLO solo key held on the device wins while held; GLO's "all on" key clears it | 0 |
+| 3 | arms (on 1) or disarms (on 0) the track for live recording, as REC: another armed track is disarmed first; armed while playing it waits for the pattern start | 1: not in use, on > 1; 3: arming while the song plays |
+| 4 | adds the next track (Stage's "Add track"): selected, its power-on sound, every pattern empty; no browser opens on the device | 1: eight already |
+| 5 | removes the track (Stage's "Remove track", Studio asks first): the tracks after it move down with everything that is theirs, the solo and armed bits too | 1: not in use or the only one; 2: failed (the project did not fit, nothing changed); 3: stop playback first (removing never stops it) |
+
+### TRANSPORT (41)
+
+The transport after `op, rc` (and the whole of `TRANSPORT_CHANGED`): state (bit 0 playing, bit 1 the song plays or
+is about to, bit 2 counting in, bit 3 a track armed), clock (`G_CLOCK`: 0 INT, 1 USB, 2 TRS), song loop (0/1), the
+song's row, its rows, repeats left of the row, track 1's step (0..63; track 1 clocks the song).
+
+| op | does | rc |
+| --- | --- | --- |
+| — | nothing (query) | 0 |
+| 1 | plays the patterns, as PLAY on Stage (nothing when playing already) | 2: external clock |
+| 2 | plays the song from row (stops first if playing; the row is the song position) | 1: row past the song or the song invalid; 2: external clock; 3: did not stop in 100 ms; 4: the song's sounds could not be prepared |
+| 3 | stops | 2: external clock |
+| 4 | sets the song loop (as SONG's sheet; works on an external clock too) | 1: on > 1; 3: the song plays (STOP TO EDIT) |
+
+Plays and stops wait until the audio interrupt takes them (at most 100 ms), so the reply shows the new state. While
+the FM-1 follows an external clock (CLK USB or TRS) that clock starts and stops it: play, song and stop answer rc 2 and
+change nothing.
+
+### PROJECTS (42)
+
+After `op, rc` and the music's slot (the slot it was loaded from or last saved to; 127 none):
+
+- status (no arguments): dirty (1: the music differs from its slot, or it has no slot and holds notes or a song with
+  events; as NEW SONG's question), then the music's name. Dirty packs the music to compare: a `BACKUP_GET` of id 0 from
+  an earlier `LIST` then answers rc 5, as after a save.
+- list (op 0): first, count, total (14 bits each, total 32), then count slots: slot, state (0 empty, 1 a project,
+  2 a record this firmware does not read: "OLD FORMAT"), stored bytes (3 × 7 bits, low first), name. count is the
+  slots asked for that exist; all 32 fit one reply.
+- every other op: the slot written or loaded, as a list item (duplicate: the slot copied to).
+
+| op | does | rc |
+| --- | --- | --- |
+| 1 | loads the slot | 1: empty or old format; 2: it did not load |
+| 2 | saves the music to the slot, its name kept (replaces what the slot held: Studio keeps a copy first) | 2: failed (STORAGE FULL, PROJECT FULL, a flash error) |
+| 3 | saves the music to the slot with this name ("" no name) | as 2 |
+| 4 | renames the stored project; the music too when the slot is its slot | 1: empty slot; 2: failed |
+| 5 | copies the stored project to slot `to`, its name kept (replaces what `to` held); when `to` is the music's slot, the music no longer has a slot | 1: empty slot; 2: failed |
+| 6 | deletes the slot (when it is the music's slot, the music no longer has one) | 2: failed |
+
+Every op but list and status may write flash or change the music, so it stops the transport first and leaves it
+stopped (a load, rename or duplicate of an empty slot answers rc 1 without stopping it) (Kerem 2026-11-06: Studio's button says "Stops FM-1 playback"); rc 3 if it does not stop within 100 ms. Studio
+asks about unsaved changes itself (the dirty flag) and reads a slot (`BACKUP_GET`) before it overwrites or deletes
+one. The status of an invalid request (rc 1, wrong length, slot ≥ 32, a bad name) changes nothing. Host builds without
+flash have four slots (total 4).
+
+### STORAGE (43)
+
+rc (0 ok, 4: no flash or a read failed), the linear sectors (FM-1 108: 0x93000..0xFEFFF; SMK-37 60), the free ones
+(what a new record may take), the payload bytes a sector holds (4,056), then one byte per sector, lowest address
+first: 0 free, 1..32 project slot 01..32, 33..40 user kit 1..8, 41 another record (the preset banks), 127 not the
+pool's (the update loader's staging, the settings pair, the resource region). A record holding k sectors stores up to
+k × 4,056 bytes; the list's stored bytes tell how many it holds.
+
+### Backup inventory and reads while playing
+
+- `BACKUP_LIST 1` is an inventory: the stored objects (projects 1..32, presets, kits) and the settings, with sizes and
+  CRCs, as `BACKUP_LIST`. It does not stop the transport, does not capture the music and writes no flash. Object 0
+  (the music) is listed with size 0; `GET` of it answers rc 5 until a `BACKUP_LIST` without the flag captures it.
+  `BACKUP_LIST` with any other argument answers rc 1 (as before).
+- `BACKUP_GET` reads while the transport runs (before: rc 3). Stored objects are read from flash in 256-byte pieces,
+  as a project load does; a save cannot happen meanwhile (saves stop the transport).
+
+### WATCH bits 2..4 and the pushes
+
+`WATCH` takes bits 2..4 on top of bits 0 (on) and 1 (`TRACK_CHANGED`), and answers with the bits it knows of those
+asked for (firmware before: 0..1, so `WATCH 31` answers 3 there). The old editor sends 1 or 3 and gets the same
+answer and pushes as before.
+
+| bit | adds |
+| --- | --- |
+| 2 | the eight tracks: `RELOAD` and `STEP_CHANGED` carry the real selected track (0..7, not clamped to 3), `TRACK` reports it too, and `TRACK_CHANGED` follows tracks 5..8 as well |
+| 3 | `TRACKS_CHANGED` (56) when the tracks in use, the selection, solo, armed or a track's sound change on the device (not level or mute: `CHANGED` / `TRACK_CHANGED` carry those), and `TRANSPORT_CHANGED` (57) when the transport changes but its step (play, stop, a song row, a repeat, the loop, the clock) |
+| 4 | `METERS` (55) every 66 ms (~15 Hz) while watching. Studio sets the bit only while Stage or Mixer is open and its tab visible |
+
+A `WATCH` with bits 2..4 while watching only changes the bits: the shadows stay, so no push is lost (a `WATCH` of 0..3,
+or one that starts watching, takes the device's values as known, as before). The editor's own `TRACKS` /
+`TRANSPORT` change pushes nothing. Pushes go out at most four per ~5 ms pass and only into a half-empty SysEx ring
+(`usb.c` 64 packets): 56 is 77 bytes, 57 13, 55 22.
+
+`METERS`: state (as `TRANSPORT`), the song's row, NPART (4), per part its peak since the last `METERS`, NTRK (8), per
+track its step (0..63). A peak is 8 × log2 of the largest |sample| (Q15, after level, solo and mute), 0..127: 120 is
+full scale, each 8 is 6 dB (dBFS ≈ (peak − 120) × 0.75), 0 silence. The device's own meters and `METERS` each get
+every peak (`trk_peak_take`: two readers).
+
 ## Flash ledger (editor commands)
 
 Melodee Studio needs new editor commands (branches F0–F5) in an app body that is nearly full. Every change that
@@ -1433,6 +1590,28 @@ SMK-37's app tail (0x93000..0x9CFFF) has 30,200 B free after `.smkx`.
 
 After F0: FM-1 image 571,576 B, **5,672 B free**; SMK image 572,092 B, **5,156 B free**. Editor code 18,484 B
 (FM-1) / 18,462 B (SMK). RAM unchanged (the new tables are constants in flash).
+
+| F1 `feat/editor-studio-session` | Studio session (see "Studio session"), per command: the full build minus a build without it | **+2,588 B** | **+2,628 B** |
+|---|---|---:|---:|
+| — CAPS 39 | the TLV table, the INFO tag | +48 B | +32 B |
+| — TRACKS 40 | select, solo latch, arm, add, remove | +320 B | +352 B |
+| — TRANSPORT 41 | play, song from row, stop, loop, external-clock refusal | +192 B | +212 B |
+| — PROJECTS 42 | status (dirty), list, load, save, save as, rename, duplicate, delete; empty-slot check before the stop | +572 B | +556 B |
+| — STORAGE 43 | the pool map | +284 B | +292 B |
+| — pushes 55–57 | TRACKS_CHANGED, TRANSPORT_CHANGED, METERS | +404 B | +336 B |
+| — shared | the TRACKS / TRANSPORT bodies the pushes reuse, WATCH bits 2..4, eight-track TRACK_CHANGED, `BACKUP_LIST 1` and `BACKUP_GET` while playing, `project_copy` (rename and duplicate), the two-reader meters, the solo latch, two handler entries | +768 B | +848 B |
+
+After F1: FM-1 image 574,164 B, **3,084 B free**; SMK image 574,720 B, **2,528 B free**. RAM .data+.bss +128 B
+(FM-1, 95,432 of 98,304) / +80 B (SMK, 95,960): the WATCH bits and signatures, eight tracks' TRACK_CHANGED shadows,
+the editor's meter peaks. Within the F1 estimate (2.5–3.5 KB); F2..F4 (est. 4–7 KB) do not fit what is left without
+further room.
+
+How F1 was checked: `tests/run_tests.sh` once (all green but `CPU live takes`, a load-timing flake: its input
+lateness 5.1 ms over a 3 ms limit under the parallel load; alone it passes), `editor_test` `studio_session` and
+`backup_test` `studio_projects`, and F0's differential harness against nightly c273b78e's `editor*.c`: 200,000 random
+and shaped requests (4 seeds), every reply and the state after it identical, leaving out only what F1 changes on
+purpose (commands 39–43 and 55–57, INFO's trailer, WATCH bits 2..4, `BACKUP_LIST 1`, `BACKUP_GET` while playing,
+`TRACK_MIX` / `TRACK_PARAM` writes on tracks 5..8).
 
 How F0 was checked: `tests/run_tests.sh` (editor_test, backup_test, the old editor's `web/test_web.mjs`), and a
 differential run of the old and new `editor*.c` on the host: 200,000 random and well-formed requests to every

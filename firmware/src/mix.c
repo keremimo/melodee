@@ -369,3 +369,18 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
     void (*volatile run)(int32_t *,uint32_t)=master_samples;
     AP_START(output_start);run(out,n);AP_END(AP_OUTPUT,output_start);
 }
+
+/* A track's meter has two readers (0 the screen's meters, 1 the editor's METERS push): each takes the peak (|sample|,
+ * Q15, after level, solo and mute) since its own last read. Main loop only */
+static int32_t peak_seen[2][NTRK];
+static int32_t trk_peak_take(uint32_t k, uint32_t who)
+{
+    int32_t p = trk[k].peak, r;
+    trk[k].peak = 0;
+    for (uint32_t c = 0; c < 2u; c++)
+        if (p > peak_seen[c][k])
+            peak_seen[c][k] = p;
+    r = peak_seen[who][k];
+    peak_seen[who][k] = 0;
+    return r;
+}

@@ -19,6 +19,8 @@ enum { ED_INFO = 1, ED_GET, ED_SET, ED_DUMP, ED_DESC, ED_STEP_GET, ED_STEP_SET, 
        ED_TRACK, ED_TRACK_MIX, ED_TRACK_DUMP, ED_TRACK_STEP,                    /* v3: tracks */
        ED_TRACK_PARAM, ED_TRACK_CHANGED, ED_SONG,
        ED_UI_STATE, ED_UI_SET, ED_UI_PALETTES, ED_FAV_GET, ED_FAV_SET,
+       ED_CAPS, ED_TRACKS, ED_TRANSPORT,                                       /* Studio (editor_session.c; 42, 43: editor_projects.c) */
+       ED_METERS = 55, ED_TRACKS_CHANGED, ED_TRANSPORT_CHANGED,                /* .. its pushes */
        ED_MOTION = 64, ED_BACKUP_LIST, ED_BACKUP_GET, ED_BACKUP_PUT,                               /* v6: song chain */
        ED_AUDIO_STATS = 72, ED_PATTERN, ED_BANK_SONG };                                       /* USB audio diagnostics (68..71: FM6, editor_fm6.c) */
 #if MELODEE_CORE1_TEST && MELODEE_DUAL_CORE
@@ -50,13 +52,6 @@ static void ed_b(uint32_t v)
 static void ed_v(int32_t v)
 {
     ed_u14(clamp(v, -8192, 8191) + 8192);
-}
-static void ed_str(const char *s, uint32_t max)   /* ASCII, 0-terminated */
-{
-    uint32_t i;
-    for (i = 0; s && s[i] && i < max; i++)
-        ed_b((uint8_t)s[i] & 0x7Fu);
-    ed_b(0);
 }
 static void ed_xyv(uint32_t x, uint32_t y, int32_t v)  /* two bytes and a value: GET / SET / CHANGED / TRACK_PARAM */
 {
@@ -110,12 +105,13 @@ static void ed_sound(const track_t *t)                   /* a track's engine and
 /* v4: the parameters of the tracks that are not selected which TRACK_CHANGED follows (the mixer) */
 static const uint8_t ED_TIDS[3] = {P_LEVEL, P_PAN, P_MUTE};
 #define ED_TRK NPART                                   /* the tracks the protocol lists (the web editor's four) */
-#define ED_NT (ED_TRK * 3u)
-/* the selected track as the protocol lists the tracks: one of the MIDI-only ones (5..8) in the last place */
-static uint32_t ed_sel(void) { return song.sel < ED_TRK ? song.sel : ED_TRK - 1u; }
+#define ED_NT (NTRK * 3u)                              /* (TRACK_MIX / TRACK_PARAM reach all eight) */
 static struct {
     uint8_t on, eng, preset, sel;
     uint8_t v4;                                          /* WATCH bit 1: TRACK_CHANGED pushes too */
+    uint8_t bits;                                        /* the WATCH bits known (2: eight tracks, 3: TRACKS / TRANSPORT
+                                                          * pushes, 4: METERS), 0 when not watching */
+    uint32_t tsig, xsig, m_ms;                           /* (editor_session.c: what TRACKS / TRANSPORT last said) */
     uint32_t pos, last_ms, run_ms, resets;
     int16_t v[ED_NV];                                    /* TSEL->p[], then song.g[] */
     uint16_t t[ED_NV];                                   /* ms (low 16 bits) of the last push */
@@ -124,6 +120,10 @@ static struct {
     uint16_t tt[ED_NT];
     uint32_t tpos, pattern_gen;
 } ed_w;
+/* the selected track as the protocol lists the tracks: one of the MIDI-only ones (5..8) in the last place, unless the
+ * editor watches all eight (WATCH bit 2) */
+static uint32_t ed_sel(void) { return song.sel < ED_TRK || (ed_w.bits & 4u) ? song.sel : ED_TRK - 1u; }
+static uint32_t ed_session_push(uint32_t n, uint32_t now);   /* editor_session.c */
 
 static int16_t *ed_val(uint32_t i)
 {
@@ -211,8 +211,9 @@ static void ed_sync(void)                                /* main loop */
         n++;
         ed_w.pos = k + 1u;
     }
-    for (i = 0; ed_w.v4 && i < ED_NT && n < ED_PUSH_MAX; i++) {   /* v4: the other tracks' mix */
-        uint32_t k = (ed_w.tpos + i) % ED_NT, tr = k / 3u, id = ED_TIDS[k % 3u];
+    uint32_t nt = (ed_w.bits & 4u ? NTRK : ED_TRK) * 3u;
+    for (i = 0; ed_w.v4 && i < nt && n < ED_PUSH_MAX; i++) {   /* v4: the other tracks' mix */
+        uint32_t k = (ed_w.tpos + i) % nt, tr = k / 3u, id = ED_TIDS[k % 3u];
         int16_t v = trk[tr].p[id];
         if (tr == song.sel || v == ed_w.tv[k] || (uint16_t)(now - ed_w.tt[k]) < 20u)
             continue;                                    /* (the selected track: CHANGED above) */
@@ -226,6 +227,7 @@ static void ed_sync(void)                                /* main loop */
         n++;
         ed_w.tpos = k + 1u;
     }
+    ed_session_push(n, now);
 }
 
 /* descriptor of parameter id of track t: the engine parameters of the engine it asked for
@@ -322,6 +324,8 @@ static int ed_flash_stop(void)
 #include "editor_library.c"
 #include "editor_prophet.c"
 #include "editor_cpu_lab.h"
+#include "editor_session.c"
+#include "editor_projects.c"
 
 static void ed_motion_reply(uint32_t k, uint32_t rc)
 {
@@ -382,6 +386,7 @@ static int (*const ED_HANDLERS[])(uint32_t cmd, const uint8_t *a, uint32_t n) = 
     ed_res_handle,
 #endif
     ed_ui_handle, ed_backup_handle, ed_fm6_handle, ed_cz_handle, ed_library_handle, ed_native_handle,
+    ed_session_handle, ed_projects_handle,
 };
 static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0 and F7 */
 {
@@ -749,7 +754,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             0x43, 1, CZ_BYTES & 127u, CZ_BYTES >> 7, 0, 0,          /* old CZ bank controls retired */
             0x35, 1, ENGI_PROPHET, USER_GENERAL, USER_NATIVE_FM, USER_NATIVE_CZ, USER_NATIVE_P5, 0, 1, /* legacy native clients see their addressable prefix */
             0x4e, 1, 64, 0, 0, 1,                                   /* legacy command 78 addressable prefixes */
-            0x55, 1, UP_SLOTS & 127u, UP_SLOTS >> 7 };              /* shared library, command 80 */
+            0x55, 1, UP_SLOTS & 127u, UP_SLOTS >> 7,                /* shared library, command 80 */
+            0x53, 1, ED_CAPS };                                     /* Studio: CAPS (39) says what else */
         ed_str("MELODEE " MELODEE_VERSION, 24);
         ed_bytes(info, 5u);
         for (i = 0; i < NENGINES; i++)
@@ -973,14 +979,23 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_b(a[0]);
         ed_b(a[0] >= 128u ? 1u : ed_flash_stop() || up_put(a[0], 0) ? 2u : 0u);
         break;
-    case ED_WATCH:                                         /* on -> on */
+    case ED_WATCH: {                                       /* on -> on */
+        uint32_t was = ed_w.on ? ed_w.bits : 0u;          /* (3 s without a request: not watching) */
         ed_w.on = a[0] & 1u;
         ed_w.v4 = (uint8_t)(ed_w.on && (a[0] & 2u));     /* v4: also TRACK_CHANGED; the reply says it is known */
+        ed_w.bits = (uint8_t)(ed_w.on ? a[0] & 31u : 0u); /* Studio: bits 2..4 (editor_session.c) */
         ed_w.resets = usb.resets;
-        if (ed_w.on)
+        if (ed_w.on && (!(was & 1u) || a[0] < 4u)) {     /* (Studio's WATCH while watching: no push is lost) */
             ed_shadow();
-        ed_b(ed_w.on | ed_w.v4 << 1);
+            ed_w.tsig = ed_tracks_body(0);                 /* (what the pushes compare with; then the reply) */
+            ed_w.xsig = ed_tp_body();
+            ed_begin(ED_WATCH);
+        }
+        if (ed_w.bits & ~was & 16u)
+            memset(peak_seen[1], 0, sizeof peak_seen[1]);   /* METERS from now on */
+        ed_b(ed_w.bits);
         break;
+    }
     case ED_PING:
         ed_b(0);
         break;

@@ -30,6 +30,7 @@ static void fm1_wdt_feed(void)
 {
     fm1_ms++;
     if (host_progress && transport_req == 2u) { seq_stop(); transport_req = 0; }
+    else if (host_progress && transport_req == 1u) events_block(1);   /* (TRANSPORT play waits for its start) */
 }
 /* Target cli/sti do not nest: an inner pair reopens the outer section. */
 static uint32_t host_irq_masked, host_irq_nested;
@@ -44,6 +45,11 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #include "../firmware/src/panel.c"
 #include "../firmware/src/ui.c"
 static void panel_setup(void) {}
+static void sound_name(const track_t *t, char *b)        /* (ui_draw.c's, not built here: the preset's name) */
+{
+    const engine_t *e = ENGINES[t->eng_req % NENGINES];
+    str_cpy(b, e->npresets ? eng_preset(e, t->preset % e->npresets)->name : e->name, 16);
+}
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
 
@@ -121,8 +127,8 @@ static int preferences(void)
     uint8_t a[4] = {0, 2, 0, 0};
     reset();
     uint32_t n = request(ED_INFO, a, 0);
-    const uint8_t caps[]={0,0x55,1,121,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,4,NPAT,CHAIN_ROWS,0x46,1,FM6_NFAC,0,0x43,1,16,1,0,0,0x35,1,19,16,17,18,20,0,1,0x4e,1,64,0,0,1,0x55,1,0,3};
-    bad+=check("INFO preserves existing IDs and advertises the shared 384-slot library",ED_SONG==33&&ED_FAV_SET==38&&n>sizeof caps&&!memcmp(host_wire+n-sizeof caps-1,caps,sizeof caps));
+    const uint8_t caps[]={0,0x55,1,121,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,4,NPAT,CHAIN_ROWS,0x46,1,FM6_NFAC,0,0x43,1,16,1,0,0,0x35,1,19,16,17,18,20,0,1,0x4e,1,64,0,0,1,0x55,1,0,3,0x53,1,39};
+    bad+=check("INFO preserves existing IDs, the shared 384-slot library, then Studio's tag",ED_SONG==33&&ED_FAV_SET==38&&n>sizeof caps&&!memcmp(host_wire+n-sizeof caps-1,caps,sizeof caps));
     request(ED_UI_SET, a, 2);
     bad += check("UI_SET updates the actual palette and reports RAM-only saving",
         host_wire[5] == 3 && settings.palette == 2 && T_BG == UI_PALETTES[2].bg);
@@ -748,10 +754,181 @@ static int midi_track_protocol(void)
                  TSEL->p[P_FXTYPE] == FX_OFF && !TSEL->p[P_FXSEND]);
     return bad;
 }
+/* the pushes one ed_sync pass sends (fm1_ms moved past its 5 ms pace): the offset of the first frame of cmd, or 0 */
+static uint32_t pushed(uint32_t cmd, uint32_t ms)
+{
+    uint32_t i;
+    fm1_ms += ms; ed_w.last_ms = fm1_ms;
+    host_wire_n = 0; ed_sync(); host_drain();
+    for (i = 0; i + 4u < host_wire_n; i++)
+        if (host_wire[i] == 0xF0 && host_wire[i + 1] == ED_HDR0 && host_wire[i + 4] == cmd)
+            return i + 5u;
+    return 0;
+}
+/* Melodee Studio's session (F1): CAPS, TRACKS, TRANSPORT, PROJECTS, STORAGE, WATCH bits, METERS, backup inventory */
+static int studio_session(void)
+{
+    int bad = 0;
+    uint8_t a[16] = {0};
+    uint32_t n, i;
+    reset();
+    n = request(ED_CAPS, a, 0);
+    bad += check("CAPS: revision 1, then TLVs (TRACKS v1, 8 places, 4 parts)", n > 8u && host_wire[5] == 1 &&
+                 host_wire[6] == 'B' && host_wire[9] == 'L' && host_wire[15] == 'T' && host_wire[17] == 1 && host_wire[18] == NTRK && host_wire[19] == NPART);
+    bad += check("CAPS with an argument: no reply", !request(ED_CAPS, a, 1));
+    n = request(ED_TRACKS, a, 0);
+    bad += check("TRACKS: 127, rc 0, eight places, four in use, the names", host_wire[5] == 127 && !host_wire[6] && host_wire[7] == NTRK &&
+                 host_wire[8] == 4 && !host_wire[9] && n > 5u + 2u + 7u + NTRK * 8u + NTRK + 1u);
+    for (i = 0; i < 4u; i++) { a[0] = 4; request(ED_TRACKS, a, 1); }
+    bad += check("TRACKS add x4: eight tracks, the last one selected", trk_n() == NTRK && song.sel == NTRK - 1u && host_wire[8] == NTRK && host_wire[9] == NTRK - 1u);
+    bad += check("TRACKS add past eight: rc 1", request(ED_TRACKS, a, 1) && host_wire[6] == 1 && trk_n() == NTRK);
+    a[0] = 1; a[1] = 6; request(ED_TRACKS, a, 2);
+    bad += check("TRACKS selects track 7 (a MIDI-only one)", !host_wire[6] && song.sel == 6 && host_wire[9] == 6);
+    request(ED_TRACK, a, 0);
+    bad += check("TRACK (27) still lists four, track 7 in the last place", host_wire[5] == ED_TRK - 1u && host_wire[6] == ED_TRK);
+    a[0] = 7; request(ED_WATCH, a, 1);
+    bad += check("WATCH 7: the reply says bits 0..2 are known", host_wire[5] == 7);
+    request(ED_TRACK, a, 0);
+    bad += check("WATCH bit 2: TRACK reports the real selection", host_wire[5] == 6);
+    a[0] = 3; request(ED_WATCH, a, 1);
+    bad += check("WATCH 3 as the old editor: 3 back, selection clamped again", host_wire[5] == 3 && (request(ED_TRACK, a, 0), host_wire[5] == ED_TRK - 1u));
+    a[0] = 2; a[1] = 0x45; a[2] = 1; request(ED_TRACKS, a, 3);
+    bad += check("TRACKS solo mask: tracks 1, 3, 7 and 8 (14 bits)", !host_wire[6] && track_solo == 0xC5 && track_solo_latch == 0xC5 &&
+                 host_wire[10] == 0x45 && host_wire[11] == 1);
+    a[0] = 3; a[1] = 1; a[2] = 1; request(ED_TRACKS, a, 3);
+    bad += check("TRACKS arms track 2 (latched, as REC)", !host_wire[6] && song.rec == 2 && (song.rec_latch & 2));
+    a[1] = 2; request(ED_TRACKS, a, 3);
+    bad += check("TRACKS arms track 3: one armed at a time", !host_wire[6] && song.rec == 4 && host_wire[12] == 4);
+    a[2] = 0; request(ED_TRACKS, a, 3);
+    bad += check("TRACKS disarms it", !host_wire[6] && !song.rec);
+    chain.armed = 1; a[2] = 1; request(ED_TRACKS, a, 3);
+    bad += check("TRACKS arm while the song plays: rc 3", host_wire[6] == 3 && !song.rec);
+    chain.armed = 0;
+    a[0] = 5; a[1] = 3; song.playing = 1; request(ED_TRACKS, a, 2);
+    bad += check("TRACKS remove while playing: rc 3, nothing removed", host_wire[6] == 3 && trk_n() == NTRK);
+    song.playing = 0; request(ED_TRACKS, a, 2);
+    bad += check("TRACKS removes track 4: seven left, the solo bits follow", !host_wire[6] && trk_n() == NTRK - 1u && track_solo_latch == 0x65);
+    a[0] = 1; request(ED_TRACKS, a, 3);
+    bad += check("TRACKS select with a stray byte: rc 1", host_wire[6] == 1);
+    a[0] = 9; request(ED_TRACKS, a, 1);
+    bad += check("TRACKS unknown op: rc 1", host_wire[6] == 1);
+
+    reset();
+    n = request(ED_TRANSPORT, a, 0);
+    bad += check("TRANSPORT: stopped, CLK INT, 13 bytes", n == 15u && host_wire[5] == 127 && !host_wire[6] && !host_wire[7] && !host_wire[8]);
+    a[0] = 1; request(ED_TRANSPORT, a, 1);
+    bad += check("TRANSPORT play: playing in the reply", !host_wire[6] && (host_wire[7] & 1) && song.playing && !transport_req);
+    a[0] = 3; request(ED_TRANSPORT, a, 1);
+    bad += check("TRANSPORT stop", !host_wire[6] && !(host_wire[7] & 1) && !song.playing);
+    song.g[G_CLOCK] = 1; a[0] = 1; request(ED_TRANSPORT, a, 1);
+    bad += check("TRANSPORT play on CLK USB: rc 2, nothing starts", host_wire[6] == 2 && host_wire[8] == 1 && !transport_req && !song.playing);
+    a[0] = 4; a[1] = 1; request(ED_TRANSPORT, a, 2);
+    bad += check("TRANSPORT song loop on (allowed on an external clock)", !host_wire[6] && host_wire[9] == 1 && chain_config.rsv[CHAIN_LOOP]);
+    song.g[G_CLOCK] = 0;
+    const uint8_t chain1[] = {1, 1, 0, 2};
+    request(ED_SONG, chain1, sizeof chain1);
+    a[0] = 2; a[1] = 1; request(ED_TRANSPORT, a, 2);
+    bad += check("TRANSPORT song from a row past its end: rc 1", host_wire[6] == 1 && !chain_busy());
+    a[1] = 0; request(ED_TRANSPORT, a, 2);
+    bad += check("TRANSPORT plays the song from row 1", !host_wire[6] && (host_wire[7] & 2) && host_wire[11] == 1);
+    a[0] = 4; a[1] = 0; request(ED_TRANSPORT, a, 2);
+    bad += check("TRANSPORT loop while the song plays: rc 3", host_wire[6] == 3);
+    a[1] = 2; request(ED_TRANSPORT, a, 2);
+    bad += check("TRANSPORT loop 2: rc 1", host_wire[6] == 1);
+    a[0] = 3; request(ED_TRANSPORT, a, 1);
+
+    reset();
+    a[0] = 9; request(ED_WATCH, a, 1);                      /* on + TRACKS / TRANSPORT pushes */
+    bad += check("WATCH 9: known", host_wire[5] == 9);
+    bad += check("nothing changed: no TRACKS_CHANGED", !pushed(ED_TRACKS_CHANGED, 10));
+    track_select(2);
+    bad += check("a selection on the device: RELOAD first", pushed(ED_RELOAD, 10));
+    i = pushed(ED_TRACKS_CHANGED, 10);                  /* (the next pass) */
+    bad += check("a selection on the device: TRACKS_CHANGED (no names)", i && host_wire[i] == NTRK && host_wire[i + 2] == 2 &&
+                 host_wire[i + 7u + NTRK * 8u] == 0xF7);
+    a[0] = 1; a[1] = 1; request(ED_TRACKS, a, 2);
+    bad += check("the editor's own TRACKS select: no TRACKS_CHANGED", !pushed(ED_TRACKS_CHANGED, 10));
+    transport_req = 1; events_block(1);
+    i = pushed(ED_TRANSPORT_CHANGED, 10);
+    bad += check("PLAY on the device: TRANSPORT_CHANGED, playing", i && (host_wire[i] & 1));
+    transport_req = 2; events_block(1);
+    a[0] = 25; request(ED_WATCH, a, 1);                     /* .. and METERS */
+    bad += check("WATCH 25 while watching: no push lost (the change still goes out)", host_wire[5] == 25 && pushed(ED_TRANSPORT_CHANGED, 10));
+    trk[0].peak = 32767; trk[1].peak = 64;
+    i = pushed(ED_METERS, 70);
+    bad += check("METERS: 8 log2 peaks (32767: 119, 64: 48), every track's step", i && host_wire[i + 2] == NPART && host_wire[i + 3] == 119 &&
+                 host_wire[i + 4] == 48 && !host_wire[i + 5] && host_wire[i + 7] == NTRK && host_wire[i + 8u + NTRK] == 0xF7);
+    bad += check("the screen's meter still gets the peak the editor took", trk_peak_take(0, 0) == 32767 && !trk_peak_take(0, 1));
+    bad += check("METERS paced (~15 Hz): none 10 ms later", !pushed(ED_METERS, 10));
+    a[0] = 0; request(ED_WATCH, a, 1);
+    bad += check("WATCH 0: no METERS", !host_wire[5] && !pushed(ED_METERS, 100));
+
+    reset();
+    for (i = NPART; i < NTRK; i++) {                    /* the MIDI-only tracks as melodee_init sets them (a channel) */
+        track_defaults(&trk[i]); set_engine_of(&trk[i], trk_def_engine(i)); apply_preset_to(&trk[i], trk_def_preset(i));
+        trk[i].engine = trk[i].eng_req;
+    }
+    n = request(ED_PROJECTS, a, 0);
+    bad += check("PROJECTS status: no slot, unchanged, no name", n == 11u && host_wire[5] == 127 && !host_wire[6] && host_wire[7] == 127 && !host_wire[8] && !host_wire[9]);
+    a[0] = 3; a[1] = 1; memcpy(a + 2, "MY SONG", 7);
+    n = request(ED_PROJECTS, a, 9);
+    bad += check("PROJECTS save as slot 2 \"MY SONG\": its slot, used, the size, the name", !host_wire[6] && host_wire[7] == 1 && host_wire[8] == 1 &&
+                 host_wire[9] == 1 && (host_wire[10] | host_wire[11] << 7 | host_wire[12] << 14) == BANK_STORE_SIZE && !memcmp(host_wire + 13, "MY SONG", 8));
+    a[0] = 0; a[1] = 0; a[2] = 32;
+    n = request(ED_PROJECTS, a, 3);
+    bad += check("PROJECTS list: first 0, four of four here (no flash), slot 2 named", !host_wire[6] && !host_wire[8] && host_wire[10] == 4 &&
+                 host_wire[12] == 4 && host_wire[14] == 0 && host_wire[15] == 0 && host_wire[20] == 1 && host_wire[21] == 1);
+    a[0] = 4; a[1] = 1; memcpy(a + 2, "RENAMED", 7); request(ED_PROJECTS, a, 9);
+    bad += check("PROJECTS rename slot 2: the music's name too", !host_wire[6] && host_wire[7] == 1 && !memcmp(proj_name, "RENAMED", 8));
+    a[0] = 5; a[1] = 1; a[2] = 3; request(ED_PROJECTS, a, 3);
+    bad += check("PROJECTS duplicate 2 -> 4: a copy, the music still slot 2's", !host_wire[6] && host_wire[7] == 1 && host_wire[8] == 3 &&
+                 host_wire[9] == 1 && project_used(3) && !memcmp(host_wire + 13, "RENAMED", 8));
+    a[1] = 3; a[2] = 1; request(ED_PROJECTS, a, 3);
+    bad += check("PROJECTS duplicate over the music's slot: no slot now", !host_wire[6] && host_wire[7] == 127);
+    a[0] = 6; a[1] = 3; request(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS delete slot 4", !host_wire[6] && !host_wire[9] && !project_used(3));
+    a[0] = 1; a[1] = 1; request(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS load slot 2: the music's slot", !host_wire[6] && host_wire[7] == 1 && proj_cur == 1);
+    a[1] = 2; song.playing = 1; request(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS load an empty slot: rc 1, the music's slot kept, still playing", host_wire[6] == 1 && proj_cur == 1 && song.playing);
+    song.playing = 0;
+    request(ED_PROJECTS, a, 0);
+    bad += check("PROJECTS status after the load: slot 2, unchanged, its name", host_wire[7] == 1 && !host_wire[8] && !memcmp(host_wire + 9, "RENAMED", 8));
+    TSEL->step[0].n = 1; TSEL->step[0].note[0] = 60; TSEL->step[0].time = 0; trk[0].p[P_LEVEL] = 17;
+    request(ED_PROJECTS, a, 0);
+    bad += check("PROJECTS status after an edit: changed", host_wire[8] == 1);
+    a[0] = 3; a[1] = 0; a[2] = 'A'; a[3] = 10; request(ED_PROJECTS, a, 4);
+    bad += check("PROJECTS save as with a control character: rc 1", host_wire[6] == 1 && !project_used(0));
+    memset(a + 2, 'A', 13); request(ED_PROJECTS, a, 15);
+    bad += check("PROJECTS save as with 13 characters: rc 1", host_wire[6] == 1);
+    a[0] = 2; a[1] = 4; request(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS slot 5 without flash: rc 1", host_wire[6] == 1);
+    a[1] = 0; song.playing = 1; host_progress = 0; request(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS save while playing, STOP times out: rc 3, not saved", host_wire[6] == 3 && !project_used(0));
+    host_progress = 1; request(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS save while playing: stopped, then saved; stays stopped", !host_wire[6] && project_used(0) && !song.playing);
+    n = request(ED_STORAGE, a, 0);
+    bad += check("STORAGE without flash: rc 4, no map", n == 13u && host_wire[5] == 4);
+
+    reset();
+    song.playing = 1; a[0] = 1;
+    n = request(ED_BACKUP_LIST, a, 1);
+    bad += check("BACKUP_LIST 1 (inventory) while playing: rc 0, still playing, id 0 empty", !host_wire[6] && song.playing &&
+                 host_wire[8] == 0 && !host_wire[9] && !host_wire[13]);
+    a[0] = 1; memset(a + 1, 0, 5); a[6] = 16; a[7] = 0;
+    request(ED_BACKUP_GET, a, 8);
+    bad += check("BACKUP_GET of the settings while playing: rc 0", host_wire[5] == 1 && !host_wire[6]);
+    a[0] = 0; request(ED_BACKUP_GET, a, 8);
+    bad += check("BACKUP_GET of the music after an inventory: rc 5 (none captured)", host_wire[6] == 5);
+    a[0] = 2; request(ED_BACKUP_LIST, a, 1);
+    bad += check("BACKUP_LIST 2: rc 1", host_wire[6] == 1);
+    wire_release(); proj_cur = PROJ_NO_SLOT; track_solo = track_solo_latch = 0;   /* (a main-loop turn) */
+    return bad;
+}
 int main(void)
 {
     int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
-              native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol();
+              native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol() + studio_session();
     printf("%s\n", bad ? "EDITOR TEST FAILED" : "editor test passed");
     return bad != 0;
 }
