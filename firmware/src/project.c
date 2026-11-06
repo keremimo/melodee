@@ -626,7 +626,7 @@ static int proj_read_slot(uint32_t slot)
 #endif
 #if MELODEE_FLASH && !defined(FM1_IRQ_TARGET)
     if (valid) {
-        if (n == BANK_STORE_SIZE) { pj_read(st_proj_obj(slot), (uint32_t)copy, 0, proj_bank_slot[slot], BANK_STORE_SIZE); memcpy(&proj_slot[slot], proj_bank_slot[slot] + 8u, sizeof proj_slot[slot]); }
+        if (n == BANK_STORE_SIZE) { pj_image(st_proj_obj(slot), (uint32_t)copy, proj_bank_slot[slot]); memcpy(&proj_slot[slot], proj_bank_slot[slot] + 8u, sizeof proj_slot[slot]); }
         else { memset(proj_bank_slot[slot], 0, sizeof proj_bank_slot[slot]); proj_bound(&proj_scratch); proj_pack(&proj_slot[slot], &proj_scratch); }
     }
 #endif
@@ -673,8 +673,7 @@ static int proj_publish_slot(uint32_t slot,st_stream_t *w)
     slot %= PROJ_SLOTS;
     proj_space();
 #if !defined(FM1_IRQ_TARGET)
-    pj.on=!st_read_range(w->obj,w->head.slot,0,&pj.h,PJ_HEAD)&&pj.h.magic==PJ_MAGIC;   /* (the record as read, not as stored) */
-    if(pj_read(w->obj,w->head.slot,0,proj_bank_slot[slot],BANK_STORE_SIZE))return 2;
+    if(pj_image(w->obj,w->head.slot,proj_bank_slot[slot]))return 2;   /* (the record as read, not as stored) */
     memcpy(&proj_slot[slot],proj_bank_slot[slot]+8u,sizeof proj_slot[slot]);
 #endif
     proj_meta[slot].used=1;proj_meta[slot].old=0;

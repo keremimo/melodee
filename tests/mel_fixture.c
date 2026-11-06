@@ -3,7 +3,7 @@
 /* The firmware's side of the .mel project file (web/mel_file.js, tested by web/test_mel.mjs; the firmware itself has
  * no .mel code): the records the web page reads and writes, made and read here by the firmware's own code.
  *   mel_fixture emit DIR    layout.json: where a project record keeps what the page touches; projects as the device
- *                           stores them (.hpj, compact) and whole (.rec); three kits recorded through Record kit's path
+ *                           stores them (.hpj, packed) and whole (.rec); three kits recorded through Record kit's path
  *                           from the firmware's own drum voices; a project naming kits in every place a record can (a
  *                           drum track, a song's and a pattern's own sound, automation), beside values that only look
  *                           like kits, and the same project with its kits renamed here, on the decoded state
@@ -37,12 +37,7 @@ static int ps_stored(uint32_t obj, uint8_t *dst)
     st_hdr_t h;
     int copy = st_current(obj, &h);
     if (copy < 0) return -1;
-    uint8_t on = pj.on;
-    pj_head_t ph = pj.h;
-    pj.on = !st_read_range(obj, (uint32_t)copy, 0, &pj.h, PJ_HEAD) && pj.h.magic == PJ_MAGIC;
-    int rc = pj_read(obj, (uint32_t)copy, 0, dst, BANK_STORE_SIZE);
-    pj.on = on; pj.h = ph;
-    return rc;
+    return pj_image(obj, (uint32_t)copy, dst);
 }
 /* the music as it is now: its record whole, and as a save stores it */
 static uint32_t emit(const char *name)
@@ -258,9 +253,9 @@ static int do_emit(void)
     FILE *f = file("layout.json", "w");
     fprintf(f, "{\"REC_BYTES\":%u,\"KIT_MAX\":%u,\"KIT_FIRST\":%u,\"KIT_COUNT\":%u,\"KIT_HEAD\":%u,\"ENGI_DRUM\":%u,\n",
             (unsigned)BANK_STORE_SIZE, (unsigned)DRK_KIT_MAX, (unsigned)DK_USER0, (unsigned)DK_NUSER, (unsigned)DRK_KIT_BYTES, (unsigned)ENGI_DRUM);
-    fprintf(f, " \"FUN_BYTES\":%u,\"TAIL_AT\":%u,\"FUN_MAGIC\":%u,\"FBKP\":%u,\"FBKQ\":%u,\"KIT_MAGIC\":%u,\"PJ_MAGIC\":%u,\"PROJECTS\":%u,\n",
+    fprintf(f, " \"FUN_BYTES\":%u,\"TAIL_AT\":%u,\"FUN_MAGIC\":%u,\"FBKP\":%u,\"FBKQ\":%u,\"KIT_MAGIC\":%u,\"PJ_MAGIC\":%u,\"PZ_MAGIC\":%u,\"PROJECTS\":%u,\n",
             (unsigned)PROJ_STORE_SIZE, (unsigned)BANK_ACTIVE_OFF, (unsigned)PROJ_MAGIC, (unsigned)BANKP_MAGIC, (unsigned)BANKQ_MAGIC,
-            (unsigned)DRK_KIT_MAGIC, (unsigned)PJ_MAGIC, (unsigned)PROJ_SLOTS);
+            (unsigned)DRK_KIT_MAGIC, (unsigned)PJ_MAGIC, (unsigned)PZ_MAGIC, (unsigned)PROJ_SLOTS);
     fprintf(f, " \"layout\":{\"np\":%u,\"e0\":%u,\"track\":%u,\"tracks\":%u,\"motion\":%u,\"funSum\":%u,\"name\":%u,\"tags\":%u,\"song\":%u,"
             "\"sounds\":%u,\"soundHead\":%u,\"soundBytes\":%u}}\n",
             (unsigned)P_COUNT, (unsigned)P_E0, (unsigned)(P_COUNT + 2u + NSTEP * 8u), 8u + 68u,
@@ -273,6 +268,7 @@ static int do_emit(void)
 
     reset(); project_new_blank();
     printf("mel: %-7s stored in %u bytes\n", "blank", (unsigned)emit("blank"));
+    assert(*(uint32_t *)(void *)big == PZ_MAGIC);
     for (uint32_t i = 0; i < 3u; i++) {
         static uint8_t b[PROJ_STORE_SIZE];
         char name[16];
@@ -331,7 +327,8 @@ static int do_verify(void)
                  put_object(92 + 3, big, n) == 0 && kit_len[3] == n && drk_user[3].n);
     n = load("out-project.bin", big, sizeof big);
     /* (project 3: the host build mirrors the first four slots only; the slot is nothing to the record) */
-    bad += check("mel: the project the page sent is accepted into a free slot", n > PJ_HEAD && put_object(4, big, n) == 0);
+    bad += check("mel: the project the page sent, packed by the page, is accepted into a free slot",
+                 n > PJ_HEAD && *(uint32_t *)(void *)big == PZ_MAGIC && n <= ST_LIN_PAYLOAD_MAX && put_object(4, big, n) == 0);
     load("kits-moved.rec", rec2, sizeof rec2);
     bad += check("mel: .. stored as the firmware's own record of that project", !ps_stored(st_proj_obj(2), rec) && !memcmp(rec, rec2, sizeof rec));
     project_new_blank();
@@ -341,6 +338,13 @@ static int do_verify(void)
     /* the same bytes with one changed: refused, the slot as it was */
     big[n / 2u] ^= 1u;
     bad += check("mel: a damaged project is refused by the device", put_object(5, big, n) != 0 && st_current(st_proj_obj(3), 0) < 0);
+    /* what the page sends firmware of before the packed form: every firmware reads it */
+    n = load("out-project-compact.bin", big, sizeof big);
+    bad += check("mel: the same project in the compact form is accepted too", *(uint32_t *)(void *)big == PJ_MAGIC && put_object(5, big, n) == 0 &&
+                 !ps_stored(st_proj_obj(3), rec) && !memcmp(rec, rec2, sizeof rec));
+    project_new_blank();
+    song.g[G_SLOT] = 4; project_load(3);
+    bad += check("mel: .. and loads as the same music", kit_project_is(12, 9, 15));
     n = load("kit-909.bin", big, sizeof big);
     big[4] ^= 8u;
     bad += check("mel: a damaged kit is refused by the device", put_object(92 + 5, big, n) != 0 && !kit_len[5]);

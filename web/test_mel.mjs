@@ -8,10 +8,9 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deflateRawSync } from "node:zlib";
 import { BACKUP_CMD, bkU32, bkR32, bkPack, bkUnpack, bkCrc } from "./fm1backup.js";
-import { MEL_CONST, MEL_MAX, recLayout, cmEncode, cmDecode, pjCompact, pjExpand, recInfo, recRemap, melPack, melUnpack,
-  melExport, melImport, melProjectId } from "./mel_file.js";
+import { MEL_CONST, MEL_MAX, recLayout, cmEncode, cmDecode, lzPack, lzUnpack, pjPacked, pjCompact, pjExpand, recInfo, recRemap,
+  melPack, melUnpack, melExport, melImport, melProjectId } from "./mel_file.js";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "../build/host/mel");
 if (!existsSync(join(DIR, "layout.json"))) { console.log("mel: no build/host/mel (tests/mel_fixture.c emit)                        skip"); process.exit(0); }
@@ -34,8 +33,31 @@ ok(Object.keys(fw.layout).every((k) => recLayout(fw.layout.np)[k] === fw.layout[
 const projects = ["blank", "fun19", "fun20", "fun21", "sketch", "song", "big", "kits"];
 const kitNames = ["909", "808", "cr78"], kit = Object.fromEntries(kitNames.map((n) => [n, read(`kit-${n}.bin`)]));
 const rec = Object.fromEntries([...projects, "kits-moved", "kits-p", "kits-p-moved"].map((n) => [n, read(`${n}.rec`)]));
-ok(projects.every((n) => same(pjExpand(read(`${n}.hpj`)), rec[n])), "a stored project expands to the firmware's whole record");
-ok(projects.every((n) => same(pjCompact(rec[n]), read(`${n}.hpj`))), "a record compacts to the bytes the firmware stores");
+const SECTOR = 4056, sectors = (n) => Math.ceil(n / SECTOR);   // a pool record's payload a sector (storage.c ST_LIN_PAYLOAD_MAX)
+ok(projects.every((n) => u32(read(`${n}.hpj`), 0) === fw.PZ_MAGIC && same(pjExpand(read(`${n}.hpj`)), rec[n])), "a project as the firmware stores it (packed) expands to its whole record");
+ok(projects.every((n) => same(pjExpand(pjPacked(rec[n])), rec[n]) && pjPacked(rec[n]).length <= read(`${n}.hpj`).length && same(pjExpand(pjCompact(rec[n])), rec[n])),
+  "a record packed by the page (never larger than the firmware's), and in the compact form of before, expands to itself");
+{
+  const lcg = (seed) => () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24;
+  const r = lcg(11), noise = Uint8Array.from({ length: 5000 }, r);
+  let good = true;
+  for (let c = 0; c < 300; c++) {
+    const n = c < 140 ? c : c * 31, d = Uint8Array.from({ length: n }, (_, i) => (c % 4 === 0 ? 0 : c % 4 === 1 ? noise[i % 5000] : c % 4 === 2 ? i % (c % 130 + 1) : noise[(i / 131) | 0] & 3));
+    const e = lzPack(d);
+    good &&= same(lzUnpack(e, n), d) && e.length <= n + Math.ceil(n / 128);
+  }
+  const zeros = lzPack(new Uint8Array(1000));
+  ok(good && zeros.length <= 30, "the device's packing, by the page: every length, zeros, noise, runs and repeats come back");
+  const bad = (f) => says(f, /Damaged/);
+  ok(bad(() => lzUnpack(Uint8Array.of(0x80, 0, 0), 3)) && bad(() => lzUnpack(Uint8Array.of(0, 7, 0x80, 1, 0), 4)) && bad(() => lzUnpack(Uint8Array.of(0, 7, 0x85, 0, 0), 4)) &&
+     bad(() => lzUnpack(Uint8Array.of(3, 1, 2), 4)) && bad(() => lzUnpack(Uint8Array.of(0, 7, 0), 1)) && bad(() => lzUnpack(Uint8Array.of(0, 7), 2)) && bad(() => lzUnpack(Uint8Array.of(0, 7, 0x80, 0), 4)) &&
+     same(lzUnpack(Uint8Array.of(0, 7, 0x80, 0, 0), 4), [7, 7, 7, 7]),
+    "packed bytes that copy from before the block, run past it, end early or late are refused");
+  const p = read("song.hpj"), field = (f, w, v) => { const g = Uint8Array.from(f); put32(g, 16 + 4 * w, v); return g; };
+  ok(bad(() => pjExpand(field(p, 0, u32(p, 16) - 1))) && bad(() => pjExpand(field(p, 0, u32(p, 16) + 1))) && bad(() => pjExpand(field(p, 0, (u32(p, 16) + 0x80000000) >>> 0))) &&
+     bad(() => pjExpand(field(p, 1, 0x7fffffff))) && says(() => recInfo(pjExpand(Uint8Array.from(p, (v, i) => (i === 12 ? v ^ 1 : v)))), /Not a Melodee project record/),
+    "a packed project whose head does not match its blocks, or whose sum is off, is refused");
+}
 ok(same(pjExpand(rec.song), rec.song) && says(() => pjExpand(rec.song.subarray(0, 13212)), /older format/) &&
    says(() => pjExpand(read("song.hpj").subarray(0, 5000)), /Damaged/) && says(() => pjExpand(Uint8Array.of(...read("song.hpj"), 0)), /Damaged/),
   "a raw record is taken as it is; an older form, a short or a long one are refused");
@@ -146,7 +168,8 @@ function device(objs, opt = {}) {
       if (op === 0) { d.staged = { id, size: bkR32(a, 2), crc: bkR32(a, 7), bytes: [] }; return [op, id, opt.refuse?.(id, d.staged.size) || 0]; }
       if (op === 1) { d.staged.bytes.push(...bkUnpack(a.slice(7), Math.min(256, d.staged.size - bkR32(a, 2)))); return [op, id, 0]; }
       if (op === 2) {
-        const s = Uint8Array.from(d.staged.bytes), rc = opt.failCommit === id ? 2 : !s.length || bkCrc(s) === d.staged.crc ? 0 : 2;
+        const s = Uint8Array.from(d.staged.bytes), old = opt.packed === false && s.length > 4 && u32(s, 0) === fw.PZ_MAGIC;
+        const rc = opt.failCommit === id || old ? 2 : !s.length || bkCrc(s) === d.staged.crc ? 0 : 2;
         if (!rc) { if (s.length) d.objs.set(id, s); else d.objs.delete(id); d.log.push(s.length ? id : -id); }
         return [op, id, rc];
       }
@@ -177,10 +200,17 @@ const targetObjs = () => [[2, live], [3, live], [4, live], [5, live], [64, live]
   ok(r.slot === 6 && r.name === "KIT SONG" && same(r.empty, [16]) && r.kits.length === 2 &&
      r.kits.some((k) => k.from === 13 && k.to === 9 && k.reused) && r.kits.some((k) => k.from === 10 && k.to === 12 && !k.reused),
     "import: the kit the device has already (every byte) is used where it is, the other takes the first free slot");
-  ok(same(target.log, [95, 66]) && same(target.objs.get(95), kit["909"]) && same(target.objs.get(66), read("kits-moved.hpj")) && target.objs.size === 14 && mono && steps > 100,
-    "import: one kit written, then the project into the first free one, naming its kits where they are now");
+  ok(same(target.log, [95, 66]) && same(target.objs.get(95), kit["909"]) && u32(target.objs.get(66), 0) === fw.PZ_MAGIC && same(pjExpand(target.objs.get(66)), rec["kits-moved"]) &&
+     sectors(target.objs.get(66).length) === 1 && target.objs.size === 14 && mono && steps > 100,
+    "import: one kit written, then the project (packed, one sector) into the first free one, naming its kits where they are now");
   writeFileSync(join(DIR, "out-kit-12.bin"), target.objs.get(95));
   writeFileSync(join(DIR, "out-project.bin"), target.objs.get(66));
+  const before = device(targetObjs(), { packed: false });   // firmware that reads the compact form only
+  let over = false;
+  const rb = await melImport(before.request, mel, (done, total) => { over ||= done > total; });
+  ok(rb.slot === 6 && same(before.log, [95, "abort 66", 66]) && u32(before.objs.get(66), 0) === fw.PJ_MAGIC && same(pjExpand(before.objs.get(66)), rec["kits-moved"]) && !over,
+    "import: firmware of before the packed form refuses it and gets the compact one");
+  writeFileSync(join(DIR, "out-project-compact.bin"), before.objs.get(66));
   const again = await melImport(target.request, mel);
   ok(again.slot === 7 && again.kits.every((k) => k.reused) && same(target.log, [95, 66, 67]) && same(target.objs.get(67), target.objs.get(66)),
     "import: the same file again writes no kit");
@@ -197,9 +227,9 @@ const targetObjs = () => [[2, live], [3, live], [4, live], [5, live], [64, live]
   const noProject = device([...targetObjs(), ...Array.from({ length: 26 }, (_, i) => [66 + i, live])]);
   ok(await asays(() => melImport(noProject.request, mel), /No free project/) && !noProject.log.length, "import: no free project is said, nothing written");
   const fails = device(targetObjs(), { failCommit: 66 });
-  ok(await asays(() => melImport(fails.request, mel), /failed validation/) && same(fails.log, [95, "abort 66", -95]) && !fails.objs.has(95) && !fails.objs.has(66),
+  ok(await asays(() => melImport(fails.request, mel), /failed validation/) && same(fails.log, [95, "abort 66", "abort 66", -95]) && !fails.objs.has(95) && !fails.objs.has(66),
     "import: a project the device refuses takes its new kit away again");
-  const old = device(targetObjs().filter(([id]) => id < 92), { ids: IDS57 });
+  const old = device(targetObjs().filter(([id]) => id < 92), { ids: IDS57, packed: false });
   ok(await asays(() => melImport(old.request, mel), /no user drum kits/) && !old.log.length && (await melImport(old.request, melPack({ project: rec.song }))).slot === 6,
     "import: firmware of before the user kits takes a project without kits only");
   ok(await asays(() => melImport(device([], { ids: IDS57.slice(0, 29) }).request, mel).catch((e) => { throw new Error(e.message); }), /./), "import: firmware of before the project pool is refused");
@@ -211,17 +241,17 @@ const targetObjs = () => [[2, live], [3, live], [4, live], [5, live], [64, live]
 }
 
 // ------------------------------------------------------------------------------------------- the sizes ---
-console.log("\nmel: sizes in bytes                      on the device   deflate    .mel");
+console.log("\nmel: bytes (pool sectors)        stored before     stored now      .mel file");
 const pad = (v, n) => String(v).padStart(n);
 for (const n of projects) {
-  const d = read(`${n}.hpj`).length, z = deflateRawSync(rec[n], { level: 9 }).length, m = melPack({ project: rec[n], kits: recInfo(rec[n]).kits.map((k) => ({ kit: k, bytes: new Uint8Array(0) })) }).length;
-  console.log(`mel:   project ${n.padEnd(8)} ${pad(d, 30)} ${pad(z, 9)} ${pad(m, 7)}  (${Math.round(m * 100 / d)} %)`);
+  const c = pjCompact(rec[n]).length, d = read(`${n}.hpj`).length, m = melPack({ project: rec[n], kits: recInfo(rec[n]).kits.map((k) => ({ kit: k, bytes: new Uint8Array(0) })) }).length;
+  console.log(`mel:   project ${n.padEnd(8)} ${pad(c, 20)} (${sectors(c)}) ${pad(d, 11)} (${sectors(d)}) ${pad(m, 12)}`);
 }
 for (const n of kitNames) {
-  const z = deflateRawSync(kit[n], { level: 9 }).length, m = cmEncode(kit[n], true).length + 16;
-  console.log(`mel:   kit ${n.padEnd(12)} ${pad(kit[n].length, 30)} ${pad(z, 9)} ${pad(m, 7)}  (${Math.round(m * 100 / kit[n].length)} %)`);
+  const m = cmEncode(kit[n], true).length + 16;
+  console.log(`mel:   kit ${n.padEnd(12)} ${pad(kit[n].length, 20)} (${sectors(kit[n].length)}) ${pad(kit[n].length, 11)} (${sectors(kit[n].length)}) ${pad(m, 12)}`);
 }
-console.log(`mel:   the kit project and its two kits ${pad(stored.length + kit["909"].length + kit["808"].length, 13)} ${pad("", 9)} ${pad(mel.length, 7)}  (${Math.round(mel.length * 100 / (stored.length + kit["909"].length + kit["808"].length))} %)\n`);
+console.log(`mel:   the kit project and its two kits as one file ${pad(mel.length, 37)}\n`);
 
 if (fails) { console.log(`mel: ${fails} FAILED`); process.exit(1); }
 console.log("mel: all checks ok");

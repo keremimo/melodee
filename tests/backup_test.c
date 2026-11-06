@@ -177,13 +177,12 @@ static uint32_t get(uint32_t id, uint32_t off, uint32_t count)
  * of the drawing canvas. Read through the same bounded source as GET: the compact image, its length. */
 static uint32_t runtime_bytes(uint8_t *out)
 {return st_read_range(ed_bk_stage.obj,ed_bk_stage.head.slot,0,out,ed_bk_stage.head.len)?0u:ed_bk_stage.head.len;}
-/* a saved project's current record as the loader reads it (a compact image expanded) */
+/* a saved project's current record as the loader reads it (a packed or compact image expanded) */
 static int flash_image(uint32_t obj,uint8_t *dst)
 {
     st_hdr_t h;int copy=st_current(obj,&h);
     if(copy<0)return -1;
-    pj.on=!st_read_range(obj,(uint32_t)copy,0,&pj.h,PJ_HEAD)&&pj.h.magic==PJ_MAGIC;
-    return pj_read(obj,(uint32_t)copy,0,dst,BANK_STORE_SIZE)?-1:(int)BANK_STORE_SIZE;
+    return pj_image(obj,(uint32_t)copy,dst)?-1:(int)BANK_STORE_SIZE;
 }
 
 static int full_pattern_archive(void)

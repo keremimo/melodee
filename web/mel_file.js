@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // .mel: one project and the user drum kits it plays, in one file. The device never reads this file: it keeps its
-// own records (a project: project_stream.c / pattern_store.c; a kit: drum_real.c KIT1), which this page takes and
-// gives back over the backup protocol (fm1backup.js: ids 2..5 and 64..91 the projects, 92..99 the kits). All of the
-// coding is here, so the firmware carries none of it.
+// own records (a project: project_stream.c / pattern_store.c, stored packed; a kit: drum_real.c KIT1), which this page
+// takes and gives back over the backup protocol (fm1backup.js: ids 2..5 and 64..91 the projects, 92..99 the kits).
+// The file's coding is here, so the firmware carries none of it.
 //
 // The file (little-endian, no padding):
 //    0  4  "MEL\0"
@@ -15,7 +15,7 @@
 //    0  1  type: 1 the project, 2 a kit           1  1  coding: 0 as it is, 1 bytes, 2 kit (below)
 //    2  2  a kit: the KIT value the project names it by (9..16); the project: 0
 //    4  4  stored bytes          8  4  decoded bytes           12  4  CRC-32 of the decoded bytes
-// The project first, once: its record whole (27,904 bytes, the device's compact form expanded). Then the kits the
+// The project first, once: its record whole (27,904 bytes, the device's stored form expanded). Then the kits the
 // project names, ascending: the KIT1 record, or no bytes for a kit that was empty.
 //
 // Codings 1 and 2 are one binary arithmetic coder under a small context-mixing model (integer arithmetic only: every
@@ -207,7 +207,7 @@ export function cmDecode(src, n, kit = false) { const c = new Decoder(src), d = 
 export const REC_BYTES = 27904, KIT_MAX = 28392;
 export const KIT_FIRST = 9, KIT_COUNT = 8;       // KIT 1..8 are the drum engine's E0 values 9..16 (eng_drum.c DK_USER0)
 const FUN_AT = 8, FUN_BYTES = 13212, TAIL_AT = FUN_AT + FUN_BYTES;
-const FUN_MAGIC = 0x46554E49, FBKP = 0x504B4246, FBKQ = 0x514B4246, KIT_MAGIC = 0x3154494B, PJ_MAGIC = 0x314A5048;
+const FUN_MAGIC = 0x46554E49, FBKP = 0x504B4246, FBKQ = 0x514B4246, KIT_MAGIC = 0x3154494B, PJ_MAGIC = 0x314A5048, PZ_MAGIC = 0x324A5048, PZ_RAW = 0x80000000;
 const NPART = 4, NTRK = 8, NPAT = 16, NSTEP = 64, MOTION_MAX = 64, CHAIN_ROWS = 64, CHAIN_OLD_ROWS = 16, CHAIN_OLD_BYTES = 36, FM6_NFN = 16;
 const ENGI_DRUM = 10, NAME_LEN = 12;
 // where things are in a record whose FUN record keeps np parameters a track (its byte 66; E0 is np - 8: common
@@ -228,10 +228,70 @@ const u32 = (b, at) => (b[at] | b[at + 1] << 8 | b[at + 2] << 16 | b[at + 3] << 
 const put32 = (b, at, v) => { b[at] = v; b[at + 1] = v >>> 8; b[at + 2] = v >>> 16; b[at + 3] = v >>> 24; };
 const isKit = (v) => v >= KIT_FIRST && v < KIT_FIRST + KIT_COUNT;
 
-// The device's compact form (project_stream.c HPJ1): a 32-byte head (magic, 27,904, four map words), then the tail's
-// 256-byte pages that are not all zero (its last always), then the first 13,220 bytes' (map bits 64..)
+// The device's packing of a block (dsp.c lz_unpack's format; project_stream.c packs with it): c < 0x80: c + 1 bytes
+// follow as they are; else (c & 0x7F) + 3 bytes copied from d + 1 back, d in the next two bytes
+export function lzUnpack(src, n) {               // -> the block's n bytes; anything that does not add up throws
+  const out = new Uint8Array(n);
+  let at = 0, k = 0;
+  while (k < n) {
+    if (at >= src.length) throw new Error("Damaged project record");
+    let c = src[at++], d = 0;
+    if (c < 0x80) c++;
+    else { if (at + 2 > src.length) throw new Error("Damaged project record"); d = (src[at] | src[at + 1] << 8) + 1; at += 2; c = (c & 0x7F) + 3; }
+    if (d > k || c > n - k || (!d && at + c > src.length)) throw new Error("Damaged project record");
+    for (; c; c--, k++) out[k] = d ? out[k - d] : src[at++];
+  }
+  if (at !== src.length) throw new Error("Damaged project record");
+  return out;
+}
+export function lzPack(d) {                      // the longest run found among the last places its three bytes began,
+  const n = d.length, out = [], head = new Int32Array(1 << 15).fill(-1), prev = new Int32Array(n);   // unless a longer one begins at the next byte
+  const hash = (i) => Math.imul(d[i] | d[i + 1] << 8 | d[i + 2] << 16, 0x9E3779B1) >>> 17;
+  const note = (i) => { if (i + 3 <= n) { const h = hash(i); prev[i] = head[h]; head[h] = i; } };
+  const find = (i) => {
+    let best = 0, from = 0;
+    if (i + 3 <= n) for (let c = head[hash(i)], tries = 256; c >= 0 && tries && i - c <= 65536 && best < 130; c = prev[c], tries--) {
+      let len = 0;
+      while (len < 130 && i + len < n && d[c + len] === d[i + len]) len++;
+      if (len > best) { best = len; from = c; }
+    }
+    return [best, from];
+  };
+  const lits = (end, lit) => { for (; lit; lit -= Math.min(lit, 128)) out.push(Math.min(lit, 128) - 1, ...d.subarray(end - lit, end - lit + Math.min(lit, 128))); };
+  let i = 0, lit = 0;
+  while (i < n) {
+    let [len, from] = find(i);
+    note(i);
+    if (len >= 3 && find(i + 1)[0] > len) len = 0;
+    if (len >= 3) {
+      lits(i, lit); lit = 0;
+      out.push(0x80 | (len - 3), (i - from - 1) & 255, (i - from - 1) >> 8);
+      for (len--, i++; len; len--, i++) note(i);
+    } else { lit++; i++; }
+  }
+  lits(i, lit);
+  return Uint8Array.from(out);
+}
+// A project as the device stores it. Packed (project_stream.c HPJ2, what it writes): a 32-byte head (magic, 27,904,
+// the record's first word, its last (the sum), the two blocks' stored bytes, | PZ_RAW: as it is), the bank tail
+// without its sum, then the FUN record, each packed as above. Compact (HPJ1, what firmware before that wrote and every
+// firmware reads): a 32-byte head (magic, 27,904, four map words), then the tail's 256-byte pages that are not all zero
+// (its last always), then the first 13,220 bytes' (map bits 64..). Raw: the record itself
 const T_PAGES = Math.ceil((REC_BYTES - TAIL_AT) / 256), S_PAGES = Math.ceil(TAIL_AT / 256);
 const regions = [[TAIL_AT, REC_BYTES, 0, T_PAGES], [0, TAIL_AT, 64, S_PAGES]];
+const blocks = [[TAIL_AT, REC_BYTES - 4], [FUN_AT, TAIL_AT]];
+export function pjPacked(rec) {
+  if (rec.length !== REC_BYTES) throw new Error("Not a project record");
+  const out = new Uint8Array(32 + REC_BYTES);
+  let at = 32;
+  put32(out, 0, PZ_MAGIC); put32(out, 4, REC_BYTES); out.set(rec.subarray(0, 4), 8); out.set(rec.subarray(REC_BYTES - 4), 12);
+  blocks.forEach(([from, to], b) => {
+    const packed = lzPack(rec.subarray(from, to)), raw = packed.length >= to - from, bytes = raw ? rec.subarray(from, to) : packed;
+    put32(out, 16 + 4 * b, raw ? (bytes.length + PZ_RAW) >>> 0 : bytes.length);
+    out.set(bytes, at); at += bytes.length;
+  });
+  return out.slice(0, at);
+}
 export function pjCompact(rec) {
   if (rec.length !== REC_BYTES) throw new Error("Not a project record");
   const out = new Uint8Array(32 + REC_BYTES), map = [0, 0, 0, 0];
@@ -246,12 +306,22 @@ export function pjCompact(rec) {
   map.forEach((m, i) => put32(out, 8 + i * 4, m >>> 0));
   return out.slice(0, at);
 }
-export function pjExpand(stored) {               // a stored project object -> its record (a raw record: as it is)
+export function pjExpand(stored) {               // a stored project object -> its record
   if (stored.length === REC_BYTES && u32(stored, 4) === REC_BYTES) return Uint8Array.from(stored);
-  if (stored.length <= 32 || u32(stored, 0) !== PJ_MAGIC || u32(stored, 4) !== REC_BYTES)
+  const magic = stored.length > 32 ? u32(stored, 0) : 0, rec = new Uint8Array(REC_BYTES);
+  if ((magic !== PJ_MAGIC && magic !== PZ_MAGIC) || u32(stored, 4) !== REC_BYTES)
     throw new Error("This project is in an older format. Load it on the device and save it again first.");
-  const rec = new Uint8Array(REC_BYTES);
   let at = 32;
+  if (magic === PZ_MAGIC) {
+    rec.set(stored.subarray(8, 12), 0); put32(rec, 4, REC_BYTES); rec.set(stored.subarray(12, 16), REC_BYTES - 4);
+    blocks.forEach(([from, to], b) => {
+      const field = u32(stored, 16 + 4 * b), raw = field >= PZ_RAW, n = field % PZ_RAW;
+      if (n > stored.length - at || (raw && n !== to - from)) throw new Error("Damaged project record");
+      rec.set(raw ? stored.subarray(at, at + n) : lzUnpack(stored.subarray(at, at + n), to - from), from); at += n;
+    });
+    if (at !== stored.length) throw new Error("Damaged project record");
+    return rec;
+  }
   for (const [from, to, bit, pages] of regions) for (let p = 0; p < pages; p++) {
     const here = u32(stored, 8 + ((bit + p) >> 5) * 4) >>> ((bit + p) & 31) & 1, n = Math.min(to, from + (p + 1) * 256) - (from + p * 256);
     if (!here) continue;
@@ -322,7 +392,7 @@ export function kitCheck(bytes) {                // what any reader can tell of 
 
 // ------------------------------------------------------------------------------------------- the file ---
 const MEL_HEAD = 32, SEC_HEAD = 16, T_PROJECT = 1, T_KIT = 2;
-export const MEL_CONST = { REC_BYTES, KIT_MAX, KIT_FIRST, KIT_COUNT, KIT_HEAD, ENGI_DRUM, FUN_BYTES, TAIL_AT, FUN_MAGIC, FBKP, FBKQ, KIT_MAGIC, PJ_MAGIC };   // (test_mel.mjs: the firmware's)
+export const MEL_CONST = { REC_BYTES, KIT_MAX, KIT_FIRST, KIT_COUNT, KIT_HEAD, ENGI_DRUM, FUN_BYTES, TAIL_AT, FUN_MAGIC, FBKP, FBKQ, KIT_MAGIC, PJ_MAGIC, PZ_MAGIC };   // (test_mel.mjs: the firmware's)
 export const MEL_MAX = MEL_HEAD + (1 + KIT_COUNT) * SEC_HEAD + REC_BYTES + KIT_COUNT * KIT_MAX;
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 // { project: a record, kits: [{ kit: 9..16, bytes: a KIT1 record or none }] } -> the file
@@ -404,7 +474,10 @@ async function getObject(request, o, onProgress = () => {}) {
   return bytes;
 }
 async function putObject(request, id, bytes, onProgress = () => {}) {
-  const put = async (args) => { const a = await ask(request, [BACKUP_CMD.PUT, args]); bkCheck(a[2]); };
+  const put = async (args) => {
+    const a = await ask(request, [BACKUP_CMD.PUT, args]);
+    try { bkCheck(a[2]); } catch (e) { e.rc = a[2]; throw e; }
+  };
   await put([0, id, ...bkU32(bytes.length), ...bkU32(bytes.length ? bkCrc(bytes) : 0)]);
   try {
     for (let off = 0; off < bytes.length; off += 256) {
@@ -461,13 +534,18 @@ export async function melImport(request, file, onProgress = () => {}) {
     const i = slots[0] ? slots.findIndex((s, j) => !s.size && !taken.has(j)) : -1;
     if (i >= 0) { map.set(kit, KIT_FIRST + i); taken.add(i); }
   }
-  const project = pjCompact(recRemap(mel.project, map));
-  const total = project.length + writes.reduce((n, w) => n + w[1].length, 0);
-  let done = 0;
+  const record = recRemap(mel.project, map), project = pjPacked(record), kitBytes = writes.reduce((n, w) => n + w[1].length, 0);
+  let done = 0, total = kitBytes + project.length;
   const step = (n) => onProgress(done += n, total), written = [];
   try {
     for (const [i, bytes] of writes) { await putObject(request, KIT_ID + i, bytes, step); written.push(i); }
-    await putObject(request, projectIds[target], project, step);
+    try { await putObject(request, projectIds[target], project, step); }
+    catch (e) {                                  // firmware before the packed form reads the compact one
+      const compact = pjCompact(record);
+      if (e.rc !== 2) throw e;
+      done = kitBytes; total = kitBytes + compact.length;
+      await putObject(request, projectIds[target], compact, step);
+    }
   } catch (e) {                                  // the kits this file brought go again: nothing is left half there
     for (const i of written) await putObject(request, KIT_ID + i, new Uint8Array(0)).catch(() => {});
     throw e;
