@@ -201,6 +201,9 @@ smk_tests() {                                     # the SMK-37 (SMK37.md): flash
     build ui_test_smk ui_test -DMELODEE_USB_AUDIO=1 -DBOARD_SMK37=1 $FW &&
         step "SMK-37 UI: the keys only play (SEQ held, PATTERNS, the dialog); the pads switch, arm, resize, copy, delete; lights" \
             "$OUT/ui_test_smk"
+    build microtonal_test_smk microtonal_test -O1 -DMELODEE_USB_AUDIO=1 -DBOARD_SMK37=1 $FW &&
+        step "SMK-37 microtonal MIDI OUT: nearest semitones, releases, shared semitones, the outer keys" \
+            "$OUT/microtonal_test_smk"
     build smk_keys_test smk_keys_test &&
         step "SMK-37 velocity keybed: two contacts, bounces, strikes before a full lift, fast repeats, the outer keys' queue, pads, the factory curves, VELOCITY" \
             "$OUT/smk_keys_test"
@@ -391,7 +394,7 @@ fi
 
 if core && [ $TABLES = 1 ]; then
     t "scales: white-key mapping and note lifecycle" scale_test -O2 $FW
-    t "microtonal: catalogue, layouts, note ownership, recordings and rendered pitch" microtonal_test -O2 $FW
+    t "microtonal: catalogue, layouts, note ownership, recordings, rendered pitch and MIDI OUT" microtonal_test -O2 $FW
     t "scale picker: families, favorites, empty lists, shared settings and navigation" scale_picker_test -O1 $FW
     t "scales and tunings: the maqam case, old entries as they were, stored data, SCL's Tuning row" scale_tuning_test -O2 $FW
     t "chord keys: diatonic and fixed chords, voicings, MONO root, releases, recording, ARP, MIDI IN, kits" chord_test $FW

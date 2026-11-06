@@ -21,14 +21,15 @@ one scale period. Bohlen–Pierce repeats at 3:1, and the measured SLENDR period
 DIA3/DIA7 stack every other degree; fixed chord shapes choose the nearest available degrees to
 their semitone intervals. Voicings move notes by whole scale periods.
 
-The existing 0–127 note addresses remain the storage and MIDI identity limit. Microtonal degree
+The existing 0–127 note addresses remain the storage and note identity limit. Microtonal degree
 addresses outside that range are silent. ALL and MPC also leave out pitches outside the conventional
 MIDI pitch range; WHITE clamps acoustic pitch at the endpoints, like the legacy white layout.
-Dense tunings therefore have a narrower accessible register. MIDI OUT sends these degree addresses
-without tuning messages or per-note pitch bends. An external receiver must share the same tuning
-and root mapping. The internal synthesizers use fractional pitch, including FM6 ratio operators;
-FM6 fixed-frequency operators retain their fixed pitch. A4 reference tuning, pitch bend and
-semitone transpose still apply.
+Dense tunings therefore have a narrower accessible register. MIDI OUT sends the semitone nearest
+each pitch, ROOT and TRN included, without tuning messages or per-note pitch bends. It is fixed at
+the press, so a release reaches the same note whatever changed meanwhile. Degrees that share a
+semitone strike it again, and it ends with the last of them. The internal synthesizers use
+fractional pitch, including FM6 ratio operators; FM6 fixed-frequency operators retain their fixed
+pitch. A4 reference tuning, pitch bend and semitone transpose still apply.
 
 MPC Sample banks E, F, G and H play tracks 1, 2, 3 and 4 respectively, on any incoming MIDI channel.
 Each melodic bank starts the same scale layout, with pad 02 on DEG. In MPC mode the octave buttons shift
