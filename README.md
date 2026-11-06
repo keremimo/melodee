@@ -1159,7 +1159,7 @@ examples and Bohlen–Pierce. See the [complete catalogue and playing notes](ass
 **Tunings.** A scale says which notes are used; a tuning says what pitch they have. The **Tuning** row
 in SCL's list sets it for the project, on any 12-tone scale and in every QNT mode: Equal, Just chromatic,
 7-limit just, Pythagorean, Meantone 1/4, 1/3 and 1/6, Werckmeister 3, Kirnberger 3, Vallotti, Young 2,
-Rast, Bayati and Saba (one tuning), Husayni and Sikah. The temperaments stay fixed on C, so each key keeps
+Rast, Bayati and Saba (these two share one tuning), Husayni and Sikah. The temperaments stay fixed on C, so each key keeps
 its colour; the just and maqam tunings are built on ROOT + TRN. A key keeps its note, so note names, chords,
 AUTO and recordings work as on any 12-tone scale, and the octave under the rows shows each key off its line
 by its cents, flat lower. MIDI OUT sends those notes without the tuning. Picking a maqam scale also sets its
