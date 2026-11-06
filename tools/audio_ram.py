@@ -91,7 +91,8 @@ def call_arguments(line, begin):
     raise ValueError('Unterminated LLVM memory intrinsic')
 
 
-def relocate(ir, roots, required_root="fm1_alnk0_irq"):   # fm1-base (platform/tools/ir_pass.py): its render's root
+def relocate(ir, roots, required_root="fm1_alnk0_irq", low=()):   # fm1-base (platform/tools/ir_pass.py): its render's
+    # root, and the resident functions it puts in the low SRAM's DSP section rather than the pool's (its arena)
     functions = {m[2]: m for m in FUNCTION.finditer(ir)}
     selected = set()
     pending = list(roots)
@@ -111,9 +112,13 @@ def relocate(ir, roots, required_root="fm1_alnk0_irq"):   # fm1-base (platform/t
 
     sections = {name: (re.search(r'\bsection "([^"]+)"', m[4]) or [None, ''])[1]
                 for name, m in functions.items()}
+    missing = set(low) - selected
+    if missing:
+        raise ValueError(f'Low-SRAM audio functions not resident: {", ".join(sorted(missing))}')
     for name in selected:
         if not sections[name]:
-            sections[name] = '.audio_libc' if name in {'memcpy', 'memset'} else '.audio_text'
+            sections[name] = ('.audio_libc' if name in {'memcpy', 'memset'} else
+                              '.dsp_text' if name in low else '.audio_text')
         elif sections[name] not in ('.audio_text', '.audio_libc', '.dsp_text', '.ram_text'):
             raise ValueError(f'Unexpected audio section for {name}: {sections[name]}')
     far = {}
