@@ -104,6 +104,11 @@ static uint8_t res_ok;                  /* res.c: installed and this build's; el
 #include "engines.c"             /* dsp.c, the eng_*.c files, the factory patterns */
 #include "params.c"
 #include "mod.c"               /* the modulation matrix, used by voice.c and mix.c */
+#if BOARD_SMK37
+#include "smk_uart_tx.h"         /* TRS MIDI OUT: UART1 TX on PC7 */
+#define SMO_SECTION __attribute__((section(".pool"), aligned(4)))
+#include "smk_midi_out.h"        /* what goes out over USB MIDI, to the TRS jack too (voice.c: midi_track.c; usb.c) */
+#endif
 #include "voice.c"
 #include "mix.c"
 
@@ -112,11 +117,6 @@ static uint8_t res_ok;                  /* res.c: installed and this build's; el
 #define MIDI_TICKS_PER_MS (1000u * FM1_TICKS_PER_US)
 #if MELODEE_BLE
 #include "midi_ble.h"
-#endif
-#if BOARD_SMK37
-#include "smk_uart_tx.h"         /* TRS MIDI OUT: UART1 TX on PC7 */
-#define SMO_SECTION __attribute__((section(".pool"), aligned(4)))
-#include "smk_midi_out.h"        /* what goes out over USB MIDI, to the TRS jack too */
 #endif
 #include "usb.c"
 #if MELODEE_BLE

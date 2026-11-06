@@ -421,7 +421,7 @@ static void out_cleanup(void)
     t->p[P_E0] = 5; midi_track_service(t); out(0x80, 72, 0); no_out();   /* a channel change: on the old channel */
     trk_note_on(t, 84, 90); out(0x94, 72, 90); trk_note_off(t, 84); out(0x84, 72, 0);
     t->p[P_E0] = 1;
-    usb.config = 0; trk_note_on(t, 84, 90); no_out(); assert(!midi_sent_n);   /* a refused press keeps nothing */
+    usb.config = 0; trk_note_on(t, 84, 90); no_out(); assert(!midi_sent_shared(trk_index(t), 72));   /* a refused press keeps nothing (of USB's: the SMK-37's jack took it) */
     usb.config = 1; trk_note_on(t, 84, 90); out(0x90, 72, 90);
     usb.config = 0; t->p[P_ROOT] = 3; trk_note_off(t, 84); no_out();
     usb.config = 1; midi_track_service(t); out(0x80, 72, 0); no_out();   /* a waiting release: the same semitone */
