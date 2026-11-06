@@ -81,7 +81,7 @@ int main(void)
     st_hdr_t target=w.head;
     uint8_t sectors[ST_PROJECT_SECTORS];
     for(uint32_t k=0,n=st_rec_sectors(&target,sectors);k<n;k++){
-        original();fail_erase_off=st_pool_at(sectors[k]);
+        original();fail_erase_off=st_rec_addr(&target,sectors[k]);
         assert(st_stream_begin(&w,OBJ_BANK0,LEN));
         assert(st_load(OBJ_BANK0,readback,LEN)==LEN&&!memcmp(readback,old,LEN));
     }

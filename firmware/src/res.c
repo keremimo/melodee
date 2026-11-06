@@ -15,8 +15,15 @@
 #define FL_RES_LO 0xCB000u
 #define FL_RES_HI 0xE0000u
 #endif
+#ifndef FL_RES_RESERVE
+#define FL_RES_RESERVE 15u
+#endif
 #define RES_BASE FL_RES_LO                            /* FM-1 0xCB000, 21 sectors to 0xDFFFF; SMK-37 0x9F000, 16 sectors */
 #define RES_SECTORS ((FL_RES_HI - FL_RES_LO) / ST_SECTOR)
+/* the window this build keeps (header rsv[0], read by the update loader: it never writes or blanks past the installed
+ * header's window). FM-1: 15 of the 21 sectors, the pool takes the rest (storage.c st_res_end); SMK-37: all 16 */
+#define RES_RESERVE FL_RES_RESERVE
+_Static_assert(RES_RESERVE >= 1u && RES_RESERVE <= RES_SECTORS, "the resource reserve lies in the region");
 #define RES_HEAD 32u
 #define RES_MAGIC 0x3153524Du                       /* MRS1 */
 typedef struct { uint32_t magic, len, crc, rsv[4], hcrc; } res_hdr_t;
@@ -42,14 +49,51 @@ static int res_valid(void)
     return st_crc32(_mres_start, len) == h.crc;      /* the payload as the app reads it */
 }
 static void res_check(void) { res_ok = (uint8_t)res_valid(); }
-/* boot, after st_small_migrate (moved: every preset bank's current record is in the pool). Not installed: the old
- * copies of banks still here go, as begin erases them, since the update loader leaves a region that holds storage
- * records alone (ldr_res); the next install, from any host, writes it */
+/* The installed header's window (boot, before the store is touched): rsv[0] its sectors, 0 the whole region (every
+ * firmware before the bridge); no valid header: the reserve, as the update loader then assumes (ldr_core.c ldr_res).
+ * The pool takes the region's sectors above it only (storage.c st_lin_ok) */
+static uint32_t res_window(void)
+{
+    res_hdr_t h;
+    uint32_t n = RES_RESERVE;
+    if (st_read(RES_BASE, &h, sizeof h)) n = RES_SECTORS;
+    else if (h.magic == RES_MAGIC && h.hcrc == st_crc32(&h, sizeof h - 4u))
+        n = !h.rsv[0] || h.rsv[0] > RES_SECTORS ? RES_SECTORS : h.rsv[0] < RES_RESERVE ? RES_RESERVE : h.rsv[0];
+#if !BOARD_SMK37
+    st_res_end = RES_BASE + n * ST_SECTOR;
+#endif
+    return n;
+}
+/* This build's region under a header from before the bridge (no reserve): the reserve written into the header, its
+ * sector rewritten as it was otherwise (through buf, a sector), so the pool may take the region's tail whatever host
+ * installed the update. A cut leaves no valid header: res_ok 0, and the next install writes the region */
+static void res_reserve_mark(uint8_t *buf)
+{
+    res_hdr_t h;
+    if (!res_ok || RES_HEAD + res_want[1] > RES_RESERVE * ST_SECTOR || st_read(RES_BASE, buf, ST_SECTOR)) return;
+    memcpy(&h, buf, sizeof h);
+    if (h.rsv[0]) return;                              /* (a window already: the bridge's, or a later build's) */
+    res_ok = 0;
+    h.rsv[0] = RES_RESERVE;
+    h.hcrc = st_crc32(&h, sizeof h - 4u);
+    if (st_erase(RES_BASE)) return;
+    for (uint32_t off = RES_HEAD; off < ST_SECTOR;) {          /* the payload, then the commit record last */
+        uint32_t k = off < 256u ? 256u - off : 256u;
+        if (st_prog(RES_BASE + off, buf + off, k)) return;
+        off += k;
+    }
+    if (!st_prog(RES_BASE, &h, sizeof h)) res_check();
+    res_window();
+}
+/* boot, after st_convert (moved: no current record left in the reserve). Not installed: the old copies of banks
+ * still here go, as begin erases them, since the update loader leaves a region that holds storage records alone
+ * (ldr_res); the next install, from any host, writes it */
 static void res_boot(int moved)
 {
     res_check();
+    if (res_ok) res_reserve_mark(wire_take());
     if (res_ok || !moved) return;
-    for (uint32_t s = 0; s < RES_SECTORS; s++) {
+    for (uint32_t s = 0; s < RES_RESERVE; s++) {
         st_hdr_t h;
         uint32_t at = RES_BASE + s * ST_SECTOR;
         if (!st_read(at, &h, sizeof h) && h.magic == ST_MAGIC && h.hcrc == st_crc32(&h, sizeof h - 4u))
@@ -67,8 +111,9 @@ static int res_begin(void)
     if (mb.on || mb.closing) return 4;
 #endif
     res_ok = 0;
-    if (st_small_migrate(wire_take(), sizeof proj_wire_u)) return 3;
-    for (uint32_t s = 0; s < RES_SECTORS; s++)
+    (void)st_convert(wire_take(), 0);                  /* (banks of an older layout still here move into the pool) */
+    if (st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR)) return 3;
+    for (uint32_t s = 0; s < RES_RESERVE; s++)
         if (st_erase(RES_BASE + s * ST_SECTOR)) return 3;
     res_open = 1;
     return 0;
@@ -94,9 +139,10 @@ static int res_commit(void)
     if (st_crc32(_mres_start, res_want[1]) != res_want[2]) return 7;
     res_hdr_t h;
     memset(&h, 0, sizeof h);
-    h.magic = RES_MAGIC; h.len = res_want[1]; h.crc = res_want[2];
+    h.magic = RES_MAGIC; h.len = res_want[1]; h.crc = res_want[2]; h.rsv[0] = RES_RESERVE;
     h.hcrc = st_crc32(&h, sizeof h - 4u);
     if (st_prog(RES_BASE, &h, sizeof h)) return 3;
     res_check();
+    res_window();
     return res_ok ? 0 : 7;
 }
