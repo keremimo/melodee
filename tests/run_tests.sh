@@ -58,6 +58,11 @@
 #                   track stems through the real mixer (usb_audio_tracks_test.c).
 # web (web/test_web.mjs): the editor protocol against its mock device, whose tables must equal the
 #                   firmware's (tests/descdump.c -> build/host/desc.json), the package builder, the updater.
+# .mel (tests/mel_fixture.c, web/test_mel.mjs): the project file the web page writes and reads (web/mel_file.js; the
+#                   firmware has no .mel code): the page's record layout == the firmware's, its compact form and
+#                   coder, damaged files refused, a project's kits renamed in every place as the firmware's decoded
+#                   state has them, export / import against a simulated device, then what the page sent through the
+#                   device's own backup PUT; the sizes next to the stored records.
 # PHYS (tests/phys_test.c): stability over the whole parameter and pitch range, the worst-case cost against
 #                   the heaviest factory preset, demos in build/phys_demo/; tests/phys_ref.cpp compares the
 #                   fixed-point models with DaisySP's float originals when DaisySP is there (DAISYSP=path).
@@ -187,6 +192,19 @@ web_tests() {                                     # the editor mock's tables mus
     fi
 }
 desc_json() { "$OUT/descdump" > "$OUT/desc.json"; }
+mel_tests() {                                     # the .mel project file: the page's coding against the firmware's records
+    build mel_fixture mel_fixture -DMELODEE_USB_AUDIO=1 $FW || return
+    step ".mel project file: the firmware's records and kits for the page (tests/mel_fixture.c emit)" \
+        "$OUT/mel_fixture" emit "$OUT/mel"
+    if command -v node >/dev/null 2>&1; then
+        step ".mel project file: layout == firmware, coder, refused files, kits renamed in every place, export / import" \
+            node web/test_mel.mjs
+        step ".mel project file: what the page's import sent goes in through the backup PUT, loads, its kits renamed" \
+            "$OUT/mel_fixture" verify "$OUT/mel"
+    else
+        echo "== skip the .mel page test (no node)"
+    fi
+}
 old_to_new() {                                    # a package of another app (this one cut short) -> this build
     head -c 200000 build/melodee.bin > "$OUT/old_app.bin" &&
         "$PY" tools/fm1pkg_make.py "$OUT/old_app.bin" build/loader/ota.bin "$OUT/old.fwsc" >/dev/null &&
@@ -335,6 +353,7 @@ core && t "MIDI Track: USB notes, TRS routing, song/recording, cleanup, silent m
 core && t "MIDI Track: host output, reconnect cleanup and USB input loss" midi_track_host_test:midi_track_test -O1 -DMELODEE_USB_HOST=1 $FW
 core && t "EQ accelerator: register layout, isolated histories and bounded timeout" eq_hw_test
 core && job web_tests
+core && [ $TABLES = 1 ] && job mel_tests
 sound && [ $TABLES = 1 ] && job dsp_tracks
 
 if core; then
