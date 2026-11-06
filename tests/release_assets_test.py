@@ -6,18 +6,20 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import prepare_release as A
 from fm1_recover import APP_LO, Package, RecoveryError, sha256
-from fm1pkg_make import BOARDS, MODELS, release_product, sfc, ufw
+from fm1pkg_make import BOARDS, MODELS, TAIL_LO, TAIL_WANT, release_product, sfc, ufw
 from recovery_test import make_package
 
 MAJOR, MINOR, PATCH = A.VERSION.split("-", 1)[0].split(".")
@@ -105,6 +107,29 @@ class ReleaseTests(unittest.TestCase):
     def test_smk_application_mismatch_is_rejected(self):
         (self.folder / f"melodee-smk37-{A.VERSION}-app.bin").write_bytes(b"wrong app")
         with self.assertRaisesRegex(RuntimeError, "differs from package"):
+            self.prepare()
+
+    def test_smk_app_area_tail_is_checked(self):
+        """an SMK-37 app with smkx_want: its package carries that tail at 0x93000 (firmware/src/smkx.c)"""
+        tail = bytes(range(256)) * 4
+        app = struct.pack("<III", TAIL_WANT, len(tail), zlib.crc32(tail))
+        pro = self.folder / f"melodee-smk37-{A.VERSION}.fwsc"
+        obj = Package(pro, MODELS["pro"], BOARDS["smk37"][0])
+        decoded = bytearray(obj.flash[APP_LO:])
+        sfc(decoded, 0, len(decoded), 0, obj.key)
+        decoded[0x120:0x120 + len(app)] = app
+        decoded[TAIL_LO - APP_LO:TAIL_LO - APP_LO + len(tail)] = tail
+
+        def write():
+            area = bytearray(decoded)
+            sfc(area, 0, len(area), 0, obj.key)
+            pro.write_bytes(ufw(bytes(obj.flash[:APP_LO]) + bytes(area), b"loader", obj.product))
+            (self.folder / f"melodee-smk37-{A.VERSION}-app.bin").write_bytes(app)
+        write()
+        self.prepare()
+        decoded[TAIL_LO - APP_LO + 5] ^= 1
+        write()
+        with self.assertRaisesRegex(RuntimeError, "tail differs"):
             self.prepare()
 
     def test_stale_native_commit_is_rejected(self):
