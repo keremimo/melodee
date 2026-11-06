@@ -3,13 +3,16 @@
 /* Melodee's Bluetooth on the stack in platform/ble: part of device/bt_own.c, after bt_own_central.c
  * (tools/base_overlay.py). The rules are Melodee's (firmware/src/midi_ble.c), on the base's glue. One radio link, the
  * computer's or a device's:
- *   - the calibration: the stock firmware's stored trims when they are still there, kept in OBJ_BLE so they outlive
+ *   - kept in Melodee's settings, as before the move (platform/ble_saved.h, mb_saved): the address and the computer's
+ *     bond (app.c app_ble_load / app_ble_save), the calibration's copy and the last device (here);
+ *   - the calibration: the stock firmware's stored trims when they are still there, kept in mb_saved so they outlive
  *     that sector, else measured at every start (fm1_rf_cal.h);
  *   - the last device is looked for, not called blind: a round of ML_RELINK_SCAN_MS every ML_RELINK_MS, and a link only
  *     once it is heard, behind a private address too (its IRK). Between the rounds a computer can find Melodee, and with
  *     GLOBAL > BLE open there are no rounds;
  *   - never a new pairing loop: a lost link is looked for again, a refusal or a code nobody entered is not;
  *   - an attempt is bounded, longer while a code waits for its user. */
+#include "ble_saved.h"
 #define ML_RELINK_MS 30000u
 #define ML_RELINK_SCAN_MS 10000u
 #define ML_ATTEMPT_MS 10000u
@@ -42,10 +45,11 @@ static void ml_own_trims(struct ble_rf_trims *use)
     struct ble_rf_trims vm;
     int save = 0;
     int complete = ble_vm_scan(ml_own_flash, 0, &info, &vm, 0, 0);
-    if (ble_rf_choose(complete, &vm, info.area, own.ml_rf, use, &save) != BLE_RF_NONE) {
+    ml_ble_saved_t *kept = mlb_ble_saved();
+    if (ble_rf_choose(complete, &vm, info.area, kept->rf, use, &save) != BLE_RF_NONE) {
         fm1_rf_cal_on = 0;
         if (save)
-            own_dirty = 1;
+            mlb_ble_dirty();
         return;
     }
     *use = OWN_TRIMS;                             /* 106, 107, 108: the SDK board's; 187 measured */
@@ -59,9 +63,8 @@ static void ml_own_load(void)
     if (ml_own.loaded)
         return;
     ml_own.loaded = 1;
-    if (plat_store_load(OBJ_BT_LAST, raw, sizeof raw) == (int)sizeof raw)
-        (void)ble_store_load(&ml_own.store, raw);
-    else
+    ble_cpy(raw, mlb_ble_saved()->dev, sizeof raw);
+    if (!ble_store_load(&ml_own.store, raw))
         ble_store_reset(&ml_own.store);
     ml_own.relink = (uint8_t)ble_store_has_last(&ml_own.store);
     ml_own.relink_t = shim_ms() - ML_RELINK_MS;
@@ -164,7 +167,9 @@ static void ml_save_poll(uint32_t now)
         return;
     ble_store_save(&ml_own.store, raw);
     ml_own.save_at = now;
-    ml_own.save_failed = (uint8_t)!!plat_store_save(OBJ_BT_LAST, raw, sizeof raw);
+    ble_cpy(mlb_ble_saved()->dev, raw, sizeof raw);   /* (the settings write it: firmware/src/project.c) */
+    mlb_ble_dirty();
+    ml_own.save_failed = 0;
     if (!ml_own.save_failed)
         ml_own.dirty = 0;
 }
@@ -290,7 +295,9 @@ int mlb_ble_forget_device(void)
     ble_store_forget(&ml_own.store);
     ml_own.relink = ml_own.relink_scan = ml_own.dirty = 0;
     ble_store_save(&ml_own.store, raw);
-    return !plat_store_save(OBJ_BT_LAST, raw, sizeof raw);
+    ble_cpy(mlb_ble_saved()->dev, raw, sizeof raw);
+    mlb_ble_dirty();
+    return 1;
 }
 int32_t ble_midi_pairing_code(void) { return plat_ble_passkey(); }
 void ble_midi_drop_host(void)
@@ -326,5 +333,6 @@ int ble_midi_forget_all(void)
     ble_zero(own.bond_ltk, sizeof own.bond_ltk);
     own.bond_ediv = 0;
     own_dirty = 0;
-    return !plat_store_save(OBJ_BLE, &own, sizeof own);
+    return !own_save();                           /* (app.c app_ble_save: into mb_saved, saved with the settings) */
 }
+int mlb_ble_rf_ok(const uint8_t *copy) { return ble_rf_copy_ok(copy); }

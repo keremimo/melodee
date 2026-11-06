@@ -30,6 +30,11 @@
  * object, the panel's calibration in its settings, in the sectors it always had. The map's pair is never written. */
 enum { OBJ_PANEL, OBJ_NOBJ };
 #define APP_STORE_MAP {0xFC000u}
+/* Bluetooth's address and bond in Melodee's settings (platform/ble_saved.h, app.c), the radio started at power-on when
+ * it was left on (Settings > Bluetooth Radio) */
+#define APP_BLE_STORE
+#define APP_BLE_AT_BOOT (mlb_ble_at_boot())
+int mlb_ble_at_boot(void);
 #define APP_OVERLOAD                                /* a render over 90 % of its time: shed a voice (melodee_app.c) */
 void app_overload(void);
 void app_init(void);

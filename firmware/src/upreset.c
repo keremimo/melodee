@@ -79,7 +79,7 @@ static uint8_t up_cached = 255;
 static struct {
     uint8_t used:1, old:1, favorite:1, engine:5;
     char name[12];
-} up_meta[UP_SLOTS];
+} up_meta[UP_SLOTS] MELODEE_BIG_BSS;
 _Static_assert(sizeof up_meta[0] == 13u && NENGINES <= 32u && UP_BANKS <= 32u, "compact preset index");
 static uint32_t up_index_ready;
 static uint32_t up_migrate;
