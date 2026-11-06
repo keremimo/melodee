@@ -10,6 +10,10 @@ enum { KM_NONE, KM_KEPT, KM_QUIET, KM_ROOM, KM_FLASH };   /* a take's end, as th
 #define KT_PAD_RESERVE 1536u                         /* bytes kept for each empty pad */
 static const int8_t KT_SNR[] = {30, 24, 18, 12};    /* never worse than 12 dB: a take too long for that is cut */
 static int kt_cymbal(uint32_t d) { return d == D9_OH || d == D9_CR || d == D9_RD; }
+/* a new kit's pads: level (Q12), -40 dB time (ms), TONE's pivot (Hz), in D9_* order (once tuned for recorded kits) */
+static const uint16_t KT_PAD[DRK_NDRUM][3] = {{4700, 1200, 4000}, {4800, 900, 6000}, {4700, 1300, 3000}, {4700, 1200, 3000},
+    {4700, 1100, 3000}, {5000, 400, 5000}, {5000, 700, 5000}, {4600, 260, 10000}, {4200, 620, 10000}, {4000, 2400, 10000},
+    {3600, 2000, 10000}};
 static int kt_low(uint32_t d) { return d == D9_BD || d == D9_LT || d == D9_MT || d == D9_HT; }
 
 /* slot u's record as the player reads it (0 sectors: none) */
@@ -46,10 +50,8 @@ static int kt_write(uint32_t u, uint32_t pad, const uint32_t *words, uint32_t sl
     else { memcpy(H.name, "KIT  ", 5); H.name[4] = (char)('1' + u); }
     for (uint32_t d = 0; d < DRK_NDRUM; d++) {
         if (O) H.map[d] = O->map[d];
-        else if (RES_OK()) H.map[d] = DRK_MAP[0][d];  /* a new kit: STUDIO's levels, decays and tones */
-        else { H.map[d].out = 3000; H.map[d].ms = kt_cymbal(d) ? 2500 : 600; H.map[d].pivot = 2000; H.map[d].tone = 0; }
+        else { H.map[d].out = KT_PAD[d][0]; H.map[d].ms = KT_PAD[d][1]; H.map[d].pivot = KT_PAD[d][2]; }
         H.map[d].sample = H.map[d].alt = 0xFFu;
-        if (!O) H.map[d].st = 0;
         src[d] = d == pad ? s : kt_old(O, secs, nsec, d, &cnt[d]);
         if (d == pad) cnt[d] = slices;
         if (!src[d]) continue;

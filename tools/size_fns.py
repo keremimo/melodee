@@ -29,7 +29,10 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "main.c", "boot_lzma.h", "params.c", "browse.c", "screen.c", "panel.c", "cz_edit.h", "prophet_edit.h", "ota.c", "favorites.c",
               "cz_panel.h",
               # the song, punch, section sound and Bluetooth screens and the editor's radio command
-              "ui_song.c", "ui_song_punch.c", "ui_song_sound.c", "ui_ble.c", "editor_ble.c"]
+              "ui_song.c", "ui_song_punch.c", "ui_song_sound.c", "ui_ble.c", "editor_ble.c",
+              # the user's drum kits: their store and record check, a take's processing, Record kit's sheet (drum_enc.c,
+              # the take's encoder, stays at -Os: its speed is the wait on "Saving")
+              "kit_store.c", "kit_take.c", "kit_rec_ui.c"]
 DEF = re.compile(
     r"^(?:static|void|int|uint\w*|int\w*|const)\b[^;=(]*?\b([A-Za-z_]\w*)\s*\(", re.M)
 # Stopped note transforms are infrequent main-loop work.

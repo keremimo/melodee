@@ -68,9 +68,6 @@
 # DRUM SID (tests/drum_sid_test.c): KIT SID (src/drum_sid.c): one 6581 on one voice, its three voices taken by
 #                   the hits, frame programs at PAL frames, DIGI on $D418 and its effect on the voices ringing,
 #                   the filter for the routed drums, levels next to the 808; demos in build/sid_kit_demo/.
-# DRUM REAL (tests/drum_real_test.c): KIT STUDIO, BOOM, TIGHT (src/drum_real.c): the decoder against the encoder, every
-#                   drum alone, overlaps, hat choke and takes, KICK SWAP, length, kit switch, knobs, levels, corners;
-#                   demos in build/drum_real_demo/.
 # DRUM KITS (tests/drum_kits_test.c): KIT CR78 (src/drum_cr78.c) and KIT FM (src/drum_fm.c) on the lanes of
 #                   src/drum_lanes.c: every drum alone, one voice, a lane struck again without a step, the hat choke,
 #                   a recorded length, kit switches, the knobs' directions, levels next to the 808, no wrapped
@@ -535,9 +532,7 @@ if sound && [ $TABLES = 1 ]; then
         "$OUT/drum_sid_test" build/sid_kit_demo
     t "DRUM CR78/FM: eight lanes on one voice, retriggers, choke, length, knobs, levels, corners" drum_kits_test -O2 $FW -- \
         "$OUT/drum_kits_test" build/drum_kits_demo
-    t "DRUM STUDIO/BOOM/TIGHT: decoder vs encoder, overlaps, choke, takes, length, knobs, levels, corners" drum_real_test -O2 $FW -- \
-        "$OUT/drum_real_test" build/drum_real_demo
-    t "USER KITS: pool record == built-in STUDIO, sector edges, empty/rewritten/deleted silent, refused records, boot scan" \
+    t "USER KITS: pool record == one RAM block, sector edges, empty/rewritten/deleted silent, refused records, boot scan" \
         user_kit_test -O2 $FW
     t "RECORD KIT: USB take trigger/end, device encoder == tools/drum_codec.c, 22/44 kHz, cymbal loop, 11 pads fit, clear" \
         kit_take_test -O2 -DMELODEE_USB_AUDIO=1 $FW -- "$OUT/kit_take_test" build/kit_take_demo

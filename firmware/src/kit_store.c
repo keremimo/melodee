@@ -9,6 +9,61 @@
 #define KIT_STORE 1                              /* (project.c: the boot scan) */
 _Static_assert(DRK_SECBYTES == ST_POOL_PAYLOAD_MAX && DRK_SECOFF == ST_POOL_PAYLOAD_OFF && DK_NUSER == ST_NKIT &&
                DRK_KSEC <= ST_PROJECT_SECTORS && DRK_KIT_MAX <= ST_PROJECT_MAX, "a user kit is a pool record");
+/* ------------------------------------------------------------ a user kit's record --- */
+/* slice k's first word, sector by sector (0 past the payload) */
+static const uint32_t *drk_slice_at(const uint32_t *const *secs, uint32_t nsec, uint32_t k)
+{
+    return k / DRK_SECSLICES < nsec ? secs[k / DRK_SECSLICES] + 2u * (k % DRK_SECSLICES) : 0;
+}
+/* a take's slices, walked by their modes (a checked record) */
+static uint32_t drk_take_slices(const uint32_t *const *secs, uint32_t nsec, const drk_sample_t *s)
+{
+    uint32_t k = s->at, idx = 0;
+    while (idx < s->n) idx += DRK_NS[drk_slice_at(secs, nsec, k++)[0] >> 30];
+    return k - s->at;
+}
+/* everything the player trusts in a record of len payload bytes in nsec sectors: the header's fields and every
+ * take's slices (walked by their modes) inside the payload, each loop where its slice starts. 0: playable */
+static int drk_kit_check(const uint32_t *const *secs, uint32_t nsec, uint32_t len)
+{
+    const drk_kit_t *H = (const drk_kit_t *)secs[0];
+    if (!nsec || nsec > DRK_KSEC || len < DRK_KIT_BYTES || len > nsec * DRK_SECBYTES || len > DRK_KIT_MAX)
+        return 1;
+    if (H->magic != DRK_KIT_MAGIC || H->bytes != DRK_KIT_BYTES || H->ndrum != DRK_NDRUM || H->nsmp > DRK_NDRUM)
+        return 2;
+    for (uint32_t i = 0, end = 0; i < sizeof H->name; i++) {
+        char ch = H->name[i];
+        if (end ? ch != 0 : ch == 0 ? (end = 1, i == 0) : (ch < ' ' || ch > '~' || i >= DRK_NAMELEN))
+            return 3;
+    }
+    for (uint32_t d = 0; d < DRK_NDRUM; d++) {
+        const drk_map_t *m = &H->map[d];
+        if ((m->sample != 0xFFu && m->sample >= H->nsmp) || (m->alt != 0xFFu && m->alt >= H->nsmp) ||
+            m->st < -24 || m->st > 24 || m->tone < -64 || m->tone > 63 || m->out > 16384u || !m->ms || m->ms > 30000u ||
+            m->pivot < 20u || m->pivot > 20000u)
+            return 4;
+    }
+    uint32_t slices = len / 8u;
+    for (uint32_t i = 0; i < H->nsmp; i++) {
+        const drk_sample_t *s = &H->smp[i];
+        if (s->at < DRK_KIT_BYTES / 8u || !s->n || s->inc < 4096u || s->inc > 32768u || s->st >= H->nsmp ||
+            (s->loop_at ? s->loop_at >= s->n : s->loop_slice != 0))
+            return 5;
+        uint32_t k = s->at, idx = 0, looped = !s->loop_at;
+        while (idx < s->n) {
+            const uint32_t *w = k < slices ? drk_slice_at(secs, nsec, k) : 0;
+            if (!w)
+                return 6;
+            if (s->loop_at && k == (uint32_t)s->at + s->loop_slice)
+                looped = idx == s->loop_at;
+            idx += DRK_NS[w[0] >> 30];
+            k++;
+        }
+        if (!looped)
+            return 7;
+    }
+    return 0;
+}
 static uint16_t kit_len[ST_NKIT];                /* each slot's payload bytes (0: empty), as drk_user[] has it */
 static uint32_t kit_obj(uint32_t u) { return ST_KFILE0 + u; }
 

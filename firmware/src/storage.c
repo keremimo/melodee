@@ -64,7 +64,7 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
 #define ST_PFILE0 64u
 /* User drum kits (kit_store.c): 8 slots, pool records of type ST_KFILE0 + slot, as slots 5..32 are */
 #ifndef MELODEE_USER_KITS                      /* (eng_drum.c sets it first in the firmware; storage tests alone: on) */
-#define MELODEE_USER_KITS (!BOARD_SMK37)
+#define MELODEE_USER_KITS 1
 #endif
 #define ST_NKIT 8u
 #define ST_KFILE0 (ST_PFILE0 + ST_NPROJ)

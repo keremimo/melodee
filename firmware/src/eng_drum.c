@@ -7,7 +7,8 @@
  * Parameters and output processing remain live while the hit rings. No recorded material.
  * KIT SID (drum_sid.c): one Commodore 6581 for the part, on one voice; its drums are C64 frame programs,
  * DIGI ON plays KICK and SNARE on the volume register, TONE and RES are its filter's.
- * KIT CR78 (drum_cr78.c) and KIT FM (drum_fm.c): eight lanes on one voice (drum_lanes.c); CR78's KICK is HATS. */
+ * KIT CR78 (drum_cr78.c) and KIT FM (drum_fm.c): eight lanes on one voice (drum_lanes.c); CR78's KICK is HATS.
+ * KIT 1..8 (values 9..16): the user's recorded kits (kit_store.c, Record kit), played by drum_real.c on one voice. */
 /* Lane and GM roles shared by the grid and the synthesized 808. */
 enum { DV_KICK, DV_SNARE, DV_CLAP, DV_HATC, DV_HATO, DV_TOM, DV_RIM, DV_BELL, DV_NLANE };
 enum { DVT_PUNCH, DVT_ROUND, DVT_SNARE, DVT_CLAP, DVT_HATC, DVT_HATO, DVT_TOM, DVT_CONGA,
@@ -16,17 +17,9 @@ enum { DVT_PUNCH, DVT_ROUND, DVT_SNARE, DVT_CLAP, DVT_HATC, DVT_HATO, DVT_TOM, D
 #include "drum_808.c"
 #include "x0x/drum909.c"
 
-enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_STUDIO = 9, DK_BOOM = 10, DK_TIGHT = 11,
-       DK_USER0 = 12 }; /* Retain the stored value of existing 808 patches. */
-#ifndef MELODEE_REAL_KITS
-#if BOARD_SMK37
-#define MELODEE_REAL_KITS 0                      /* the recordings need ~31 KB of the resource region; the SMK-37 has 11 KB */
-#else
-#define MELODEE_REAL_KITS 1
-#endif
-#endif
+enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_USER0 = 9 }; /* Retain the stored value of existing 808 patches. */
 #ifndef MELODEE_USER_KITS
-#define MELODEE_USER_KITS MELODEE_REAL_KITS      /* the user's kits (kit_store.c): KIT 12..19, played by drum_real.c */
+#define MELODEE_USER_KITS 1                      /* the user's kits (kit_store.c): KIT 9..16, played by drum_real.c, both boards */
 #endif
 /* Record kit (kit_rec_ui.c): the device itself, with USB audio and flash; host builds of the UI never show it */
 #if defined(FM1_IRQ_TARGET) && MELODEE_USER_KITS && MELODEE_USB_AUDIO && MELODEE_FLASH
@@ -35,10 +28,8 @@ enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_STUDIO = 9
 #define KIT_REC 0
 #endif
 #define DK_NUSER 8u
-#define DK_REAL0 DK_STUDIO
-#define DK_REAL_MAX DK_TIGHT
-#define DK_KIT_MAX (MELODEE_USER_KITS ? DK_USER0 + (int)DK_NUSER - 1 : DK_REAL_MAX)
-#define DK_LAST (MELODEE_REAL_KITS ? DK_KIT_MAX : DK_FM)
+#define DK_KIT_MAX (DK_USER0 + (int)DK_NUSER - 1)
+#define DK_LAST (MELODEE_USER_KITS ? DK_KIT_MAX : DK_FM)
 static const uint8_t DV_TYPE_LANE[DVT_COUNT] = {
     DV_KICK, DV_KICK, DV_SNARE, DV_CLAP, DV_HATC, DV_HATO, DV_TOM, DV_TOM, DV_RIM, DV_RIM, DV_BELL, DV_BELL,
 };
@@ -69,9 +60,8 @@ static int drum_issid(const track_t *t) { return t->p[P_E0] == DK_SID; }
 static int drum_iscr(const track_t *t) { return t->p[P_E0] == DK_CR78; }
 static int drum_isfm(const track_t *t) { return t->p[P_E0] == DK_FM; }
 static int drum_islane(const track_t *t) { return t->p[P_E0] == DK_CR78 || t->p[P_E0] == DK_FM; }   /* the lane kits (drum_lanes.c) */
-static int drum_isreal(const track_t *t) { return MELODEE_REAL_KITS && t->p[P_E0] >= DK_REAL0 && t->p[P_E0] <= DK_KIT_MAX; }   /* the recorded kits (drum_real.c), the user's too */
-static int drum_isuser(const track_t *t) { return MELODEE_USER_KITS && t->p[P_E0] >= DK_USER0; }    /* the user's (kit_store.c) */
-static int drum_map11(const track_t *t) { return drum_is909(t) || drum_isreal(t); }   /* the 909's eleven drums, a real ride and crash */
+static int drum_isuser(const track_t *t) { return MELODEE_USER_KITS && t->p[P_E0] >= DK_USER0 && t->p[P_E0] <= DK_KIT_MAX; }   /* the user's (drum_real.c) */
+static int drum_map11(const track_t *t) { return drum_is909(t) || drum_isuser(t); }   /* the 909's eleven drums, a real ride and crash */
 static int drum_isone(const track_t *t) { return t->p[P_E0] >= DK_SID; }      /* a whole kit on one voice */
 typedef struct dsk_part dsk_part_t;
 static uint32_t dsk_bytes(void);
@@ -79,7 +69,7 @@ typedef struct dlk_part dlk_part_t;
 static uint32_t dlk_bytes(void);
 typedef struct drk_part drk_part_t;
 static uint32_t drk_bytes(void);
-static uint32_t drum_bytes(const track_t *t) { return drum_is909(t) ? sizeof(drum909_part_t) : drum_issid(t) ? dsk_bytes() : drum_islane(t) ? dlk_bytes() : drum_isreal(t) ? drk_bytes() : sizeof(drum_lane_t)*DV_NLANE; }
+static uint32_t drum_bytes(const track_t *t) { return drum_is909(t) ? sizeof(drum909_part_t) : drum_issid(t) ? dsk_bytes() : drum_islane(t) ? dlk_bytes() : drum_isuser(t) ? drk_bytes() : sizeof(drum_lane_t)*DV_NLANE; }
 static drum909_part_t *drum909_of(const track_t *t)
 {
     drum909_part_t *k = drum909_part((uint32_t)(t-trk));
@@ -198,9 +188,6 @@ static void drum_block(track_t *t)
 }
 
 static const char *const N_DRUM_KIT[] = {"808", "808", "808", "808", "808", "909", "SID", "CR78", "FM"
-#if MELODEE_REAL_KITS
-    , "STUDIO", "BOOM", "TIGHT"
-#endif
 #if MELODEE_USER_KITS                          /* (the card shows a user kit's own name: drk_user_name) */
     , "KIT 1", "KIT 2", "KIT 3", "KIT 4", "KIT 5", "KIT 6", "KIT 7", "KIT 8"
 #endif
@@ -230,8 +217,8 @@ static uint32_t drum_gm(const int16_t *p, uint32_t note, int32_t *st)
 }
 #include "drum_sid.c"                          /* KIT SID */
 #include "drum_lanes.c"                        /* KIT CR78, KIT FM */
-#if MELODEE_REAL_KITS
-#include "drum_real.c"                         /* KIT STUDIO, BOOM, TIGHT */
+#if MELODEE_USER_KITS
+#include "drum_real.c"                         /* KIT 1..8: the user's recorded kits */
 #else
 static uint32_t drk_bytes(void) { return 0; }
 #endif
@@ -369,8 +356,8 @@ static void drum_note_on(track_t *t, voice_t *v)
     if(drum_issid(t)) {                                  /* the hit's own length: its SID voice's gate */
         v->s[2]=DK_SID; v->s[5]=0; v->env_out=32767; dsk_hit(t,v->note,v->vel); return;
     }
-#if MELODEE_REAL_KITS
-    if(drum_isreal(t)) {                                 /* the hit's own length: its channel's */
+#if MELODEE_USER_KITS
+    if(drum_isuser(t)) {                                 /* the hit's own length: its channel's */
         v->s[2]=t->p[P_E0]; v->s[5]=0; v->env_out=32767; drk_hit(t,v->note,v->vel); return;
     }
 #endif
@@ -417,8 +404,8 @@ static void drum_note_on(track_t *t, voice_t *v)
 static int32_t drum_amp(track_t *t, voice_t *v, int32_t adsr)
 {
     if(v->s[2]>=DK_SID || drum_isone(t)) {               /* the chip, the lane kits: on while any of it sounds */
-#if MELODEE_REAL_KITS
-        if(drum_isreal(t)) { if(v->s[2]==t->p[P_E0] && drk_tick(t)) { v->env=1<<24; return 32767*127/(v->vel?v->vel:1); } v->active=v->gate=v->stage=0; v->env=0; return 0; }
+#if MELODEE_USER_KITS
+        if(drum_isuser(t)) { if(v->s[2]==t->p[P_E0] && drk_tick(t)) { v->env=1<<24; return 32767*127/(v->vel?v->vel:1); } v->active=v->gate=v->stage=0; v->env=0; return 0; }
 #endif
         if(v->s[2]==t->p[P_E0] && (drum_issid(t) ? dsk_tick(t) : dlk_tick(t))) { v->env=1<<24; return 32767*127/(v->vel?v->vel:1); }
         v->active=v->gate=v->stage=0; v->env=0; return 0;
@@ -477,8 +464,8 @@ static void drum_render_into(track_t *t,voice_t *v,int32_t *out,uint32_t n,const
             dsk_render(t, out, n > CTL ? CTL : n, m, p);
         return;
     }
-#if MELODEE_REAL_KITS
-    if (p[P_E0] >= DK_REAL0) {
+#if MELODEE_USER_KITS
+    if (p[P_E0] >= DK_USER0) {
         if (v->s[2] == p[P_E0])
             drk_render(t, out, n > CTL ? CTL : n, m, p);
         return;
@@ -541,24 +528,18 @@ static const preset_t DRUM_PRESETS[] = {
     {"SID DIGI", {DK_SID, 64, 80, 64, 64, 100, 1, 0}, {0, 100, 127, 100}, 0, 0},   /* kick, snare on $D418 */
     {"CR78 KIT", {DK_CR78, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
     {"FM KIT", {DK_FM, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
-#if MELODEE_REAL_KITS
-    {"STUDIO KIT", {DK_STUDIO, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
-    {"BOOM KIT", {DK_BOOM, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
-    {"TIGHT KIT", {DK_TIGHT, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
-#endif
 };
 /* KIT SID: KICK is DIGI (KICK and SNARE on $D418), DRV the filter's resonance */
 static const char *const N_DRUM_DIGI[] = {"OFF", "ON"};
 static const param_desc_t DRUM_SID_DIGI = {"DIGI", F_ENUM, 0, 1, 0, N_DRUM_DIGI, 0};
 static const param_desc_t DRUM_SID_RES = {"RES", F_PCT, 0, 127, 0, 0, 0};
-/* the recorded kits: KICK the kit's own, or the other's */
-static const char *const N_DRUM_REAL_KICK[] = {"KIT", "SWAP"};
-static const param_desc_t DRUM_REAL_KICK = {"KICK", F_ENUM, 0, 1, 0, N_DRUM_REAL_KICK, 0};
-static const param_desc_t DRUM_USER_KICK = {"KICK", F_ENUM, 0, 0, 0, N_DRUM_REAL_KICK, 0};   /* a user kit: its one kick */
+/* a user kit: its one kick */
+static const char *const N_DRUM_USER_KICK[] = {"KIT"};
+static const param_desc_t DRUM_USER_KICK = {"KICK", F_ENUM, 0, 0, 0, N_DRUM_USER_KICK, 0};
 static const param_desc_t *drum_desc(const track_t *t, uint32_t k)
 {
-    if (drum_isreal(t))
-        return k == 6u ? drum_isuser(t) ? &DRUM_USER_KICK : &DRUM_REAL_KICK : 0;
+    if (drum_isuser(t))
+        return k == 6u ? &DRUM_USER_KICK : 0;
     if (drum_iscr(t))
         return k == 6u ? &DRUM_CR_HATS : 0;
     return !drum_issid(t) ? 0 : k == 6u ? &DRUM_SID_DIGI : k == 7u ? &DRUM_SID_RES : 0;
