@@ -27,11 +27,11 @@
 #else
 #define SMK_MODEL "SMK-37 Pro"
 #endif
-#define MELODEE_ID SMK_MODEL "_900"
+#define MELODEE_ID SMK_MODEL "_91070"       /* a release's: the plain handshake answers three digits of it */
 #define T_AREA 0xBB000u                  /* the staging area (ota.c OTA_AREA) */
 #define T_PARM_ID "ota-" SMK_MODEL "_016"
 #else
-#define MELODEE_ID "FM-1_900"
+#define MELODEE_ID "FM-1_91070"
 #define T_AREA 0xE0000u
 #define T_PARM_ID "ota-FM-1_015"
 #endif
@@ -267,9 +267,20 @@ int main(int argc, char **argv)
         uint8_t m[7] = {0, 0x59, 0x11, 0, 0, 0, 0xFF};
         host_reply(m, 7);
         ota_service();
+        uint8_t full[8] = {0, 0x59, 0x11, 1, 0, 0, 1, 0xFE}, other[8] = {0, 0x59, 0x11, 1, 0, 0, 2, 0xFD};
+        uint32_t cut = sizeof MELODEE_ID - 3u;       /* the name, '_' and three digits */
         bad += check("handshake answered", ident_replies == 1);
-        bad += check("identity frame is " MELODEE_ID,
-                     ota_msg[2] == 0x11 && !memcmp(ota_msg + 6, MELODEE_ID, sizeof MELODEE_ID - 1));
+        bad += check("the plain handshake gets the name, '_' and three digits of " MELODEE_ID ", zeros after",
+                     ota_msg[2] == 0x11 && !memcmp(ota_msg + 6, MELODEE_ID, cut) && MELODEE_ID[cut - 4u] == '_' &&
+                     !ota_msg[6 + cut] && !ota_msg[6 + cut + 1u]);
+        host_reply(full, 8);
+        ota_service();
+        bad += check("the handshake with the body 01 gets the whole " MELODEE_ID,
+                     ident_replies == 2 && ota_msg[2] == 0x11 &&
+                     !memcmp(ota_msg + 6, MELODEE_ID, sizeof MELODEE_ID - 1) && !ota_msg[6 + sizeof MELODEE_ID - 1]);
+        host_reply(other, 8);
+        ota_service();
+        bad += check("a handshake with another body is not answered", ident_replies == 2);
     }
 
 #if BOARD_SMK37

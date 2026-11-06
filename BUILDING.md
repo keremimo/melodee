@@ -103,6 +103,10 @@ release ships: the package, the app (`melodee-0.11.1-app.bin`), `SHA256SUMS`, `L
 `LICENSES/` (the package contains Apache-2.0 SDK files, so the licence texts travel with it).
 For example, `--release 1.0.0` uses the distinct identity `FM-1_91000`.
 
+On the device, a plain handshake gets the name, `_` and three digits of that identity (`FM-1_910` for
+`FM-1_91070`): M-VAVE's M-UPGRADE 3.11 refuses a device that answers more. The whole identity answers the
+handshake with the body `01`, which `tools/fm1_install.py` and the web installer send after a three-digit answer.
+
 ## Releases
 
 All future tagged releases, including release candidates, must use

@@ -43,8 +43,8 @@ HS_QUERY = bytes([0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7])
 # the handshake with the one-byte body 01 (00 59 11, length 1, 01, checksum FE), as fm1-base's installer asks: a
 # firmware built on fm1-base (felucca-bsp chip/ota.c, tools/build_base.py) answers HS_QUERY with its name, '_' and
 # three digits only ("FM-1_9001613" -> "FM-1_900": M-UPGRADE 3.11 refuses more) and this one with its whole identity.
-# Classic Melodee (firmware/src/ota.c answers 7-byte handshakes only), M-VAVE's firmware and the update loaders don't
-# answer it; it is never sent to a stock identity (NAME_0dd: nothing more to tell) or to a loader
+# Classic Melodee answers both the same way from 1.7.0 (firmware/src/ota.c ota_handshake; before, its whole identity
+# to HS_QUERY and nothing to this one); M-VAVE's firmware and the update loaders don't answer it; it is never sent to a stock identity (NAME_0dd: nothing more to tell) or to a loader
 HS_FULL = bytes([0xF0, 0x00, 0x32, 0x45, 0x08, 0x00, 0x00, 0x40, 0x00, 0x7E, 0x01, 0xF7])
 UPGRADE = bytes([0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7])
 FINISH_CHECK, FINISH_WRITE = 0xE0000000, 0xF0000000
@@ -318,8 +318,9 @@ def ask(link, query, secs):
 
 
 def handshake(link, tries=3):
-    """the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits, not 0dd (fm1-base firmware
-    tells its whole identity so); the plain answer when nothing answers HS_FULL (classic Melodee)"""
+    """the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits, not 0dd (Melodee from 1.7.0
+    and fm1-base firmware tell their whole identity so); the plain answer when nothing answers HS_FULL (Melodee
+    before 1.7.0)"""
     link.drain()
     for _ in range(tries):
         ident = ask(link, HS_QUERY, DELAY["hs"])

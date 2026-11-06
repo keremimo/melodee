@@ -6,7 +6,8 @@
 /* M-UPGRADE entry: "step 1 lite".
  *
  * The updater talks SysEx (F0 pack7(00 59 cmd len24 body chk) F7):
- *   cmd 0x11  handshake -> we answer our package identity (MELODEE_ID)
+ *   cmd 0x11  handshake -> we answer our package identity (MELODEE_ID): the name, '_' and three digits to the
+ *             plain one, the whole identity to the one with the body 01 (ota_handshake)
  *   F0 22 24 35 7F F7  upgrade -> ota_session(): pull parts of the package
  *     with cmd 0x30 read requests, check them, stage the package's update
  *     loader at 0xE0000 (outside Melodee's store; SMK: 0xBB000), ask 0xE0000000 ("success"),
@@ -153,14 +154,32 @@ static int ota_send_msg(uint32_t cmd, const uint8_t *body, uint32_t n)   /* n <=
     return ota_wire_send(ota_wire, w);
 }
 
-static void ota_reply_identity(void)
+/* The plain handshake gets the name, '_' and three digits at most, as M-VAVE's own firmware answers it: M-UPGRADE
+ * 3.11 refuses an identity with more, so a release's "FM-1_91070" answers "FM-1_910" (the development build's
+ * "FM-1_900" is whole already). The handshake with the one-byte body 01 (tools/fm1_install.py HS_FULL, web/fm1ota.js;
+ * firmware built on fm1-base takes it too) gets the whole identity: the installers ask it after a plain answer of
+ * three digits that is not stock's 0dd, and take it when it starts with that answer. */
+static void ota_reply_identity(uint32_t full)
 {
     static const char ID[] = MELODEE_ID;         /* == the package marker string */
     uint8_t id[27];
-    uint32_t i;
+    uint32_t i, n = sizeof ID - 1u, u = 0;
+    while (u < n && ID[u] != '_')
+        u++;
+    if (!full && u + 4u < n)
+        n = u + 4u;
     for (i = 0; i < sizeof id; i++)
-        id[i] = i < sizeof ID - 1u ? (uint8_t)ID[i] : 0;
+        id[i] = i < n ? (uint8_t)ID[i] : 0;
     ota_send_msg(0x11, id, sizeof id);
+}
+
+/* the decoded frame (ota_take's d bytes) is a handshake: answered, 1 */
+static int ota_handshake(uint32_t d)
+{
+    if (ota_dec[2] != 0x11 || (d != 7u && (d != 8u || ota_dec[6] != 1u)))
+        return 0;
+    ota_reply_identity(d == 8u);
+    return 1;
 }
 
 /* decode the pending frame; returns its decoded length (0 = not ours) */
@@ -185,8 +204,8 @@ static uint32_t ota_take(void)
 static void ota_service(void)
 {
     uint32_t d = ota_take();
-    if (d == 7u && ota_dec[2] == 0x11)
-        ota_reply_identity();
+    if (d)
+        (void)ota_handshake(d);
 }
 
 /* one read request (3 tries x 5 s); data -> dst */
@@ -211,10 +230,8 @@ static int ota_read(uint32_t addr, uint8_t *dst, uint32_t len)
             d = ota_take();
             if (!d)
                 continue;
-            if (d == 7u && ota_dec[2] == 0x11) {
-                ota_reply_identity();
+            if (ota_handshake(d))
                 continue;
-            }
             if (d == len + 15u && ota_dec[2] == 0x30 && ota_rd24(ota_dec + 3) == len + 8u &&
                 ota_rd32(ota_dec + 7) == addr && ota_rd24(ota_dec + 11) == len) {
                 for (i = 0; i < len; i++)

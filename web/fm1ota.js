@@ -9,9 +9,9 @@
 // asks, we answer": cmd 0x30 read requests on the logical image.
 
 const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
-// the handshake with the body 01 (tools/fm1_install.py HS_FULL): firmware built on fm1-base answers HS_QUERY with its
-// name, '_' and three digits only and this one with its whole identity; classic Melodee, M-VAVE's firmware and the
-// loaders don't answer it. Never sent to a stock identity (NAME_0dd) or to a loader
+// the handshake with the body 01 (tools/fm1_install.py HS_FULL): Melodee from 1.7.0 (firmware/src/ota.c ota_handshake)
+// and firmware built on fm1-base answer HS_QUERY with their name, '_' and three digits only (M-UPGRADE 3.11 refuses
+// more) and this one with their whole identity; Melodee before 1.7.0, M-VAVE's firmware and the loaders don't answer it. Never sent to a stock identity (NAME_0dd) or to a loader
 export const HS_FULL = [0xF0, 0x00, 0x32, 0x45, 0x08, 0x00, 0x00, 0x40, 0x00, 0x7E, 0x01, 0xF7];
 const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
 const MAXDATA = 512;
@@ -124,8 +124,8 @@ async function ask(link, query, ms) {
   return null;
 }
 
-// the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits, not 0dd (fm1-base firmware tells
-// its whole identity so); the plain answer when nothing answers HS_FULL (classic Melodee)
+// the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits, not 0dd (Melodee from 1.7.0 and
+// fm1-base firmware tell their whole identity so); the plain answer when nothing answers HS_FULL (Melodee before 1.7.0)
 async function handshake(link, tries = 3) {
   link.drain();
   for (let t = 0; t < tries; t++) {
