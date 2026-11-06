@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-"""Exact Sequential v1.03 programs -> factory presets and mock data."""
+"""Exact Sequential v1.03 programs -> factory presets and mock data.
+--json PATH also writes the 200 programs as JSON (tools/studio_bundle.py: prophet_factory.json), the same 138-byte
+records as the web editor's P5_FACTORY (133 raw bytes, then size, model, command, group, program)."""
 import argparse
 import hashlib
 import json
@@ -64,18 +66,27 @@ def pack(patches):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("output", type=Path)
+    parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--web", choices=["update", "check"])
+    parser.add_argument("--json", type=Path, help="also write the programs as JSON here")
     args = parser.parse_args()
+    if not args.output and not args.json:
+        parser.error("an output header, --json PATH, or both")
     patches = records()
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps({"source": "Sequential Prophet-5/10 factory programs v1.03 (unchanged native data)",
+                                         "syx_sha256": SHA256, "record_bytes": 138, "count": len(patches),
+                                         "programs": [list(p) for p in patches]}, separators=(",", ":")) + "\n")
     lines = ["/* Generated from Sequential's unchanged v1.03 factory SysEx. */",
              "#pragma once",
              f"#define P5_FACTORY_N {len(patches)}u",
              "/* All 200 programs are engine factory presets. Native user slots start empty. */"]
     lines += pack(patches)
     lines.append("")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("\n".join(lines + [""]))
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text("\n".join(lines + [""]))
     if args.web:
         editor = ROOT / "web/editor.html"
         source = editor.read_text()
@@ -86,7 +97,7 @@ def main():
                 raise SystemExit("Prophet web defaults differ; regenerate with --web update")
         else:
             editor.write_text(source[:start] + block + source[end:])
-    print(f"Prophet factory: {len(patches)} exact native programs -> {args.output}")
+    print(f"Prophet factory: {len(patches)} exact native programs -> {', '.join(str(p) for p in (args.output, args.json) if p)}")
 
 
 if __name__ == "__main__":

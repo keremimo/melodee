@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-"""Generate the append-only SCL catalogue, offline. --check verifies checked-in outputs."""
+"""Generate the append-only SCL catalogue, offline. --check verifies checked-in outputs.
+--json PATH also writes the catalogue and the tunings as JSON (tools/studio_bundle.py: scales.json)."""
 import argparse
 import json
 import math
@@ -78,9 +79,34 @@ def tunings(rows):
     return table
 
 
+def write_json(path, rows, table, groups, short):
+    """The catalogue as the firmware stores it (ids are row indices, append-only) and the tunings; pitches in hundredths
+    of a cent from the root, the octave (or period) last"""
+    names = [t["name"] for t in table]
+    families = [{"short": short[i], "title": "Western" if g == "Original" else g} for i, g in enumerate(groups)]
+    scales = []
+    for i, r in enumerate(rows):
+        e = {"id": i, "name": r["name"], "title": r["title"], "family": groups.index(r["group"]),
+             "degrees": len(r["pitch"]) - 1, "pitch": r["pitch"]}
+        if i < 16 or i >= MICRO_END:
+            e["mask"] = sum(1 << n for n in r["notes"])
+        if "tuning" in r:
+            e["tuning"] = names.index(r["tuning"])
+        if r.get("retired"):
+            e["retired"] = True
+        scales.append(e)
+    tunings = [{"id": i, "name": t["name"], "pitch": t["pitch"], "on_root": t.get("on") == "root",
+                **({"scale": [r["name"] for r in rows].index(t["scale"])} if "scale" in t else {})}
+               for i, t in enumerate(table)]
+    data = {"legacy": 16, "micro_end": MICRO_END, "families": families, "scales": scales, "tunings": tunings}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=1) + "\n")
+
+
 def main():
     check = argparse.ArgumentParser()
     check.add_argument("--check", action="store_true")
+    check.add_argument("--json", type=Path, help="also write the catalogue and tunings as JSON here")
     args = check.parse_args()
     rows = catalogue()
     table = tunings(rows)
@@ -126,6 +152,8 @@ def main():
     output += ["static const tuning_t TUNING[] = {"]
     output += [f"    {{{source.get(i, '0')}, {int(tn.get('on') == 'root')}}}, /* {tn['name']} */" for i, tn in enumerate(table)]
     output += ["};", ""]
+    if args.json:
+        write_json(args.json, rows, table, groups, short)
     header = ROOT / "firmware/src/scales.h"
     web = ROOT / "web/editor.html"
     html = web.read_text()

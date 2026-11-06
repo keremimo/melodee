@@ -1,0 +1,55 @@
+name: Studio bundle
+
+# The firmware's data for Melodee Studio (tools/studio_bundle.py -> build/studio-bundle): the tables, records and
+# fixtures, protocol, constants, menu, scales, palettes, licences and, once the tree builds them, the WebAssembly core
+# and kit encoder (Emscripten 3.1.74, as emulator.yml). Uploaded as the workflow artifact
+# studio-bundle-<version>-<commit>, a tarball inside; Studio pins it by the tarball's sha256 (bundle.lock.json).
+on:
+  push:
+    branches: [nightly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libharfbuzz-dev libfribidi-dev libraqm-dev
+          python -m pip install -r tools/requirements-build.txt
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+      - name: Generated headers
+        run: python tools/generate_assets.py
+      - name: WebAssembly core and kit encoder (when the tree has their builds)
+        run: |
+          if [ -f web/core/build.sh ]; then PYTHON=python sh web/core/build.sh; fi
+          if [ -f web/kit/build.sh ]; then PYTHON=python sh web/kit/build.sh; fi
+      - name: Bundle
+        run: python tools/studio_bundle.py
+      - name: Verify against the manifest
+        run: python tools/studio_bundle.py --verify build/studio-bundle
+      - name: Package
+        id: package
+        run: |
+          name=$(python -c 'import json; m = json.load(open("build/studio-bundle/manifest.json")); print("studio-bundle-%s-%s" % (m["firmware"]["version"], m["firmware"]["commit"][:12]))')
+          tar -C build -cf - --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 studio-bundle | gzip -9n > "build/$name.tar.gz"
+          (cd build && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          cat "build/$name.tar.gz.sha256"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            build/${{ steps.package.outputs.name }}.tar.gz
+            build/${{ steps.package.outputs.name }}.tar.gz.sha256
