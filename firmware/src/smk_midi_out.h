@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * SMK-37 Pro port: Copyright (C) 2026 M. Geisler (genkigenki/makkuro) */
 /* SMK-37: TRS MIDI OUT, the same stream as USB MIDI out (usb.c midi_out_event hands every packet here, with or
- * without a computer; midi_sync_send the realtime stream: clock, Start, Stop, Song Position). A USB-MIDI packet becomes its MIDI bytes (no running status: every message whole), a whole
+ * without a computer; midi_track.c a MIDI Track's, on its own books; midi_sync_send the realtime stream: clock, Start, Stop, Song Position). A USB-MIDI packet becomes its MIDI bytes (no running status: every message whole), a whole
  * message or nothing goes into a 256-byte ring (producer: the audio ISR, and the main loop with the IRQs off, as
  * midi_out_event), and the TIMER5 tick (main.c, 10 kHz, nested in the render too) sends one byte whenever the UART
  * has finished the last: ~0.4 ms a byte, never waiting. A byte the UART does not finish within SMO_TIMEOUT ticks is
  * given up; after SMO_DEAD of those in a row the jack stays quiet until the menu's TRS MIDI OUT is set again (no
- * UART: no hang, no stall). TRS MIDI OUT OFF: nothing is queued. Hardware: hal/smk_uart_tx.h; the host test
+ * UART: no hang, no stall). TRS MIDI OUT OFF: nothing is queued. Room for every owed ending (smo_start, smo_end) is
+ * kept from all the rest, so a release is never dropped. Hardware: hal/smk_uart_tx.h; the host test
  * (tests/smk_midi_out_test.c) gives SMO_TX_DONE / SMO_TX_PUT its own UART. */
 #pragma once
 #include <stdint.h>
@@ -32,6 +33,7 @@ static struct {
     uint32_t wait;                /* ticks since the byte in flight started (0: none in flight) */
     uint32_t lost;                /* bytes timed out in a row */
     uint32_t sent, timeouts, drops;
+    uint32_t owed;                /* what smo_start began and smo_end has not ended */
     volatile uint8_t dead;
 } smo SMO_SECTION;
 
@@ -60,20 +62,39 @@ static uint32_t smo_bytes(uint32_t pkt, uint8_t *b)
     return n;
 }
 
-static void smo_put(uint32_t pkt)                      /* producer: one packet, whole or dropped */
+static int smo_send(uint32_t pkt, uint32_t keep)       /* producer: one packet, whole or dropped; keep: bytes left free */
 {
     uint8_t b[3];
     uint32_t n = smo_bytes(pkt, b), w = smo.w, i;
     if (!trs_out || smo.dead || !n)
-        return;
-    if (SMO_RING - (w - smo.r) < n) {
+        return 0;
+    if (SMO_RING - (w - smo.r) < n + keep) {
         smo.drops++;
-        return;
+        return 0;
     }
     for (i = 0; i < n; i++)
         smo.ring[(w + i) % SMO_RING] = b[i];
     SMO_PUBLISH();
     smo.w = w + n;
+    return 1;
+}
+
+#define SMO_END 3u                                     /* the bytes of what ends a note or a pedal */
+static void smo_put(uint32_t pkt) { (void)smo_send(pkt, SMO_END * smo.owed); }
+
+/* A MIDI Track's note or pedal: admitted only with room left for its ending and every other owed one. */
+static int smo_start(uint32_t pkt)
+{
+    if (!smo_send(pkt, SMO_END * (smo.owed + 1u)))
+        return 0;
+    smo.owed++;
+    return 1;
+}
+
+static void smo_end(uint32_t pkt)                      /* ... and that ending: its room is there */
+{
+    smo.owed--;
+    (void)smo_send(pkt, 0);
 }
 
 static void smo_tick(void)                             /* the TIMER5 tick: at most one byte, never waits */

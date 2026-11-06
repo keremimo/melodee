@@ -144,11 +144,8 @@ static int midi_enqueue(uint32_t pkt, uint32_t source)
     return 1;
 }
 
-static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
+static int midi_track_emit(uint32_t pkt)            /* from the audio ISR: USB and BLE, whole or neither */
 {
-#if BOARD_SMK37 && defined(SMO_RING)                /* (the update loader has no TRS queue) */
-    smo_put(pkt);                                   /* the TRS jack, with or without a computer */
-#endif
 #if MELODEE_BLE
     uint32_t ie = fm1_icfg(); fm1_irq_off();
     int usb_ready = usb_midi_out_ready(), ble_ready = mel_ble_ready();
@@ -167,7 +164,13 @@ static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
 #endif
     return 1;
 }
-static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
+static void midi_out_event(uint32_t pkt)
+{
+#if BOARD_SMK37 && defined(SMO_RING)                /* (the update loader has no TRS queue) */
+    smo_put(pkt);                                   /* the TRS jack, with or without a computer */
+#endif
+    (void)midi_track_emit(pkt);
+}
 
 /* From the audio ISR. Each transport admits them alone, so a stalled one costs the other nothing. */
 static void midi_sync_send(uint32_t pkt)

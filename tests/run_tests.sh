@@ -207,6 +207,12 @@ smk_tests() {                                     # the SMK-37 (SMK37.md): flash
     build smk_midi_out_test smk_midi_out_test &&
         step "SMK-37 TRS MIDI OUT: USB-MIDI packets to bytes, the ring, one byte a tick, OFF, no UART: no stall" \
             "$OUT/smk_midi_out_test"
+    build smk_midi_track_test smk_midi_track_test -DMELODEE_USB_AUDIO=1 -DBOARD_SMK37=1 $FW &&
+        step "SMK-37 MIDI Track at the TRS jack: no computer, USB gone or full: a note ends once there, USB's release still owed" \
+            "$OUT/smk_midi_track_test"
+    build smk_midi_track_ble_test smk_midi_track_test -DTRS_BLE=1 -DMELODEE_USB_AUDIO=1 -DBOARD_SMK37=1 -Itests/ble_fake $FW &&
+        step "SMK-37 MIDI Track at the TRS jack, with BLE: BLE gone or full: a note ends once there, BLE's release still owed" \
+            "$OUT/smk_midi_track_ble_test"
     build smk_flash_test smk_flash_test -DBOARD_SMK37=1 -Ifirmware/hal &&
         step "SMK-37 flash map and store: never the head, BTIF/USRTRIM, USR, key_mac; the stock marker only released" \
             "$OUT/smk_flash_test"

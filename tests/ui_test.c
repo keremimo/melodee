@@ -48,7 +48,11 @@ static const int8_t SMK_PK_NONE[SMK_NPAD] = {-1, -1, -1, -1, -1, -1, -1, -1, -1,
 static const int8_t *volatile smk_pad_key = SMK_PK_KEYS;
 static uint8_t smk_vel_curve;
 static uint32_t host_ticks;
+#if MELODEE_BLE
+static inline uint32_t fm1_ticks(void);               /* (ble_fake/fm1_ble.h) */
+#else
 static uint32_t fm1_ticks(void) { return host_ticks; }
+#endif
 static uint32_t fm1__lock(void) { return 0; }
 static void fm1__unlock(uint32_t k) { (void)k; }
 static int32_t smk_extkey_take(void) { return -1; }
@@ -181,6 +185,9 @@ static void ui_power_on(void)
     cap_free = 0;
     midi_insert_init();
     memset(midi_output, 0, sizeof midi_output);
+#if BOARD_SMK37
+    memset(midi_trs, 0, sizeof midi_trs); smo.owed = 0;
+#endif
     punch_reset(); punch_panel_mask=punch_panel_lock=0;
     punch_song_req=-1; punch_song_buffered=0; punch_song_gate=0;
     fx_clear_all();
