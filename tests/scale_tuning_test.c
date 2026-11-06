@@ -36,8 +36,9 @@ static double heard_cents(const track_t *t, uint32_t note)   /* what a voice on 
 /* -------------------------------------------------- what an old project does --- */
 /* Every entry a project of before could hold, in every quantize mode, root and transposition: each key's and MIDI
  * note's mapping, the note's pitch, the chords. FNV-1a over all of it, taken from the firmware before tunings came
- * (3fe570d2): an entry that became a tuning plays exactly as it did. */
-#define OLD_FINGERPRINT 0x53d60d21u
+ * (3fe570d2): an entry that became a tuning plays exactly as it did. A microtonal scale's fixed chord shapes are left
+ * out: on every entry they aim at just ratios now (microtonal_test). */
+#define OLD_FINGERPRINT 0xeb2b1369u
 static uint32_t fp;
 static void fp_add(int32_t v)
 {
@@ -67,6 +68,7 @@ static uint32_t old_entries_fingerprint(void)
                     }
                     for (uint32_t m = 0; m < NELEM(MODES); m++) {
                         uint8_t out[CHORD_MAX + 2u]; int32_t root; uint16_t mask; uint32_t c;
+                        if (MODES[m] >= CH_MAJ && micro_active(t)) continue;
                         t->p[P_CHRD] = MODES[m];
                         c = chord_make(t, 60, out, &root, &mask);
                         fp_add((int32_t)c); fp_add(root); fp_add(mask);
@@ -89,7 +91,7 @@ static void old_projects(void)
     assert(!tune_active(t) && !micro_active(t) && heard_cents(t, 64) == 6400.0);
     t->p[P_QUANT] = Q_ALL;                              /* .. and in degrees: note 62 its third degree, 350 cents */
     assert(fabs(heard_cents(t, 62) - 6350.0) < 0.5 && kb_map(t, 9) == 62);
-    puts("scales and tunings: every old entry maps, pitches and voices chords as before");
+    puts("scales and tunings: every old entry maps, pitches and voices chords as before, but a microtonal scale's fixed shapes");
 }
 
 /* ----------------------------------------------------------- the maqam case --- */
