@@ -5,6 +5,7 @@
  * glow: ui_input.c ui_leds), KNOB ACCEL (ui_input.c accel_by), USB AUDIO (IN+OUT, IN, OUT or OFF; usb.c ua_off_set),
  * USB INPUT (stereo master or four track stems; usb.c ua_tracks_set),
  * USB HOST (the USB-C port hosts a USB-MIDI controller instead of talking to a computer; not saved; usb_host.c),
+ * MIDI THRU (fm1-base: what comes in goes on out where it did not come from; platform/melodee_app.c midi_thru),
  * TRS MIDI OUT (SMK-37: the jack sends what USB MIDI sends; smk_midi_out.h),
  * AUTOSAVE (automatic project saves after five seconds stopped and untouched), HOME SELECT (what SELECT turns on HOME:
  * ui.c HS_*), GLO SELECT (what SELECT turns with GLO held, on any page: the same choices), UNUSED TRACKS (SHOW:
@@ -26,6 +27,9 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #endif
 #if MELODEE_BLE
        MI_BLE,
+#endif
+#if MELODEE_MIDI_THRU
+       MI_THRU,
 #endif
 #if BOARD_SMK37
        MI_TRS, MI_VELOCITY,
@@ -50,6 +54,9 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD",
 #endif
 #if MELODEE_BLE
                                               "BLUETOOTH",
+#endif
+#if MELODEE_MIDI_THRU
+                                              "MIDI THRU",
 #endif
 #if BOARD_SMK37
                                               "TRS MIDI OUT", "VELOCITY",
@@ -352,6 +359,9 @@ static void draw_menu(void)
                 if (i == MI_HOME_SEL) value = HS_NAME[home_select()];
                 if (i == MI_GLO_SEL) value = HS_NAME[glo_select()];
                 if (i == MI_TRACKS) value = GLO_SELECT & TRACKS_HIDE ? "HIDE" : "SHOW";
+#if MELODEE_MIDI_THRU
+                if (i == MI_THRU) value = GLO_SELECT & MIDI_THRU_ON ? "ON" : "OFF";
+#endif
 #if BOARD_SMK37
                 if (i == MI_TRS) value = GLO_SELECT & TRS_OUT_OFF ? "OFF" : "ON";
                 if (i == MI_VELOCITY) value = SMK_VEL_NAME[smk_vel_curve % 4u];
@@ -554,6 +564,13 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         GLO_SELECT = (uint8_t)(hide ? GLO_SELECT | TRACKS_HIDE : GLO_SELECT & ~TRACKS_HIDE);
         ui.force = 1; ok = 0;
     }
+#if MELODEE_MIDI_THRU
+    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_THRU) {       /* KNOB 1 right ON, left OFF; OCT+ toggles */
+        uint32_t on = s > 0 ? 1u : s < 0 ? 0u : !(GLO_SELECT & MIDI_THRU_ON);   /* (saved when the menu closes) */
+        GLO_SELECT = (uint8_t)(on ? GLO_SELECT | MIDI_THRU_ON : GLO_SELECT & ~MIDI_THRU_ON);
+        ui.force = 1; ok = 0;
+    }
+#endif
 #if BOARD_SMK37
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_TRS) {        /* KNOB 1 right ON, left OFF; OCT+ toggles */
         uint32_t off = s > 0 ? 0u : s < 0 ? 1u : !(GLO_SELECT & TRS_OUT_OFF);

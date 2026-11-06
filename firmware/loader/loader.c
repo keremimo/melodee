@@ -36,6 +36,7 @@
 #include "fm1_flash.h"
 #include "../src/libc.c"
 #include "../src/usb.c"
+#include "ldr_screen.c"                         /* "UPDATING", the bar and its percentage (felucca-bsp's) */
 
 static uint32_t ldr_ms(void)   /* monotonic ms; survives the TIMER4 wrap (178.9 s) */
 {
@@ -48,7 +49,7 @@ static uint32_t ldr_ms(void)   /* monotonic ms; survives the TIMER4 wrap (178.9 
     return ms;
 }
 
-static void ldr_poll(void)                          /* USB at ~2 kHz, watchdog */
+static void ldr_poll(void)                          /* USB at ~2 kHz, watchdog; the screen counts silent polls */
 {
     static uint32_t last;
     uint32_t now = fm1_ticks();
@@ -56,6 +57,10 @@ static void ldr_poll(void)                          /* USB at ~2 kHz, watchdog *
     if (now - last >= 500u * FM1_TICKS_PER_US) {
         last = now;
         usb_poll();
+        if (sx_ready || usb.ota_req)                /* (a frame waits in usb.c) */
+            ldr_screen_heard();
+        else
+            ldr_screen_tick();
     }
 }
 
@@ -88,7 +93,7 @@ static void ldr_record_clear(void)
 {
     fm1_updata_parm_clear();                        /* CRC 0: the SPL ignores it on a warm reset */
 }
-static void ldr_progress(uint32_t done, uint32_t total) { (void)done; (void)total; ldr_poll(); }
+static void ldr_progress(uint32_t done, uint32_t total) { ldr_screen_progress(done, total); ldr_poll(); }
 #include "ldr_core.c"
 
 extern uint32_t _bss_start[], _bss_end[];
@@ -97,6 +102,7 @@ void ldr_main(void)
 {
     fm1_wdt_arm(0x0D);                              /* ~8 s, fed by ldr_poll */
     fm1_time_init();
+    ldr_screen_init();                              /* "UPDATING", "DO NOT UNPLUG", the bar, "0%" (~0.4 s) */
     usb_start();
     for (;;) {
         ldr_poll();
@@ -109,7 +115,9 @@ void ldr_main(void)
         ota_service();                              /* handshake */
         if (usb.ota_req) {
             usb.ota_req = 0;
+            ldr_screen_progress(0, 1);              /* an install: from here a silent host is a lost cable */
             if (ldr_session() == 0) {
+                ldr_screen_done();                  /* "DONE", "RESTARTING" */
                 fm1_delay_ms(200);                  /* the "success" reply leaves */
                 usb_detach();
                 fm1_delay_ms(30);

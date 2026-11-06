@@ -1,0 +1,48 @@
+# MIDI THRU (the menu): OFF, nothing passes; ON, what comes in goes on out where it did not come from (Bluetooth in and
+# the TRS jack's to USB, USB's never back to USB); Song Position only from the input CLK follows (INT here: none); the
+# setting survives a restart. Channels 6..8: no track plays them (ROUT CH1-4), so what goes out is the thru's alone.
+# (The host builds Melodee without Bluetooth: nothing listens there, so what goes to Bluetooth is not checked here.)
+wait 3000
+expect midi_thru 0
+out
+midi TRS 95 3C 64
+wait 100
+expect_no_out USB 95 3C 64
+# HOME held: the menu; KNOB 2 down to MIDI THRU (COLOR FONT HOLD LIGHTS USB VOLUME, then it: the host has no
+# BLUETOOTH row, the device has it before MIDI THRU); OCT+ turns it ON
+press HOME
+wait 800
+release HOME
+wait 200
+spin K2 5
+wait 100
+shot thru_menu.png
+tap OCT+
+wait 200
+expect midi_thru 1
+press HOME
+wait 800
+release HOME
+wait 300
+out
+midi USB 95 3C 64
+wait 100
+expect_no_out USB 95 3C 64
+out
+midi BLE 96 40 50
+wait 100
+expect_out USB 96 40 50
+out
+midi TRS 97 41 51
+wait 100
+expect_out USB 97 41 51
+out
+midi TRS F2 10 00
+wait 100
+expect_no_out USB F2 10 00
+expect clock_source 0
+# kept: the menu saved it, the restart reads it again
+wait 2000
+reboot
+wait 3000
+expect midi_thru 1

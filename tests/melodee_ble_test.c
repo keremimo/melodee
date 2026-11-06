@@ -217,7 +217,7 @@ int main(void)
     assert(mel_ble_emit_to(q, mel_ble_other_links()) && mb.ln[0].tw - mb.ln[0].tr == 1 && mb.ln[1].tw == mb.ln[1].tr);
     mb_in_link = BLE_LINK_PERIPH; assert(mel_ble_other_links() == 1u << BLE_LINK_CENTRAL);
     mb.ln[0].tr = mb.ln[0].tw;
-    assert(mel_ble_room_for(MBQ)); mb.ln[1].tw = mb.ln[1].tr + 1; assert(!mel_ble_room_for(MBQ)); mb.ln[1].tr = mb.ln[1].tw;
+    assert(mel_ble_room_for(MBQ, ~0u)); mb.ln[1].tw = mb.ln[1].tr + 1; assert(!mel_ble_room_for(MBQ, ~0u)); mb.ln[1].tr = mb.ln[1].tw;
     was = ll_enter(BLE_LINK_CENTRAL); ble_app_midi_in(packet(0x90, 67, 100), 10, 10); ll_leave(was);
     ble_app_midi_in(packet(0x90, 69, 100), 10, 10);           /* (the computer's) */
     assert(mb.ln[1].rw - mb.ln[1].rr == 1 && mb.ln[0].rw - mb.ln[0].rr == 1);
@@ -286,6 +286,62 @@ int main(void)
             for(uint32_t row=0;row<ble_found_n()+5;row++) {ble_row=(uint8_t)row;ui.menu=3;ui.force=1;draw_ble_page();}
         }
     }
+    /* MIDI THRU (midi_thru.c): OFF nothing; ON out where it did not come from, clock only from CLK's input */
+    reset_ble(); usb.up = usb.config = 1; mb.ln[0].ready = 1; rt_r = rt_w = 0; mb.ln[0].rt_r = mb.ln[0].rt_w = 0;
+    p = packet(0x95, 60, 100);
+    assert(midi_enqueue(p, 2u) && mo_w == mo_r && mb.ln[0].tw == mb.ln[0].tr);           /* OFF: Melodee plays it, no copy */
+    GLO_SELECT |= MIDI_THRU_ON;
+    mi_r = mi_w;
+    assert(midi_enqueue(p, 2u) && mo_w - mo_r == 1u && midi_out_q[mo_r % MQ] == p);   /* TRS -> USB and BLE */
+    assert(mb.ln[0].tw - mb.ln[0].tr == 1u && mb.ln[0].tx[mb.ln[0].tr % MBQ] == p);
+    mo_r = mo_w; mb.ln[0].tr = mb.ln[0].tw;
+    assert(midi_enqueue(p, 1u) && mo_w == mo_r && mb.ln[0].tw - mb.ln[0].tr == 1u);   /* USB -> BLE only */
+    mb.ln[0].tr = mb.ln[0].tw;
+#if BLE_LINKS > 1
+    mb_in_link = BLE_LINK_PERIPH;                  /* (the computer's: mel_ble_drain says which link it came in on) */
+#endif
+    assert(midi_enqueue(p, 3u) && mo_w - mo_r == 1u && mb.ln[0].tw == mb.ln[0].tr);   /* BLE -> USB only */
+    mo_r = mo_w;
+    (void)midi_enqueue(0x04u | 0xF0u << 8 | 0x7Du << 16 | 0x01u << 24, 1u);   /* SysEx: never through */
+    assert(mo_w == mo_r && mb.ln[0].tw == mb.ln[0].tr);
+    song.g[G_CLOCK] = 0;                                                       /* INT: no clock through */
+    assert(midi_enqueue(0x0Fu | 0xF8u << 8, 2u) && rt_w == rt_r && mb.ln[0].rt_w == mb.ln[0].rt_r);
+    song.g[G_CLOCK] = 2;                                                       /* TRS: its clock through */
+    assert(midi_enqueue(0x0Fu | 0xF8u << 8, 2u) && rt_w - rt_r == 1u && mb.ln[0].rt_w - mb.ln[0].rt_r == 1u);
+    assert(midi_enqueue(0x0Fu | 0xF8u << 8, 1u) && rt_w - rt_r == 1u);   /* USB's clock while CLK is TRS: no */
+    mo_r = mo_w; mb.ln[0].tr = mb.ln[0].tw;
+    mo_w = mo_r + MQ - 8u;                                                     /* a busy USB ring: 8 slots free */
+    assert(midi_enqueue(packet(0xE5, 0, 64), 2u) && mo_w - mo_r == MQ - 8u);   /* bend waits for 16 */
+    assert(midi_enqueue(packet(0xB5, 64, 0), 2u) && mo_w - mo_r == MQ - 7u);   /* the pedal goes */
+    assert(midi_enqueue(packet(0x85, 60, 0), 2u) && mo_w - mo_r == MQ - 6u);   /* so does a note-off */
+    GLO_SELECT &= (uint8_t)~MIDI_THRU_ON; song.g[G_CLOCK] = 0;
+    puts("MIDI THRU: off, routes, clock from CLK's input, busy ring passed");
+#if BLE_LINKS > 1
+    /* Two links: a Bluetooth message goes on to the other link only (the keyboard's to the iPad, the iPad's to the
+     * keyboard), everything else to both; a full link the message is not for holds nothing up. */
+    reset_ble(); usb.up = usb.config = 0; mb.ln[0].ready = mb.ln[1].ready = 1; rt_r = rt_w = 0;
+    GLO_SELECT |= MIDI_THRU_ON; mi_r = mi_w;
+    p = packet(0x95, 61, 100);
+    was = ll_enter(BLE_LINK_CENTRAL); ble_app_midi_in(p, 10, 10); ll_leave(was); mel_ble_drain();
+    assert(mb.ln[0].tw - mb.ln[0].tr == 1u && mb.ln[0].tx[mb.ln[0].tr % MBQ] == p && mb.ln[1].tw == mb.ln[1].tr);
+    mb.ln[0].tr = mb.ln[0].tw;
+    ble_app_midi_in(p, 10, 10); mel_ble_drain();                                /* (the iPad's) */
+    assert(mb.ln[1].tw - mb.ln[1].tr == 1u && mb.ln[0].tw == mb.ln[0].tr);
+    mb.ln[1].tr = mb.ln[1].tw;
+    assert(midi_enqueue(p, 2u) && mb.ln[0].tw - mb.ln[0].tr == 1u && mb.ln[1].tw - mb.ln[1].tr == 1u);   /* TRS -> both */
+    mb.ln[0].tr = mb.ln[0].tw; mb.ln[1].tr = mb.ln[1].tw;
+    mb.ln[1].tw = mb.ln[1].tr + MBQ;                                            /* the keyboard's queue full */
+    was = ll_enter(BLE_LINK_CENTRAL); ble_app_midi_in(packet(0xE5, 0, 64), 10, 10); ll_leave(was); mel_ble_drain();
+    assert(mb.ln[0].tw - mb.ln[0].tr == 1u);                                    /* its bend still reaches the iPad */
+    mb.ln[0].tr = mb.ln[0].tw; mb.ln[1].tr = mb.ln[1].tw;
+    song.g[G_CLOCK] = 3;                                                        /* CLK BLE: the keyboard's clock on */
+    was = ll_enter(BLE_LINK_CENTRAL); ble_app_midi_in(0xF80Fu, 0, 0); ll_leave(was); mel_ble_drain();
+    assert(mb.ln[0].rt_w - mb.ln[0].rt_r == 1u && mb.ln[1].rt_w == mb.ln[1].rt_r);
+    GLO_SELECT &= (uint8_t)~MIDI_THRU_ON; song.g[G_CLOCK] = 0;
+    mel_ble_drain(); events_block(0);
+    puts("MIDI THRU, two links: Bluetooth on to the other link only passed");
+#endif
+
     puts("Melodee BLE integration: all passed");
     return 0;
 }
