@@ -9,6 +9,11 @@
 #else
 #define ED_BOARD 0u
 #endif
+#if MELODEE_BLE
+#define ED_BT 1u                                          /* BLE (52) v1 */
+#else
+#define ED_BT 0u
+#endif
 #define ED_METER_MS 66u                                   /* METERS: ~15 Hz */
 /* CAPS: its revision, then per feature a tag, the length of its value, the value */
 static const uint8_t ED_CAPS_TLV[] = {
@@ -20,11 +25,13 @@ static const uint8_t ED_CAPS_TLV[] = {
     'P', 3, 1, PROJ_SLOTS, PROJ_NAME_LEN,                 /* PROJECTS v1: slots, name length */
     'G', 1, 1,                                            /* STORAGE v1 */
     'K', 1, 1,                                            /* BACKUP_LIST 1 (an inventory), BACKUP_GET while playing */
-    'W', 1, 127,                                          /* the WATCH bits known */
+    'W', 2, 127, 1,                                       /* the WATCH bits known (14 bits: bit 7 in a second byte) */
     'M', 2, 1, ED_METER_MS,                               /* METERS v1, ms between pushes */
     'S', 6, 1, 1, 1, CHAIN_ROWS, CHAIN_SOUNDS, PUNCH_NFX,  /* SONG2, SONG_SOUND, PUNCH v1; sections, sounds, effects */
     'D', 4, 2, NSTEP, RECORD_MAX & 127u, RECORD_MAX >> 7,  /* the patterns (44, 45, 64's bank, 73's 3..5) v1, v2 73's copy to
                                                             * another track; steps, notes */
+    'C', 4, 1, 1, ED_BT, 1,                               /* the FM-1 page (editor_device.c): SETTINGS, MLEARN, BLE (0: none),
+                                                            * DRUM v1 */
 };
 
 static uint32_t ed_sig(uint32_t at) { return fnv(2166136261u, ed_out + at, ed_n - at); }   /* the reply's bytes from at */
@@ -131,7 +138,7 @@ static uint32_t ed_session_push(uint32_t n, uint32_t now)
         ed_send();
         n++;
     }
-    return n;
+    return ed_device_push(n);                             /* (bit 7: DEVICE_CHANGED) */
 }
 
 static int ed_session_handle(uint32_t cmd, const uint8_t *a, uint32_t n)

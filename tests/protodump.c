@@ -51,6 +51,9 @@ static const struct { uint32_t id; const char *name, *group, *when; } CMDS[] = {
     {ED_SONG_CHANGED, "SONG_CHANGED", "studio song (push)", ""},
     {ED_PATTERN_DATA, "PATTERN_DATA", "studio patterns", ""}, {ED_NOTES, "NOTES", "studio patterns", ""},
     {ED_PATTERN_CHANGED, "PATTERN_CHANGED", "studio patterns (push)", ""},
+    {ED_SETTINGS, "SETTINGS", "studio device", ""}, {ED_MLEARN, "MLEARN", "studio device", ""},
+    {52, "BLE", "studio device", "MELODEE_BLE"},                                       /* (editor_ble.c ED_BLE) */
+    {ED_DRUM, "DRUM", "studio device", ""}, {ED_DEVICE_CHANGED, "DEVICE_CHANGED", "studio device (push)", ""},
     {ED_MOTION, "MOTION", "motion", ""}, {ED_BACKUP_LIST, "BACKUP_LIST", "backup", ""},
     {ED_BACKUP_GET, "BACKUP_GET", "backup", ""}, {ED_BACKUP_PUT, "BACKUP_PUT", "backup", ""},
     {ED_FM6_GET, "FM6_GET", "fm6", ""}, {ED_FM6_PUT, "FM6_PUT", "fm6", ""}, {ED_FM6_LIST, "FM6_LIST", "fm6", ""},
@@ -76,6 +79,9 @@ _Static_assert(ED_BLE_CAL == 81u, "BLE_CAL");
 #ifdef ED_RES
 _Static_assert(ED_RES == 82u, "RES");
 #endif
+#ifdef ED_BLE
+_Static_assert(ED_BLE == 52u, "BLE");
+#endif
 
 /* INFO's tagged blocks after the engine names, NTRK and the retired SONG byte, in the order the firmware sends them
  * (the web editor reads them by position: a tag can come twice, 'U'); each block's payload names */
@@ -90,7 +96,7 @@ static const struct { uint8_t tag, ver; const char *name, *cmds, *fields[8]; } T
                                          "user_native_p5", "flags", "native_version"}},
     {0x4e, 1, "native pools", "78", {"fm6_capacity_lo", "fm6_capacity_hi", "cz_capacity_lo", "cz_capacity_hi"}},
     {0x55, 1, "shared library", "80", {"capacity_lo", "capacity_hi"}},
-    {0x53, 1, "studio", "39-45, 47-49, 55-59", {"caps_command"}},
+    {0x53, 1, "studio", "39-45, 47-53, 55-60", {"caps_command"}},
 };
 
 static uint32_t nfields(uint32_t k) { uint32_t n = 0; while (n < 8u && TAGS[k].fields[n]) n++; return n; }

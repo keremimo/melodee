@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // The virtual FM-1 (web/core/melodee_core.c in WebAssembly) driven from Node as Melodee Studio's worker drives it.
 //   1. Protocol transcripts from a new device's power-on: INFO (its 'S' tag), CAPS, TRACKS, TRANSPORT, PROJECTS,
-//      STORAGE, SONG2, SONG_SOUND, PUNCH, PATTERN_DATA, NOTES, MOTION on a bank, PATTERN; the same frames through the same core built natively must answer the same
+//      STORAGE, SONG2, SONG_SOUND, PUNCH, PATTERN_DATA, NOTES, MOTION on a bank, PATTERN, SETTINGS, MLEARN, DRUM; the same frames through the same core built natively must answer the same
 //      bytes. Then a project (tests/mel_fixture.c's song) loaded into project 6 and the Studio commands again.
 //      --transcripts FILE writes them as JSON lines (tools/studio_bundle.py puts them in the bundle).
 //   2. A render of the song: speed, the time per 128-frame quantum, memory; the same render natively, sample for
@@ -83,6 +83,8 @@ const FRESH = [
   ["SONG_SOUND list", 48, [0, 0, 50]], ["PUNCH state", 49], ["PUNCH names", 49, [0]],
   ["PATTERN_DATA", 44, [0, 0, 0]], ["NOTES list", 45, [0, 0, 0, 0, 0, 127]], ["MOTION bank 2", 64, [0, 5, 1]],
   ["PATTERN query", 73, [0, 0]],
+  ["SETTINGS", 50], ["SETTINGS list", 50, [0, 0, 127]], ["SETTINGS set LIGHTS", 50, [1, 3, 4, 0]], ["MLEARN", 51],
+  ["DRUM track 4", 53, [3]], ["DRUM write", 53, [3, 0, 1, 30, 70, 60, 100]],
 ];
 const transcripts = [];
 const run = (c, phase, list) => {
@@ -103,8 +105,10 @@ const bytes = (h) => h.split(" ").map((v) => parseInt(v, 16));
   const tracks = bytes(at("TRACKS").replies[0]).slice(5, -1);
   check("TRACKS: NTRK 8, four tracks in use", tracks[2] === 8 && tracks[3] === 4, `op ${tracks[0]} rc ${tracks[1]}`);
   check("CAPS: the patterns' tag 'D'", caps.includes(0x44), `${caps.length} bytes`);
+  check("CAPS: the FM-1 page's tag 'C' (no Bluetooth here)", caps.includes(0x43), `${caps.length} bytes`);
   for (const name of ["TRANSPORT", "PROJECTS status", "PROJECTS list", "STORAGE", "SONG2 head", "SONG2 sections", "SONG2 timing", "SONG_SOUND list", "PUNCH state", "PUNCH names",
-                      "PATTERN_DATA", "NOTES list", "MOTION bank 2", "PATTERN query"])
+                      "PATTERN_DATA", "NOTES list", "MOTION bank 2", "PATTERN query", "SETTINGS", "SETTINGS list", "SETTINGS set LIGHTS",
+                      "MLEARN", "DRUM track 4", "DRUM write"])
     check(`${name}: answered`, at(name).replies.length === 1, `${bytes(at(name).replies[0] ?? "").length} bytes`);
 }
 if (existsSync(NATIVE)) {
@@ -126,7 +130,7 @@ if (MEL) {
   check("core_load_record: the song into project 6 (slots past the host mirrors' four)", rc === 0, `rc ${rc}`);
   run(a, "song in project 6", [["PROJECTS status", 42], ["PROJECTS list", 42, [0, 0, 32]], ["TRACKS", 40], ["STORAGE", 43],
     ["SONG2 head", 47], ["SONG2 sections", 47, [0, 0, 41]], ["SONG2 timing", 47, [1]], ["SONG_SOUND list", 48, [0, 0, 50]], ["PUNCH events", 49, [3]],
-    ["PATTERN_DATA", 44, [0, 0, 0]], ["NOTES list", 45, [0, 0, 0, 0, 0, 127]], ["MOTION", 64, [0]]]);
+    ["PATTERN_DATA", 44, [0, 0, 0]], ["NOTES list", 45, [0, 0, 0, 0, 0, 127]], ["MOTION", 64, [0]], ["DRUM track 4", 53, [3]]]);
   const st = bytes(at("PROJECTS status", "song in project 6").replies[0]).slice(5, -1);
   check("PROJECTS: the music is project 6", st[2] === 5, `op ${st[0]} rc ${st[1]} slot ${st[2]}`);
   const head = bytes(at("SONG2 head", "song in project 6").replies[0]).slice(5, -1);

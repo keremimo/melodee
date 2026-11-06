@@ -154,7 +154,7 @@ global `G_CLOCK` (id 2, label "CLK") 3 (INT, USB, TRS). `G_MIDI` (id 12) is an e
 | 19 UP_STORE | slot, name | slot, rc. Stores the current sound: engine, parameters, the first 16 sequencer steps as the pattern (TIE steps → flag 4) |
 | 20 UP_LOAD | slot | slot, rc (0 ok, 1 empty/invalid). Applies its sound (not its pattern; the steps stay) |
 | 21 UP_ERASE | slot | slot, rc |
-| 22 WATCH | on (0/1; v4: 3 = also `TRACK_CHANGED`; Studio: bits 2..4, see "Studio session") | on (0/1; v4 firmware: 3 when 3 was asked for; Studio firmware: the bits it knows of those asked for). While on, the device pushes cmds 23, 24, 26 (and 32 with bit 1; 55..57 with bits 3, 4) |
+| 22 WATCH | on (0/1; v4: 3 = also `TRACK_CHANGED`; Studio: bits 2..4, see "Studio session"), then (F4) bits 7..13 in an optional second byte | on (0/1; v4 firmware: 3 when 3 was asked for; Studio firmware: the bits it knows of those asked for), then (a second byte asked) the second byte's. While on, the device pushes cmds 23, 24, 26 (and 32 with bit 1; 55..57 with bits 3, 4) |
 | 23 CHANGED (push) | — | scope, id, v14 |
 | 24 RELOAD (push) | — | engine, preset, then (v3) the selected track, then preset >> 7 |
 | 25 PING | — | 0 |
@@ -1442,10 +1442,11 @@ printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies e
 | `P` (0x50) | 3 | `PROJECTS` version 1, slots (32), name length (12) |
 | `G` (0x47) | 1 | `STORAGE` version 1 |
 | `K` (0x4B) | 1 | 1: `BACKUP_LIST 1` (an inventory) and `BACKUP_GET` while playing |
-| `W` (0x57) | 1 | the `WATCH` bits known (31: bits 0..4; 63 with F3's bit 5, "Studio song"; 127 with F2's bit 6, "Studio patterns") |
+| `W` (0x57) | 1 (F4: 2) | the `WATCH` bits known (31: bits 0..4; 63 with F3's bit 5, "Studio song"; 127 with F2's bit 6, "Studio patterns"); F4: two bytes, 127, 1 (bits 0..13 low first: bit 7, "Studio device", in the second) |
 | `M` (0x4D) | 2 | `METERS` version 1, milliseconds between pushes (66, ~15 Hz) |
 | `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
 | `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`; 2: also `PATTERN` 2's copy to another track), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
+| `C` (0x43) | 4 | (F4) `SETTINGS`, `MLEARN`, `BLE`, `DRUM` versions (1, 1, 1, 1; `BLE` 0 in a build without Bluetooth): see "Studio device" |
 
 Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
 
@@ -1551,6 +1552,7 @@ answer and pushes as before.
 | 4 | `METERS` (55) every 66 ms (~15 Hz) while watching. Studio sets the bit only while Stage or Mixer is open and its tab visible |
 | 5 | (F3) `SONG_CHANGED` (58) when the song changes on the device: see "Studio song" |
 | 6 | (F2) `PATTERN_CHANGED` (59) when patterns change on the device: see "Studio patterns" |
+| 7 | (F4) `DEVICE_CHANGED` (60) when the settings, MIDI LEARN, Bluetooth or a kit's drums change on the device; sent in `WATCH`'s second byte (bit 0): see "Studio device" |
 
 A `WATCH` with bits 2..4 while watching only changes the bits: the shadows stay, so no push is lost (a `WATCH` of 0..3,
 or one that starts watching, takes the device's values as known, as before). The editor's own `TRACKS` /
@@ -1806,6 +1808,143 @@ track's steps or timing of the bank playing, a bank written (copied, cleared, ha
 playing or queued, the motion, the timed notes. Studio then reads again what it shows. `PATTERN_DATA`, `NOTES`,
 `MOTION` and `PATTERN` push nothing for the editor's own changes; other commands' do (`STEP_SET`, `TRACK_STEP`, a
 `SET` of LEN, ...). The device looks every push pass (~5 ms) while the bit is set (a hash of ~6 KB).
+
+## Studio device (commands 50–53, 60)
+
+Melodee Studio's FM-1 page (branch F4, on the kit maker `studio-kits-7e034d` ad00b4b0: F1, F3, the virtual FM-1, F2): the
+HOME menu's settings, MIDI LEARN, Bluetooth, a kit track's drum sounds, and a push when they change on the device. The
+commands only add: every earlier command answers byte for byte as before (a `WATCH` of one byte too). Code:
+`firmware/src/editor_device.c` (50, 51, 53, 60), `firmware/src/editor_ble.c` (52), `firmware/src/menu_rows.c` (the menu's
+rows: their values, steps and words, which `ui_menu.c` draws and steps with the same functions). Tests: `tests/editor_test.c`
+`studio_device`, `tests/ble_cal_editor_test.c` (BLE, with one and two links).
+
+**Finding out.** `CAPS` (39) has a tag `C`: `43 04` SETTINGS version 1, MLEARN version 1, BLE version 1 (0: a build without
+Bluetooth, the virtual FM-1's: no reply to 52), DRUM version 1; `W` is two bytes, 127 and 1 (bit 7 known). Firmware without
+the tag never answers 50–53 and gets no reply to a `WATCH` of two bytes (its argument check).
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 50 SETTINGS | — (the values); 0, first, count (the rows); 1, row, value lo, value hi (set) | op (127: values), rc, rows, rows × value (14 bits), then 0: first, count, total (14 bits each), count × row |
+| 51 MLEARN | — (the list); 1, control (forget it); 2 (forget all); 3, control (learn it); 4 (stop learning) | op (127: list), rc, learning (control + 1, 0 none), controls (21), knobs (7), 21 × (kind, number, channel), 21 × name |
+| 52 BLE | — (state); 1, on (radio); 2, visible (Mode); 3 (disconnect); 4 (the last device); 5 (forget the pairings); 6, on (scan); 7, row (connect to it) | op (127: state), rc, the state (below) |
+| 53 DRUM | track (read); track, first, m, m × (tune + 24, decay, third, level) (write) | track, rc, sounds, sounds × (tune + 24, decay, third, level), sounds × (name, the third's name) |
+| 60 DEVICE_CHANGED (push) | — | what changed (bits), then rows, rows × value (14 bits), as `SETTINGS` |
+
+Controls, rows and tracks count from 0 on the wire. A request of the wrong length still gets its reply, with rc 1 (as F1–F3).
+Every reply fits one 1024-byte frame (`SETTINGS` pages its rows: the FM-1's all fit one, 955 bytes; the SMK-37's may take two).
+
+| rc | `SETTINGS`, `MLEARN` | `BLE` | `DRUM` |
+| --- | --- | --- | --- |
+| 0 | done and saved | done | done |
+| 1 | malformed or invalid (nothing changed) | malformed or invalid | malformed, invalid, not a kit track |
+| 2 | refused: `USB HOST` on (`SETTINGS`); the device's own MIDI LEARN page is open (`MLEARN` 3) | refused: no radio calibration or setup unfinished (1), nothing to connect to (4, 7), the scan cannot run (6: radio off, VISIBLE, connecting, a device linked) | — |
+| 3 | done, not saved (no flash, a failed write) | stop the sound first (1: STOP AUDIO TO START BLE) | — |
+| 4 | done, saved after STOP | — | — |
+
+### SETTINGS (50)
+
+The rows are the HOME menu's (Settings), in its order; the build decides which there are (the FM-1: USB AUDIO, USB INPUT, USB
+VOLUME, USB HOST, BLUETOOTH: 30 rows; the SMK-37: PAD LIGHTS for LIGHTS, TRS MIDI OUT and VELOCITY too: 32; the virtual FM-1:
+no USB or Bluetooth rows: 25). A row's number is that build's: read the list first and key rows by their name.
+
+- **Values** (every reply, and `DEVICE_CHANGED`): rows, then per row its value, 14 bits: a list's or a cycle's index into its
+  words, a percentage, MIDI LEARN's controls learned, 0 for the other pages and actions.
+- **Rows** (op 0): `first, count, total`, then per row: kind (below), values (14 bits: a list's or cycle's count, a
+  percentage's top; 0 a page or action), step (a percentage's: 5; a list or cycle: 1; 0), the row's name as the firmware has
+  it (`ui_menu.c`: "AUDIO CLICK"; the device shows it through `menu_words`, "Audio click"), then for a list or a cycle its
+  values' words as the device shows them ("Lo-fi", "0.4 s", "In + out", "Pixel"). `count` is the rows asked for that exist,
+  cut where the next would not fit.
+
+  | kind | row | KNOB 1 / OCT+ on the device |
+  | --- | --- | --- |
+  | 0 | a list (most rows; ON / OFF switches are two-value lists: Off, On) | steps, stops at both ends / steps and wraps |
+  | 1 | a cycle (COLOR: the palettes, UI_PALETTES' order) | wraps both ways |
+  | 2 | a percentage (CLICK LEVEL, USB VOLUME: 0..100) | 5 a detent / 5, from 100 to 0 |
+  | 3 | a page (BLUETOOTH: `BLE`; MIDI LEARN: `MLEARN`; CALIBRATION, ABOUT, SOUND DESIGNER: the device's own) | opens it |
+  | 4 | an action (FORGET LEARNED: `MLEARN` 2; BACK) | does it |
+- **Set** (op 1): a value the menu reaches (a list or cycle: 0..count − 1; a percentage: 0..100 in steps of 5), else rc 1.
+  It is set as the menu sets it (`menu_put`, with what the menu does then: a new palette or font redraws everything, MIDI
+  KNOBS / MODE drop the old mapping's pending turns, ...), then saved as `UI_SET` saves (the device's menu saves when it
+  closes; the editor at once, or after STOP: rc 4). The reply's values are the device's after it.
+- **Quirks.** HOME SELECT and GLO SELECT count in the menu's order (BPM, MOD WHEEL, LEVEL, SWING, TRANSPOSE, OCTAVE, CHORD,
+  ARP RATE, PATTERN, OFF), not by their stored ids. USB HOST on is refused (rc 2): the USB-C port would host a controller and
+  the editor's own link would end (off is what it is while the editor talks over USB). USB AUDIO and USB INPUT replug the
+  FM-1's USB once the value has rested 0.6 s: the MIDI port goes and comes back (Studio reconnects). FONT reads Pixel while
+  the resource region is missing (Rubik lives there). COLOR, AUDIO CLICK, CLICK LEVEL, COUNT-IN, NOTE PREVIEW, CHORD ENTRY
+  and SCREEN OFF are the same settings as `UI_SET` (34, 35); `UI_SET`'s click level takes any 0..100, `SETTINGS` the menu's
+  steps. The GLO page's KEYS (key backlights) is the global parameter `G_LIGHTS` (`SET` scope 1), not a menu row.
+
+### MLEARN (51)
+
+The controls MIDI LEARN binds (`mlearn_row`, saved with the settings): first the seven knobs (SELECT, ALGORITHM, PRESETS,
+KNOB 1..4; the SMK-37: K6, K7, K8, K1..K4), then the fourteen buttons (the FM-1: by matrix id, named as calibration labels
+them; the SMK-37: by FM-1 function, FX .. OCTAVE+). Each control's message: kind (0 none, 1 a CC on any channel, 2 a note),
+number (0..127), channel (a note's, 0..15; 127 any). The names follow the messages, 0-terminated.
+
+| op | does |
+| --- | --- |
+| 1 | forgets the control (the device forgets only all: FORGET LEARNED) |
+| 2 | forgets all (FORGET LEARNED, without the device's question: Studio asks) |
+| 3 | learns the control from the next message, as the device's page: a CC for a knob, a CC (64 and up down) or a note-on for a button; the message leaves the control it had; meanwhile nothing learned acts and controllers' messages wait (they do not play). rc 2 while the device's own MIDI LEARN page is open |
+| 4 | stops learning |
+
+Learning ends when a message is learned, with op 4, when the device's MIDI LEARN page opens, and 3 s after the editor's last
+request (send `PING` while waiting, as for `PUNCH`). `learning` says whether it still waits; `DEVICE_CHANGED` bit 1 says
+when the table changed. CCs 0, 1, 6, 11, 32, 38, 64, 96..101 and 120..127 are never learned (they keep their meaning).
+
+### BLE (52)
+
+What the Bluetooth page (Settings > BLUETOOTH, `ui_ble.c`) shows and does. The state after `op, rc`:
+
+| bytes | field |
+| --- | --- |
+| 1 | flags: 1 calibrated (the radio can start), 2 the radio on, 4 Mode VISIBLE (else CONNECT OUT), 8 scanning, 16 connecting out, 32 relinking (looking for the last device) |
+| 1 | links (`BLE_LINKS`: 2, a computer's and a device's at once; 1) |
+| links × 1 | per link: 1 MIDI up, 2 connected. Link 0 is a computer or phone that connected to the FM-1 (Mode VISIBLE); link 1 a device the FM-1 connected out to. With one link it is either |
+| 3 | the code to enter on the peer while pairing, 3 × 7 bits low first (0x1FFFFF none) |
+| string | the status the header shows ("BLE OFF", "VISIBLE 1A2B", "BLE CONNECTED", "COMPUTER + DEVICE", "FORGET ON PEER", ...) |
+| 1 | the computer's pairing kept (1; it keeps no name) |
+| 1 | the last device: 1 kept, 2 paired |
+| string | the last device's name (its address when it has none; "" none) |
+| 1 + n × string | what the scan found (CONNECT OUT; VISIBLE lists nothing): count, then each one's name or address |
+
+| op | does (as the page's row) |
+| --- | --- |
+| 1 | Radio on (1) or off (0). On is refused while anything sounds and the radio never started (rc 3: its start holds interrupts) and without calibration (rc 2). Kept for power-on |
+| 2 | Mode: VISIBLE (1, advertises, never scans) or CONNECT OUT (0). A link up stays up |
+| 3 | Disconnect (every link) |
+| 4 | Last device: connect to it again |
+| 5 | Forget pairings: the computer's and the last device (both, as the page: there is no forgetting one of them) |
+| 6 | scan on (1) or off (0), for the list. The editor's scan ends 3 s after its last request (the page's own scan is the page's) |
+| 7 | connect out to the device in row `row` of the scan's list |
+
+Everything is saved with the settings as the page's (the main loop saves Bluetooth's state when it changes).
+
+### DRUM (53)
+
+A kit track's (engine DRUM, tracks 1..4) DRUM SOUND and DRUM MIX values, one row per sound: 16 (the 808, SID, CR78 and FM
+kits: KICK, SNARE, TOM L, TOM M, TOM H, RIM, CLAP, HAT C, HAT O, CRASH, RIDE, CONGL, CONGM, CONGH, CLAVE, MARAC; the CR78 and
+the 808's BELL / CYMB name theirs) or 11 (the 909 and the user kits KIT 9..16: the 909's eleven), by the patch's own index
+(the device's knob steps through them in `DRUM_ORDER_808` / `DRUM_ORDER_909`, `eng_drum.c`).
+
+| byte | value (as the device shows it) |
+| --- | --- |
+| 0 | TUNE + 24: 0..48 (−24..+24 semitones; 24 the kit's own) |
+| 1 | DECAY, 0..127 (64 the kit's own) |
+| 2 | the third (its name follows: SNAPPY on the snare, ATTACK / TONE on the 909's, SNAP on SID's, else TONE), 0..127 (64 own) |
+| 3 | LEVEL (DRUM MIX), 0..127 (127 full) |
+
+A write replaces sounds `first..first + m − 1` (m ≥ 1, past the kit's sounds: rc 1; TUNE above 48: rc 1, nothing changed) and
+plays from the next hit. As the pages' knobs, it is not an undo step on the device; a sound load's undo copy keeps the values
+with the sound. A recorded hit's own pitch and length are timed notes: `NOTES` (45).
+
+### WATCH bit 7: DEVICE_CHANGED (60)
+
+`WATCH on, 1` (the second byte's bit 0 is bit 7) pushes `DEVICE_CHANGED` when, on the device, the settings' values (bit 0
+of `what`), MIDI LEARN's table (bit 1), Bluetooth's state (bit 2: the radio, Mode, links, pairing, a connection's attempt)
+or a kit's drum values (bit 3) change. It carries the rows' values (2 + 2 × rows bytes: 68 with the frame on the FM-1); Studio
+reads `MLEARN`, `BLE` or `DRUM` again for the others. `WATCH` answers the second byte with the bits it knows (1). The
+editor's own 50–53 push nothing. The device looks every push pass (~5 ms) while the bit is set.
 
 ## Flash ledger (editor commands)
 

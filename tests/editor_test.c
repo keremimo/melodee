@@ -1259,11 +1259,159 @@ static int studio_patterns(void)
     bad += check("a bank copied on the device: PATTERN_CHANGED", pushed(ED_PATTERN_CHANGED, 10) != 0);
     return bad;
 }
+/* Melodee Studio's FM-1 page (F4): SETTINGS, MLEARN, DRUM, WATCH bit 7 and DEVICE_CHANGED */
+static uint32_t sv(uint32_t row) { return wire14(8u + 2u * row); }   /* SETTINGS: a row's value in the reply */
+static uint32_t set_row(uint32_t row, uint32_t v)
+{
+    uint8_t a[4] = {1, (uint8_t)row, (uint8_t)(v & 127u), (uint8_t)(v >> 7)};
+    request(ED_SETTINGS, a, 4);
+    return host_wire[6];
+}
+static int studio_device(void)
+{
+    int bad = 0;
+    uint8_t a[64] = {0};
+    uint32_t n, i, j, p, seen = 0, rows = 0, ok = 1;
+    reset();
+    memset(mlearn_row, 0, sizeof mlearn_row); memset(drum_patch, 0, sizeof drum_patch);
+    settings_lights = LIGHTS_MID; settings_click_level = 40; HOME_SELECT = HS_BPM; mlearn_on = 0; ed_learn = 0;
+    n = request(ED_CAPS, a, 0);
+    for (i = 6; i + 1u < n && host_wire[i] != 'C'; i += 2u + host_wire[i + 1]) ;
+    for (j = 6; j + 1u < n && host_wire[j] != 'W'; j += 2u + host_wire[j + 1]) ;
+    bad += check("CAPS: tag C (SETTINGS, MLEARN v1, no BLE in this build, DRUM v1), W 2 bytes (bit 7 known)",
+                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 1 && !host_wire[i + 4] && host_wire[i + 5] == 1 &&
+                 host_wire[j + 1] == 2 && host_wire[j + 2] == 127 && host_wire[j + 3] == 1);
+
+    /* SETTINGS */
+    n = request(ED_SETTINGS, a, 0);
+    bad += check("SETTINGS: 127, rc 0, the rows' values (LIGHTS, CLICK LEVEL, COLOR as the menu has them)", n == 9u + 2u * MI_COUNT &&
+                 host_wire[5] == 127 && !host_wire[6] && host_wire[7] == MI_COUNT && sv(MI_LIGHTS) == LIGHTS_MID &&
+                 sv(MI_CLICK_LEVEL) == 40 && sv(MI_COLOR) == settings.palette);
+    for (p = 0; ok && p < 9u && (p == 1u || rows < MI_COUNT); p++) {           /* the list, a page at a time: the first of what fits a
+                                                                   * reply (all here), then 7 rows a page */
+        if (p == 1u) rows = 0;
+        a[0] = 0; a[1] = (uint8_t)rows; a[2] = p ? 7 : 127; n = request(ED_SETTINGS, a, 3);
+        uint32_t at = 8u + 2u * MI_COUNT, first = wire14(at), c = wire14(at + 2u);
+        ok &= !host_wire[6] && first == rows && wire14(at + 4u) == MI_COUNT && c && n <= sizeof ed_out;
+        at += 6u;
+        for (i = 0; ok && i < c; i++, rows++) {
+            uint32_t k = host_wire[at], m = wire14(at + 1u), st = host_wire[at + 3u];
+            const char *name = (const char *)host_wire + at + 4u, *v;
+            ok &= k == menu_kind(rows) && m == MR_N[rows] && st == (k == MR_PERCENT ? 5u : k <= MR_CYCLE) && !strcmp(name, MI_NAME[rows]);
+            at += 5u + (uint32_t)strlen(name);
+            for (j = 0; k <= MR_CYCLE && j < m; j++) {
+                char b[24], w[24];
+                v = (const char *)host_wire + at;
+                menu_words(w, menu_value(rows, j, b), sizeof w);
+                ok &= !strcmp(v, w);
+                at += 1u + (uint32_t)strlen(v);
+            }
+            seen |= (rows == MI_COLOR && m == NPALETTES && k == MR_CYCLE) | (rows == MI_CLICK_LEVEL && k == MR_PERCENT && m == 100) << 1 |
+                    (rows == MI_MIDI_LEARN && k == MR_PAGE) << 2 | (rows == MI_BACK && k == MR_ACTION) << 3 |
+                    (rows == MI_HOME_SEL && !strcmp(name, "HOME SELECT") && m == HS_N) << 4;
+        }
+        ok &= host_wire[at] == 0xF7;
+    }
+    bad += check("SETTINGS list: every row in pages (kind, values, step, name, the values' words as the menu shows them)",
+                 ok && rows == MI_COUNT && p >= 2u && seen == 31u);
+    bad += check("SETTINGS sets LIGHTS FULL: the menu's value (rc 3: no flash here)", set_row(MI_LIGHTS, LIGHTS_N - 1u) == 3 &&
+                 settings_lights == LIGHTS_N - 1u && sv(MI_LIGHTS) == LIGHTS_N - 1u);
+    bad += check("SETTINGS past the row's values, on a page, past the rows: rc 1, unchanged", set_row(MI_LIGHTS, LIGHTS_N) == 1 &&
+                 set_row(MI_ABOUT, 0) == 1 && set_row(MI_COUNT, 0) == 1 && settings_lights == LIGHTS_N - 1u);
+    bad += check("SETTINGS CLICK LEVEL: 35 %, not 37 (KNOB 1 steps 5)", set_row(MI_CLICK_LEVEL, 37) == 1 && settings_click_level == 40 &&
+                 set_row(MI_CLICK_LEVEL, 35) == 3 && settings_click_level == 35 && set_row(MI_CLICK_LEVEL, 105) == 1);
+    bad += check("SETTINGS HOME SELECT in the menu's order: OCTAVE beside TRANSPOSE", set_row(MI_HOME_SEL, 5) == 3 &&
+                 HOME_SELECT == HS_OCT && sv(MI_HOME_SEL) == 5);
+    i = (settings.palette + 3u) % NPALETTES;
+    bad += check("SETTINGS COLOR: the palette, as the menu sets it", set_row(MI_COLOR, i) == 3 && settings.palette == i && ui.force);
+    midi_panel_delta[EN_K1] = 3; midi_panel_mask = 1;
+    bad += check("SETTINGS MIDI KNOBS GENERAL: the old mapping's turns dropped (as the menu)", set_row(MI_MIDI_KNOBS, MK_GENERAL) == 3 &&
+                 settings_midi_knobs == MK_GENERAL && !midi_panel_delta[EN_K1] && !midi_panel_mask);
+    a[0] = 1; a[1] = MI_LIGHTS; request(ED_SETTINGS, a, 3);
+    bad += check("SETTINGS set of the wrong length: rc 1 (and the values)", host_wire[5] == 1 && host_wire[6] == 1 && host_wire[7] == MI_COUNT);
+    a[0] = 0; a[1] = MI_COUNT - 2u; a[2] = 5; n = request(ED_SETTINGS, a, 3);
+    bad += check("SETTINGS list from the last two rows: two, ABOUT .. BACK", wire14(8u + 2u * MI_COUNT + 2u) == 2);
+    settings_midi_knobs = MK_OFF;
+
+    /* MLEARN */
+    n = request(ED_MLEARN, a, 0);
+    bad += check("MLEARN: nothing learned, 21 controls (7 knobs), their names", !host_wire[6] && !host_wire[7] && host_wire[8] == MLEARN_N &&
+                 host_wire[9] == NE && !host_wire[10] && host_wire[12] == 127 &&
+                 !strcmp((const char *)host_wire + 10 + 3 * MLEARN_N, E_NAME[0]));
+    a[0] = 3; a[1] = EN_K1; request(ED_MLEARN, a, 2);
+    bad += check("MLEARN learns KNOB 1: it waits, as the page does (nothing learned acts)", !host_wire[6] && host_wire[7] == EN_K1 + 1 && mlearn_on);
+    mlearn_receive(0x90u, 0, 60, 100); ed_service();
+    bad += check("  a note for a knob: still waiting", ed_learn == EN_K1 + 1 && !mlearn_row[EN_K1]);
+    mlearn_receive(0xB0u, 2, 21, 64); ed_service();
+    bad += check("  CC 21: KNOB 1's now, the wait over", mlearn_row[EN_K1] == 21 && !ed_learn && !mlearn_on && mlearn_count() == 1);
+    a[0] = 3; a[1] = NE + B_SAVE; request(ED_MLEARN, a, 2);
+    mlearn_receive(0x90u, 9, 60, 100); ed_service();
+    n = request(ED_MLEARN, a, 0);
+    j = 10u + 3u * (NE + B_SAVE);
+    bad += check("MLEARN learns a button from a note on channel 10; the list says so", mlearn_row[NE + B_SAVE] == (MLEARN_NOTE | 60) &&
+                 host_wire[10 + 3 * EN_K1] == 1 && host_wire[11 + 3 * EN_K1] == 21 && host_wire[12 + 3 * EN_K1] == 127 &&
+                 host_wire[j] == 2 && host_wire[j + 1] == 60 && host_wire[j + 2] == 9);
+    a[0] = 1; a[1] = EN_K1; request(ED_MLEARN, a, 2);
+    bad += check("MLEARN forgets KNOB 1 (the button's stays)", !mlearn_row[EN_K1] && mlearn_count() == 1 && host_wire[6] == 3);
+    a[0] = 3; a[1] = 0; request(ED_MLEARN, a, 2); fm1_ms += 3100u; ed_device_poll();
+    bad += check("MLEARN's wait ends 3 s after the editor's last request", !ed_learn && !mlearn_on);
+    ui.menu = 4; a[0] = 3; request(ED_MLEARN, a, 2);
+    bad += check("MLEARN while the device's MIDI LEARN page is open: rc 2", host_wire[6] == 2 && !ed_learn);
+    ui.menu = 0; a[0] = 3; request(ED_MLEARN, a, 2); a[0] = 4; request(ED_MLEARN, a, 1);
+    bad += check("MLEARN stop: no wait", !host_wire[6] && !ed_learn && !mlearn_on);
+    a[0] = 2; request(ED_MLEARN, a, 1);
+    bad += check("MLEARN forget all (FORGET LEARNED)", !mlearn_count() && host_wire[6] == 3);
+    a[0] = 1; a[1] = MLEARN_N; request(ED_MLEARN, a, 2);
+    bad += check("MLEARN past the controls, op 0, wrong length: rc 1", host_wire[6] == 1 && (a[0] = 0, request(ED_MLEARN, a, 1), host_wire[6] == 1) &&
+                 (a[0] = 2, request(ED_MLEARN, a, 2), host_wire[6] == 1));
+
+    /* DRUM */
+    a[0] = 0; request(ED_DRUM, a, 1);
+    bad += check("DRUM on a track that is not a kit: rc 1, no sounds", host_wire[6] == 1 && !host_wire[7]);
+    set_engine_of(&trk[1], ENGI_DRUM); apply_preset_to(&trk[1], 0); trk[1].p[P_E0] = DK_808;
+    a[0] = 1; n = request(ED_DRUM, a, 1);
+    bad += check("DRUM 808 kit: 16 sounds at their own values (TUNE 0, DECAY 64, TONE 64, LEVEL 127), names", !host_wire[6] &&
+                 host_wire[7] == 16 && host_wire[8] == 24 && host_wire[9] == 64 && host_wire[10] == 64 && host_wire[11] == 127 &&
+                 !strcmp((const char *)host_wire + 8 + 64, "KICK") && !strcmp((const char *)host_wire + 8 + 64 + 5, "TONE") &&
+                 !strcmp((const char *)host_wire + 8 + 64 + 10, "SNARE") && !strcmp((const char *)host_wire + 8 + 64 + 16, "SNAPPY"));
+    a[1] = 1; a[2] = 2; a[3] = 36; a[4] = 10; a[5] = 100; a[6] = 90; a[7] = 0; a[8] = 127; a[9] = 0; a[10] = 0;
+    request(ED_DRUM, a, 11);
+    bad += check("DRUM writes SNARE and TOM L as the page would", !host_wire[6] && drum_patch[1].c[1][0] == 12 && drum_patch[1].c[1][1] == -54 &&
+                 drum_patch[1].c[1][2] == 36 && drum_patch[1].c[1][3] == 37 && drum_patch[1].c[2][0] == -24 && drum_patch[1].c[2][1] == 63 &&
+                 drum_patch[1].c[2][2] == -64 && drum_patch[1].c[2][3] == 127 && host_wire[12] == 36 && host_wire[15] == 90);
+    a[3] = 49; request(ED_DRUM, a, 11);
+    bad += check("DRUM TUNE past +24, past the sounds, the wrong length: rc 1, unchanged", host_wire[6] == 1 && drum_patch[1].c[1][0] == 12 &&
+                 (a[3] = 36, a[1] = 15, request(ED_DRUM, a, 11), host_wire[6] == 1) && (a[1] = 1, request(ED_DRUM, a, 10), host_wire[6] == 1));
+    trk[1].p[P_E0] = DK_909; request(ED_DRUM, a, 1);
+    bad += check("DRUM 909 kit: eleven sounds, the 909's own third values", !host_wire[6] && host_wire[7] == D9_NUM &&
+                 !strcmp((const char *)host_wire + 8 + 4 * D9_NUM + 5, drum_character(0)));
+
+    /* WATCH bit 7: DEVICE_CHANGED */
+    a[0] = 1; a[1] = 1; request(ED_WATCH, a, 2);
+    bad += check("WATCH 1, 1: bit 7 known (a second byte back)", host_wire[5] == 1 && host_wire[6] == 1 && host_wire[7] == 0xF7);
+    bad += check("nothing changed: no DEVICE_CHANGED", !pushed(ED_DEVICE_CHANGED, 10));
+    set_row(MI_LIGHTS, LIGHTS_LOW);
+    bad += check("the editor's own SETTINGS: no DEVICE_CHANGED", !pushed(ED_DEVICE_CHANGED, 10));
+    settings_lights = LIGHTS_HIGH;
+    i = pushed(ED_DEVICE_CHANGED, 10);
+    bad += check("LIGHTS changed on the device: DEVICE_CHANGED (bit 0) with the values", i && host_wire[i] == 1 && host_wire[i + 1] == MI_COUNT &&
+                 host_wire[i + 2 + 2 * MI_LIGHTS] == LIGHTS_HIGH && !pushed(ED_DEVICE_CHANGED, 10));
+    mlearn_bind(NE + 1u, 30, 0); drum_patch[1].c[0][0] = 5;
+    i = pushed(ED_DEVICE_CHANGED, 10);
+    bad += check("a control learned and a drum tuned on the device: bits 0, 1, 3", i && host_wire[i] == 11);
+    a[0] = 127; request(ED_WATCH, a, 1);
+    settings_lights = LIGHTS_LOW;
+    bad += check("WATCH 127 (one byte): 127 back, no DEVICE_CHANGED", host_wire[5] == 127 && host_wire[6] == 0xF7 && !pushed(ED_DEVICE_CHANGED, 10));
+    a[0] = 1; a[1] = 2; request(ED_WATCH, a, 2);
+    bad += check("WATCH's second byte: only bit 7 is known", host_wire[5] == 1 && !host_wire[6]);
+    memset(mlearn_row, 0, sizeof mlearn_row); memset(drum_patch, 0, sizeof drum_patch); settings_lights = LIGHTS_MID;
+    return bad;
+}
 int main(void)
 {
     int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
               native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol() + studio_session() +
-              studio_song() + studio_patterns();
+              studio_song() + studio_patterns() + studio_device();
     printf("%s\n", bad ? "EDITOR TEST FAILED" : "editor test passed");
     return bad != 0;
 }
