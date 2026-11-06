@@ -796,7 +796,7 @@ static void draw_cards(void)
     }
 
     uint32_t c;
-    char val[12];
+    char val[16];
     const char *unit;
     if (cur_page()->scope == SC_TRK) {                 /* LEVEL PAN MUTE of the selected track */
         const track_t *t = TSEL;

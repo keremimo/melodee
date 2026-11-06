@@ -300,7 +300,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
         voice_capacity_kill(&vp->v[k]);
     }
     if (t->p[P_ALLOC] || t->p[P_GLIDE]) {
-        int32_t target=micro_active(t)?clamp(micro_pitch(t,(int32_t)note),0,1270000)*16/10000:(int32_t)note*16;
+        int32_t target=scale_tuned(t)?scale_pitch(t,(int32_t)note)*16/10000:(int32_t)note*16;
         for (i = 0; i < np; i++) {
             int32_t d = t->v[i].pitch_cur - target;
             if (t->v[i].active)
@@ -356,8 +356,8 @@ static void glide_set(track_t *t, voice_t *v, int glide)
 /* Keep each sounding voice's pitch after SCL/ROOT/QNT changes, including release tails. */
 static void voice_scale_pitch(const track_t *t, voice_t *v, uint32_t note)
 {
-    if (micro_active(t)) {
-        int32_t pitch = clamp(micro_pitch(t, (int32_t)note), 0, 1270000);
+    if (scale_tuned(t)) {
+        int32_t pitch = scale_pitch(t, (int32_t)note);
         v->pitch16 = pitch * 16 / 10000;
         v->scale_fine = (pitch * 16 - v->pitch16 * 10000) * 2367 / 1600000;
     } else {

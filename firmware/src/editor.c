@@ -746,7 +746,11 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
                 int32_t value=enum_orig(d,clamp(ed_rv(a+2),d->min,d->max));
                 if(a[0]==1 && a[1]>=G_MFXTYPE && a[1]<=G_MFX3TYPE && (a[1]-G_MFXTYPE)%FX_PARAMS==0u){
                     uint32_t flags=motion_guard();shared_fx_select(song.g,(a[1]-G_MFXTYPE)/FX_PARAMS,value);motion_unguard(flags);
-                }else *vp=(int16_t)value;
+                }else{
+                    if (a[0] == 0 && a[1] == P_SCALE)
+                        scale_tuning_follow(TSEL, (uint32_t)*vp, (uint32_t)value);
+                    *vp=(int16_t)value;
+                }
                 if (a[0] == 1 && (a[1] == G_A4 || a[1] == G_BUDGET))
                     settings_save();
                 if (a[0] == 0) {
@@ -1046,8 +1050,12 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         t = &trk[a[0]];
         d = ed_tdesc(t, a[1]);
         if (na >= 4u && !param_reserved(a[1]) && !(chain_busy() && a[1] >= P_SLEN && a[1] <= P_SGATE)) {
-            if (d->max > d->min)                           /* as SET: clamped; a fixed value stays */
-                t->p[a[1]] = (int16_t)enum_orig(d, clamp(ed_rv(a + 2), d->min, d->max));
+            if (d->max > d->min) {                         /* as SET: clamped; a fixed value stays */
+                int32_t value = enum_orig(d, clamp(ed_rv(a + 2), d->min, d->max));
+                if (a[1] == P_SCALE)
+                    scale_tuning_follow(t, (uint32_t)t->p[P_SCALE], (uint32_t)value);
+                t->p[a[1]] = (int16_t)value;
+            }
             (void)motion_capture(t, a[1], t->p[a[1]]);
             if (scale_shared(a[1]))
                 scale_share(t);

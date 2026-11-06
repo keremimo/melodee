@@ -630,7 +630,24 @@ static int project_scale_protocol(void)
         request(ED_TRACK_PARAM, a, sizeof a);
         for (uint32_t k = 0; k < NTRK; k++) ok &= trk[k].p[ids[i]] == TP[ids[i]].def;
     }
-    return check("SET and TRACK_PARAM share project ROOT, scale, note and recording quantization across all eight tracks", ok);
+    ok &= check("SET and TRACK_PARAM share project ROOT, scale, note and recording quantization across all eight tracks", ok) == 0;
+    {                                                   /* a tuning: the same, and a maqam set brings its own */
+        uint16_t v = (uint16_t)(7 + 8192);
+        uint8_t a[4] = {0, P_TUNING, v & 127u, v >> 7};
+        int tuned;
+        request(ED_SET, a, sizeof a);
+        tuned = TSEL->p[P_TUNING] == 7;
+        for (uint32_t k = 0; k < NTRK; k++) tuned &= trk[k].p[P_TUNING] == 7;
+        v = (uint16_t)(SCALE_MICRO_END + 8192);
+        a[1] = P_SCALE; a[2] = v & 127u; a[3] = v >> 7;
+        request(ED_SET, a, sizeof a);
+        for (uint32_t k = 0; k < NTRK; k++) tuned &= trk[k].p[P_SCALE] == (int16_t)SCALE_MICRO_END && trk[k].p[P_TUNING] == SCALE_LINK[0];
+        v = (uint16_t)(1 + 8192);
+        a[0] = 2; a[2] = v & 127u; a[3] = v >> 7;
+        request(ED_TRACK_PARAM, a, sizeof a);
+        for (uint32_t k = 0; k < NTRK; k++) tuned &= trk[k].p[P_SCALE] == 1 && !trk[k].p[P_TUNING];
+        return (ok ? 0 : 1) + check("SET and TRACK_PARAM share the tuning, a maqam's scale brings its tuning", tuned);
+    }
 }
 static int prophet_protocol(void)
 {

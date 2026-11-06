@@ -101,6 +101,7 @@ static void new_create(void)
         song.sel = 0;
     for (k = 0; k < NTRK; k++)
         trk[k].p[P_ROOT] = (int16_t)nw.root;
+    scale_tuning_follow(TSEL, (uint32_t)TSEL->p[P_SCALE], nw.scale);
     TSEL->p[P_SCALE] = (int16_t)nw.scale;
     scale_share(TSEL);
     song.g[G_BPM] = nw.bpm;
@@ -122,7 +123,7 @@ static void new_input(uint32_t oct, int home_tap)
         ui.hot_t = 40;
         if (nw.on == 1) {
             if (k == 0u) nw.root = (uint8_t)clamp((int32_t)nw.root + (s > 0 ? 1 : -1), TP[P_ROOT].min, TP[P_ROOT].max);
-            else if (k == 1u) nw.scale = (uint8_t)clamp((int32_t)nw.scale + (s > 0 ? 1 : -1), 0, SCALE_TOTAL - 1);
+            else if (k == 1u) nw.scale = (uint8_t)scale_land(nw.scale, clamp((int32_t)nw.scale + (s > 0 ? 1 : -1), 0, SCALE_TOTAL - 1));
             else if (k == 2u) nw.bpm = (int16_t)clamp(nw.bpm + accel(EN_K1 + k, s, GP[G_BPM].max - GP[G_BPM].min), GP[G_BPM].min, GP[G_BPM].max);
         } else {
             nw.role[k] = (uint8_t)clamp((int32_t)nw.role[k] + (s > 0 ? 1 : -1), 0, NR_N - 1);

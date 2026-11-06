@@ -11,10 +11,26 @@ static void scale_picker_mark(int on)
     if (scale_favorite_set((uint32_t)TSEL->p[P_SCALE], on)) settings_save();
     ui.force = 1;                   /* marking a favorite keeps the active tuning */
 }
-static int scale_picker_match(uint32_t id)
+/* A retired entry stays listed only while it is the one selected: its project keeps it, nothing new picks it */
+static int scale_in_family(uint32_t id, uint32_t family)
 {
-    return id < SCALE_TOTAL && (!ui.scale_family || (ui.scale_family == SCALE_FAMILIES + 1u ? scale_favorite(id) :
-        SCALE_FAMILY[id] + 1u == ui.scale_family));
+    return id < SCALE_TOTAL && (!scale_retired(id) || id == (uint32_t)TSEL->p[P_SCALE]) &&
+        (!family || (family == SCALE_FAMILIES + 1u ? scale_favorite(id) : SCALE_FAMILY[id] + 1u == family));
+}
+static int scale_picker_match(uint32_t id) { return scale_in_family(id, ui.scale_family); }
+static int scale_family_empty(uint32_t family)  /* (all its entries are tunings now: KNOB 1 passes it by) */
+{
+    for (uint32_t i = 0; i < SCALE_TOTAL; i++)
+        if (scale_in_family(i, family)) return 0;
+    return 1;
+}
+/* from a list stepped to `to`: on past the retired entries, the way it was going */
+static int32_t scale_land(int32_t from, int32_t to)
+{
+    int32_t dir = to > from ? 1 : -1, at = to;
+    if (to == from) return from;
+    while (at >= 0 && at < (int32_t)SCALE_TOTAL && scale_retired((uint32_t)at)) at += dir;
+    return at >= 0 && at < (int32_t)SCALE_TOTAL ? at : from;
 }
 static uint32_t scale_picker_count(void)
 {
@@ -41,6 +57,7 @@ static uint32_t scale_picker_rank(void)
 static void scale_picker_select(uint32_t id)
 {
     if (id >= SCALE_TOTAL) return;
+    scale_tuning_follow(TSEL, (uint32_t)TSEL->p[P_SCALE], id);
     TSEL->p[P_SCALE] = (int16_t)id;
     motion_capture(TSEL, P_SCALE, (int16_t)id);
     scale_share(TSEL);
@@ -56,7 +73,14 @@ static void scale_picker_step(int32_t steps)
 static void scale_picker_edit(uint32_t slot, int32_t steps)
 {
     if (slot == 0u) {
-        ui.scale_family = (uint8_t)clamp((int32_t)ui.scale_family + steps, 0, SCALE_FAMILIES + 1u);
+        int32_t f = ui.scale_family, dir = steps > 0 ? 1 : -1;
+        for (int32_t n = steps < 0 ? -steps : steps; n > 0; n--) {
+            int32_t g = f + dir;
+            while (g > 0 && g <= (int32_t)SCALE_FAMILIES && scale_family_empty((uint32_t)g)) g += dir;
+            if (g < 0 || g > (int32_t)SCALE_FAMILIES + 1) break;
+            f = g;
+        }
+        ui.scale_family = (uint8_t)f;
         if (!scale_picker_match((uint32_t)TSEL->p[P_SCALE])) scale_picker_select(scale_picker_at(0));
     } else if (slot == 1u) {
         scale_picker_step(steps);

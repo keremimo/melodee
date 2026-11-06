@@ -392,7 +392,7 @@ static void up_values(const up_rec_t *r, int16_t *v)   /* mapped and clamped for
     for (i = 0; i < P_COUNT; i++)
         def[i] = param_desc_of(up_native_cz(r)?ENGI_CZ:r->engine, i)->def;
     up_params(r, v, def);
-    for (i = 0; i < P_COUNT; i++) if (param_reserved(i)) v[i] = 0;
+    for (i = 0; i < P_COUNT; i++) if (param_reserved(i) || i == P_TUNING) v[i] = 0;   /* (a sound never brings a tuning) */
     for (i = 0; i < P_COUNT; i++)
         if (!(eng_extra_retired(r->engine) && i >= P_E0))
         v[i] = (int16_t)clamp(v[i], param_desc_of(up_native_cz(r)?ENGI_CZ:r->engine, i)->min, param_desc_of(up_native_cz(r)?ENGI_CZ:r->engine, i)->max);
