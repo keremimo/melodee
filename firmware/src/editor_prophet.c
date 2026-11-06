@@ -13,7 +13,7 @@ static void p5_accept_patch(uint32_t tr,const p5_patch_t *patch)
 static int ed_prophet_handle(uint32_t cmd,const uint8_t *a,uint32_t n)
 {
     if(cmd!=95u)return 0;
-    uint32_t op=n?a[0]:127u,tr=n>1u?a[1]:127u,rc=n<2u||tr>=NPART||op>4u;
+    uint32_t op=ed_arg(a,n,0),tr=ed_arg(a,n,1),rc=n<2u||tr>=NPART||op>4u;
     p5_patch_t patch;uint8_t frame[P5_FRAME_MAX];uint32_t size=0;
     if(!rc){
         if(op==0u){if(n!=2u)rc=1;else size=p5_patch_encode(p5_patch_of(&trk[tr]),frame,sizeof frame);}
@@ -24,8 +24,8 @@ static int ed_prophet_handle(uint32_t cmd,const uint8_t *a,uint32_t n)
             if(n!=4u || a[2]>=88u || !P5_PANEL[a[2]].label || a[3]<P5_PANEL[a[2]].min || a[3]>P5_PANEL[a[2]].max || trk[tr].eng_req!=ENGI_PROPHET)rc=1;
             else {fm1_irq_off();p5_edit_value(&trk[tr],a[2],a[3]);fm1_irq_on();ui.force=1;}
         }else if(op==3u){
-            if(n>2u+P5_NAME_LEN || n<3u || trk[tr].eng_req!=ENGI_PROPHET)rc=1;
-            for(uint32_t i=2u;!rc&&i<n;i++)if(a[i]<32u||a[i]>126u)rc=1;
+            char name[P5_NAME_LEN+1];
+            if(n>2u+P5_NAME_LEN || n<3u || trk[tr].eng_req!=ENGI_PROPHET || !ed_text(name,a+2,n-2u))rc=1;
             if(!rc){patch=*p5_patch_of(&trk[tr]);memset(patch.raw+P5_NAME,' ',P5_NAME_LEN);memcpy(patch.raw+P5_NAME,a+2,n-2u);fm1_irq_off();p5_patch[tr]=patch;fm1_irq_on();ui.force=1;}
         }else if(n!=2u)rc=1;else p5_send(tr);
     }
