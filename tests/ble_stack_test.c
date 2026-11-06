@@ -24,19 +24,19 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "../firmware/src/ble/ble_prim.c"
-#include "../firmware/src/ble/ble_aes.c"
-#include "../firmware/src/ble/ble_ll.c"
-#include "../firmware/src/ble/ble_smp.c"
-#include "../firmware/src/ble/ble_host.c"
-#include "../firmware/src/ble/ble_att.c"
-#include "../firmware/src/ble/ble_midi.c"
-#include "../firmware/src/ble/ble_diag.c"
-#include "../firmware/src/ble/ble_store.c"   /* (the stack's plain parts: built here too) */
+#include "ble/ble_prim.c"
+#include "ble/ble_aes.c"
+#include "ble/ble_ll.c"
+#include "ble/ble_smp.c"
+#include "ble/ble_host.c"
+#include "ble/ble_att.c"
+#include "ble/ble_midi.c"
+#include "ble/ble_diag.c"
+#include "ble/ble_store.c"   /* (the stack's plain parts: built here too) */
 #if BLE_CENTRAL
-#include "../firmware/src/ble/ble_scan.c"
-#include "../firmware/src/ble/ble_gattc.c"
-#include "../firmware/src/ble/ble_central.c"
+#include "ble/ble_scan.c"
+#include "ble/ble_gattc.c"
+#include "ble/ble_central.c"
 #endif
 
 static int fails;
@@ -79,7 +79,7 @@ void ble_hw_conn_start(const struct ble_hw_conn *c)
     hw.conn = *c;
     hw.max_tx = hw.max_rx = 27;
 }
-void ble_hw_conn_stop(void)
+void ble_hw_conn_stop(uint8_t link)
 {
     hw.conn_on = 0;
     hw.conn_stops++;
@@ -106,23 +106,23 @@ void ble_hw_init_start(const struct ble_hw_init *i) { (void)i; }
 void ble_hw_init_stop(void) {}
 void ble_app_central_keys(const struct ble_keys *k) { (void)k; }
 #endif
-void ble_hw_conn_update(const struct ble_hw_conn_upd *u)
+void ble_hw_conn_update(uint8_t link, const struct ble_hw_conn_upd *u)
 {
     hw.upd = *u;
     hw.upd_n++;
 }
-void ble_hw_chmap_update(const uint8_t chm[5], uint16_t instant)
+void ble_hw_chmap_update(uint8_t link, const uint8_t chm[5], uint16_t instant)
 {
     memcpy(hw.chm, chm, 5);
     hw.chm_instant = instant;
     hw.chm_n++;
 }
-void ble_hw_set_lengths(uint8_t max_tx, uint8_t max_rx)
+void ble_hw_set_lengths(uint8_t link, uint8_t max_tx, uint8_t max_rx)
 {
     hw.max_tx = max_tx;
     hw.max_rx = max_rx;
 }
-void ble_hw_tx_kick(void) { hw.kicks++; }
+void ble_hw_tx_kick(uint8_t link) { hw.kicks++; }
 uint32_t ble_hw_time_us(void) { return now_us; }
 uint32_t ble_hw_diag_now(void) { return now_us; }
 uint8_t ble_hw_addr(uint8_t addr[6])
@@ -287,20 +287,20 @@ static int c_event(void)
         return 0;
     if (C.alive)
         for (i = 0; i < C.qn; i++)
-            ble_ll_hw_rx(C.q[i], (uint8_t)(2 + C.q[i][1]));
+            ble_ll_hw_rx(0, C.q[i], (uint8_t)(2 + C.q[i][1]));
     C.qn = 0;
     while (C.alive && hw.conn_on && sent < 32) {
-        uint8_t n = ble_ll_hw_tx(pdu);
+        uint8_t n = ble_ll_hw_tx(0, pdu);
         if (!n)
             break;
         c_take(pdu, n);
         sent++;
-        ble_ll_hw_tx_acked();
+        ble_ll_hw_tx_acked(0);
     }
     if (!hw.conn_on)
         return sent;
     now_us += (uint32_t)C.interval * 1250u;
-    ble_ll_hw_event_end(C.evt, (uint8_t)C.alive);
+    ble_ll_hw_event_end(0, C.evt, (uint8_t)C.alive);
     C.evt++;
     if (hw.upd_n && C.evt == hw.upd.instant)
         C.interval = hw.upd.interval;
@@ -560,7 +560,7 @@ static void test_gatt(void)
     int n, i, ok, nsvc = 0;
     uint16_t svc_s[8], svc_e[8], midi_val = 0, midi_ccc = 0, sc_ccc = 0, s;
     r = c_att((const uint8_t[]){0x02, 0x05, 0x02}, 3, &n);
-    check("ATT MTU: the central 517 -> we answer 247", r && n == 3 && r[0] == 0x03 && r[1] == 247 && batt.mtu == 247);
+    check("ATT MTU: the central 517 -> we answer 247", r && n == 3 && r[0] == 0x03 && r[1] == 247 && att_st.mtu == 247);
     for (s = 1; s && nsvc < 8;) {              /* primary services */
         q[0] = 0x10, q[1] = (uint8_t)s, q[2] = (uint8_t)(s >> 8), q[3] = 0xFF, q[4] = 0xFF, q[5] = 0x00, q[6] = 0x28;
         r = c_att(q, 7, &n);
@@ -642,13 +642,13 @@ static void test_gatt(void)
     r = c_frame(4, &n);
 #if BLE_SC_ON_SUBSCRIBE
     check("then the Service Changed indication 0x0001..0xFFFF",
-          r && r[0] == 0x1D && r[1] == 10 && r[3] == 1 && r[5] == 0xFF && r[6] == 0xFF && batt.ind_wait);
+          r && r[0] == 0x1D && r[1] == 10 && r[3] == 1 && r[5] == 0xFF && r[6] == 0xFF && att_st.ind_wait);
     c_l2cap(4, (const uint8_t[]){0x1E}, 1);
     c_event();
-    check("confirmed", !batt.ind_wait);
+    check("confirmed", !att_st.ind_wait);
 #else
     check("then no Service Changed indication: the database never changes (the Mac stopped after one, blell10-12)",
-          !r && !batt.ind_wait && !batt.sc_due);
+          !r && !att_st.ind_wait && !att_st.sc_due);
     r = c_att((const uint8_t[]){0x0A, 11, 0}, 3, &n);
     check("Read the Service Changed CCCD: 2 (indications on)", r && r[0] == 0x0B && n == 3 && r[1] == 2);
 #endif
@@ -1316,7 +1316,9 @@ static void test_scan(void)
     ble_ll_scan(0);
     check("scan: connect: advertising first", hw.adv_on && connect(24, 300));
     ble_ll_scan(1);
-    check("scan: DEVICES opened while connected: the link stays, no scan", ble_ll_connected() && !hws.on);
+    check(BLE_LINKS > 1 ? "scan: DEVICES opened while connected: the link stays, the central link scans beside it"
+                        : "scan: DEVICES opened while connected: the link stays, no scan",
+          ble_ll_connected() && hws.on == (BLE_LINKS > 1));
     c_ctrl((const uint8_t[]){LL_TERMINATE_IND, 0x13}, 2);
     c_event();
     check("scan: the link ends with DEVICES open: scanning (not advertising)", !ble_ll_connected() && hws.on &&

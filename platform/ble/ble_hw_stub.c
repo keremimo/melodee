@@ -7,19 +7,25 @@
 BLE_API void ble_hw_adv_start(const struct ble_hw_adv *a) { (void)a; }
 BLE_API void ble_hw_adv_stop(void) {}
 BLE_API void ble_hw_conn_start(const struct ble_hw_conn *c) { (void)c; }
-BLE_API void ble_hw_conn_stop(void) {}
-BLE_API void ble_hw_conn_update(const struct ble_hw_conn_upd *u) { (void)u; }
-BLE_API void ble_hw_chmap_update(const uint8_t chm[5], uint16_t instant)
+BLE_API void ble_hw_conn_stop(uint8_t link) { (void)link; }
+BLE_API void ble_hw_conn_update(uint8_t link, const struct ble_hw_conn_upd *u)
 {
+    (void)link;
+    (void)u;
+}
+BLE_API void ble_hw_chmap_update(uint8_t link, const uint8_t chm[5], uint16_t instant)
+{
+    (void)link;
     (void)chm;
     (void)instant;
 }
-BLE_API void ble_hw_set_lengths(uint8_t max_tx, uint8_t max_rx)
+BLE_API void ble_hw_set_lengths(uint8_t link, uint8_t max_tx, uint8_t max_rx)
 {
+    (void)link;
     (void)max_tx;
     (void)max_rx;
 }
-BLE_API void ble_hw_tx_kick(void) {}
+BLE_API void ble_hw_tx_kick(uint8_t link) { (void)link; }
 BLE_API uint8_t ble_hw_addr(uint8_t addr[6])
 {
     static const uint8_t a[6] = {0x01, 0x00, 0x00, 0x00, 0x00, 0xC0};   /* random static (top bits 11): a placeholder */

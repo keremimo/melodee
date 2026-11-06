@@ -29,8 +29,8 @@
 #ifndef BLE_CENTRAL
 #define BLE_CENTRAL 1
 #endif
-#include "../firmware/src/ble/ble_stack.c"
-#include "../firmware/src/ble/ble_diag.c"
+#include "ble/ble_stack.c"
+#include "ble/ble_diag.c"
 #if BLE_DIAG
 #define DG(x) (x)
 #else
@@ -59,7 +59,7 @@ static const uint8_t PEER[6] = {0x37, 0x37, 0x4B, 0x65, 0x79, 0xC4};
 static void eng_adv(uint8_t hdr, const uint8_t a[6], const uint8_t *target, int cntl)
 {
     uint32_t b = CB->rxtog & 1u;
-    uint8_t *p = bb.rx[b].buf + HW_SWHDR, n = target ? 12u : 9u;
+    uint8_t *p = bb.lk[BLE_LINK_CENTRAL].rx[b].buf + HW_SWHDR, n = target ? 12u : 9u;
     memcpy(p, a, 6);
     if (target)
         memcpy(p + 6, target, 6);
@@ -130,13 +130,13 @@ static void master_event(uint32_t e)
         if (loaded && !m.in_flight) {          /* the engine sends buffer t */
             pdu[0] = (uint8_t)(CB->txdhdr[t] & 3u);
             pdu[1] = (uint8_t)(CB->txdhdr[t] >> 8);
-            memcpy(pdu + 2, bb.tx[t].buf + HW_SWHDR, pdu[1]);
+            memcpy(pdu + 2, bb.lk[BLE_LINK_CENTRAL].tx[t].buf + HW_SWHDR, pdu[1]);
             per_take(pdu);
             m.in_flight = 1;
             m.last_b = (int)t;
         }
         {                                      /* the peripheral's answer: its next PDU or an empty one */
-            uint8_t *p = bb.rx[rb].buf + HW_SWHDR, *q = m.qn ? m.q[0] : 0, n = q ? q[1] : 0;
+            uint8_t *p = bb.lk[BLE_LINK_CENTRAL].rx[rb].buf + HW_SWHDR, *q = m.qn ? m.q[0] : 0, n = q ? q[1] : 0;
             if (q)
                 memcpy(p, q + 2, n);
             CB->rxdhdr[rb] = (uint16_t)(n << 8 | (uint32_t)m.psn << 3 | (q ? q[0] & 3u : 1u));
@@ -194,14 +194,14 @@ static void t_central(void)
         int ok = 1;
         for (k = 0; k < 2u; k++)
             ok &= CB->txahdr[k] == (5u | 1u << 4 | 1u << 5) && CB->txdhdr[k] == 34u << 8 &&
-                  !memcmp(bb.tx[k].buf + HW_SWHDR, OWN, 6) && !memcmp(bb.tx[k].buf + HW_SWHDR + 6, PEER, 6) &&
-                  !memcmp(bb.tx[k].buf + HW_SWHDR + 12, bll.state == LL_INIT ? llc.cind + 14 : OWN, 22);
+                  !memcmp(bb.lk[BLE_LINK_CENTRAL].tx[k].buf + HW_SWHDR, OWN, 6) && !memcmp(bb.lk[BLE_LINK_CENTRAL].tx[k].buf + HW_SWHDR + 6, PEER, 6) &&
+                  !memcmp(bb.lk[BLE_LINK_CENTRAL].tx[k].buf + HW_SWHDR + 12, bll.state == LL_INIT ? llc.cind + 14 : OWN, 22);
         check("initiating: both TX buffers our CONNECT_IND (TXAHDR 5 | TxAdd | RxAdd, length 34, InitA, AdvA, LLData)", ok);
     }
     {   /* the stopped scan's packet, in the air when initiating started: its report ends before its own airtime
          * since the start (the "mac" pick of ble_emu_central_test.py): no hit */
         uint32_t b = CB->rxtog & 1u;
-        uint8_t *p = bb.rx[b].buf + HW_SWHDR;
+        uint8_t *p = bb.lk[BLE_LINK_CENTRAL].rx[b].buf + HW_SWHDR;
         memcpy(p, PEER, 6);
         p[6] = 2, p[7] = 1, p[8] = 6;
         CB->rxahdr[b] = 0x40;
@@ -253,7 +253,7 @@ static void t_central(void)
     for (e = 0; e < 40u; e++)
         master_event(e);
     check("events: our VERSION_IND, FEATURE_REQ, LENGTH_REQ and the ATT MTU request out by the TX rule, answered",
-          m.ver == 1 && m.feat == 1 && m.len == 1 && m.mtu == 1 && bll.feat_known && batt.mtu == 185);
+          m.ver == 1 && m.feat == 1 && m.len == 1 && m.mtu == 1 && bll.feat_known && att_st.mtu == 185);
     check("events: after the first packet WINCNTL = 0, WINCNTL2 = 30 (HW §21.3 step 4)", CB->wincntl[0] == 0u &&
           CB->wincntl[1] == 0u && CB->wincntl2 == 30u && !drv.win_wide && DG(ble_dgc.m_events_rx >= 30u));
     ble_ll_conn_update(12, 12, 300);

@@ -65,7 +65,7 @@ static int ble_quiet(void) { uint32_t pkt, ms; return !ble_app_midi_peek(&pkt, &
 static track_t *fresh(void)
 {
 #ifdef TRS_BLE
-    mb.tr = mb.tw; mb.ready = 0;
+    mb.ln[0].tr = mb.ln[0].tw; mb.ln[0].ready = 0;
 #endif
     usb.config = 1; mo_r = mo_w = 0;
     for (uint32_t i = 0; i < NTRK; i++) trk_all_off(&trk[i]);
@@ -322,40 +322,40 @@ static void other_streams(void)
 static void ble(void)
 {
     track_t *t = fresh();
-    mb.ready = 1;
+    mb.ln[0].ready = 1;
     trk_note_on(t, 60, 100);
     expect(ble_next(0x90, 60) && JACK(0x90, 60, 100), "BLE: the note goes both ways");
     trk_note_off(t, 60);
     expect(ble_next(0x80, 60) && JACK(0x90, 60, 100, 0x80, 60, 0) && ble_quiet(), "BLE: the release too, once each");
 
     t = fresh();
-    mb.ready = 1; mb.tw = mb.tr + MBQ;
+    mb.ln[0].ready = 1; mb.ln[0].tw = mb.ln[0].tr + MBQ;
     trk_note_on(t, 60, 100);
     expect(JACK(0x90, 60, 100), "BLE full: the note still reaches the jack");
     trk_note_off(t, 60); flushes();
     expect(JACK(0x90, 60, 100, 0x80, 60, 0), "BLE full: its release reaches the jack, once");
-    mb.tr = mb.tw; flushes();
+    mb.ln[0].tr = mb.ln[0].tw; flushes();
     expect(ble_quiet() && !midi_track_pending(0), "BLE free: no release of a note it never heard");
 
     t = fresh();
-    mb.ready = 1;
+    mb.ln[0].ready = 1;
     trk_note_on(t, 60, 100);
     expect(ble_next(0x90, 60), "BLE stalls after the note: the note went out");
-    mb.tw = mb.tr + MBQ;
+    mb.ln[0].tw = mb.ln[0].tr + MBQ;
     trk_note_off(t, 60); flushes();
     expect(JACK(0x90, 60, 100, 0x80, 60, 0) && midi_track_pending(0), "BLE stalls after the note: the jack once, BLE's release owed");
-    mb.tr = mb.tw; flushes();
+    mb.ln[0].tr = mb.ln[0].tw; flushes();
     expect(ble_next(0x80, 60) && ble_quiet() && !midi_track_pending(0), "BLE free: its release, once");
     expect(jack_count(0x80, 60) == 1u, "BLE free: nothing more for the jack");
 
     t = fresh();
-    mb.ready = 1;
+    mb.ln[0].ready = 1;
     trk_note_on(t, 60, 100); expect(ble_next(0x90, 60), "BLE lost after the note: the note went out");
-    mb.ready = 0;
+    mb.ln[0].ready = 0;
     trk_note_off(t, 60); flushes();
     trk_note_on(t, 62, 100); trk_note_off(t, 62);
     expect(jack_count(0x80, 60) == 1u && jack_count(0x90, 62) == 1u && jack_count(0x80, 62) == 1u, "BLE lost: the jack keeps playing");
-    mb.ready = 1; flushes();
+    mb.ln[0].ready = 1; flushes();
     expect(ble_next(0x80, 60) && ble_quiet() && !midi_track_pending(0), "BLE back: its release, once");
 }
 #endif

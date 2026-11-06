@@ -538,7 +538,7 @@ static void ble_diag_print(ble_diag_put put, const struct ble_diag_regs *r)
     put("ll_state ");
     put(BD_LL[bll.state % 5u]);
     put("\r\n");
-    bd_kv(put, "ll_enabled", bll.enabled);
+    bd_kv(put, "ll_enabled", llg.enabled);
     bd_kv(put, "ll_established", bll.state == LL_CONN && bll.established);
     bd_kv(put, "ll_interval", bll.state == LL_CONN ? bll.interval : 0u);
     bd_kv(put, "ll_lproc", bll.lproc);

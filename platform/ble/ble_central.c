@@ -71,11 +71,13 @@ BLE_API int ble_central_connect(const struct ble_peer *p)
 
 BLE_API void ble_central_cancel(void)
 {
+    uint8_t was = ll_enter(BLE_LINK_CENTRAL);
     if (ble_ll_initiating()) {
         ble_ll_connect_cancel();
         bcen.st = BLE_CS_IDLE;
     } else if (ble_ll_central())
         ble_ll_disconnect(BLE_ERR_REMOTE_USER);   /* (ble_central_disconnected when it is gone) */
+    ll_leave(was);
 }
 
 /* leave the link for this reason (it is kept until the next attempt), once what is queued has gone (a Pairing Failed
@@ -293,7 +295,7 @@ BLE_API void ble_central_event(void)
         return;
     now = ble_hw_time_us();
     if (bcen.leave) {
-        if (ble_ll_tx_room() + 4u >= BLE_LL_TX_RING || now - bcen.leave_t > 1000000u) {
+        if (ble_ll_tx_idle() || now - bcen.leave_t > 1000000u) {
             bcen.leave = 0;
             ble_ll_disconnect(BLE_ERR_REMOTE_USER);
         }
@@ -306,7 +308,7 @@ BLE_API void ble_central_event(void)
 #endif
     ble_gattc_event(now);
 #if BLE_CEN_PAIR
-    if (bcen.gatt_after_keys && ble_ll_tx_room() + 4u >= BLE_LL_TX_RING) {
+    if (bcen.gatt_after_keys && ble_ll_tx_idle()) {
         bcen.gatt_after_keys = 0;              /* (our keys handed to the engine: the request again; after the
                                                 * GATT timeout check, whose `now` is older than this request) */
         ble_gattc_retry();

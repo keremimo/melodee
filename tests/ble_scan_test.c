@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 #define BLE_API static
-#include "../firmware/src/ble/ble_scan.c"
+#include "ble/ble_scan.c"
 
 static int fails;
 static void check(const char *what, int ok)

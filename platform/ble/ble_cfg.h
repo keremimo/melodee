@@ -77,6 +77,10 @@
 #ifndef BLE_LL_TX_RING
 #define BLE_LL_TX_RING 1024u             /* queued L2CAP frames (bytes, a power of two) */
 #endif
+#ifndef BLE_LL_TX_RING_CENTRAL
+#define BLE_LL_TX_RING_CENTRAL BLE_LL_TX_RING   /* ... of the central link, with BLE_LINKS 2 (a power of two; a device's ATT MTU is
+                                                 * smaller than the computer's, so its ring can be: Melodee's build uses 512) */
+#endif
 #ifndef BLE_LL_CTRL_Q
 #define BLE_LL_CTRL_Q 4u                 /* queued LL control PDUs */
 #endif
@@ -115,6 +119,34 @@
 #endif
 #ifndef BLE_CEN_PAIR
 #define BLE_CEN_PAIR (BLE_CENTRAL == 1)  /* the central pairs (SMP initiator, LL encryption as master, passkey, RPA search) */
+#endif
+/* Melodee: how many links the stack holds at once. 1 (the default): one link, advertising or scanning or connected, as
+ * before. 2 (BLE_CENTRAL needed): a peripheral link (link 0: the computer's, advertising and then slave) and a central
+ * link (link 1: a device's, scanning, initiating and then master) side by side, each on an instance of its own in the
+ * engine (docs/BLE-MULTILINK.md). With 1, both roles are link 0 and every link argument below is 0. */
+#ifndef BLE_LINKS
+#define BLE_LINKS 1
+#endif
+#if BLE_LINKS < 1 || BLE_LINKS > 2
+#error "BLE_LINKS: 1, or 2 (a peripheral link and a central link)"
+#endif
+#if BLE_LINKS > 1 && !BLE_CENTRAL
+#error "BLE_LINKS 2 needs BLE_CENTRAL"
+#endif
+#define BLE_LINK_PERIPH 0u                  /* the link the peripheral role (advertising, slave) runs on */
+#define BLE_LINK_CENTRAL (BLE_LINKS > 1 ? 1u : 0u)   /* the link the central role (scan, initiate, master) runs on */
+/* With 2 links: advertising, scanning and initiating are the "idle" activities of a link that has none. 1 (the
+ * default): only one of them runs at a time, as with one link (a scan pauses advertising); connected links go on
+ * beside it. 0: advertising and scanning run side by side (the engine shares the radio by priority, HW §21.5; not
+ * measured on hardware) */
+#ifndef BLE_IDLE_EXCL
+#define BLE_IDLE_EXCL 1
+#endif
+/* Where the banked per-link state of a two-link build lives (BLE_LINKS 2; ordinary zero-initialised statics, attribute
+ * placed after the declarator). Empty, the default: .bss. Melodee's classic build puts it in .pool (zeroed once at boot,
+ * outside .data / .bss: that RAM has under 1 KB free there, the audio arena 30 KB over its minimum; midi_ble.h) */
+#ifndef BLE_STATE_MEMORY
+#define BLE_STATE_MEMORY
 #endif
 #if (defined(FELUCCA_BLE_BOND) && FELUCCA_BLE_BOND) || BLE_CEN_PAIR
 /* builder item BLE_BOND: bonding (SMP Just Works + LL encryption); BLE_CENTRAL level 1 needs it too: Apple's
@@ -231,6 +263,9 @@
 #endif
 #if BLE_ATT_MTU_MAX < 23u || BLE_ATT_MTU_MAX > 517u
 #error "BLE_ATT_MTU_MAX: 23..517"
+#endif
+#if (BLE_LL_TX_RING_CENTRAL & (BLE_LL_TX_RING_CENTRAL - 1u)) || BLE_LL_TX_RING_CENTRAL < 2u * (BLE_ATT_MTU_MAX + 4u + 2u)
+#error "BLE_LL_TX_RING_CENTRAL: a power of two, room for two full ATT frames of the central link"
 #endif
 #if (BLE_LL_TX_RING & (BLE_LL_TX_RING - 1u)) || BLE_LL_TX_RING < 2u * (BLE_ATT_MTU_MAX + 4u + 2u)
 #error "BLE_LL_TX_RING: a power of two, room for two full ATT frames"
