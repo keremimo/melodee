@@ -717,9 +717,10 @@ int mlb_sysex(const uint8_t *p, uint32_t n)
     ml_sx_p = p;
     ml_sx_n = n;
     ml_sx_ready = 1;
-    ed_service();                                   /* takes it (or drops it) now, while p is the base's */
-    ml_sx_ready = 0;
-    return 1;
+    ed_service();                                   /* takes it now, while p is the base's (ota_frame_done) */
+    int took = !ml_sx_ready;                        /* left: not the editor's, so the base's: its updater's handshake */
+    ml_sx_ready = 0;                                /* (ota_service, main_fm1.c), the M-UPGRADE commands */
+    return took;
 }
 int mlb_expect(const char *s, int *v)
 {
