@@ -20,9 +20,10 @@ ROOT=Path(__file__).resolve().parents[1]
 # charlesvestal/fm1-base main and its felucca-bsp (hugelton/felucca-bsp main), fetched 2026-11-05
 REV="698e2cba46b33bf14d9bf756675036053535638e"
 BSP_REV="f878800967e66e721dfbc9a4f5fe1835772ae8fc"
-# The SMK-37 board layer: the two PR branches feat/smk37-board (fm1-base on REV, felucca-bsp on BSP_REV), cloned from
-# the local repositories until they are pushed (SMK_FROM). The revisions pin it as REV and BSP_REV pin the FM-1's.
-SMK_REV="2303d1b1ae3e805c73b4b4063fd445abfa84f8a0"
+# The SMK-37 board layer: the two PR branches feat/smk37-board (charlesvestal/fm1-base#38 on REV, hugelton/felucca-bsp#30
+# on BSP_REV), cloned from the local repositories (SMK_FROM). The revisions pin it as REV and BSP_REV pin the FM-1's;
+# SMK_BSP_REV is the one fm1-base's own submodule pins (#30's later head changed only its README and a comment).
+SMK_REV="b5007d02b68de4ebe2d44af33c110f30b9384d26"
 SMK_BSP_REV="3fb410b40d4e152dba417576a6f5a7468a2f39a3"
 SMK_FROM=(Path.home()/"code/personal/fm1-base", Path.home()/"code/personal/felucca-bsp")
 SMK_MODELS={"pro":("Pro",""),"elite":("Elite","-elite"),"mke":("MKE","-mke")}  # the product's name, the file's suffix
@@ -68,7 +69,7 @@ shutil.copytree(source,work,ignore=shutil.ignore_patterns(".git","build","__pyca
 from base_overlay import apply, smk37_linker, smk37_toml
 if smk:
     name=SMK_MODELS[model][0]
-    (work/"device/app_smk37.ld").write_text(smk37_linker((ROOT/"platform/app.ld").read_text()))
+    (work/"device/app.ld").write_text(smk37_linker((ROOT/"platform/app.ld").read_text()))   # (the slot: the base's)
     (work/"melodee-fm1.toml").write_text(smk37_toml((ROOT/"platform/fm1.toml").read_text(),model,name))
     apply(work,board,model,"Melodee "+name)
 else:

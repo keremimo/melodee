@@ -36,6 +36,9 @@ enum { OBJ_PANEL, OBJ_NOBJ };
 #define APP_BLE_AT_BOOT (mlb_ble_at_boot())
 int mlb_ble_at_boot(void);
 #define APP_OVERLOAD                                /* a render over 90 % of its time: shed a voice (melodee_app.c) */
+/* The SMK-37's TRS jack gets only what Melodee sends it TO_TRS (platform/smk_midi_out_base.h: USB MIDI out's stream and
+ * the MIDI Tracks' notes on their own books), not the base's copy of everything sent TO_USB (tools/base_overlay.py) */
+#define APP_TRS_OWN
 void app_overload(void);
 void app_init(void);
 void app_render(int32_t *lr,uint32_t n,uint32_t gain);

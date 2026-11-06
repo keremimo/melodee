@@ -89,6 +89,11 @@ static void fm1_aw_relax(void){}
 #endif
 
 /* ---- the panel: buttons, keys, encoders, LEDs (fm1_input.h); fed by ml_poll from the base's scan */
+#if BOARD_SMK37
+#include "smk_input_base.h"                     /* (hal/smk_input.h's API and state) */
+#define SMO_SECTION                             /* (in RAM: the pool's arena is the SMK's tighter, RAM has room) */
+#include "smk_midi_out_base.h"                  /* the TRS jack's MIDI OUT (voice.c: midi_track.c; usb.c's stream below) */
+#else
 #define FM1_NCOL 11u
 #define FM1_NKEY 41u
 #define FM1_NENC 7u
@@ -113,6 +118,7 @@ static uint8_t fm1_led[11],fm1_led_dim[3][11],fm1_led_dim_mask[3];
 static uint32_t fm1_input_edges(uint32_t *released){uint32_t p=ml_pressed;if(released)*released=ml_released;ml_pressed=ml_released=0;return p;}   /* (released may be 0) */
 static uint32_t fm1_input_note_edges(void){uint32_t p=ml_notes;ml_notes=0;return p;}
 static int32_t fm1_enc_take(uint32_t i){int32_t n=ml_enc[i%7u];ml_enc[i%7u]=0;return n;}
+#endif
 
 /* ---- the LCD (lcd.c): the base's driver */
 static void lcd_fill(uint32_t x,uint32_t y,uint32_t w,uint32_t h,uint16_t c){ml_fill(x,y,w,h,c);}
@@ -186,10 +192,19 @@ static int midi_track_emit(uint32_t pkt)
     ml_midi_out(pkt);
     return 1;
 }
-static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
+static void midi_out_event(uint32_t pkt)
+{
+#if BOARD_SMK37
+    smo_put(pkt);                                   /* the TRS jack, with or without a computer */
+#endif
+    (void)midi_track_emit(pkt);
+}
 static void midi_sync_send(uint32_t pkt)            /* clock, transport, Song Position: four slots kept for transport */
 {
     uint32_t pulse = ((pkt >> 8) & 0xFFu) == 0xF8u;
+#if BOARD_SMK37
+    smo_put(pkt);                                   /* the TRS jack follows the clock too (one byte a message) */
+#endif
     if (ml_midi_ready() && ml_midi_room() > (pulse ? 4u : 0u)) ml_midi_out(pkt);
 }
 static void midi_sync_emit(uint32_t st) { midi_sync_send(0xFu | st << 8); }
@@ -374,6 +389,134 @@ static const uint8_t *fm1_xip_ptr(uint32_t off) { return ml_flash(off); }
 #define INSTALLER_REPORT_FRAME(p, n) 0
 #include "../firmware/src/editor.c"
 
+#if BOARD_SMK37
+/* ---- the SMK-37's controls in the main loop (main.c's, the scan the base's: smk_input_base.h) */
+#include "../firmware/src/smk_controls.h"
+static int32_t smk_wheel_bend, smk_wheel_mod;      /* the base's wheels: a 14-bit bend, a 0..127 mod (ml_smk_read) */
+/* main.c smk_wheels after its readings (the base takes the pitch wheel's centre and both ranges): the selected synth
+ * track's bend and mod wheel, only when they change, so MIDI IN's bend and CC1 keep working; another track selected
+ * takes them off the old one. Keep it with main.c's. */
+static void smk_wheels(void)
+{
+    static int32_t sent_b, sent_m = -1;
+    static uint8_t tsel = 0xFF;
+    int32_t b = smk_wheel_bend, mw = smk_wheel_mod;
+    track_t *t;
+    smk_bend = b;
+    if (tsel != song.sel) {                        /* another track: the old one back at rest */
+        if (tsel < NTRK && (sent_b || sent_m > 0)) {
+            t = &trk[tsel];
+            t->bend_raw = 0;
+            midi_bend_target[tsel] = 0;
+            t->mw = 0;
+        }
+        tsel = (uint8_t)song.sel;
+        sent_b = 0;
+        sent_m = -1;
+    }
+    t = TSEL;
+    smk_wheel_trk = (uint8_t)song.sel;
+    smk_modw = drum_track(t) ? 0u : (uint8_t)mw;
+    if (drum_track(t))                             /* drums ignore bend and the wheel (as MIDI's) */
+        return;
+    if (b != sent_b) {
+        sent_b = b;
+        t->bend_raw = (int16_t)b;                  /* PROPHET (its BEND) and FM6 (its DX7 range) read this */
+        if (t->eng_req != ENGI_PROPHET)
+            midi_bend_target[song.sel % NTRK] = b * (SMK_BEND_ST * 256) / (b < 0 ? 8192 : 8191);
+    }
+    if (mw != sent_m) {
+        sent_m = mw;
+        t->mw = (uint8_t)mw;
+    }
+}
+/* the base's reading of the panel into hal/smk_input.h's state: the buttons and encoders by PANEL_DEFAULT's ids (the
+ * base's own map, which HARDWARE CALIBRATION teaches, gave them their functions), the keys as the scan's events (a
+ * key's press, its release, struck again before a full lift; a tap shorter than a pass is down for one pass), the pads
+ * the same through their map (smk__padq), the faders, the wheels and the pedal as they are */
+static void smk_base_poll(uint32_t raw, const int32_t *enc)
+{
+    static ml_smk_t s;
+    static uint64_t kprev;
+    static uint32_t pprev;
+    uint64_t held, gone, again, fresh;
+    uint32_t b = 0, i, l, ph, pg, pa, pf;
+    for (i = 0; i < NB; i++)
+        if ((raw >> i) & 1u) b |= 1u << PANEL_DEFAULT.btn[i];
+    for (i = 0; i < 4u; i++)
+        if ((raw >> (NB + i)) & 1u) b |= 1u << (SMK_BTN_KNOB_BANK + i);
+    ml_smk_read(&s);
+    l = fm1__lock();
+    b |= fm1_in.remote | fm1_in.remote_tap;        /* MIDI LEARN: a controller's button, closed as a panel button */
+    fm1_in.remote_tap &= ~fm1_in.buttons;
+    fm1_in.pressed |= b & ~fm1_in.buttons;
+    fm1_in.released |= fm1_in.buttons & ~b;
+    fm1_in.buttons = b;
+    for (i = 0; i < NE; i++)
+        fm1_in.enc_steps[PANEL_DEFAULT.enc[i]] += (int16_t)(enc[i] * PANEL_DEFAULT.dir[i]);
+    held = s.keys | (s.keys_hit & ~kprev);
+    gone = kprev & ~held;
+    again = (s.retrig | s.keys_hit) & kprev & held;
+    fresh = held & ~kprev;
+    for (i = 0; i < FM1_NKEY; i++) {
+        uint64_t m = (uint64_t)1u << i;
+        uint32_t v = s.vel[i] ? s.vel[i] : 100u;
+        if (gone & m) {
+            smk__key_event(i, 0);
+        } else if (again & m) {                    /* struck again while down: end it, then the new note */
+            smk__key_event(i, 0);
+            if (i >= SMK_KEY_F3 && i < SMK_KEY_F3 + 27u)
+                fm1_in.notes_retrig |= 1u << (i - SMK_KEY_F3);
+            smk__key_event(i, v);
+        } else if (fresh & m) {
+            smk__key_event(i, v);
+        }
+    }
+    kprev = held;
+    ph = s.pads | (s.pads_hit & ~pprev);
+    pg = pprev & ~ph;
+    pa = s.pads_hit & pprev & ph;
+    pf = ph & ~pprev;
+    for (i = 0; i < SMK_NPAD; i++) {
+        uint32_t m = 1u << i, v = s.pad_vel[i] ? s.pad_vel[i] : 1u;
+        if (pg & m) {
+            fm1_in.pad_st[i] = 0;
+            fm1_in.pad_press[i] = 0;
+            smk__padq(i, 0);
+        } else if (pa & m) {
+            smk__padq(i, 0);
+            smk__padq(i, v);
+        } else if (pf & m) {
+            fm1_in.pad_st[i] = 0x80u;
+            smk__padq(i, v);
+        }
+        if (ph & m)
+            fm1_in.pad_press[i] = s.pad_press[i];
+    }
+    pprev = ph;
+    for (i = 0; i < 4u; i++)
+        fm1_in.fader[i] = s.fader[i];
+    fm1_in.frames = fm1_ms / 8u * 5u;
+    smk_pedal = s.pedal;
+    smk_wheel_bend = s.bend;
+    smk_wheel_mod = s.mod;
+    fm1__unlock(l);
+    ml_smk_config(smk_vel_curve);
+}
+/* the button LEDs by function (fm1_led by button id: PANEL_DEFAULT's), SEQ PLAY's red, and the pads' colours */
+static void smk_base_lights(void)
+{
+    uint32_t lit = 0, i;
+    for (i = 0; i < NB; i++)
+        if (fm1_led[PANEL_DEFAULT.btn[i]]) lit |= 1u << i;
+    for (i = 0; i < 4u; i++)
+        if (fm1_led[SMK_BTN_KNOB_BANK + i]) lit |= 1u << (NB + i);
+    if (fm1_led[18])
+        lit |= 1u << 31;
+    ml_smk_lights(lit, padled_rgb);
+}
+#endif
+
 /* ---- power-on, the frame, the input (firmware/src/main.c's, without the hardware the base brings up) */
 static void clock_boot(void)
 {
@@ -421,6 +564,10 @@ static void ml_poll(void)
     usb.config = (uint8_t)u[0]; usb.resets = u[1]; usb.up = (uint8_t)u[2]; usb.suspended = (uint8_t)u[3]; usb.rx_pkts = u[4];
     if (ml_usb_lost()) midi_usb_lost = 1;
     ml_input(&buttons, &keys, enc);
+#if BOARD_SMK37
+    (void)keys; (void)i;
+    smk_base_poll(buttons, enc);
+#else
     buttons |= fm1_in.remote | fm1_in.remote_tap;  /* MIDI LEARN: a controller's button, closed as a panel button */
     fm1_in.remote_tap = 0;
     ml_pressed |= buttons & ~fm1_in.buttons; ml_released |= fm1_in.buttons & ~buttons;
@@ -428,6 +575,7 @@ static void ml_poll(void)
     for (i = 0; i < 27u; i++) if ((keys & ~fm1_in.notes) >> i & 1u) fm1_in.note_t[i] = fm1_ticks();
     fm1_in.buttons = buttons; fm1_in.notes = keys;
     for (i = 0; i < 7u; i++) ml_enc[i] += enc[i];
+#endif
     while (ml_midi_in(&packet, &port)) {            /* port: 1 USB (and the host's device), 2 TRS, 3 Bluetooth */
 #if MELODEE_BLE
         if (port == 3) mb.epoch_ms = fm1_ms;        /* (the header's BLE activity: ui_draw.c) */
@@ -472,6 +620,9 @@ void mlb_init(void)
     melodee_dbg.max_us = 0;
     melodee_dbg.in_audio = 0;
     panel_init();
+#if BOARD_SMK37
+    panel = PANEL_DEFAULT;                          /* the base's map has the 18 buttons and its calibration (smk_base_poll) */
+#endif
     ml_panel_set(panel.btn, panel.enc, panel.dir);
     melodee_init();
 #if MELODEE_DUAL_CORE && !defined(PLAT_HOST)
@@ -492,7 +643,15 @@ void mlb_init(void)
 #endif
     ml_poll();
 }
-void mlb_input_only(void) { ml_poll(); ui_input(); }
+void mlb_input_only(void)
+{
+    ml_poll();
+    ui_input();
+#if BOARD_SMK37
+    smk_wheels();                                   /* (bends follow the wheel, not the screen) */
+    smk_pads_sync();                                /* the pads' map and mode (ui_input.c) */
+#endif
+}
 void mlb_frame(void)
 {
     static uint32_t usb_volume = 0xFFFFFFFFu;
@@ -527,9 +686,21 @@ void mlb_frame(void)
 #endif
     settings_poll();
     melodee_dbg.stage = 2;
+#if BOARD_SMK37
+    smk_pads_sync();                                /* the pads' map and mode (ui_input.c) */
+    smo_sync();
+#endif
     ui_leds();
+#if BOARD_SMK37
+    smk_faders();
+    smk_wheels();
+#endif
     ui_draw();
+#if BOARD_SMK37
+    smk_base_lights();
+#else
     ml_lights(fm1_led, &fm1_led_dim[0][0], fm1_led_dim_mask);
+#endif
     melodee_dbg.stage = 9;
 }
 void mlb_panic(void) { panic_req = (1u << NTRK) - 1u; }

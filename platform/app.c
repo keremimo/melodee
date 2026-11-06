@@ -54,15 +54,21 @@ void ml_input(uint32_t *buttons,uint32_t *keys,int32_t *enc){
     static const uint8_t bm[14]={2,3,4,5,6,7,8,9,10,11,12,13,0,1};
     static const uint8_t em[7]={0,1,6,2,3,4,5};
     uint32_t b;*buttons=0;*keys=plat_keys();
-#if defined(PLAT_HOST)||defined(MELODEE_SMK37)
-    /* The SMK-37: plat_buttons and plat_enc read the 18 buttons and 8 encoders by the base's panel map (K5 is its
-     * virtual MASTER), and the UI gets the FM-1's 14 functions and 7 roles in the FM-1's default ids */
+#ifdef MELODEE_SMK37
+    /* The SMK-37: the 18 buttons and the 7 roles as the base's panel map reads them (K5 is its virtual MASTER); the
+     * instrument puts them in its own ids (melodee_app.c smk_base_poll) */
+    *buttons=plat_buttons();
+    for(uint32_t i=0;i<7u;i++)enc[i]=plat_enc((int)i);
+    (void)bm;(void)em;(void)b;return;
+#endif
+#if defined(PLAT_HOST)
+    /* the host: the UI gets the FM-1's 14 functions and 7 roles in the FM-1's default ids */
     b=plat_buttons();
 #else
     *buttons=fm1_in.buttons;b=remote.btn;
 #endif
     for(uint32_t i=0;i<14u;i++)if(b&(1u<<i))*buttons|=1u<<bm[i];
-    #if defined(PLAT_HOST)||defined(MELODEE_SMK37)
+    #if defined(PLAT_HOST)
     for(uint32_t i=0;i<7u;i++)enc[em[i]]=plat_enc((int)i);
 #else
     uint32_t f=plat_lock();
@@ -73,7 +79,7 @@ void ml_input(uint32_t *buttons,uint32_t *keys,int32_t *enc){
 }
 #ifdef MELODEE_SMK37
 void ml_smk_read(ml_smk_t *s){
-    s->keys=plat_keys37();s->retrig=plat_keys37_retrig();
+    s->keys=plat_keys37();s->keys_hit=plat_keys37_pressed();s->retrig=plat_keys37_retrig();
     for(int i=0;i<37;i++)s->vel[i]=(uint8_t)plat_key_vel(i);
     s->bend=plat_wheel(PLAT_WHEEL_PITCH);s->mod=plat_wheel(PLAT_WHEEL_MOD);s->pedal=(uint8_t)plat_pedal();
     s->extra=plat_buttons()>>B_KBANK;
@@ -81,23 +87,37 @@ void ml_smk_read(ml_smk_t *s){
     for(int i=0;i<16;i++){s->pad_vel[i]=(uint8_t)plat_pad_vel(i);s->pad_press[i]=(uint8_t)plat_pad_press(i);}
     for(int i=0;i<4;i++)s->fader[i]=(uint8_t)plat_fader(i);
 }
-void ml_master_set(uint32_t q12){plat_master_set(q12);}
-int32_t ml_k5(int lend){return plat_k5_lend(lend);}
-void ml_smk_config(uint32_t vel,uint32_t trs_off){
-    static uint32_t was_vel=255u,was_off=255u;
+void ml_smk_config(uint32_t vel){
+    static uint32_t was_vel=255u;
     if(vel!=was_vel){was_vel=vel;plat_vel_curve((int)vel);}
-    if(trs_off!=was_off){was_off=trs_off;plat_trs_out(!trs_off);}
 }
-/* the LEDs of the SMK's own buttons, and PLAY's red, in plat_lights' bits (ui_smk.c smk_led_extra) */
-static uint32_t ml_smk_lit;
-void ml_smk_lights(uint32_t extra,const uint32_t *pad_rgb){
-    ml_smk_lit=(extra&15u)<<B_KBANK|((extra>>4)&1u)<<B_PLAY;
+/* the button LEDs (ui_input.c smk_leds_out): plat_lights' bits, SEQ PLAY's own LED its green (LED_PLAY_GREEN), B_PLAY its
+ * red; on or off, as Melodee's own SMK build shows them */
+void ml_smk_lights(uint32_t lit,const uint32_t *pad_rgb){
+    uint32_t b=lit&((1u<<NB)-1u)&~(1u<<B_PLAY);
+    if(lit&(1u<<B_PLAY))b|=LED_PLAY_GREEN;
+    if(lit>>31)b|=1u<<B_PLAY;
+    plat_lights(b,0,0,0,0);plat_lights_mid(0,0);
     for(int i=0;i<16;i++)plat_pad_rgb(i,pad_rgb[i]);
 }
+#ifdef PLAT_HOST
+int ml_trs_send(uint32_t p,uint32_t keep){(void)p;(void)keep;return 0;}
+uint32_t ml_trs_room(void){return 0;}
+int ml_trs_dead(void){return 1;}
+void ml_trs_on(int on){(void)on;}
+#else
+/* the jack's ring (device/midi_trs_out.c, in this unit before app.c): app.h APP_TRS_OWN leaves it the instrument's */
+int ml_trs_send(uint32_t p,uint32_t keep){
+    uint32_t f=plat_lock(),n=trs_len(p);int ok=0;
+    if(n&&!trs_off&&!trs_user_off&&TRS_RING-(trs_w-trs_r)>=n+keep){trs_out_put(p);midi_counted(PORT_TRS,1,p);ok=1;}
+    else if(n)trs_drops++;
+    plat_unlock(f);return ok;
+}
+uint32_t ml_trs_room(void){return TRS_RING-(trs_w-trs_r);}
+int ml_trs_dead(void){return trs_off!=0;}
+void ml_trs_on(int on){plat_trs_out(on);}
+#endif
 #ifndef PLAT_HOST
-/* The UI draws the FM-1's LED cells (instrument.c FM1_KEYMAP): where each function's is, (column << 3) | row, in plat.h's
- * button order. tests/build_targets_test.py checks this against FM1_KEYMAP */
-static const uint8_t ml_btn_cell[14]={49,33,17,1,74,66,57,41,25,9,82,58,4,12};
 /* Melodee's SMK store (store_map.h, hal/fm1_flash_map.h): A = XDATA0 + AUTO + XDATA1, B = DATA, C = GLOB + FREE */
 _Static_assert(FL_XDATA0_LO==0x9D000u&&FL_XDATA0_HI==FL_AUTO_LO&&FL_AUTO_HI==FL_XDATA1_LO&&FL_XDATA1_HI==0xBB000u&&
                FL_DATA_LO==0xC2000u&&FL_DATA_HI==0xEA000u&&FL_GLOB_LO==0xEB000u&&FL_GLOB_HI==FL_FREE_LO&&
@@ -105,25 +125,8 @@ _Static_assert(FL_XDATA0_LO==0x9D000u&&FL_XDATA0_HI==FL_AUTO_LO&&FL_AUTO_HI==FL_
 #endif
 #endif
 void ml_lights(const uint8_t *bright,const uint8_t *dim,const uint8_t *masks){
-#if defined(MELODEE_SMK37)&&!defined(PLAT_HOST)
-    /* the UI's three dim planes, at the board's levels: a plane at full duty lit, 1/2 and 1/4 mid, 1/8 the glow */
-    uint32_t lit=0,mid=0,glow=0;
-    for(uint32_t i=0;i<14u;i++){
-        uint32_t c=ml_btn_cell[i]>>3,bit=1u<<(ml_btn_cell[i]&7u);
-        if(bright[c]&bit)lit|=1u<<i;
-        for(uint32_t p=0;p<3u;p++)if(masks[p]!=255u&&(dim[p*11u+c]&bit)){
-            if(!masks[p])lit|=1u<<i;
-            else if(masks[p]<=3u)mid|=1u<<i;
-            else glow|=1u<<i;
-        }
-    }
-    /* SEQ PLAY's own LED is its green (the base's LED_PLAY_GREEN); B_PLAY would light its red */
-    {uint32_t play=1u<<B_PLAY;
-     if(lit&play)lit=(lit&~play)|LED_PLAY_GREEN;
-     if(mid&play)mid=(mid&~play)|LED_PLAY_GREEN;
-     if(glow&play)glow=(glow&~play)|LED_PLAY_GREEN;}
-    lit|=ml_smk_lit;
-    plat_lights(lit,0,glow,0,2);plat_lights_mid(mid,0);
+#if defined(MELODEE_SMK37)
+    (void)bright;(void)dim;(void)masks;   /* (the SMK-37's: ml_smk_lights) */
 #elif !defined(PLAT_HOST)
     for(uint32_t i=0;i<11u;i++)fm1_led[i]=bright[i];
     for(uint32_t i=0;i<33u;i++)ml_led_planes[i/11u][i%11u]=dim[i];
