@@ -114,6 +114,7 @@ static void glo_select_set(uint32_t v) { GLO_SELECT = (uint8_t)((GLO_SELECT & ~0
  * place not in use, saying "Add track"; HIDE: the tracks in use share the rows (one track: the wide card) */
 #define TRACKS_HIDE 32u
 #define TRS_OUT_OFF 64u                        /* (SMK-37) the menu's TRS MIDI OUT OFF (smk_midi_out.h) */
+#define MIDI_THRU_ON 128u                      /* (fm1-base) the menu's MIDI THRU ON (platform/melodee_app.c midi_thru) */
 /* the four tracks Stage, MIXER, PATTERNS and SONG show: the selected one's (1..4, or the MIDI-only
  * 5..8); a row k of them is track trk_group() + k */
 static uint32_t trk_group(void) { return song.sel / NPART * NPART; }

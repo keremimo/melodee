@@ -36,7 +36,7 @@ int ml_usb_host_msg(void);
 void ml_usb_full(int on);
 void ml_usb_play_gain(uint32_t q12);
 uint32_t ml_flash_id(void);
-void ml_midi_thru(uint32_t packet,int port);
+uint32_t ml_midi_thru(uint32_t packet,int clock_in);
 int ml_sysex_send(const uint8_t *frame,uint32_t n);
 int ml_read(uint32_t off,void *dst,uint32_t n);
 int ml_erase(uint32_t off);
