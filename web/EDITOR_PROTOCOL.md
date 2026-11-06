@@ -1445,7 +1445,7 @@ printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies e
 | `W` (0x57) | 1 | the `WATCH` bits known (31: bits 0..4; 63 with F3's bit 5, "Studio song"; 127 with F2's bit 6, "Studio patterns") |
 | `M` (0x4D) | 2 | `METERS` version 1, milliseconds between pushes (66, ~15 Hz) |
 | `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
-| `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
+| `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`; 2: also `PATTERN` 2's copy to another track), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
 
 Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
 
@@ -1689,7 +1689,7 @@ take operations that got no reply before. Code: `firmware/src/editor_patterns.c`
 `firmware/src/pattern_dialog.c` (the dialog's delete, half and double, moved out of `ui_input.c` so the editor and the
 virtual FM-1 have them). Tests: `tests/editor_test.c` `studio_patterns`.
 
-**Finding out.** `CAPS` (39) has a tag `D`: `44 04` version 1 (all of the below), the steps a pattern holds (64), the
+**Finding out.** `CAPS` (39) has a tag `D`: `44 04` version 2 (all of the below; version 1 lacked `PATTERN` 2's track), the steps a pattern holds (64), the
 timed notes a project holds (1,024, 14 bits); `W` is 127 (bits 0..6). Firmware without the tag never answers 44 and
 45, ignores `MOTION` op 5 and `PATTERN` ops 3..5, and knows no bit 6.
 
@@ -1698,7 +1698,7 @@ timed notes a project holds (1,024, 14 bits); `W` is 127 (bits 0..6). Firmware w
 | 44 PATTERN_DATA | track, bank, half (read); track, bank, half, LEN, DIV, SWING, GATE, 32 × step (write) | track, bank, half, rc, then (a bank the track has) LEN, DIV, SWING, GATE, 32 × step |
 | 45 NOTES | track, bank, 0, first (14 bits), count (list); track, bank, 1, m, m × note (write) | track, bank, op, rc, then 0: first, count, total (14 bits each), count × note; 1: the m notes' ids (14 bits each) |
 | 64 MOTION | track, 5, bank, then a `MOTION` request's bytes after its track: — (query), 1 on, 2 clear, 3 set, 4 delete | as `MOTION`: track, rc, on, count, max, the events, all of that bank |
-| 73 PATTERN | track, 3, bank (clear); track, 4, bank (halve); track, 5, bank (double) | as `PATTERN`: track, op, rc, active bank, queued bank (127 none), the track's banks |
+| 73 PATTERN | track, 2, source, destination, destination track (copy to another track, v2); track, 3, bank (clear); track, 4, bank (halve); track, 5, bank (double) | as `PATTERN`: track, op, rc, active bank, queued bank (127 none), the track's banks |
 | 59 PATTERN_CHANGED (push) | — | NTRK, then per track: the bank playing, the bank queued (127 none) |
 
 Tracks and banks count from 0 on the wire (16 banks on tracks 1..4, 8 on the MIDI-only tracks 5..8); half 0 is steps
@@ -1777,7 +1777,15 @@ of its banks). The reply is `MOTION`'s with that bank's count and events. A clea
 MOTION CLEARED (undoable as a load). The rules are `MOTION`'s (64 events shared by the parts' banks: rc 2 full; tracks
 5..8 have no motion: no reply; bank ≥ 16: no reply).
 
-### PATTERN (73): clear, halve, double
+### PATTERN (73): copy to another track, clear, halve, double
+
+- **2 copy with a fifth byte** (v2), the destination track: the PATTERNS page's Copy to (`pattern_copy_to`, as on the
+  device). Steps, LEN/DIV timing and timed notes go; motion only between tracks 1..4 of the same engine; the
+  pattern's own sound never (the destination bank plays its track's sound). Refused (rc 1) while a song plays or
+  over the destination track's bank playing, rc 2 when the timed notes or motion do not fit, rc 4 storage. The
+  reply describes the source track (`PATTERN_CHANGED` does not follow: the editor's own change). Four bytes copy
+  within the track, as before.
+
 
 SEQ's pattern dialog on the device (SEQ held, then a pattern key held), with its messages on the device's screen:
 
@@ -1889,6 +1897,7 @@ them, every reply and the state after it identical, leaving out only what F3 cha
 | — NOTES 45, write | add / change / remove, all checked first; the bank's views made again from its notes; undoable on the bank playing (the edit memory) | +1,508 B | +1,532 B |
 | — MOTION 64 on a bank | `track, 5, bank, ..`: query, set, delete, clear on any bank | +16 B | +48 B |
 | — PATTERN 73 ops 3..5 | clear, halve, double through SEQ's dialog code | +72 B | +96 B |
+| — PATTERN 73 op 2 to a track | (after the moves) a fifth byte copies to another track through `pattern_copy_to`, CAPS `D` 2 | +60 B | +52 B |
 | — push 59 | PATTERN_CHANGED on WATCH bit 6 (the signature, the banks) | +504 B | −640 B |
 | — shared | the CAPS `D` tag, `W` 127, the handler entry, `motion_set_event_at` / `motion_delete_event_at`, SEQ's pattern dialog moved out of `ui_input.c` into `pattern_dialog.c` (built for size with `editor_patterns.c`; left at `-Os` they cost ~0.7 KB more) | +176 B | +128 B |
 | — savings found | NOTES reuses `recording_remove` (−40 / −68 B); `installer_report.c`, `note_history.c`, `ui_midi_learn.c` built for size: main-loop only (−60 / −56 B; SMK RAM +32 B from the regrouped globals) | −100 B | −124 B |
@@ -1912,6 +1921,8 @@ loses them again, so the push's "−640 B" there is layout, not the push (on FM-
 | F2 + SID table (SMK) | Kerem 2026-11-06 ("SID wave table"): SID's combined waveforms (`SID_WAVE_LZ`, 4,277 B, `gen_tables.py`) in the SMK-37's app area tail with the icons (`MELODEE_SMKX`; tail 10,760 -> 15,040 B, 25,920 B free). Without the tail (another build's: `smkx_ok` 0) `sid_table` gives zeros: TRI+SAW, TRI+PULSE, SAW+PULSE and all three are silent, the single waveforms play; it unpacks once the tail checks out (`sid_test`). The FM-1 keeps the table in its app | ±0 | **−4,272 B** |
 
 After both: FM-1 image 573,112 B, **4,136 B free** with F2; SMK image 574,528 B, **2,720 B free**. F2 fits both boards.
+With `PATTERN` 2's copy to another track (Kerem 2026-11-06: the device copies across tracks, so the wire does too):
+FM-1 573,172 B, **4,076 B free**; SMK 574,580 B, **2,668 B free**.
 RAM: FM-1 95,464 B (+16 over F3), SMK 95,992 B (+32).
 
 How F2 was checked: `editor_test` `studio_patterns` (also under ASan/UBSan), the virtual FM-1 core (`core_check`: the
