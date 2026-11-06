@@ -1905,6 +1905,12 @@ and the interrupt and main-loop code that reads them grows or shrinks with it. F
 outside the editor (`fm1_main` −246 B, `fm1_timer5_irq` −214 B, `mix_block` −86 B, ...); the build without the push
 loses them again, so the push's "−640 B" there is layout, not the push (on FM-1 its code is ~270 B).
 
+| Branch / commit | Change | FM-1 | SMK |
+|---|---|---:|---:|
+| F2 + icons (FM-1) | Kerem 2026-11-06 ("move icons"): the FM-1's 16 and 24 px icon cells (`AI16_DATA`, `AI24_DATA`, 6,368 B) in the resource region (`MELODEE_ICON_BIG` = `.mres`; `icons.c` draws none of them while the region is missing, as the SMK-37 does without its tail); the 12 px cells stay in the app. The resource payload 53,852 -> 60,220 B, 15 of the 15 sectors the FM-1 keeps (1,188 B left; the pool unchanged). The SMK-37's icons were already in its app area tail | **−6,328 B** | ±0 |
+
+After the icons: FM-1 image 573,112 B, **4,136 B free** with F2; SMK image 578,800 B, still **1,552 B over**.
+
 How F2 was checked: `editor_test` `studio_patterns` (also under ASan/UBSan), the virtual FM-1 core (`core_check`: the
 F2 transcripts natively and in WebAssembly byte for byte), `tests/run_tests.sh` once, and F0's differential harness
 against the branch tip (`feat/studio-export` de24e07a, F1 and F3 included): 200,000 random and shaped requests (4

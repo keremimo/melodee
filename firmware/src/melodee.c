@@ -70,6 +70,11 @@
 #if MELODEE_FLASH
 #define SMKX_OK() (smkx_ok != 0u)
 #endif
+#elif MELODEE_FLASH
+/* the FM-1 has no app area tail: its 16 and 24 px icon cells sit in the resource region (icons.c draws none while the
+ * region is missing; the 12 px cells stay in the app) */
+#define MELODEE_ICON_BIG MELODEE_RES
+#define ICON_BIG_OK() RES_OK()
 #endif
 
 /* ------------------------------------------------------------- HAL --- */
