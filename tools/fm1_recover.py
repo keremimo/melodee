@@ -35,6 +35,7 @@ APP_LO, APP_HI, FLASH_SIZE, SECTOR = 0x4000, 0x93000, 0x100000, 4096
 VERSION = "1.6.0-rc.1"
 LOADER_SHA256 = "d9de9f1c81a3bb52998e5bced678f0ca851223014a7d43965b03f0719a44eb55"
 LOADER_ADDRESS = 0x1C02000
+FLASH_IDS = (0x856014, 0xB36014)  # the 1 MiB parts persist_boot accepts (0x85 Puya, 0xB3 UCUN UC25HQ80)
 
 
 def bundled_file(name):
@@ -240,7 +241,7 @@ class Link:
         key_data = self.command(0xFC09, struct.pack(">I", 0xAC6900))
         key = int.from_bytes(cipher(key_data[4:6][::-1]), "little")
         info = self.command(0xFC0A)
-        require(info[0] == 3 and int.from_bytes(info[2:6], "little") == 0x856014,
+        require(info[0] == 3 and int.from_bytes(info[2:6], "little") in FLASH_IDS,
                 "Unexpected flash type or capacity; refusing recovery")
         return key
 
