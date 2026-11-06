@@ -1909,7 +1909,10 @@ loses them again, so the push's "−640 B" there is layout, not the push (on FM-
 |---|---|---:|---:|
 | F2 + icons (FM-1) | Kerem 2026-11-06 ("move icons"): the FM-1's 16 and 24 px icon cells (`AI16_DATA`, `AI24_DATA`, 6,368 B) in the resource region (`MELODEE_ICON_BIG` = `.mres`; `icons.c` draws none of them while the region is missing, as the SMK-37 does without its tail); the 12 px cells stay in the app. The resource payload 53,852 -> 60,220 B, 15 of the 15 sectors the FM-1 keeps (1,188 B left; the pool unchanged). The SMK-37's icons were already in its app area tail | **−6,328 B** | ±0 |
 
-After the icons: FM-1 image 573,112 B, **4,136 B free** with F2; SMK image 578,800 B, still **1,552 B over**.
+| F2 + SID table (SMK) | Kerem 2026-11-06 ("SID wave table"): SID's combined waveforms (`SID_WAVE_LZ`, 4,277 B, `gen_tables.py`) in the SMK-37's app area tail with the icons (`MELODEE_SMKX`; tail 10,760 -> 15,040 B, 25,920 B free). Without the tail (another build's: `smkx_ok` 0) `sid_table` gives zeros: TRI+SAW, TRI+PULSE, SAW+PULSE and all three are silent, the single waveforms play; it unpacks once the tail checks out (`sid_test`). The FM-1 keeps the table in its app | ±0 | **−4,272 B** |
+
+After both: FM-1 image 573,112 B, **4,136 B free** with F2; SMK image 574,528 B, **2,720 B free**. F2 fits both boards.
+RAM: FM-1 95,464 B (+16 over F3), SMK 95,992 B (+32).
 
 How F2 was checked: `editor_test` `studio_patterns` (also under ASan/UBSan), the virtual FM-1 core (`core_check`: the
 F2 transcripts natively and in WebAssembly byte for byte), `tests/run_tests.sh` once, and F0's differential harness

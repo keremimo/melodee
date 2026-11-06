@@ -16,9 +16,10 @@ FS = 44100
 CTL = 32
 
 
-def arr(name, ctype, vals, per=12, ram=False):
-    """a table in flash (XIP, through the cache); ram: in RAM (.data), for lookups every sample"""
-    out = [f"static {'TABLE_RAM ' if ram else 'const '}{ctype} {name}[{len(vals)}] = {{"]
+def arr(name, ctype, vals, per=12, ram=False, attr=""):
+    """a table in flash (XIP, through the cache); ram: in RAM (.data), for lookups every sample; attr: a placement
+    macro after the declarator (MELODEE_SMKX: the SMK-37's app area tail)"""
+    out = [f"static {'TABLE_RAM ' if ram else 'const '}{ctype} {name}[{len(vals)}]{' ' + attr if attr else ''} = {{"]
     for i in range(0, len(vals), per):
         out.append("    " + ", ".join(str(v) for v in vals[i:i + per]) + ",")
     out.append("};")
@@ -45,6 +46,9 @@ def main(path):
          "#define TABLE_RAM                 /* host builds: anywhere */",
          "#else",
          "#define TABLE_RAM __attribute__((section(\".data.tables\")))   /* RAM, not XIP flash: per-sample lookups */",
+         "#endif",
+         "#ifndef MELODEE_SMKX",
+         "#define MELODEE_SMKX              /* melodee.c: the SMK-37's app area tail (smkx.c); the FM-1 and host builds: none */",
          "#endif", ""]
     # (1025 points: SINE[i + 1] needs no wrap; the users mask)
     L += arr("SINE", "int16_t", [int(round(32767 * math.sin(2 * math.pi * i / 1024))) for i in range(1025)])
@@ -298,7 +302,8 @@ def sid_tables():
              [near(att, math.log(10 ** (4 * v / 127) / 1000)) | near(dr, math.log(10 ** (4 * v / 127) / 1000)) << 4
               for v in range(128)], 16)
     # combined waveforms: reSID's samples of a real 6581 and 8580 (assets/resid/README.md), the top 8 of 12 output
-    # bits by accumulator >> 12 for TRI+SAW, TRI+PULSE, SAW+PULSE, all three; packed (lz_pack, checked here)
+    # bits by accumulator >> 12 for TRI+SAW, TRI+PULSE, SAW+PULSE, all three; packed (lz_pack, checked here). On the
+    # SMK-37 in its app area tail (MELODEE_SMKX; eng_sid.c sid_table: without the tail, silence for these four)
     packed, at = bytearray(), []
     for m in ("6581", "8580"):
         for w in ("_ST", "P_T", "PS_", "PST"):
@@ -307,7 +312,7 @@ def sid_tables():
             assert len(t) == 4096 and lz_unpack(e, 4096) == t
             at.append(len(packed))
             packed += e
-    L += arr("SID_WAVE_LZ", "uint8_t", list(packed), 24)
+    L += arr("SID_WAVE_LZ", "uint8_t", list(packed), 24, attr="MELODEE_SMKX")
     L += ["static const uint16_t SID_WAVE_AT[2][4] = {{" + ", ".join(map(str, at[:4])) + "}, {" +
           ", ".join(map(str, at[4:])) + "}};   /* [6581, 8580][TRI+SAW, TRI+PULSE, SAW+PULSE, all] */"]
     # clocks: SID cycles per control tick (Q16), 32-bit phase step per frequency register unit (Q16), its inverse

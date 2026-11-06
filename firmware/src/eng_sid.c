@@ -191,7 +191,12 @@ static uint32_t sid_wave12(uint32_t wave, const uint8_t *wt, uint32_t ph, uint32
 }
 
 
-/* the part's samples of combined waveform bits wb on MODEL, unpacked when either changes; 0 for a single one */
+#ifndef SMKX_OK
+#define SMKX_OK() 1                       /* melodee.c: the SMK-37 keeps SID_WAVE_LZ in its app area tail (smkx.c) */
+#endif
+/* the part's samples of combined waveform bits wb on MODEL, unpacked when either changes; 0 for a single one. The
+ * SMK-37's tail another build's or missing: zeros (the combined waveforms silent; key 1, never a real one, so they
+ * unpack once the tail checks out) */
 static const uint8_t *sid_table(track_t *t, uint32_t model, uint32_t wb)
 {
     sid_part_t *sp;
@@ -199,7 +204,12 @@ static const uint8_t *sid_table(track_t *t, uint32_t model, uint32_t wb)
     if (wb != 3u && (wb < 5u || wb > 7u))
         return 0;
     sp = sid_part((uint32_t)(t - trk) % NPART);
-    if (sp->wave_key != key) {
+    if (!SMKX_OK()) {
+        if (sp->wave_key != 1u) {
+            memset(sp->wave, 0, sizeof sp->wave);
+            sp->wave_key = 1u;
+        }
+    } else if (sp->wave_key != key) {
         lz_unpack(sp->wave, SID_WAVE_LZ + SID_WAVE_AT[model][wb == 3u ? 0u : wb - 4u], sizeof sp->wave);
         sp->wave_key = key;
     }

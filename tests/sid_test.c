@@ -6,6 +6,8 @@
  * the filter's sum, the 6581's DC thump through the C64's output stage, band-limited edges, a new gate at the top of
  * the envelope, MODEL C64 (one voice, the registers written at PAL frames, the hard restart, a held chord
  * arpeggiated a note a frame), and the 32 presets. */
+static int host_smkx_ok = 1;                 /* (the SMK-37's app tail: eng_sid.c sid_table's fallback) */
+#define SMKX_OK() (host_smkx_ok != 0)
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
@@ -224,6 +226,15 @@ static void combined_tests(void)
         uint32_t a = 0x40000000u;
         check("RING on TRI+PULSE: the index's MSB flips with the source's inverted MSB",
               sid_wave12(SID_TRI_PULSE, pt, a, a ^ (~0u & 0x80000000u), 0, 0) == (uint32_t)pt[(a ^ 0x80000000u) >> 20] << 4);
+    }
+    {   /* the SMK-37 keeps SID_WAVE_LZ in its app area tail: another build's or none, the combined waveforms are silent */
+        const uint8_t *z;
+        uint32_t a, off = 0, on = 0;
+        host_smkx_ok = 0; direct(0, 60); z = sid_table(T, SID_8580, 3);
+        for (a = 0; a < 4096u; a++) off += z[a];
+        host_smkx_ok = 1; z = sid_table(T, SID_8580, 3);
+        for (a = 0; a < 4096u; a++) on += z[a];
+        check("SMK-37 tail missing: combined waveforms silent (zeros), unpacked once the tail checks out", !off && on);
     }
     {   /* the 6581's sawtooth combinations pull the accumulator's MSB low where the output's bit 11 is low */
         int32_t o1[1];
