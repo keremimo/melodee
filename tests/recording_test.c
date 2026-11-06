@@ -266,8 +266,9 @@ static int pattern_passes(void)
             song.rec == 1 && !song.rec_latch && song.rec_wait == 1 && !song.rec_pass && !rec_on(t) &&
             recording_head[0] == RECORD_MAX && !motion.count && gate_note(t, 60));
         fm1_ms = 0; ui_leds();
-        bad += check("waiting REC breathes while playback stays lit", pass_led(2, panel.btn[B_REC]) &&
-            !pass_led(0, panel.btn[B_REC]) && pass_led(0, panel.btn[B_PLAY]));
+        bad += check("waiting REC breathes while playback stays lit (PLAY green, its red dark)",
+            pass_led(2, panel.btn[B_REC]) && !pass_led(0, panel.btn[B_REC]) && (fm1_led[8] & 2u) &&
+            !pass_led(0, panel.btn[B_PLAY]));
         rec_toggle(0); seq_advance(100);
         bad += check("a second REC cancels waiting without losing a held live note",
             !song.rec && !song.rec_wait && !song.rec_pass && gate_note(t, 60) && recording_head[0] == RECORD_MAX);

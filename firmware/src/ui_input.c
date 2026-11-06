@@ -626,7 +626,16 @@ static void ui_leds(void)
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (ui.layer)                                       /* the layer's button blinks while its map is up */
         led_put(nl, panel.btn[layer_btn()], ((fm1_ms / 250u) & 1u) == 0u);
+#if BOARD_SMK37
     led_put(nl, panel.btn[B_PLAY], rolling && !counting); /* steady transport state, independent of audio block rate; */
+#else
+    /* PLAY's two LEDs (fm1-base device/plat_fm1.c): its second, green one (the keyless matrix position column 8, PA5)
+     * while playing; the red one while recording. Steady transport state, independent of audio block rate */
+    uint32_t play_green = rolling && !counting && !recording_now;
+    led_put(nl, panel.btn[B_PLAY], recording_now);
+    if (play_green)
+        nl[8] |= 2u;
+#endif
     led_put(nw, panel.btn[B_PLAY], counting);           /* counting in: waiting */
     led_put(nl, panel.btn[B_REC], recording_now);
     led_put(nw, panel.btn[B_REC], armed && !recording_now);
@@ -652,6 +661,10 @@ static void ui_leds(void)
     }
     for (k = 0; lights != LIGHTS_OFF && k < NB; k++)   /* the buttons glow when idle (one breathing: not under it) */
         led_put(nb, panel.btn[k], !led_get(nw, panel.btn[k]));
+#if !BOARD_SMK37
+    if (play_green && led_pos[panel.btn[B_PLAY]] != 0xFFu)   /* (PLAY's red glow under the green would mix to orange) */
+        nb[led_pos[panel.btn[B_PLAY]] >> 3] &= (uint8_t)~(1u << (led_pos[panel.btn[B_PLAY]] & 7u));
+#endif
 #if BOARD_SMK37
     (void)play;
     smk_leds_out(nl, nd, nb, nw);
