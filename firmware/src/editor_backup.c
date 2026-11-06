@@ -339,7 +339,7 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
         uint32_t len = ed_bk_r32(a + 2);
         if (len > ED_BK_LEN_MAX(a[1]) || (a[1] == 0u && !len) ||
             (a[1] == 1u && len != sizeof(persist_t) && !tmpl_param_count(len - sizeof(persist_t))) ||
-            (!ed_bk_project(a[1]) && len > BANK_STORE_SIZE) ||
+            (!ed_bk_project(a[1]) && !ed_bk_kit(a[1]) && len > BANK_STORE_SIZE) ||   /* (a kit: DRK_KIT_MAX, above) */
             (ed_bk_preset_bank(a[1])<UP_BANKS && len>3840u) ||
             (a[1]==8u && len)) return 1;
         ed_bk_valid=ed_bk_put=0;
