@@ -193,6 +193,17 @@ static void names(void)
                 assert(!strcmp(joined, want) && (label != cents || off));
             }
         }
+    t = setup("31EDO"); t->p[P_ROOT] = 1;                 /* the view's keys light what the name says */
+    uint32_t on[4] = {0}, at[4];
+    uint8_t of[128] = {0}, by[128];
+    on[63 >> 5] |= 1u << (63 & 31); of[63] = 2;
+    view_keys_at(on, of, at, by);
+    assert(at[62 >> 5] == 1u << (62 & 31) && !at[0] && !at[2] && !at[3] && by[62] == 2);
+    t = setup("53EDO");                                   /* 23 cents apart, one semitone: one key, the lowest's track */
+    memset(on, 0, sizeof on);
+    on[60 >> 5] |= 1u << (60 & 31) | 1u << (61 & 31); of[60] = 1; of[61] = 3;
+    view_keys_at(on, of, at, by);
+    assert(at[60 >> 5] == 1u << (60 & 31) && !at[0] && !at[2] && !at[3] && by[60] == 1);
     t->p[P_ROOT] = 0;
     t->p[P_SCALE] = (int16_t)scale_id("24EDO"); t->p[P_QUANT] = Q_OFF;
     assert(!strcmp(name_of(61), "C#4"));                  /* QNT OFF: the plain twelve */

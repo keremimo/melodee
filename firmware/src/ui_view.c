@@ -223,9 +223,29 @@ static void view_wheel(const uint32_t *on, const uint8_t *of, int faded)
 
 /* the keys: C2 .. B5, those sounding lit in their track's colour (let go: faded) */
 static int vw_black(uint32_t n) { return (int)((0x54Au >> (n % 12u)) & 1u); }
+/* a microtonal key's notes on the keys: each on the semitone it sounds nearest, as it is named (two on one: the lowest's
+ * track, as the wheel) */
+static void view_keys_at(const uint32_t *on, const uint8_t *of, uint32_t *at, uint8_t *by)
+{
+    uint32_t n;
+    memset(at, 0, 16);
+    for (n = 128u; n-- > 0u;)
+        if ((on[n >> 5] >> (n & 31u)) & 1u) {
+            int32_t cents;
+            uint32_t k = micro_nearest(TSEL, (int32_t)n, &cents);
+            at[k >> 5] |= 1u << (k & 31u);
+            by[k] = of[n];
+        }
+}
 static void view_keys(const uint32_t *on, const uint8_t *of, int faded)
 {
-    uint32_t n, w = 0;
+    uint32_t n, w = 0, at[4];
+    uint8_t by[128];
+    if (micro_active(TSEL)) {
+        view_keys_at(on, of, at, by);
+        on = at;
+        of = by;
+    }
     cv_begin(240, VW_KEYS_H, T_BG);
     for (n = VW_LO; n < VW_LO + 12u * VW_OCT; n++) {    /* the white keys, then the black over them */
         uint32_t lit = (on[n >> 5] >> (n & 31u)) & 1u;
