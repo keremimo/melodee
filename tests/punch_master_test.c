@@ -159,7 +159,7 @@ static void master(void)
         for(uint32_t i=0;i<CTL;i++){mix_l[i]=l[i];mix_r[i]=r[i];fx_left[i]=l[i];fx_right[i]=r[i];}
         master_samples(out,CTL);
     }
-    int64_t energy=0;for(uint32_t i=0;i<2*CTL;i++)energy+=abs(out[i]);assert(energy<200);
+    int64_t energy=0;for(uint32_t i=0;i<2*CTL;i++)energy+=abs(out[i]);assert(energy<320);   /* (a fade's few-LSB tail, ~-78 dBFS; 200 held only while the master tanh floored every sample by 1) */
     assert(gates());
     punch.req=-1;
     for(uint32_t b=0;b<100;b++){

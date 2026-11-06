@@ -41,6 +41,19 @@ static inline __attribute__((always_inline)) int32_t dc_block(int32_t x, int32_t
     return x - ((*dc + 32) >> 6);
 }
 
+/* linear up to 24576 (-2.5 dBFS), above it 4096 tanh(d / 4096): slope 1 at the knee, ceiling 28524 (-1.2 dBFS).
+ * Only what the limiter's attack lets through bends (a held -2 dBFS peak loses 0.02 dB); a full tanh here bent
+ * every sample and turned chords into intermodulation (-26 dB on a Prophet chord, -52 dB now). */
+static inline __attribute__((always_inline)) int32_t master_knee(int32_t y)
+{
+    int32_t a = y < 0 ? -y : y;
+    if (a <= 24576)
+        return y;
+    a -= 24576;
+    a = 24576 + (softclip((a < 8192 ? a : 8192) * 8) >> 3);   /* (softclip is flat from 65536 on) */
+    return y < 0 ? -a : a;
+}
+
 static __attribute__((noinline,section(".dsp_text"))) void master_out(int32_t *l, int32_t *r)
 {
     int32_t al, ar, a;
@@ -59,8 +72,8 @@ static __attribute__((noinline,section(".dsp_text"))) void master_out(int32_t *l
         *l = ((*l >> 4) * g) >> 11;                      /* >> 4 first: |l| may be far above Q15 */
         *r = ((*r >> 4) * g) >> 11;
     }
-    *l = softclip(*l);
-    *r = softclip(*r);
+    *l = master_knee(*l);
+    *r = master_knee(*r);
 }
 
 /* length of one division (N_DIV order) in samples at the song tempo */
