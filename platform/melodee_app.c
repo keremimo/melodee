@@ -79,8 +79,11 @@ static void irq_restore(uint32_t token){ml_unlock(token);}
 static uint32_t ml_irq_depth,ml_irq_token;
 static void fm1_irq_off(void){if(!ml_irq_depth++)ml_irq_token=ml_lock();}
 static void fm1_irq_on(void){if(ml_irq_depth&&! --ml_irq_depth)ml_unlock(ml_irq_token);}
-static uint32_t fm1_icfg(void){return ml_lock();}
-static void fm1_icfg_set(uint32_t token){ml_unlock(token);}
+/* the classic HAL's save, off, restore (motion.c, pattern.c: f = fm1_icfg(); fm1_irq_off(); ... fm1_icfg_set(f)): the
+ * save is the shim's nesting, the restore unwinds to it. (A save taking a lock of its own left one held at the restore:
+ * the base's lock never back to 0, the interrupts off for good, the scan, the render and USB with them) */
+static uint32_t fm1_icfg(void){return ml_irq_depth;}
+static void fm1_icfg_set(uint32_t depth){while(ml_irq_depth>depth)fm1_irq_on();}
 static void fm1_wdt_feed(void){ml_watchdog();}
 static void fm1_delay_ms(uint32_t n){ml_delay(n);}
 static void fm1_reboot(void){ml_reboot();}
