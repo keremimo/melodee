@@ -98,9 +98,10 @@ void ml_smk_lights(uint32_t extra,const uint32_t *pad_rgb){
 /* The UI draws the FM-1's LED cells (instrument.c FM1_KEYMAP): where each function's is, (column << 3) | row, in plat.h's
  * button order. tests/build_targets_test.py checks this against FM1_KEYMAP */
 static const uint8_t ml_btn_cell[14]={49,33,17,1,74,66,57,41,25,9,82,58,4,12};
-_Static_assert(ML_SMK_DATA_LO==FL_DATA_LO&&ML_SMK_DATA_HI==FL_DATA_HI&&ML_SMK_GLOB_LO==FL_GLOB_LO&&ML_SMK_GLOB_HI==FL_GLOB_HI&&
-               ML_SMK_LOW_LO==FL_XDATA0_LO&&FL_XDATA0_HI==FL_AUTO_LO&&FL_AUTO_HI==FL_XDATA1_LO&&ML_SMK_LOW_HI==FL_XDATA1_HI&&
-               ML_FLASH_ID==FL_JEDEC_ID,"store_map.h is not this board's flash map");
+/* Melodee's SMK store (store_map.h, hal/fm1_flash_map.h): A = XDATA0 + AUTO + XDATA1, B = DATA, C = GLOB + FREE */
+_Static_assert(FL_XDATA0_LO==0x9D000u&&FL_XDATA0_HI==FL_AUTO_LO&&FL_AUTO_HI==FL_XDATA1_LO&&FL_XDATA1_HI==0xBB000u&&
+               FL_DATA_LO==0xC2000u&&FL_DATA_HI==0xEA000u&&FL_GLOB_LO==0xEB000u&&FL_GLOB_HI==FL_FREE_LO&&
+               FL_FREE_HI==0xF4000u,"store_map.h is not this board's flash map");
 #endif
 #endif
 void ml_lights(const uint8_t *bright,const uint8_t *dim,const uint8_t *masks){
