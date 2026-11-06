@@ -284,7 +284,8 @@ def build_app(stub):
         flags.append(f'-DFELUCCA_DATA_FAMILY="{fam}"')
     if os.environ.get("P5_OVERSAMPLE") in ("1", "2"):
         flags.append("-DP5_OVERSAMPLE=" + os.environ["P5_OVERSAMPLE"])
-    links = os.environ.get("MELODEE_BLE_LINKS", "1")   # Bluetooth links at once: 2 = a computer's and a device's (docs/BLE-MULTILINK.md)
+    # Bluetooth links at once: 2 (the default) = a computer's and a device's (docs/BLE-MULTILINK.md); 1 without Bluetooth
+    links = os.environ.get("MELODEE_BLE_LINKS", "1" if os.environ.get("MELODEE_BLE") == "0" else "2")
     if links not in ("1", "2"):
         raise SystemExit("MELODEE_BLE_LINKS: 1 or 2")
     if links == "2":

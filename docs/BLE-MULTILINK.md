@@ -8,7 +8,7 @@ So a BLE keyboard can play Melodee while an iPad or a Mac is connected to it. Up
 (checked 2026-11-06 against `w0ts/optimist` `8a91efd6`: "One link at a time", "Not built: two links at once"), so this is
 new work, and **none of it has been on a device yet**.
 
-- Build: `MELODEE_BLE_LINKS=2 ./build.sh` (FM-1 or `--board smk37`); the default (unset or `1`) is one link.
+- Build: two links are the default (`./build.sh`, FM-1 or `--board smk37`); `MELODEE_BLE_LINKS=1 ./build.sh` builds one link.
 - Code: the classic stack `firmware/src/ble/` and `firmware/hal/fm1_ble.h`, the glue `firmware/src/midi_ble.c`.
   `platform/ble/` (the parked fm1-base port's copy) carries the same stack changes and stays tested beside it.
 - `BLE_LINKS 1` is the stack as it was in behaviour: one bank, both roles on link 0, every link argument 0. Its code was
