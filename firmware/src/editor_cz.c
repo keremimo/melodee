@@ -7,12 +7,12 @@ enum { ED_CZ_GET = 75, ED_CZ_PUT = 76, ED_CZ_BANK = 77 };
 static int ed_cz_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 {
     if(cmd==ED_CZ_BANK){
-        uint32_t k=n?a[0]:127u;cz_bank_t *b=n==1?cz_bank_load(k):0;ed_b(k);ed_b(b?0:1);
-        if(b){ed_str(b->name,16);for(uint32_t i=0;i<16;i++){ed_b((b->used>>i)&1u);char name[17]={0};if((b->used>>i)&1u)for(uint32_t j=0;j<16;j++)name[j]=b->tone[i].raw[128+j]>=32 && b->tone[i].raw[128+j]<=126?(char)b->tone[i].raw[128+j]:' ';ed_str(name,16);}}
+        uint32_t k=ed_arg(a,n,0);cz_bank_t *b=n==1?cz_bank_load(k):0;ed_b(k);ed_b(b?0:1);
+        if(b){ed_str(b->name,16);for(uint32_t i=0;i<16;i++){ed_b((b->used>>i)&1u);char name[17]={0};if((b->used>>i)&1u)ed_shown(name,b->tone[i].raw+128,16u);ed_str(name,16);}}
         return 1;
     }
     if (cmd != ED_CZ_GET && cmd != ED_CZ_PUT) return 0;
-    uint32_t target = n ? a[0] : 127u, index = n > 1u ? a[1] : 127u, rc = 0;
+    uint32_t target = ed_arg(a, n, 0), index = ed_arg(a, n, 1), rc = 0;
     uint8_t raw[CZ_BYTES];
     if (target > 2u || index >= (target == 2u ? 128u : target ? UP_SLOTS : NPART) || (target==2u && cmd==ED_CZ_PUT)) rc = 1;
     if (!rc && cmd == ED_CZ_GET) {
@@ -24,18 +24,13 @@ static int ed_cz_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
     }
     if (!rc && cmd == ED_CZ_PUT) {
         if (n != 2u + 2u*CZ_BYTES && n != 2u + 2u*CZ_BYTES + 32u) rc = 1;
-        for (uint32_t i=0; !rc && i<CZ_BYTES; i++) {
-            if (a[2u+2u*i] > 15u || a[3u+2u*i] > 15u) rc = 1;
-            else raw[i] = a[2u+2u*i] | (uint8_t)(a[3u+2u*i]<<4);
-        }
-        if (!rc && !cz_patch_valid(raw)) rc = 1;
+        if (!rc && (!ed_unnibble(raw, a + 2, CZ_BYTES) || !cz_patch_valid(raw))) rc = 1;
         if (!rc && target) {
             up_rec_t r; memset(&r,0,sizeof r);
             r.used=UP_USED; r.ver=UP_VER_CZ; r.engine=ENGI_CZ; r.np=P_COUNT;
             memcpy(r.packed,raw,CZ_BYTES);
             char name[13];
-            for (uint32_t i=0;i<12u;i++) name[i]=raw[128u+i]>=32u && raw[128u+i]<=126u ? (char)raw[128u+i] : ' ';
-            name[12]=0; up_set_name(&r,index,name);
+            ed_shown(name,raw+128u,12u); up_set_name(&r,index,name);
             if (n > 2u+2u*CZ_BYTES) for (uint32_t i=0;i<16u;i++) {
                 r.note[i]=a[2u+2u*CZ_BYTES+2u*i]; r.flags[i]=a[3u+2u*CZ_BYTES+2u*i];
                 up_pat_norm(&r.note[i],&r.flags[i]);
@@ -55,6 +50,6 @@ static int ed_cz_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         }
     }
     ed_b(target); ed_b(index); ed_b(rc);
-    if (cmd == ED_CZ_GET && !rc) for (uint32_t i=0;i<CZ_BYTES;i++) { ed_b(raw[i]&15u); ed_b(raw[i]>>4); }
+    if (cmd == ED_CZ_GET && !rc) ed_nibbles(raw, CZ_BYTES);
     return 1;
 }

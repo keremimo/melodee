@@ -3,6 +3,7 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Optional device preferences, advertised in INFO. No preset format changes. The font weight
  * (ED_UI_FONT) is gone: one weight; UI_SET of it answers rc 2 (not supported), UI_STATE 127. */
+#include "editor_wire.h"
 enum { ED_UI_PALETTE = 1, ED_UI_FONT = 2, ED_UI_MONITOR = 4, ED_UI_FAVORITES = 8, ED_UI_RECORDING = 16, ED_UI_PERFORMANCE = 32,
        ED_UI_CLICK_PERCENT = 64 };   /* click level 0..100 % (before: 0 LOW, 1 MID, 2 HIGH) */
 static uint32_t ed_ui_caps(void)
@@ -15,10 +16,6 @@ static uint32_t ed_ui_caps(void)
     caps |= ED_UI_FAVORITES;
 #endif
     return caps;
-}
-static void ed_u28(uint32_t n)
-{
-    for (uint32_t i = 0; i < 4; i++) ed_b((n >> (i * 7)) & 127u);
 }
 static void ed_ui_state(void)
 {
@@ -39,8 +36,8 @@ static void ed_ui_state(void)
     ed_b(127);
 #endif
     sig=(sig^up_gen)*16777619u;
-    ed_u28(sig);
-    ed_u28(up_gen);
+    ed_n7(sig, 4u);
+    ed_n7(up_gen, 4u);
     ed_b(settings_click);ed_b(settings_click_level);ed_b(settings_countin);ed_b(settings_preview);ed_b(settings_chord_add);
     ed_b(127); ed_b(scr_get());
 }
@@ -99,6 +96,18 @@ static uint32_t ed_ui_set(const uint8_t *a, uint32_t n)
     ui.force = 1;
     return ed_ui_save();
 }
+#ifdef MELODEE_FAVORITES
+/* a favourite's kind (FAV_GET / FAV_SET): an engine, the shared library (USER_GENERAL) or a native pool */
+static uint32_t ed_fav_native(uint32_t kind)        /* a native pool's engine, else NENGINES */
+{
+    return kind == USER_NATIVE_P5 ? ENGI_PROPHET : kind == USER_NATIVE_FM ? ENGI_FM6 : kind == USER_NATIVE_CZ ? ENGI_CZ : NENGINES;
+}
+static uint32_t ed_fav_limit(uint32_t kind)
+{
+    uint32_t e = ed_fav_native(kind);
+    return e < NENGINES ? native_limit(e) : kind == USER_GENERAL ? UP_SLOTS : ENGINES[kind]->npresets;
+}
+#endif
 static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 {
     switch (cmd) {
@@ -106,7 +115,7 @@ static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         ed_ui_state(); return 1;
     case ED_UI_SET:
         ed_b(ed_ui_set(a, n));
-        ed_b(n ? a[0] : 127u); ed_b(n > 1u ? a[1] : 127u);
+        ed_echo(a, n, 2u);
         ed_ui_state(); return 1;
     case ED_UI_PALETTES:
         ed_b(NPALETTES);
@@ -116,7 +125,7 @@ static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 #ifdef MELODEE_FAVORITES
         if (n == 4u && a[0] <= USER_NATIVE_P5) {
             int32_t start = ed_rv(a + 1);
-            uint32_t limit = (a[0]==USER_NATIVE_FM || a[0]==USER_NATIVE_CZ || a[0]==USER_NATIVE_P5) ? native_limit(a[0]==USER_NATIVE_P5?ENGI_PROPHET:a[0]==USER_NATIVE_FM?ENGI_FM6:ENGI_CZ) : a[0] == USER_GENERAL ? UP_SLOTS : ENGINES[a[0]]->npresets;
+            uint32_t limit = ed_fav_limit(a[0]);
             if (start >= 0 && a[3] && a[3] <= 32u && (uint32_t)start + a[3] <= limit) {
                 ed_b(0); ed_b(a[0]); ed_v(start); ed_b(a[3]);
                 for (uint32_t i = 0; i < a[3]; i++) ed_b(favorite_has(a[0], (uint32_t)start + i));
@@ -132,10 +141,10 @@ static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 #ifdef MELODEE_FAVORITES
         if (n == 4u && a[0] <= USER_NATIVE_P5 && a[3] <= 1u) {
             int32_t preset = ed_rv(a + 1);
-            uint32_t limit = (a[0]==USER_NATIVE_FM || a[0]==USER_NATIVE_CZ || a[0]==USER_NATIVE_P5) ? native_limit(a[0]==USER_NATIVE_P5?ENGI_PROPHET:a[0]==USER_NATIVE_FM?ENGI_FM6:ENGI_CZ) : a[0] == USER_GENERAL ? UP_SLOTS : ENGINES[a[0]]->npresets;
+            uint32_t limit = ed_fav_limit(a[0]), e = ed_fav_native(a[0]);
             if (preset >= 0 && (uint32_t)preset < limit &&
                 (a[0] != USER_GENERAL || !a[3] || up_used((uint32_t)preset)) &&
-                ((a[0]!=USER_NATIVE_FM && a[0]!=USER_NATIVE_CZ && a[0]!=USER_NATIVE_P5) || !a[3] || native_used(a[0]==USER_NATIVE_P5?ENGI_PROPHET:a[0]==USER_NATIVE_FM?ENGI_FM6:ENGI_CZ,(uint32_t)preset))) {
+                (e >= NENGINES || !a[3] || native_used(e, (uint32_t)preset))) {
                 int p5=a[0]==ENGI_PROPHET || a[0]==USER_NATIVE_P5;
                 int before=favorite_has(a[0],(uint32_t)preset);
                 int changed=favorite_set(a[0], (uint32_t)preset, a[3]);

@@ -6,6 +6,7 @@
  * Runtime and saved projects include all 32 pattern banks. Retired user sample
  * slots are absent from the inventory and cannot be restored over project data.
  */
+#include "editor_wire.h"
 #ifndef ED_BK_FLASH_PTR
 #define ED_BK_FLASH_PTR(off) fm1_xip_ptr(off)
 #endif
@@ -42,10 +43,24 @@ static st_stream_t ed_bk_stage;
 /* Profiling builds keep the original RAM-only archive workspace. Guarded
  * sessions must capture and restore live music without any flash mutation. */
 static int ed_bk_ram_only(void){return AUDIO_LAB_GUARDED();}
+static void ed_bk_from(uint32_t obj, uint32_t copy, uint32_t crc)   /* GET reads the object from obj's copy */
+{
+    ed_bk_source_obj = obj; ed_bk_source_copy = copy; ed_bk_source_crc = crc;
+}
+/* a stored object: its length, and where GET reads it (none stored: the staging RAM, length 0) */
+static const uint8_t *ed_bk_stored(uint32_t obj, uint32_t *len)
+{
+    st_hdr_t h;
+    int copy = st_current(obj, &h);
+    if (copy < 0)
+        return ED_BK_RAW;
+    *len = h.len;
+    ed_bk_from(obj, (uint32_t)copy, h.crc);
+    return ED_BK_FLASH_PTR(st_sector(obj, (uint32_t)copy) + st_payload_off_header(obj, &h));
+}
 #endif
 static int ed_bk_project(uint32_t id){return id==0u || (id>=2u && id<=5u) || (id>=64u && id<60u+PROJ_SLOTS);}
 static uint32_t ed_bk_slot(uint32_t id) { return id < 6u ? id - 2u : id - 60u; }   /* a saved project's id -> slot */
-static void ed_bk_u32(uint32_t n) { for (uint32_t i = 0; i < 5u; i++) ed_b((n >> (i * 7u)) & 127u); }
 static uint32_t ed_bk_r32(const uint8_t *p)
 {
     return (uint32_t)p[0] | (uint32_t)p[1] << 7 | (uint32_t)p[2] << 14 | (uint32_t)p[3] << 21 | (uint32_t)p[4] << 28;
@@ -75,11 +90,7 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
 #if MELODEE_FLASH
     ed_bk_source_obj=OBJ_COUNT;
     uint32_t bank=ed_bk_preset_bank(id),obj=bank<UP_BANKS?up_obj(bank):id==1u && template_old()?OBJ_SETTINGS:OBJ_COUNT;
-    if(obj<OBJ_COUNT){
-        st_hdr_t h;int copy=st_current(obj,&h);
-        if(copy>=0){*len=h.len;ed_bk_source_obj=obj;ed_bk_source_copy=(uint32_t)copy;ed_bk_source_crc=h.crc;return ED_BK_FLASH_PTR(st_sector(obj,(uint32_t)copy)+st_payload_off_header(obj,&h));}
-        return ED_BK_RAW;
-    }
+    if(obj<OBJ_COUNT)return ed_bk_stored(obj,len);
 #else
     uint32_t bank=ed_bk_preset_bank(id);
     if(bank<UP_BANKS){*len=sizeof(up_bank_t);return (const uint8_t *)up_cache_bank(bank);}
@@ -87,31 +98,21 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
     if (id == 0u) {
         *len=BANK_STORE_SIZE;
 #if MELODEE_FLASH
-        if(!ed_bk_ram_only()){*len=ed_bk_stage.head.len;ed_bk_source_obj=ed_bk_stage.obj;ed_bk_source_copy=ed_bk_stage.head.slot;ed_bk_source_crc=ed_bk_stage.head.crc;}   /* (compact) */
+        if(!ed_bk_ram_only()){*len=ed_bk_stage.head.len;ed_bk_from(ed_bk_stage.obj,ed_bk_stage.head.slot,ed_bk_stage.head.crc);}   /* (compact) */
 #endif
         return ED_BK_RAW;
     }
     if (id == 1u) { *len = ed_bk_set_len; return (const uint8_t *)&ed_bk_set; }
 #ifdef KIT_STORE
     if (ed_bk_kit(id)) {                    /* a user kit: GET reads its record range by range */
-        st_hdr_t h;
-        uint32_t obj = kit_obj(id - ED_BK_KIT0);
-        int copy = st_current(obj, &h);
-        if (copy >= 0) { *len = h.len; ed_bk_source_obj = obj; ed_bk_source_copy = (uint32_t)copy; ed_bk_source_crc = h.crc; }
+        (void)ed_bk_stored(kit_obj(id - ED_BK_KIT0), len);
         return ED_BK_RAW;
     }
 #endif
     if (id && ed_bk_project(id)) {
         uint32_t slot = ed_bk_slot(id);
 #if MELODEE_FLASH
-        st_hdr_t h;
-        uint32_t obj = st_proj_obj(slot);
-        int copy = st_current(obj, &h);
-        if (copy >= 0) {
-            *len = h.len; ed_bk_source_obj = obj; ed_bk_source_copy = (uint32_t)copy; ed_bk_source_crc = h.crc;
-            return ED_BK_FLASH_PTR(st_sector(obj, (uint32_t)copy) + st_payload_off_header(obj, &h));
-        }
-        return ED_BK_RAW;                   /* empty: a valid pointer, zero length */
+        return ed_bk_stored(st_proj_obj(slot), len);   /* empty: a valid pointer, zero length */
 #else
         if (slot >= 4u) return (const uint8_t *)&proj_slot[0];   /* (host fixtures: four slots) */
         if (bank_valid(proj_bank_slot[slot], BANK_STORE_SIZE) &&
@@ -397,7 +398,7 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             else
 #endif
                 crc = st_crc32(p, len);
-            ed_b(ED_BK_IDS[i]); ed_bk_u32(len); ed_bk_u32(crc);
+            ed_b(ED_BK_IDS[i]); ed_u35(len); ed_u35(crc);
             fm1_wdt_feed();
         }
         return 1;
@@ -416,13 +417,13 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             p = ed_transfer_buf; data_off = 0;
         }
 #endif
-        ed_b(n ? a[0] : 127u); ed_b(rc); ed_bk_u32(off); ed_b(rc ? 0u : count & 127u); ed_b(rc ? 0u : count >> 7);
+        ed_echo(a, n, 1u); ed_b(rc); ed_u35(off); ed_u14(rc ? 0u : count);
         if (!rc) ed_bk_pack(p + data_off, count);
         return 1;
     }
     if (cmd == ED_BACKUP_PUT) {
         uint32_t rc = ed_bk_write(a, n);
-        ed_b(n ? a[0] : 127u); ed_b(n >= 2u ? a[1] : 127u); ed_b(rc);
+        ed_echo(a, n, 2u); ed_b(rc);
         return 1;
     }
     return 0;
