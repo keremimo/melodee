@@ -1285,7 +1285,7 @@ static int studio_device(void)
     for (i = 6; i + 1u < n && host_wire[i] != 'C'; i += 2u + host_wire[i + 1]) ;
     for (j = 6; j + 1u < n && host_wire[j] != 'W'; j += 2u + host_wire[j + 1]) ;
     bad += check("CAPS: tag C (SETTINGS, MLEARN v1, BLE v1 with Bluetooth, else 0, DRUM v1), W 2 bytes (bit 7 known)",
-                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 1 && host_wire[i + 4] == !!MELODEE_BLE && host_wire[i + 5] == 1 &&
+                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 1 && host_wire[i + 4] == ED_BT && host_wire[i + 5] == 1 &&
                  host_wire[j + 1] == 2 && host_wire[j + 2] == 127 && host_wire[j + 3] == 1);
 
     /* SETTINGS */
