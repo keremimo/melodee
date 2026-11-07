@@ -45,7 +45,10 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "menu_rows.c", "editor_device.c",
               # the user's drum kits: their store and record check, a take's processing, Record kit's sheet (drum_enc.c,
               # the take's encoder, stays at -Os: its speed is the wait on "Saving")
-              "kit_store.c", "kit_take.c", "kit_rec_ui.c"]
+              "kit_store.c", "kit_take.c", "kit_rec_ui.c",
+              # main-loop only too: the SMK-37's knob / fader banks and their picker, the store's staged writes, the resource
+              # region's reads
+              "ui_smk.c", "storage_stream.c", "res.c"]
 DEF = re.compile(
     r"^(?:static|void|int|uint\w*|int\w*|const)\b[^;=(]*?\b([A-Za-z_]\w*)\s*\(", re.M)
 # Stopped note transforms are infrequent main-loop work.
@@ -104,7 +107,12 @@ def size_names():
               "fm6_sx_byte", "seq_erase_rebuild", "seq_erase_pass", "seq_stop", "seq_start", "pattern_encode",
               "pattern_apply", "fm6_note_on", "fm6_legato", "fm6_keyed", "fm6_alloc", "p5_note_on", "sid_note_on",
               "cz_native_note_on", "motion_native_edited", "motion_set_event", "motion_native_ok", "motion_capture",
-              "motion_restore", "audition_stop"}
+              "motion_restore", "audition_stop",
+              # main loop: the USB device's (re)start and its configuration, PATTERNS' copy, SEQ's halve / double, the
+              # banks' start, a stored motion's, song's and chain's checks, motion edits
+              "usb_start", "pattern_copy_to", "pattern_double", "recording_double", "pattern_half", "pattern_init",
+              "motion_valid", "motion_clear", "motion_replace_track", "motion_delete_event_at", "song_sound_valid",
+              "chain_valid"}
     for f in SIZE_FILES:
         names.update(n for n in definitions((SRC / f).read_text())
                      if not n.endswith("_irq"))   # (ISRs stay as they are)
