@@ -100,7 +100,7 @@ def size_names():
               "recording_zero", "recording_snapshot", "recording_stop", "recording_pitch_add",
               "recording_queue_remove", "recording_queue_refresh",
               "trk_note_on_engine", "trk_note_on_raw", "input_on", "input_off", "key_off", "mono_play", "voice_victim",
-              "midi_event", "midi_note_event", "midi_parameter", "midi_release", "midi_forget_track", "midi_clock_mode",
+              "midi_event", "midi_note_event", "midi_parameter", "mparam_receive", "midi_release", "midi_forget_track", "midi_clock_mode",
               "midi_insert_release", "midi_insert_controls", "midi_track_note_on", "midi_track_controller",
               "midi_track_flush", "midi_track_all_off",
               "chord_make", "chord_strum_begin", "lcz_sx_encode", "cz_ed_decode", "cz_ed_put", "sysex_byte",

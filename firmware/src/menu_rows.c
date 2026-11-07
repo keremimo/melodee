@@ -86,21 +86,40 @@ static void menu_words(char *d, const char *s, uint32_t n)
     }
 }
 
-/* ---- MIDI LEARN's table (midi_knobs.h mlearn_row): what is learned, forget it all, a control's message */
+/* ---- MIDI LEARN's tables (midi_knobs.h mlearn_row, mparam_row): what is learned (the controls and the parameters),
+ * forget it all, a control's message, a parameter's CC. A message has one job: learnt again, it leaves the one it had */
+static int mparam_valid(void) { return mparam_row[MPARAM_N] == MPARAM_TAG; }
 static uint32_t mlearn_count(void)
 {
-    uint32_t n = 0;
+    uint32_t n = 0, k;
+    const uint8_t *m;
     if (mlearn_valid())
-        for (uint32_t k = 0; k < MLEARN_N; k++) n += mlearn_row[k] != 0u;
+        for (k = 0; k < MLEARN_N; k++) n += mlearn_row[k] != 0u;
+    for (k = 0, m = (const uint8_t *)mparam_row; mparam_valid() && k < MPARAM_N; k++, m += 4)
+        n += m[0] != 0u;
     return n;
 }
 static void mlearn_forget(void)
 {
     fm1_irq_off();
     memset(mlearn_row, 0, sizeof mlearn_row);
+    if (mparam_valid())
+        memset(mparam_row, 0, sizeof mparam_row);       /* (rows not theirs keep their old stars) */
     fm1_in.remote = 0;
     fm1_irq_on();
     settings_save();
+}
+/* CC cc on channel ch (or any) leaves the parameter it had, and track tr's parameter id its CC (tr NTRK: none) -> the
+ * first free place, 0 none */
+static uint8_t *mparam_drop(uint32_t cc, uint32_t ch, uint32_t tr, uint32_t id)
+{
+    uint8_t *m = (uint8_t *)mparam_row, *free = 0;
+    for (uint32_t k = 0; mparam_valid() && k < MPARAM_N; k++, m += 4) {
+        if ((m[0] == cc && (ch == MPARAM_ANY || m[1] == MPARAM_ANY || m[1] == ch)) || (m[2] == tr && m[3] == id))
+            m[0] = 0;
+        if (!m[0] && !free) free = m;
+    }
+    return free;
 }
 static void mlearn_bind(uint32_t k, uint32_t src, uint32_t ch)   /* control k (knobs, then buttons) is message src now */
 {
@@ -112,11 +131,31 @@ static void mlearn_bind(uint32_t k, uint32_t src, uint32_t ch)   /* control k (k
     for (uint32_t i = 0; i < MLEARN_N; i++)             /* the message leaves the control it had */
         if (mlearn_row[i] == src && (!(src & MLEARN_NOTE) || (i >= NE && mlearn_note_ch(i - NE) == ch)))
             mlearn_row[i] = 0;
+    if (!(src & MLEARN_NOTE))
+        (void)mparam_drop(src, MPARAM_ANY, NTRK, 0);    /* (a CC: on any channel, so the parameter it had too) */
     mlearn_row[k] = (uint8_t)src;
     if (k >= NE) {
         uint32_t b = k - NE, shift = b & 1u ? 4u : 0u;
         uint8_t *c = &mlearn_row[MLEARN_N + b / 2u];
         *c = (uint8_t)((*c & ~(15u << shift)) | ch << shift);
+    }
+    fm1_irq_on();
+    settings_save();
+}
+
+static void mparam_bind(uint32_t tr, uint32_t id, uint32_t cc, uint32_t ch)   /* CC cc on ch (or any) sets tr's id now */
+{
+    uint8_t *m;
+    fm1_irq_off();
+    if (!mparam_valid()) {                              /* (the rows' old stars go, the first time) */
+        memset(mparam_row, 0, sizeof mparam_row);
+        mparam_row[MPARAM_N] = MPARAM_TAG;
+    }
+    if (mlearn_valid())                                 /* (the control it had: a CC there is on any channel) */
+        for (uint32_t k = 0; k < MLEARN_N; k++)
+            if (mlearn_row[k] == cc) mlearn_row[k] = 0;
+    if ((m = mparam_drop(cc, ch, tr, id)) != 0) {
+        m[0] = (uint8_t)cc; m[1] = (uint8_t)ch; m[2] = (uint8_t)tr; m[3] = (uint8_t)id;
     }
     fm1_irq_on();
     settings_save();

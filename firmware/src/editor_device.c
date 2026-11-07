@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Melodee Studio's FM-1 page (EDITOR_PROTOCOL.md "Studio device"): SETTINGS (50) lists and sets the HOME menu's rows
- * (menu_rows.c: the menu's own values, steps and words; saved as UI_SET saves), MLEARN (51) lists MIDI LEARN's controls,
- * forgets one or all and learns one from the next message, DRUM (53) reads and writes a kit track's DRUM SOUND / MIX
+ * (menu_rows.c: the menu's own values, steps and words; saved as UI_SET saves), MLEARN (51) lists MIDI LEARN's controls
+ * and parameters, forgets one or all and learns one from the next message, DRUM (53) reads and writes a kit track's DRUM SOUND / MIX
  * values (BLE 52: editor_ble.c). WATCH bit 7 pushes DEVICE_CHANGED (60) when they or Bluetooth's state change on the
  * device. Included by editor.c */
 #include "menu_rows.c"                                    /* (the firmware: ui_menu.c has it already) */
 enum { ED_SETTINGS = 50, ED_MLEARN, ED_DRUM = 53, ED_DEVICE_CHANGED = 60 };
 static uint8_t ed_learn;                                  /* MLEARN: the control + 1 waiting for a message, 0 none */
+static uint16_t ed_plearn __attribute__((section(".pool")));   /* MLEARN: (any << 10 | track << 7 | parameter) + 1 waiting, 0 none */
 
 static void ed_set_values(void)                           /* the rows, then each one's value (14 bits) */
 {
@@ -22,7 +23,7 @@ static uint32_t ed_dev_sig(uint32_t k)
     if (k == 0)
         for (i = 0; i < MI_COUNT; i++) h = (h ^ menu_get(i)) * 16777619u;
     if (k == 1)
-        h = fnv(h, mlearn_row, sizeof mlearn_row);
+        h = fnv(fnv(h, mlearn_row, sizeof mlearn_row), mparam_row, sizeof mparam_row);
 #if MELODEE_BLE
     if (k == 2)
         h = mb.generation + mb.on * 3u + MB_READY_BITS * 997u + mb_saved.flags * 7919u + mel_ble_code() * 17u + mb.attempt * 31u;
@@ -59,6 +60,7 @@ static uint32_t ed_device_push(uint32_t n)                /* ed_session_push's l
 static void ed_learn_end(void)
 {
     ed_learn = 0;
+    ed_plearn = 0;
     if (ui.menu != 4u)
         mlearn_on = 0;                                    /* (the page's own wait is the page's) */
 }
@@ -72,7 +74,7 @@ static void ed_device_poll(void)
             mel_ble_scan(0);                              /* (the Bluetooth page's own scan stays) */
     }
 #endif
-    if (!ed_learn)
+    if (!ed_learn && !ed_plearn)
         return;
     if (ui.menu == 4u || fm1_ms - ed_w.last_ms > 3000u) {
         ed_learn_end();
@@ -82,11 +84,14 @@ static void ed_device_poll(void)
     if ((seen = mlearn_seen) < 0)
         return;
     mlearn_seen = -1;
-    uint32_t k = ed_learn - 1u, src = (uint32_t)seen & 255u;
-    if (k >= NE || !(src & MLEARN_NOTE)) {                /* (a knob: a CC only) */
-        mlearn_bind(k, src, (uint32_t)seen >> 8);
-        ed_learn_end();
-    }
+    uint32_t k = ed_learn - 1u, src = (uint32_t)seen & 255u, ch = (uint32_t)seen >> 8, p = ed_plearn - 1u;
+    if ((src & MLEARN_NOTE) && (ed_plearn || k < NE))    /* (a knob, a parameter: a CC only) */
+        return;
+    if (ed_plearn)                                        /* (all 23 taken, none the parameter's: nothing learned) */
+        mparam_bind(p >> 7 & 7u, p & 127u, src, p >> 10 ? MPARAM_ANY : ch);
+    else
+        mlearn_bind(k, src, ch);
+    ed_learn_end();
 }
 
 static const char *ed_mlearn_name(uint32_t r)             /* a control as the MIDI LEARN page names it */
@@ -149,28 +154,37 @@ static int ed_device_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             ed_out[at] = (uint8_t)(i & 127u); ed_out[at + 1u] = (uint8_t)(i >> 7);
         }
     } else if (cmd == ED_MLEARN) {
-        /* [op: 1 control (forget it), 2 (forget all: FORGET LEARNED), 3 control (learn it from the next message), 4 (stop
-         * waiting)] -> op, rc, waiting (control + 1, 0 none), controls, knobs, per control its message (kind 0 none, 1 CC, 2
-         * note; number; channel: a note's, 127 any), then the controls' names */
+        /* [op: 1 control (forget it), 2 (forget all: FORGET LEARNED, the parameters too), 3 control (learn it from the
+         * next message), 4 (stop waiting), 5 track parameter [any] (learn the parameter from the next CC: on its channel, or
+         * any), 6 k (forget parameter k)] -> op, rc, waiting (control + 1, 0 none), controls, knobs, per control its
+         * message (kind 0 none, 1 CC, 2 note; number; channel: a note's, 127 any), the controls' names, then (v2) the
+         * parameters: their count, the one waiting (track, parameter; 127 127 none), per one CC (0 none), channel (127
+         * any), track, parameter */
+        uint32_t id = a[2], want = op == 5u ? 3u + (n > 3u) : op == 6u || (op & 1u) ? 2u : 1u;
+        const param_desc_t *pd = ed_tdesc(&trk[x % NTRK], id % P_COUNT);
         if (!n)
             ;                                             /* (the list) */
-        else if (!op || op > 4u || n != (op & 1u ? 2u : 1u) || ((op & 1u) && x >= MLEARN_N))
+        else if (!op || op > 6u || n != want || ((op == 1u || op == 3u) && x >= MLEARN_N) || (op == 6u && x >= MPARAM_N) ||
+                 (op == 5u && (x >= NTRK || !MPARAM_TARGET(id) || pd->max <= pd->min)))
             rc = 1;
-        else if (op == 3u && ui.menu == 4u)
+        else if ((op == 3u || op == 5u) && ui.menu == 4u)
             rc = 2;                                       /* (the device's own MIDI LEARN page is open) */
-        else if (op == 3u) {
+        else if (op == 3u || op == 5u) {
             fm1_irq_off();
             fm1_in.remote = 0;                            /* (as the page: nothing a controller held stays down) */
             mlearn_seen = -1;
             mlearn_on = 1;
             fm1_irq_on();
-            ed_learn = (uint8_t)(x + 1u);
+            ed_learn = (uint8_t)(op == 3u ? x + 1u : 0u);   /* (one waits at a time) */
+            ed_plearn = (uint16_t)(op == 5u ? 1u + (x << 7 | id | (n > 3u && a[3]) << 10) : 0u);
         } else if (op == 4u) {
-            if (ed_learn)
+            if (ed_learn || ed_plearn)
                 ed_learn_end();
         } else {
             if (op == 2u)
                 mlearn_forget();
+            else if (op == 6u)
+                mparam_row[x] &= mparam_valid() ? ~127u : ~0u;   /* (its CC 0: one word, the interrupt's own read) */
             else if (mlearn_valid()) {
                 fm1_irq_off();
                 mlearn_row[x] = 0;
@@ -187,6 +201,10 @@ static int ed_device_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         }
         for (i = 0; i < MLEARN_N; i++)
             ed_str(ed_mlearn_name(i), 16);
+        k = ed_plearn - 1u;                               /* (v2) the parameters */
+        ed_b(MPARAM_N); ed_b(ed_plearn ? k >> 7 & 7u : 127u); ed_b(ed_plearn ? k : 127u);
+        for (i = 0, c = mparam_valid(); i < 4u * MPARAM_N; i++)
+            ed_b(c ? ((const uint8_t *)mparam_row)[i] : 0u);
     } else if (cmd == ED_DRUM) {
         /* [track] (read); [track, first, m, m x (tune + 24, decay, character, level)] (write) -> track, rc, sounds, then per
          * sound its four values, then per sound its name and its third value's name */

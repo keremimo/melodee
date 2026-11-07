@@ -30,8 +30,8 @@ static const uint8_t ED_CAPS_TLV[] = {
     'S', 6, 1, 1, 1, CHAIN_ROWS, CHAIN_SOUNDS, PUNCH_NFX,  /* SONG2, SONG_SOUND, PUNCH v1; sections, sounds, effects */
     'D', 4, 2, NSTEP, RECORD_MAX & 127u, RECORD_MAX >> 7,  /* the patterns (44, 45, 64's bank, 73's 3..5) v1, v2 73's copy to
                                                             * another track; steps, notes */
-    'C', 4, 1, 1, ED_BT, 1,                               /* the FM-1 page (editor_device.c): SETTINGS, MLEARN, BLE (0: none),
-                                                            * DRUM v1 */
+    'C', 4, 1, 2, ED_BT, 1,                               /* the FM-1 page (editor_device.c): SETTINGS v1, MLEARN v2 (v1 and the
+                                                            * parameters), BLE v1 (0: none), DRUM v1 */
 };
 
 static uint32_t ed_sig(uint32_t at) { return fnv(2166136261u, ed_out + at, ed_n - at); }   /* the reply's bytes from at */

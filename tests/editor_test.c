@@ -1273,6 +1273,96 @@ static uint32_t set_row(uint32_t row, uint32_t v)
     request(ED_SETTINGS, a, 4);
     return host_wire[6];
 }
+/* MLEARN v2: the parameters' part of the list (after the controls' names): count, the one waiting, per one 4 bytes */
+static uint32_t mparams_at(void)
+{
+    uint32_t at = 10u + 3u * MLEARN_N, i;
+    for (i = 0; i < MLEARN_N; i++)
+        at += (uint32_t)strlen((const char *)host_wire + at) + 1u;
+    return at;
+}
+static uint32_t plearn(uint32_t tr, uint32_t id, int any)  /* MLEARN 5: learn track tr's parameter id; -> rc */
+{
+    uint8_t a[4] = {5, (uint8_t)tr, (uint8_t)id, 1};
+    request(ED_MLEARN, a, any ? 4u : 3u);
+    return host_wire[6];
+}
+#define MP(k) ((const uint8_t *)&mparam_row[k])     /* parameter k's bytes */
+static int studio_mlearn_params(uint8_t *a)
+{
+    int bad = 0;
+    uint32_t n, at, i, ok = 1;
+    uint8_t keep[sizeof mparam_row];
+    const param_desc_t *dec = ed_tdesc(&trk[1], P_DEC);
+    memset(mparam_row, 0, sizeof mparam_row); memset(mlearn_row, 0, sizeof mlearn_row);
+    settings_midi_knob_mode = MK_ABSOLUTE; song.sel = 0;
+    n = request(ED_MLEARN, a, 0); at = mparams_at();
+    for (i = 0; i < MPARAM_N; i++) ok &= !host_wire[at + 3u + 4u * i];
+    bad += check("MLEARN v2 list: then 23 parameters, none waiting, none learned", host_wire[at] == MPARAM_N && host_wire[at + 1] == 127 &&
+                 host_wire[at + 2] == 127 && ok && n == at + 3u + 4u * MPARAM_N + 1u && host_wire[n - 1u] == 0xF7);
+    bad += check("MLEARN 5 learns DECAY of track 2: it waits (the list says which), as the page", !plearn(1, P_DEC, 0) &&
+                 !host_wire[7] && host_wire[mparams_at() + 1] == 1 && host_wire[mparams_at() + 2] == P_DEC && mlearn_on && ed_plearn);
+    mlearn_receive(0x90u, 2, 60, 100); ed_service();
+    bad += check("  a note: still waiting", ed_plearn && !mlearn_count());
+    trk[1].p[P_DEC] = dec->min;
+    mlearn_receive(0xB0u, 2, 74, 127); ed_service();
+    bad += check("  CC 74 on channel 3: DECAY of track 2's now, on its channel, the wait over (nothing moved)",
+                 !ed_plearn && !mlearn_on && mlearn_count() == 1 && mparam_valid() && MP(0)[0] == 74 &&
+                 MP(0)[1] == 2 && MP(0)[2] == 1 && MP(0)[3] == P_DEC && trk[1].p[P_DEC] == dec->min);
+    n = request(ED_MLEARN, a, 0); at = mparams_at();
+    bad += check("MLEARN list: CC 74, channel 3, track 2, DECAY", host_wire[at + 3] == 74 && host_wire[at + 4] == 2 &&
+                 host_wire[at + 5] == 1 && host_wire[at + 6] == P_DEC && !host_wire[at + 7]);
+    bad += check("CC 74 on channel 3 sets track 2's DECAY over its range, the panel on track 1",
+                 mlearn_receive(0xB0u, 2, 74, 127) && trk[1].p[P_DEC] == dec->max && (mlearn_receive(0xB0u, 2, 74, 0), trk[1].p[P_DEC] == dec->min));
+    bad += check("... not on another channel", !mlearn_receive(0xB0u, 3, 74, 127) && trk[1].p[P_DEC] == dec->min);
+    settings_midi_knob_mode = MK_REL1;
+    mlearn_receive(0xB0u, 2, 74, 66);
+    bad += check("MIDI MODE relative: +2 steps", trk[1].p[P_DEC] == dec->min + 2);
+    settings_midi_knob_mode = MK_ABSOLUTE;
+    bad += check("learnt again from CC 75: one CC per parameter", !plearn(1, P_DEC, 0) && (mlearn_receive(0xB0u, 2, 75, 64), ed_service(), 1) &&
+                 mlearn_count() == 1 && MP(0)[0] == 75 && !mlearn_receive(0xB0u, 2, 74, 0));
+    bad += check("LEVEL of track 3 on any channel (op 5's fourth byte)", !plearn(2, P_LEVEL, 1) &&
+                 (mlearn_receive(0xB0u, 9, 20, 64), ed_service(), 1) && MP(1)[0] == 20 && MP(1)[1] == MPARAM_ANY &&
+                 mlearn_receive(0xB0u, 15, 20, 0) && trk[2].p[P_LEVEL] == ed_tdesc(&trk[2], P_LEVEL)->min);
+    a[0] = 3; a[1] = EN_K1; request(ED_MLEARN, a, 2); mlearn_receive(0xB0u, 0, 20, 64); ed_service();
+    bad += check("one job per CC: KNOB 1 learns CC 20, LEVEL of track 3 lets it go", mlearn_row[EN_K1] == 20 && !MP(1)[0] &&
+                 mlearn_count() == 2);
+    plearn(3, P_REL, 0); mlearn_receive(0xB0u, 0, 20, 64); ed_service();
+    bad += check("... and back: RELEASE of track 4 takes CC 20 from KNOB 1", !mlearn_row[EN_K1] && MP(1)[0] == 20 &&
+                 MP(1)[1] == 0 && MP(1)[2] == 3 && MP(1)[3] == P_REL);
+    mlearn_row[EN_K2] = 20; mlearn_row[28] = 'M'; mlearn_row[29] = 'L'; mlearn_row[30] = 1;   /* (a hand-made record: both) */
+    i = midi_knob_w;
+    bad += check("a CC with both a parameter and a control: the parameter wins", mlearn_receive(0xB0u, 0, 20, 127) &&
+                 trk[3].p[P_REL] == ed_tdesc(&trk[3], P_REL)->max && midi_knob_w == i && mlearn_receive(0xB0u, 1, 20, 127) && midi_knob_w == i + 1u);
+    mlearn_row[EN_K2] = 0; midi_knob_r = midi_knob_w;
+    a[0] = 6; a[1] = 1; request(ED_MLEARN, a, 2);
+    bad += check("MLEARN 6 forgets parameter 2 (RELEASE), DECAY stays", host_wire[6] == 3 && !MP(1)[0] && MP(0)[0] == 75 &&
+                 mlearn_count() == 1 && !mlearn_receive(0xB0u, 0, 20, 0));
+    bad += check("MLEARN 5 checks: past the tracks, past the parameters, a reserved one, wrong length: rc 1",
+                 plearn(NTRK, P_DEC, 0) == 1 && plearn(1, P_COUNT, 0) == 1 && plearn(1, P_RESERVED33, 0) == 1 &&
+                 (a[0] = 5, a[1] = 1, request(ED_MLEARN, a, 2), host_wire[6] == 1) && (a[0] = 6, request(ED_MLEARN, a, 1), host_wire[6] == 1) &&
+                 (a[0] = 6, a[1] = MPARAM_N, request(ED_MLEARN, a, 2), host_wire[6] == 1) && !ed_plearn);
+    ui.menu = 4;
+    bad += check("MLEARN 5 while the device's MIDI LEARN page is open: rc 2", plearn(1, P_ATK, 0) == 2 && !ed_plearn);
+    ui.menu = 0;
+    for (i = 0; i < MPARAM_N; i++) mparam_bind(i % NPART, P_LEVEL + i / NPART, 30u + i, 0);
+    memcpy(keep, mparam_row, sizeof mparam_row);
+    bad += check("23 learned; a 24th waits but learns nothing (Studio asks for a place first)", mlearn_count() == MPARAM_N &&
+                 !plearn(5, P_PAN, 0) && (mlearn_receive(0xB0u, 0, 90, 64), ed_service(), !ed_plearn) && !memcmp(keep, mparam_row, sizeof mparam_row));
+    bad += check("... one of the 23 learnt again from CC 90: its place", !plearn(MP(22)[2], MP(22)[3], 0) &&
+                 (mlearn_receive(0xB0u, 0, 90, 64), ed_service(), MP(22)[0] == 90) && mlearn_count() == MPARAM_N && (plearn(1, P_ATK, 0), 1));
+    a[0] = 4; request(ED_MLEARN, a, 1);
+    bad += check("MLEARN 4 ends a parameter's wait", !ed_plearn && !mlearn_on);
+    plearn(1, P_ATK, 0); fm1_ms += 3100u; ed_device_poll();
+    bad += check("a parameter's wait ends 3 s after the editor's last request", !ed_plearn && !mlearn_on);
+    a[0] = 2; request(ED_MLEARN, a, 1);
+    bad += check("MLEARN 2 forgets the parameters too", !mlearn_count() && !mparam_valid() && !mparam_row[0] && !mparam_row[MPARAM_N]);
+    memset(mparam_row, 0x15, sizeof mparam_row);           /* (old stars in the rows: no table) */
+    request(ED_MLEARN, a, 1);
+    bad += check("... old stars in the rows are no table, and FORGET LEARNED leaves them", !mlearn_count() && mparam_row[MPARAM_N] == 0x15151515u);
+    memset(mparam_row, 0, sizeof mparam_row);
+    return bad;
+}
 static int studio_device(void)
 {
     int bad = 0;
@@ -1284,8 +1374,8 @@ static int studio_device(void)
     n = request(ED_CAPS, a, 0);
     for (i = 6; i + 1u < n && host_wire[i] != 'C'; i += 2u + host_wire[i + 1]) ;
     for (j = 6; j + 1u < n && host_wire[j] != 'W'; j += 2u + host_wire[j + 1]) ;
-    bad += check("CAPS: tag C (SETTINGS, MLEARN v1, BLE v1 with Bluetooth, else 0, DRUM v1), W 2 bytes (bit 7 known)",
-                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 1 && host_wire[i + 4] == ED_BT && host_wire[i + 5] == 1 &&
+    bad += check("CAPS: tag C (SETTINGS v1, MLEARN v2, BLE v1 with Bluetooth, else 0, DRUM v1), W 2 bytes (bit 7 known)",
+                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 2 && host_wire[i + 4] == ED_BT && host_wire[i + 5] == 1 &&
                  host_wire[j + 1] == 2 && host_wire[j + 2] == 127 && host_wire[j + 3] == 1);
 
     /* SETTINGS */
@@ -1370,6 +1460,7 @@ static int studio_device(void)
     a[0] = 1; a[1] = MLEARN_N; request(ED_MLEARN, a, 2);
     bad += check("MLEARN past the controls, op 0, wrong length: rc 1", host_wire[6] == 1 && (a[0] = 0, request(ED_MLEARN, a, 1), host_wire[6] == 1) &&
                  (a[0] = 2, request(ED_MLEARN, a, 2), host_wire[6] == 1));
+    bad += studio_mlearn_params(a);
 
     /* DRUM */
     a[0] = 0; request(ED_DRUM, a, 1);

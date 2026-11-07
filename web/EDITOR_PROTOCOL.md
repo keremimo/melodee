@@ -1446,7 +1446,7 @@ printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies e
 | `M` (0x4D) | 2 | `METERS` version 1, milliseconds between pushes (66, ~15 Hz) |
 | `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
 | `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`; 2: also `PATTERN` 2's copy to another track), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
-| `C` (0x43) | 4 | (F4) `SETTINGS`, `MLEARN`, `BLE`, `DRUM` versions (1, 1, 1, 1; `BLE` 0 in a build without Bluetooth): see "Studio device" |
+| `C` (0x43) | 4 | (F4) `SETTINGS`, `MLEARN`, `BLE`, `DRUM` versions (1, 2, 1, 1; `MLEARN` 2: the parameters, 1 before them; `BLE` 0 in a build without Bluetooth): see "Studio device" |
 | `E` (0x45) | 2 | (F5, only in a `MELODEE_BLE_EDITOR=1` build) the link this `CAPS` came on (0 USB, 1 Bluetooth), the Bluetooth command list's version (1): see "Studio over Bluetooth". Without the tag: USB |
 
 Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
@@ -1819,14 +1819,14 @@ commands only add: every earlier command answers byte for byte as before (a `WAT
 rows: their values, steps and words, which `ui_menu.c` draws and steps with the same functions). Tests: `tests/editor_test.c`
 `studio_device`, `tests/ble_cal_editor_test.c` (BLE, with one and two links).
 
-**Finding out.** `CAPS` (39) has a tag `C`: `43 04` SETTINGS version 1, MLEARN version 1, BLE version 1 (0: a build without
+**Finding out.** `CAPS` (39) has a tag `C`: `43 04` SETTINGS version 1, MLEARN version 2 (1: F4, the controls only), BLE version 1 (0: a build without
 Bluetooth, the virtual FM-1's: no reply to 52), DRUM version 1; `W` is two bytes, 127 and 1 (bit 7 known). Firmware without
 the tag never answers 50–53 and gets no reply to a `WATCH` of two bytes (its argument check).
 
 | cmd | Request args | Reply args |
 | --- | --- | --- |
 | 50 SETTINGS | — (the values); 0, first, count (the rows); 1, row, value lo, value hi (set) | op (127: values), rc, rows, rows × value (14 bits), then 0: first, count, total (14 bits each), count × row |
-| 51 MLEARN | — (the list); 1, control (forget it); 2 (forget all); 3, control (learn it); 4 (stop learning) | op (127: list), rc, learning (control + 1, 0 none), controls (21), knobs (7), 21 × (kind, number, channel), 21 × name |
+| 51 MLEARN | — (the list); 1, control (forget it); 2 (forget all); 3, control (learn it); 4 (stop learning); (v2) 5, track, parameter [, any] (learn it); 6, k (forget parameter k) | op (127: list), rc, learning (control + 1, 0 none), controls (21), knobs (7), 21 × (kind, number, channel), 21 × name, then (v2) parameters (23), the one waiting (track, parameter; 127, 127 none), 23 × (CC, channel, track, parameter) |
 | 52 BLE | — (state); 1, on (radio); 2, visible (Mode); 3 (disconnect); 4 (the last device); 5 (forget the pairings); 6, on (scan); 7, row (connect to it) | op (127: state), rc, the state (below) |
 | 53 DRUM | track (read); track, first, m, m × (tune + 24, decay, third, level) (write) | track, rc, sounds, sounds × (tune + 24, decay, third, level), sounds × (name, the third's name) |
 | 60 DEVICE_CHANGED (push) | — | what changed (bits), then rows, rows × value (14 bits), as `SETTINGS` |
@@ -1838,7 +1838,7 @@ Every reply fits one 1024-byte frame (`SETTINGS` pages its rows: the FM-1's all 
 | --- | --- | --- | --- |
 | 0 | done and saved | done | done |
 | 1 | malformed or invalid (nothing changed) | malformed or invalid | malformed, invalid, not a kit track |
-| 2 | refused: `USB HOST` on (`SETTINGS`); the device's own MIDI LEARN page is open (`MLEARN` 3) | refused: no radio calibration or setup unfinished (1), nothing to connect to (4, 7), the scan cannot run (6: radio off, VISIBLE, connecting, a device linked) | — |
+| 2 | refused: `USB HOST` on (`SETTINGS`); the device's own MIDI LEARN page is open (`MLEARN` 3, 5) | refused: no radio calibration or setup unfinished (1), nothing to connect to (4, 7), the scan cannot run (6: radio off, VISIBLE, connecting, a device linked) | — |
 | 3 | done, not saved (no flash, a failed write) | stop the sound first (1: STOP AUDIO TO START BLE) | — |
 | 4 | done, saved after STOP | — | — |
 
@@ -1892,6 +1892,39 @@ number (0..127), channel (a note's, 0..15; 127 any). The names follow the messag
 Learning ends when a message is learned, with op 4, when the device's MIDI LEARN page opens, and 3 s after the editor's last
 request (send `PING` while waiting, as for `PUNCH`). `learning` says whether it still waits; `DEVICE_CHANGED` bit 1 says
 when the table changed. CCs 0, 1, 6, 11, 32, 38, 64, 96..101 and 120..127 are never learned (they keep their meaning).
+
+**v2: parameters (per-parameter learn).** Besides the panel's controls, a CC can be learned for one parameter of one track
+(Studio's "CC 74 → Cutoff · track 2"): it sets that track's parameter on every page, whatever track or page the device
+shows, and it is saved with the settings (rows 5..7 of the favorites, retired engines' rows, tag `M P 1 0` at their end: no
+layout change; it travels in backups; older firmware keeps the rows as stars). Up to 23. Code: `firmware/src/midi_knobs.c`
+`mparam_receive` (the audio interrupt's MIDI dispatch), `firmware/src/menu_rows.c` `mparam_bind`.
+
+| op | does |
+| --- | --- |
+| 5, track, parameter [, any] | learns the parameter (`P_*` id, as `TRACK_PARAM` 4 and the `DESC` ids; 0..`P_COUNT` − 1) of the track (0..7) from the next CC, on that CC's channel (any = 1: on every channel). As op 3 meanwhile: nothing learned acts, messages wait; notes do not end the wait. rc 1: past the tracks or parameters, a reserved one, the project's scale (ROOT, SCL, TUNING, scale QNT, the MPC degree, recording QNT: they are the project's, not a track's), a parameter with no range on that track (a MIDI Track's audio ones); rc 2: the device's own MIDI LEARN page is open |
+| 6, k | forgets parameter k (0..22) |
+| 2 | (FORGET LEARNED) forgets the parameters too |
+| 4 | stops either wait |
+
+After the controls' names: the parameters' count (23), the one waiting (track, parameter; 127, 127: none; op 3's waiting
+control is in `learning`, one wait at a time), then per parameter its CC (0: none, the other three bytes then mean nothing),
+channel (0..15; 127 any), track, parameter. A v1 reader stops at the names. `DEVICE_CHANGED` bit 1 covers both tables; the
+MIDI LEARN row's value (`SETTINGS`) counts both.
+
+- The value: over the parameter's range as `DESC` gives it for the track's engine (a list: over its names in order, its
+  empty, retired entries left out). MIDI MODE applies as to the learned knobs: ABSOLUTE puts the value there (no pickup:
+  the knobs have none), the relative modes step by what the CC says. With REC armed and playing, the moves record as motion
+  (as `TRACK_PARAM`). The steps' parameters (LEN, DIV, SWING, GATE) stay while SONG runs.
+- One job per CC: learning a CC for a parameter takes it from the parameter it had (its channel, or any, overlapping) and
+  from a panel control (whose CCs are on any channel); learning it for a control takes it from the parameters; a parameter
+  learned again keeps one CC, the new one. A CC learned for a parameter no longer does what it did (the channel's own
+  CC 74, CC 7 ...).
+- Precedence (a record where one CC has both, which learning never makes): the parameter. The device checks the
+  parameters first, then the controls.
+- With all 23 taken and none of them the parameter's, the wait ends with nothing learned: Studio offers a place first
+  (it has the list).
+- The device has no gesture of its own for a parameter: Studio learns them; the device shows how many are learned (the
+  MIDI LEARN row) and FORGET LEARNED forgets them with the controls.
 
 ### BLE (52)
 
