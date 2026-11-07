@@ -520,6 +520,9 @@ if core && [ $TABLES = 1 ]; then
     t "full backup: CRC before writes, stale runtime, USB reset / timeout, malformed objects, older projects" backup_test $FW
     t "CPU laboratory: persistence guard and RAM-only preference restoration" backup_lab:backup_test -DMELODEE_AUDIO_PROFILE=1 $FW
     t "editor: real C protocol, malformed transfers and queue recovery" editor_test $FW
+    t "editor over Bluetooth (MELODEE_BLE_EDITOR, two links): SysEx across BLE packets, the command list, replies on the asking link" \
+        editor_ble:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -DBLE_LINKS=2 -Itests/ble_fake $FW
+    t "editor over Bluetooth (MELODEE_BLE_EDITOR, one link)" editor_ble1:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -Itests/ble_fake $FW
     t "CPU lab controls: native recording/transport, guarded protocol and exact restoration" audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 -DMELODEE_AUDIO_BENCH=1 $FW
     t "CPU lab controls absent in normal firmware" cpu_lab_off:audio_cpu_lab_test -O2 $FW
     t "CPU lab controls absent with profiling only" cpu_lab_profile:audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 $FW

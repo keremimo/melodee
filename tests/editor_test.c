@@ -33,9 +33,11 @@ static void fm1_wdt_feed(void)
     else if (host_progress && transport_req == 1u) events_block(1);   /* (TRANSPORT play waits for its start) */
 }
 /* Target cli/sti do not nest: an inner pair reopens the outer section. */
+#if !MELODEE_BLE                                      /* (with Bluetooth: hostsim.c's) */
 static uint32_t host_irq_masked, host_irq_nested;
 static void fm1_irq_off(void) { host_irq_nested += host_irq_masked; host_irq_masked = 1; }
 static void fm1_irq_on(void) { host_irq_masked = 0; }
+#endif
 static int32_t fm1_enc_take(uint32_t e) { (void)e; return 0; }
 static void lcd_sync(void) {}
 static void lcd_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c) { (void)x; (void)y; (void)w; (void)h; (void)c; }
@@ -70,6 +72,10 @@ static int st_read(uint32_t off, void *p, uint32_t n) { (void)off; (void)p; (voi
 static int st_prog(uint32_t off, const void *p, uint32_t n) { (void)off; (void)p; (void)n; return -1; }
 static int st_erase(uint32_t off) { (void)off; return -1; }
 #include "../firmware/src/storage.c"
+#if MELODEE_BLE                                       /* (ui_ble.c's, not built here: BLE 52 asks them) */
+static uint32_t ble_found_n(void) { return mb_saved.flags & MB_VISIBLE ? 0u : mb.count; }
+static int ble_start_quiet(void) { return !song.playing; }
+#endif
 #include "../firmware/src/editor.c"
 #include "../firmware/src/cz_store.c"
 
@@ -1278,8 +1284,8 @@ static int studio_device(void)
     n = request(ED_CAPS, a, 0);
     for (i = 6; i + 1u < n && host_wire[i] != 'C'; i += 2u + host_wire[i + 1]) ;
     for (j = 6; j + 1u < n && host_wire[j] != 'W'; j += 2u + host_wire[j + 1]) ;
-    bad += check("CAPS: tag C (SETTINGS, MLEARN v1, no BLE in this build, DRUM v1), W 2 bytes (bit 7 known)",
-                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 1 && !host_wire[i + 4] && host_wire[i + 5] == 1 &&
+    bad += check("CAPS: tag C (SETTINGS, MLEARN v1, BLE v1 with Bluetooth, else 0, DRUM v1), W 2 bytes (bit 7 known)",
+                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 1 && host_wire[i + 4] == !!MELODEE_BLE && host_wire[i + 5] == 1 &&
                  host_wire[j + 1] == 2 && host_wire[j + 2] == 127 && host_wire[j + 3] == 1);
 
     /* SETTINGS */
@@ -1407,11 +1413,202 @@ static int studio_device(void)
     memset(mlearn_row, 0, sizeof mlearn_row); memset(drum_patch, 0, sizeof drum_patch); settings_lights = LIGHTS_MID;
     return bad;
 }
+
+#if MELODEE_BLE_EDITOR
+/* Melodee Studio over Bluetooth (MELODEE_BLE_EDITOR): requests go in through the stack's own BLE-MIDI encoder and its
+ * MIDI I/O entry (ble_att_midi_packet: the decoder, then midi_ble.c), replies come off the computer's link as ble_att.c
+ * sends them (peek, encode, pop) and are decoded as the computer would. cap: a packet's bytes (ATT MTU - 3) */
+static uint8_t bt_wire[2048];                         /* what the computer got: SysEx bytes in order */
+static uint32_t bt_wire_n, bt_packets, bt_seen[16], bt_seen_at[16], bt_nseen;   /* (other messages, and where) */
+static struct ble_midi_dec bt_dec;
+static struct ble_midi_enc bt_enc;
+static void bt_sink(void *ctx, uint32_t pkt, uint16_t ts)
+{
+    uint32_t cin = pkt & 15u, k = cin == 4u ? 3u : cin - 4u, i;
+    (void)ctx; (void)ts;
+    if (cin < 4u || cin > 7u) {
+        if (bt_nseen < 16u) { bt_seen[bt_nseen] = pkt; bt_seen_at[bt_nseen++] = bt_wire_n; }
+        return;
+    }
+    for (i = 0; i < k && bt_wire_n < sizeof bt_wire; i++)
+        bt_wire[bt_wire_n++] = (uint8_t)(pkt >> (8u + 8u * i));
+}
+static void bt_reset(void)
+{
+    ble_init((uint8_t[]){1, 2, 3, 4, 5, 0xC6}, 1);
+    memset(&mbe, 0, sizeof mbe); memset(mb.ln, 0, sizeof mb.ln);
+    mb.on = mb.started = 1; mb.ln[BLE_LINK_PERIPH].ready = 1; mbe.epoch = 1;
+    ble_midi_dec_reset(&bt_dec); ble_midi_enc_reset(&bt_enc);
+    bt_wire_n = bt_packets = bt_nseen = 0;
+}
+static void bt_send(const uint8_t *f, uint32_t n, uint32_t cap)   /* a frame (F0..F7) from the computer */
+{
+    struct ble_midi_enc e;
+    uint8_t buf[256];
+    uint32_t i = 0;
+    ble_midi_enc_reset(&e); ble_midi_enc_begin(&e, buf, (uint16_t)cap);
+    while (i < n) {
+        uint32_t k = n - i >= 3u ? 3u : n - i;
+        uint32_t pkt = (i + k < n ? 4u : 4u + k) | (uint32_t)f[i] << 8 | (k > 1u ? (uint32_t)f[i + 1] << 16 : 0u) |
+                       (k > 2u ? (uint32_t)f[i + 2] << 24 : 0u);
+        if (ble_midi_enc_add(&e, pkt, fm1_ms) > 0) { i += k; continue; }
+        ble_att_midi_packet(buf, ble_midi_enc_len(&e));   /* full: this packet goes, the next begins */
+        ble_midi_enc_begin(&e, buf, (uint16_t)cap);
+    }
+    if (ble_midi_enc_len(&e)) ble_att_midi_packet(buf, ble_midi_enc_len(&e));
+}
+static uint32_t bt_take(uint32_t cap)                 /* the link's notifications until nothing waits */
+{
+    uint8_t buf[256];
+    uint32_t pkt, t, before = bt_packets;
+    for (;;) {
+        ble_midi_enc_begin(&bt_enc, buf, (uint16_t)cap);
+        while (ble_app_midi_peek(&pkt, &t)) {
+            if (!ble_midi_enc_add(&bt_enc, pkt, t)) break;
+            ble_app_midi_pop();
+        }
+        if (!ble_midi_enc_len(&bt_enc)) return bt_packets - before;
+        bt_packets++;
+        ble_midi_dec(&bt_dec, buf, ble_midi_enc_len(&bt_enc), bt_sink, 0);
+    }
+}
+static uint32_t bt_frame(uint32_t cmd, const uint8_t *a, uint32_t n, uint8_t *f)
+{
+    uint32_t k = 0, i;
+    f[k++] = 0xF0; f[k++] = ED_HDR0; f[k++] = ED_HDR1; f[k++] = ED_HDR2; f[k++] = (uint8_t)cmd;
+    for (i = 0; i < n; i++) f[k++] = a[i];
+    f[k++] = 0xF7;
+    return k;
+}
+static uint32_t bt_request(uint32_t cmd, const uint8_t *a, uint32_t n, uint32_t cap)   /* -> the reply's length (0 none) */
+{
+    uint8_t f[700];
+    bt_wire_n = bt_nseen = 0;
+    bt_send(f, bt_frame(cmd, a, n, f), cap);
+    ed_service(); bt_take(cap);
+    return bt_wire_n;
+}
+static int studio_bluetooth(void)
+{
+    int bad = 0;
+    uint8_t a[8] = {0}, usb_reply[1100], f[32];
+    (void)usb_reply;
+    uint32_t n, m, i, ok, before;
+    reset(); bt_reset();
+    n = request(ED_INFO, a, 0); memcpy(usb_reply, host_wire, n);
+    uint32_t info_n = n;
+    host_wire_n = 0; m = bt_request(ED_INFO, a, 0, 20); host_drain();
+    bad += check("Bluetooth: INFO as over USB byte for byte, in 20-byte packets, nothing on USB",
+                 m == n && !memcmp(bt_wire, usb_reply, n) && bt_packets > 3u && !host_wire_n);
+    n = request(ED_CAPS, a, 0);
+    bad += check("CAPS over USB ends with E 2: link 0, Bluetooth's list v1", host_wire[n - 5] == 'E' && host_wire[n - 4] == 2 &&
+                 host_wire[n - 3] == 0 && host_wire[n - 2] == 1);
+    m = bt_request(ED_CAPS, a, 0, 20);
+    bad += check("CAPS over Bluetooth: link 1, the rest as over USB", m == n && bt_wire[m - 3] == 1 && !memcmp(bt_wire, host_wire, n - 3));
+    host_wire_n = 0; bt_request(ED_PING, a, 0, 20); host_drain();
+    bad += check("PING over Bluetooth: answered there only", bt_wire_n == 7 && bt_wire[4] == ED_PING && !host_wire_n);
+
+    static const uint8_t usb_only[] = {11, 12, 13, 14, 15, 23, 24, 26, 32, 46, 54, 55, 60, 65, 66, 67, 72, 79, 81, 82, 96, 100, 101, 127};
+    for (i = 0, ok = 1; i < sizeof usb_only; i++) {
+        a[0] = 0; a[1] = 0;
+        ok &= !bt_request(usb_only[i], a, usb_only[i] == 66 ? 0 : 1, 20) && !mbe.ready && !ed_ble_busy();
+    }
+    static const uint8_t other[] = {0xF0, 0x7D, 0x4D, 0x4C, 0x01, 0x00, 0xF7}, dx7[] = {0xF0, 0x43, 0x20, 0x00, 0xF7};
+    bt_send(other, sizeof other, 20); ed_service(); bt_send(dx7, sizeof dx7, 20); ed_service(); bt_take(20);
+    ok &= !bt_wire_n && !mbe.ready;                                            /* (a preset file, a DX7 request: USB's) */
+    ok &= bt_request(ED_PING, a, 0, 20) == 7;
+    bad += check("samples, backups and kits, the diagnostics, BLE_CAL, RES, the pushes, other SysEx: nothing over Bluetooth", ok);
+    a[0] = 1; n = request(ED_BACKUP_LIST, a, 1);
+    bad += check("... BACKUP_LIST still answers over USB", n > 8u && host_wire[4] == ED_BACKUP_LIST);
+    static const uint8_t allowed[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 17, 18, 19, 20, 21, 22, 25, 27, 28, 29, 30, 31, 33, 34, 35,
+                                      36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51, 52, 53, 64, 68, 69, 70, 71, 73,
+                                      74, 75, 76, 77, 78, 80, 95};
+    for (i = 0, ok = 1; i < 128u; i++) {
+        uint32_t in = 0, j;
+        for (j = 0; j < sizeof allowed; j++) in |= allowed[j] == i;
+        ok &= (i < 96u && (ED_BLE_OK[i >> 3] >> (i & 7u) & 1u)) == in;
+    }
+    bad += check("the list: the session, sounds, patterns, song and device commands, nothing else", ok);
+
+    /* a page of 1 KB: Prophet's names, as over USB, in 20-byte and in 182-byte packets; the link's notes and clock meanwhile */
+    a[0] = ENGI_PROPHET; a[1] = 0; a[2] = 0;
+    n = request(ED_NAMES, a, 3); memcpy(usb_reply, host_wire, n);
+    bt_wire_n = bt_nseen = 0;
+    bt_send(f, bt_frame(ED_NAMES, a, 3, f), 20); ed_service();
+    uint32_t note = 0x09u | 0x90u << 8 | 60u << 16 | 100u << 24, off = 0x08u | 0x80u << 8 | 60u << 16;
+    ok = ed_ble_busy() && midi_track_emit(note) && midi_track_emit(off);
+    midi_sync_emit(0xF8u);
+    m = bt_take(20);
+    bad += check("NAMES (1 KB) over Bluetooth: byte for byte, 20-byte packets", n > 900u && bt_wire_n == n && !memcmp(bt_wire, usb_reply, n) && m > 40u);
+    bad += check("... the link's notes wait for its F7, the clock goes in between", ok && bt_nseen == 3 && (bt_seen[0] & 0xFFFFu) == 0xF80Fu &&
+                 bt_seen_at[0] < n && bt_seen[1] == note && bt_seen[2] == off && bt_seen_at[1] == n && !ed_ble_busy());
+    bt_wire_n = 0; bt_request(ED_NAMES, a, 3, 182);
+    bad += check("... and in 182-byte packets (an ATT MTU of 185)", bt_wire_n == n && !memcmp(bt_wire, usb_reply, n));
+
+    /* one at a time: a reply going out holds the editor (USB too: ed_out is the reply's); the next frame waits, a third is dropped */
+    bt_wire_n = 0; host_wire_n = 0;
+    bt_send(f, bt_frame(ED_INFO, a, 0, f), 20); ed_service();
+    bt_send(f, bt_frame(ED_PING, a, 0, f), 20);
+    a[0] = 4; bt_send(f, bt_frame(ED_TRACK_MIX, a, 1, f), 20);                 /* (dropped: a frame waits) */
+    ota_frame_done(); sysex_byte(0xF0); sysex_byte(ED_HDR0); sysex_byte(ED_HDR1); sysex_byte(ED_HDR2); sysex_byte(ED_PING); sysex_byte(0xF7);
+    ed_service(); ed_service(); host_drain();
+    ok = ed_ble_busy() && mbe.ready && sx_ready && !host_wire_n;
+    bt_take(20); m = bt_wire_n;
+    ed_service(); host_drain();                                              /* USB's first, then Bluetooth's */
+    ok &= host_wire_n == 7 && host_wire[4] == ED_PING && mbe.ready;
+    ed_service(); bt_take(20); ed_service(); bt_take(20);
+    bad += check("a reply going out holds the editor: the next frame and USB's wait, a third is dropped",
+                 ok && m == info_n && bt_wire_n == info_n + 7u && bt_wire[info_n + 4u] == ED_PING && !mbe.ready && !ed_ble_busy());
+
+    /* a request cut by a note: the stack's decoder drops the SysEx, the note plays, nothing answers; the next one does */
+    static const uint8_t cut1[] = {0x80, 0x81, 0xF0, ED_HDR0, ED_HDR1, ED_HDR2, ED_PING}, cut2[] = {0x80, 0x82, 0x90, 60, 100},
+                         cut3[] = {0x80, 0x83, 0xF7};
+    before = mb.ln[BLE_LINK_PERIPH].rw;
+    bt_wire_n = 0; ble_att_midi_packet(cut1, sizeof cut1); ble_att_midi_packet(cut2, sizeof cut2); ble_att_midi_packet(cut3, sizeof cut3);
+    ed_service(); bt_take(20);
+    bad += check("a frame cut by a note: no reply, the note goes to the music", !bt_wire_n && !mbe.ready &&
+                 mb.ln[BLE_LINK_PERIPH].rw - before == 1 && mb.ln[BLE_LINK_PERIPH].rx[before % MBQ] == (0x9u | 0x90u << 8 | 60u << 16 | 100u << 24));
+    mb.ln[BLE_LINK_PERIPH].rr = mb.ln[BLE_LINK_PERIPH].rw;
+    bad += check("... and the next frame is answered", bt_request(ED_PING, a, 0, 20) == 7);
+#if BLE_LINKS > 1
+    uint8_t was = ll_enter(BLE_LINK_CENTRAL);
+    bt_wire_n = 0; bt_send(f, bt_frame(ED_PING, a, 0, f), 20);
+    ll_leave(was);
+    ed_service(); bt_take(20);
+    bad += check("SysEx on the device's link (a keyboard Melodee connected out to): not the editor's", !bt_wire_n && !mbe.ready);
+#endif
+
+    /* WATCH over Bluetooth: the pushes go there, not to USB; the link coming up again ends it (as a USB reset) */
+    a[0] = 1; bt_request(ED_WATCH, a, 1, 20);
+    ok = bt_wire_n == 7 && bt_wire[5] == 1 && ed_w.on && ed_w.link == 1;
+    TSEL->p[P_LEVEL] = (int16_t)(TSEL->p[P_LEVEL] > 60 ? 40 : 90);
+    fm1_ms += 30; ed_w.last_ms = fm1_ms; host_wire_n = 0; bt_wire_n = 0;
+    ed_service(); bt_take(20); host_drain();
+    bad += check("WATCH over Bluetooth: CHANGED pushed there, nothing on USB", ok && bt_wire_n > 8u && bt_wire[4] == ED_CHANGED &&
+                 !bt_wire[5] && bt_wire[6] == P_LEVEL && !host_wire_n);
+    mbe.epoch++; fm1_ms += 30; ed_w.last_ms = fm1_ms; ed_service();
+    bad += check("... a new connection ends WATCH", !ed_w.on);
+
+    /* the link going while a reply goes out: the rest is dropped, the editor goes on (USB answers) */
+    bt_send(f, bt_frame(ED_INFO, a, 0, f), 20); ed_service();
+    ok = ed_ble_busy();
+    ble_app_state();                                                          /* (no MIDI link in the fake stack: gone) */
+    ok &= !ed_ble_busy() && !mb.ln[BLE_LINK_PERIPH].ready;
+    bad += check("the computer's link gone mid-reply: the rest dropped, USB answers", ok && request(ED_PING, a, 0) == 7);
+    bt_wire_n = 0; bt_send(f, bt_frame(ED_PING, a, 0, f), 20); ed_service(); bt_take(20);
+    bad += check("... and a frame without a link gets no reply", !bt_wire_n && !ed_ble_busy() && !mbe.ready);
+    mb.ln[BLE_LINK_PERIPH].ready = 1;
+    return bad;
+}
+#endif
 int main(void)
 {
     int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
               native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol() + studio_session() +
               studio_song() + studio_patterns() + studio_device();
+#if MELODEE_BLE_EDITOR
+    bad += studio_bluetooth();
+#endif
     printf("%s\n", bad ? "EDITOR TEST FAILED" : "editor test passed");
     return bad != 0;
 }

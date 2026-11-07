@@ -42,6 +42,8 @@ CLASSIC_CASES = [
     ('ble_ui_render', ['-DMELODEE_USB_HOST=1', '-Itests/ble_fake', '-Ibuild/gen', '-Ifirmware/src', '-lm']),
     ('melodee_ble_test', ['-Itests/ble_fake', '-Ibuild/gen', '-Ifirmware/src', '-lm']),
     ('melodee_ble_test', ['-DBLE_LINKS=2', '-Itests/ble_fake', '-Ibuild/gen', '-Ifirmware/src', '-lm']),
+    # Melodee Studio over Bluetooth (MELODEE_BLE_EDITOR): the adapter's routing with the computer's link taking SysEx
+    ('melodee_ble_test', ['-DMELODEE_BLE_EDITOR=1', '-DBLE_LINKS=2', '-Itests/ble_fake', '-Ibuild/gen', '-Ifirmware/src', '-lm']),
 ]
 
 

@@ -148,6 +148,10 @@ static int ed_session_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         if (n)
             return 0;
         ed_bytes(ED_CAPS_TLV, sizeof ED_CAPS_TLV);
+#if MELODEE_BLE_EDITOR
+        ed_b('E'); ed_b(2); ed_b(ed_link); ed_b(1);     /* the link this came on (0 USB, 1 Bluetooth), Bluetooth's command
+                                                          * list v1 (EDITOR_PROTOCOL.md "Studio over Bluetooth") */
+#endif
         return 1;
     }
     if (cmd == ED_TRACKS) {           /* [op: 1 select k, 2 solo lo hi, 3 arm k on, 4 add, 5 remove k] -> op, rc, the tracks */

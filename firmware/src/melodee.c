@@ -60,6 +60,13 @@
 #if MELODEE_OTA && !MELODEE_FLASH
 #error "MELODEE_OTA needs MELODEE_FLASH"
 #endif
+#ifndef MELODEE_BLE_EDITOR
+#define MELODEE_BLE_EDITOR 0    /* Melodee Studio over Bluetooth: editor frames on the computer's link (midi_ble.c mbe,
+                                 * EDITOR_PROTOCOL.md "Studio over Bluetooth"). A build option, off by default */
+#endif
+#if MELODEE_BLE_EDITOR && !(MELODEE_BLE && MELODEE_OTA)
+#error "MELODEE_BLE_EDITOR needs MELODEE_BLE and MELODEE_OTA"
+#endif
 
 /* the resource region (res.c): data read in place at 0xEA020 (app.ld .mres), installed after an update */
 #define MELODEE_RES __attribute__((section(".mres"), aligned(4)))

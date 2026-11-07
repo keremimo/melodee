@@ -86,6 +86,39 @@ int main(void)
     assert(!mn_get(0,60) && mn_get(0,64));
     /* A wireless maintenance SysEx never enters the OTA/parser path. */
     uint32_t w = mb.ln[0].rw; ble_app_midi_in(0x2235F004u, 0, 0); assert(mb.ln[0].rw == w);
+#if MELODEE_BLE_EDITOR
+    /* Studio over Bluetooth: the computer's link gathers one frame for the editor (not the music's queue), a frame
+     * waiting keeps the next one out; the reply peeked ahead of the link's notes, CIN 4 then the end's CIN 5..7 */
+    assert(mbe.on && !mbe.ready);                              /* (gathered as any SysEx: editor.c drops what is not Studio's) */
+    ble_app_midi_in(0x4C467D04u, 0, 0); ble_app_midi_in(0x00F71906u, 0, 0);   /* (its rest: 7D 46 4C, then 19 F7) */
+    assert(mbe.ready == 6 && mbe.in[0] == 0x35 && mbe.in[1] == 0x22 && mb.ln[0].rw == w);
+    mbe.ready = 0;
+    ble_app_midi_in(0x4C467D04u, 0, 0); ble_app_midi_in(0x00F71906u, 0, 0);
+    assert(!mbe.ready && mb.ln[0].rw == w);                    /* (no F0 before it: nothing) */
+    ble_app_midi_in(0x467DF004u, 0, 0); ble_app_midi_in(0xF7194C07u, 0, 0);
+    assert(mbe.ready == 4 && !memcmp(mbe.in, (uint8_t[]){0x7D, 0x46, 0x4C, 0x19}, 4) && mb.ln[0].rw == w);
+    ble_app_midi_in(0x467DF004u, 0, 0); ble_app_midi_in(0xF7184C07u, 0, 0);
+    assert(mbe.ready == 4 && mbe.in[3] == 0x19);               /* (a frame waits: the next is dropped) */
+    mbe.ready = 0;
+#if BLE_LINKS > 1
+    uint8_t lk = ll_enter(BLE_LINK_CENTRAL);
+    ble_app_midi_in(0x467DF004u, 0, 0); ble_app_midi_in(0xF7194C07u, 0, 0);
+    ll_leave(lk); assert(!mbe.ready);                          /* (the device's link: not the editor's) */
+#endif
+    {
+        static const uint8_t reply[] = {0xF0, 0x7D, 0x46, 0x4C, 0x19, 0, 0xF7};
+        uint32_t q = packet(0x90, 62, 80), o, t;
+        mb.ln[0].ready = 1; mb.ln[0].tr = mb.ln[0].tw; mb.ln[0].rt_r = mb.ln[0].rt_w;
+        assert(mel_ble_emit(q));
+        mbe.out = reply; mbe.out_at = 0; mbe.out_n = sizeof reply;
+        assert(ble_app_midi_peek(&o, &t) && o == 0x467DF004u); ble_app_midi_pop();
+        assert(ble_app_midi_peek(&o, &t) && o == 0x00194C04u); ble_app_midi_pop();
+        assert(ble_app_midi_peek(&o, &t) && o == 0xF705u); ble_app_midi_pop();
+        assert(mbe.out_at == mbe.out_n && ble_app_midi_peek(&o, &t) && o == q); ble_app_midi_pop();
+        mb.ln[0].ready = 0;
+    }
+    puts("BLE adapter: Studio's frames on the computer's link, its reply ahead of the link's notes passed");
+#endif
     /* An old BLE release cannot end a USB retrigger of the same channel/note. */
     midi_enqueue(packet(0x90, 64, 110), 3); events_block(0);
     midi_enqueue(packet(0x90, 64, 120), 1); events_block(0);

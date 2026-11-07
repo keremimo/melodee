@@ -1447,6 +1447,7 @@ printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies e
 | `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
 | `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`; 2: also `PATTERN` 2's copy to another track), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
 | `C` (0x43) | 4 | (F4) `SETTINGS`, `MLEARN`, `BLE`, `DRUM` versions (1, 1, 1, 1; `BLE` 0 in a build without Bluetooth): see "Studio device" |
+| `E` (0x45) | 2 | (F5, only in a `MELODEE_BLE_EDITOR=1` build) the link this `CAPS` came on (0 USB, 1 Bluetooth), the Bluetooth command list's version (1): see "Studio over Bluetooth". Without the tag: USB |
 
 Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
 
@@ -1946,6 +1947,44 @@ or a kit's drum values (bit 3) change. It carries the rows' values (2 + 2 × row
 reads `MLEARN`, `BLE` or `DRUM` again for the others. `WATCH` answers the second byte with the bits it knows (1). The
 editor's own 50–53 push nothing. The device looks every push pass (~5 ms) while the bit is set.
 
+## Studio over Bluetooth (F5, build option `MELODEE_BLE_EDITOR`)
+
+Melodee Studio talks to the FM-1 over Bluetooth MIDI with the same frames as over USB (branch F5, on F4
+`pensive-maxwell-0e10c8` 25d17ef2). It is a build option, off by default (Kerem 2026-11-07): `MELODEE_BLE_EDITOR=1
+./build.sh` (both boards; it needs `MELODEE_BLE` and `MELODEE_OTA`). A default build is byte for byte the image without it.
+Code: `firmware/src/midi_ble.c` (`mbe`: the frame in, the reply out, in the BLE interrupt), `firmware/src/editor.c` (the frame
+taken in `ed_service`, the command list `ED_BLE_OK`, the replies' and pushes' link), the `CAPS` tag in `editor_session.c`. Tests:
+`tests/editor_test.c` `studio_bluetooth` (built with `-DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1`, one and two links: requests
+through the stack's own BLE-MIDI encoder and `ble_att_midi_packet`, replies decoded as a computer would), `tests/melodee_ble_test.c`
+(the adapter with the option: gathering, the reply's priority).
+
+- **The link.** Only the computer's link takes frames: a computer or phone that connected to the FM-1 (the peripheral role;
+  with two links, link 0). SysEx on the link the FM-1 connected out on (a keyboard) is not read. The firmware's BLE-MIDI
+  decoder (`ble/ble_midi.c`) joins a frame across BLE packets (a continuation packet: header, then data), and drops a SysEx a
+  status byte cuts (real-time bytes may come inside it). Only editor frames (`F0 7D 46 4C`) are answered; other SysEx (preset
+  files, DX7, CZ, Prophet programs, the installer's and update frames) is USB's and ignored here.
+- **One frame at a time.** The interrupt keeps one frame of at most 640 bytes (`CAPS` `L`); a frame that arrives while one
+  waits is dropped, as over USB: Studio sends one request at a time and asks again after its timeout.
+- **Replies go to the link that asked.** A Bluetooth request's reply goes out on the computer's link only; a USB request's on
+  USB only. `WATCH` sets where the pushes go: the link it came on. `WATCH` ends when that link goes or comes up again (as a USB
+  reset ends it), or after 3 s without a request.
+- **Pacing.** A reply is not copied: the link sends it from the reply buffer as fast as it takes notifications (two a
+  connection event, each up to the ATT MTU − 3 bytes: 20 bytes at the default MTU, 182 at 185), and the editor answers
+  nothing else, on either link, until it is out (`ed_ble_busy`). The link's own MIDI out (notes, MIDI THRU) waits behind it in
+  the link's queue (a channel message inside a SysEx would end it); clock and transport go between its packets. A 1,024-byte
+  reply is 57 notifications at MTU 23 (the encoder packs whole 3-byte USB-MIDI events: 18 bytes a continuation), 6 at MTU 185. If the link goes, the rest of the reply is dropped. Studio should allow
+  ~1.5 s for a reply over Bluetooth.
+- **The command list** (`ED_BLE_OK`, version 1 in `CAPS` `E`): 1–10, 16–22, 25, 27–31, 33–45, 47–53, 64, 68–71, 73–78, 80 and 95:
+  the session, the sounds (presets, user slots, the shared library one sound at a time, FM6 / CZ / native / Prophet patches),
+  steps, patterns, motion, the song and the FM-1 page (settings, MIDI learn, Bluetooth, drums). Not over Bluetooth, no reply:
+  the samples (11–15), `BACKUP_LIST`, `BACKUP_GET` and `BACKUP_PUT` (65–67: complete backups, captures for Export and
+  LIVE's preview, the kits), the audio and CPU1 diagnostics (72, 79, 100, 101), the radio calibration (81), the resource region
+  (82) and the pushes' numbers. Studio greys these out over Bluetooth ("Over USB").
+- **`BLE` (52) over Bluetooth.** Radio off (1, 0), disconnect (3) and forget the pairings (5) end the link the request came
+  on: no reply arrives (Studio asks before it sends them and expects the link to go).
+- **Finding out.** `CAPS` `E` (only in a build with the option): `45 02 link 01`. Over USB in such a build: link 0. A build
+  without the option never answers over Bluetooth at all.
+
 ## Flash ledger (editor commands)
 
 Melodee Studio needs new editor commands (branches F0–F5) in an app body that is nearly full. Every change that
@@ -2091,3 +2130,23 @@ ASan/UBSan), the menu's differential above (renders, `settingsdump`, gestures), 
 table and the settings included) identical, leaving out only what F4 changes on purpose (`CAPS`, commands 50..53, a `WATCH`
 of two bytes), the virtual FM-1's transcripts (`core_check`: SETTINGS, MLEARN, DRUM natively and in WebAssembly) and
 `tests/run_tests.sh` once.
+
+| F5 (branch from F4 `pensive-maxwell-0e10c8` 25d17ef2) | Studio over Bluetooth (see "Studio over Bluetooth"), a build option: `MELODEE_BLE_EDITOR=1` | FM-1 | SMK |
+|---|---|---:|---:|
+| default build (option off) | byte for byte the F4 image (`cmp` of `build/melodee.bin`: FM-1 574,636 B, SMK 576,104 B) | **±0** | **±0** |
+| — the frame in | the BLE interrupt gathers the computer's link's SysEx (`mb_ed_in`, inlined in `att_midi_in`), `ed_service` takes it, checks the header and the command list (`ED_BLE_OK`, 12 B), `ed_frame_done` | +308 B | +308 B |
+| — the reply out | `ble_app_midi_peek` / `ble_app_midi_pop` send the reply from `ed_out` ahead of the link's MIDI; `ed_send`, `ed_room`, `ed_ble_busy`; the link's epoch and the reply dropped when it goes (`ble_app_state`) | +390 B | +390 B |
+| — the pushes' link, CAPS `E` | `WATCH` keeps its link (`ED_GONE` / `ED_EPOCH` in `ed_sync`, `ed_handle`), the tag (`ed_session_handle`) | +118 B | +92 B |
+| — layout | the interrupt's MIDI functions no longer inlined into `ble_ll_hw_event_end` (−118 / −120 B there), alignment; SMK: its merged globals move (`fm6_control_ram` +38, `mix_block` +16, `smk_faders` −14, ...) | −92 B | −106 B |
+| **F5 option total** | the option build minus the default build | **+724 B** | **+684 B** |
+
+With the option: FM-1 image 575,360 B, **1,888 B free**; SMK image 576,788 B, **460 B free**. It fits both boards. RAM .data+.bss
+unchanged (95,480 / 96,008 B); the frame buffer and the reply's state (`mbe`, 672 B) are in the audio pool (`.pool`, zeroed at
+boot): pool 140,228 / 141,848 B of 357,888. Per part above: the size changes of the functions each part adds or grows (`nm -S`,
+the option build against the default; layout = the rest of the image's change), not builds without each part.
+
+How F5 was checked: both boards built with and without the option (default images compared byte for byte with F4's),
+`editor_test` `studio_bluetooth` (two links and one link; ASan/UBSan), `melodee_ble_test` with the option (both via
+`tests/run_tests.sh` and `tests/ble_tests.py`), the virtual FM-1 core and the studio bundle rebuilt from the clean commit
+(`core_check`), `tests/run_tests.sh` once. Not on hardware: nothing was flashed; the radio path (CoreMIDI's or Chrome's BLE-MIDI
+against the FM-1, MTU, connection interval, pairing) is untested.

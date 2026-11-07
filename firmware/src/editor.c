@@ -60,9 +60,46 @@ static void ed_xyv(uint32_t x, uint32_t y, int32_t v)  /* two bytes and a value:
     ed_v(v);
 }
 static uint32_t ed_left(void) { return sizeof ed_out - 1u - ed_n; }   /* paged replies: payload bytes before the F7 */
+#if MELODEE_BLE_EDITOR
+/* Melodee Studio over Bluetooth (EDITOR_PROTOCOL.md "Studio over Bluetooth"; the link's side: midi_ble.c mbe). ed_link: the
+ * link of the request in hand, or (ed_sync) of the pushes: 0 USB, 1 the computer's Bluetooth link. A reply over Bluetooth
+ * goes out from ed_out as the link takes it: ed_service does nothing more until it is out (ed_ble_busy) */
+static uint8_t ed_link;
+static int ed_ble_busy(void)                       /* (no lock: the IRQ only adds to out_at, and only while busy) */
+{
+    if (mbe.out_at < mbe.out_n && !MB_ED_UP())
+        mbe.out_n = 0;                             /* (the link gone: its rest dropped) */
+    return mbe.out_at < mbe.out_n;
+}
+/* the commands Bluetooth takes (bit c: command c), each a request with one reply of at most 1024 bytes: the session,
+ * sounds, patterns, song and device. Not the samples (11..15), the backups and kits (65..67), the audio and CPU1
+ * diagnostics (72, 79, 100, 101), the radio calibration (81), the resources (82) nor the pushes' numbers: no reply */
+static const uint8_t ED_BLE_OK[12] = {0xFE, 0x07, 0x7F, 0xFA, 0xFE, 0xBF, 0x3F, 0x00, 0xF1, 0x7E, 0x01, 0x80};
+static void ed_frame_done(void)
+{
+    if (!ed_link) { ota_frame_done(); return; }
+    RING_PUBLISH(); mbe.ready = 0;                 /* (the IRQ may gather the next one) */
+}
+#define ED_FRAME_DONE() ed_frame_done()
+#define ED_GONE() (ed_w.link ? !MB_ED_UP() || mbe.epoch != ed_w.resets : !usb.config || usb.resets != ed_w.resets)
+#define ED_EPOCH() (ed_link ? mbe.epoch : usb.resets)
+#else
+#define ED_FRAME_DONE() ota_frame_done()
+#define ED_GONE() (!usb.config || usb.resets != ed_w.resets)
+#define ED_EPOCH() usb.resets
+#endif
 static void ed_send(void)
 {
     ed_out[ed_n++] = 0xF7;
+#if MELODEE_BLE_EDITOR
+    if (ed_link) {                                 /* (the link gone: nothing goes) */
+        if (MB_ED_UP()) {                          /* (out_n last: the IRQ starts on it; first 0, so out_at can be reset) */
+            mbe.out_n = 0; mbe.out = ed_out; mbe.out_ms = fm1_ms; mbe.out_at = 0;
+            RING_PUBLISH(); mbe.out_n = ed_n;
+        }
+        return;
+    }
+#endif
     ota_wire_send(ed_out, ed_n);
 }
 static int32_t ed_rv(const uint8_t *p) { return (int32_t)(p[0] | p[1] << 7) - 8192; }
@@ -121,6 +158,9 @@ static struct {
     int16_t tv[ED_NT];                                   /* v4: trk[k].p[ED_TIDS[j]] at k * 3 + j */
     uint16_t tt[ED_NT];
     uint32_t tpos, pattern_gen;
+#if MELODEE_BLE_EDITOR
+    uint8_t link;                                        /* the link that sent WATCH: the pushes go there (0 USB) */
+#endif
 } ed_w;
 /* the selected track as the protocol lists the tracks: one of the MIDI-only ones (5..8) in the last place, unless the
  * editor watches all eight (WATCH bit 2) */
@@ -151,7 +191,11 @@ static void ed_shadow(void)                              /* the editor is in syn
     ed_w.sel = song.sel; ed_w.pattern_gen = TSEL->pattern_gen;
     sync_reload = 0;
 }
+#if MELODEE_BLE_EDITOR
+static int ed_room(void) { return ed_link ? !ed_ble_busy() : so_w - so_r + 8u <= SXQ / 2u; }   /* (Bluetooth: one at a time) */
+#else
 static int ed_room(void) { return so_w - so_r + 8u <= SXQ / 2u; }
+#endif
 static void ed_known(uint32_t k, uint32_t id)            /* the editor's own change of trk[k].p[id]: no push */
 {
     uint32_t j;
@@ -170,8 +214,8 @@ static void ed_sync(void)                                /* main loop */
     if (!ed_w.on || now - ed_w.run_ms < 5u)
         return;
     ed_w.run_ms = now;
-    if (!usb.config || usb.resets != ed_w.resets || now - ed_w.last_ms > 3000u) {
-        ed_w.on = 0;                                     /* no host, USB reset, or 3 s without a request */
+    if (ED_GONE() || now - ed_w.last_ms > 3000u) {
+        ed_w.on = 0;                                     /* no host, USB reset (Bluetooth: link gone), or 3 s without a request */
         return;
     }
     if (sync_reload || TSEL->pattern_gen != ed_w.pattern_gen || ed_eng(TSEL) != ed_w.eng || TSEL->preset != ed_w.preset || song.sel != ed_w.sel) {
@@ -1001,7 +1045,10 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_w.v4 = (uint8_t)(ed_w.on && (a[0] & 2u));     /* v4: also TRACK_CHANGED; the reply says it is known */
         ed_w.bits = (uint8_t)(ed_w.on ? bits : 0u);       /* Studio: bits 2..4 (editor_session.c), 5 (editor_song.c),
                                                            * 6 (editor_patterns.c), 7 (editor_device.c: a second byte) */
-        ed_w.resets = usb.resets;
+        ed_w.resets = ED_EPOCH();
+#if MELODEE_BLE_EDITOR
+        ed_w.link = ed_link;                             /* (the pushes go where WATCH came from) */
+#endif
         if (ed_w.on && (!(was & 1u) || bits < 4u)) {     /* (Studio's WATCH while watching: no push is lost) */
             ed_shadow();
             ed_w.psig[0] = ed_tracks_body(0);              /* (what the pushes compare with; then the reply) */
@@ -1176,11 +1223,31 @@ static void ed_service(void)
 {
     const uint8_t *p;
     uint32_t n;
+#if MELODEE_BLE_EDITOR
+    if (ed_ble_busy())
+        return;                                            /* (a reply still going out over Bluetooth: ed_out is its) */
+    ed_link = ed_w.link;
+#endif
     ed_sync();                                             /* v2 pushes (while watched) */
     if (fm1_ms - ed_w.last_ms > 3000u)
         ed_punch_release();                                /* (PUNCH: 3 s without a request, the editor's effect stops) */
     ed_device_poll();                                      /* (MLEARN's wait, BLE's scan) */
+#if MELODEE_BLE_EDITOR
+    ed_link = 0;
+    if (!ota_frame_get(&p, &n)) {
+        if (!mbe.ready)
+            return;
+        RING_PUBLISH();                                    /* (the frame after its length) */
+        p = mbe.in; n = mbe.ready; ed_link = 1;
+        if (n < 4u || p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2 || p[3] >= 96u || !(ED_BLE_OK[p[3] >> 3] >> (p[3] & 7u) & 1u)) {
+            ed_frame_done();                               /* (not Studio's, or USB only: no reply) */
+            return;
+        }
+        goto editor;
+    }
+#else
     if(!ota_frame_get(&p,&n))return;
+#endif
 #ifdef INSTALLER_REPORT_FRAME
     if (INSTALLER_REPORT_FRAME(p,n)) { ota_frame_done();return; }
 #endif
@@ -1188,10 +1255,13 @@ static void ed_service(void)
     if(p5_native_frame(p,n)){ota_frame_done();return;}
     if (n < 4u || p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
         return;
+#if MELODEE_BLE_EDITOR
+editor:
+#endif
     ed_w.last_ms = fm1_ms;                                 /* any request keeps WATCH alive */
     if (p[3] >= ED_SMP_BEGIN) {                            /* large frames: handled in place, then freed */
         ed_handle(p, n);
-        ota_frame_done();
+        ED_FRAME_DONE();
         return;
     }
     {
@@ -1199,7 +1269,7 @@ static void ed_service(void)
         uint32_t k = n > sizeof f ? sizeof f : n, i;
         for (i = 0; i < k; i++)
             f[i] = p[i];
-        ota_frame_done();                                  /* free the frame buffer before replying */
+        ED_FRAME_DONE();                                   /* free the frame buffer before replying */
         ed_handle(f, k);
     }
 }
