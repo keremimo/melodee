@@ -61,8 +61,9 @@
 #error "MELODEE_OTA needs MELODEE_FLASH"
 #endif
 #ifndef MELODEE_BLE_EDITOR
-#define MELODEE_BLE_EDITOR 0    /* Melodee Studio over Bluetooth: editor frames on the computer's link (midi_ble.c mbe,
-                                 * EDITOR_PROTOCOL.md "Studio over Bluetooth"). A build option, off by default */
+#define MELODEE_BLE_EDITOR (MELODEE_BLE && MELODEE_OTA)   /* Melodee Studio over Bluetooth: editor frames on the
+                                 * computer's link (midi_ble.c mbe, EDITOR_PROTOCOL.md "Studio over Bluetooth"). On
+                                 * wherever the build has Bluetooth and the editor; MELODEE_BLE_EDITOR=0 leaves it out */
 #endif
 #if MELODEE_BLE_EDITOR && !(MELODEE_BLE && MELODEE_OTA)
 #error "MELODEE_BLE_EDITOR needs MELODEE_BLE and MELODEE_OTA"

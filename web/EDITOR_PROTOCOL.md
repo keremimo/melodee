@@ -1447,7 +1447,7 @@ printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies e
 | `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
 | `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`; 2: also `PATTERN` 2's copy to another track), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
 | `C` (0x43) | 4 | (F4) `SETTINGS`, `MLEARN`, `BLE`, `DRUM` versions (1, 2, 1, 1; `MLEARN` 2: the parameters, 1 before them; `BLE` 0 in a build without Bluetooth): see "Studio device" |
-| `E` (0x45) | 2 | (F5, only in a `MELODEE_BLE_EDITOR=1` build) the link this `CAPS` came on (0 USB, 1 Bluetooth), the Bluetooth command list's version (1): see "Studio over Bluetooth". Without the tag: USB |
+| `E` (0x45) | 2 | (F5, only in a build with `MELODEE_BLE_EDITOR`: the default wherever there is Bluetooth) the link this `CAPS` came on (0 USB, 1 Bluetooth), the Bluetooth command list's version (1): see "Studio over Bluetooth". Without the tag: USB |
 
 Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
 
@@ -1980,11 +1980,12 @@ or a kit's drum values (bit 3) change. It carries the rows' values (2 + 2 × row
 reads `MLEARN`, `BLE` or `DRUM` again for the others. `WATCH` answers the second byte with the bits it knows (1). The
 editor's own 50–53 push nothing. The device looks every push pass (~5 ms) while the bit is set.
 
-## Studio over Bluetooth (F5, build option `MELODEE_BLE_EDITOR`)
+## Studio over Bluetooth (F5, `MELODEE_BLE_EDITOR`, on by default)
 
 Melodee Studio talks to the FM-1 over Bluetooth MIDI with the same frames as over USB (branch F5, on F4
-`pensive-maxwell-0e10c8` 25d17ef2). It is a build option, off by default (Kerem 2026-11-07): `MELODEE_BLE_EDITOR=1
-./build.sh` (both boards; it needs `MELODEE_BLE` and `MELODEE_OTA`). A default build is byte for byte the image without it.
+`pensive-maxwell-0e10c8` 25d17ef2). It was built as an option off by default; since Kerem 2026-11-07 ("can we fit bluetooth editor and make it the
+default?") it is on in every build with `MELODEE_BLE` and `MELODEE_OTA` (both boards), and `MELODEE_BLE_EDITOR=0
+./build.sh` leaves it out (the image then is byte for byte the one without it).
 Code: `firmware/src/midi_ble.c` (`mbe`: the frame in, the reply out, in the BLE interrupt), `firmware/src/editor.c` (the frame
 taken in `ed_service`, the command list `ED_BLE_OK`, the replies' and pushes' link), the `CAPS` tag in `editor_session.c`. Tests:
 `tests/editor_test.c` `studio_bluetooth` (built with `-DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1`, one and two links: requests
@@ -2193,6 +2194,11 @@ against the FM-1, MTU, connection interval, pairing) is untested.
 | — kept with the settings | rows 5..7 of the favorites in and out (`settings_import`, `settings_export`) | +46 B | |
 | **parameter learn** | the full build minus the savings-only build (cf06c4a8) | **+1,132 B** | **+1,084 B** |
 | **total over F5** | | **+940 B** | **+300 B** |
+
+**Default on (Kerem 2026-11-07):** `MELODEE_BLE_EDITOR` defaults to `MELODEE_BLE && MELODEE_OTA`, so a plain build
+carries Studio over Bluetooth: FM-1 576,280 B, **968 B free**; SMK-37 Pro 577,116 B, **132 B free**; Elite and MKE
+577,092 B, **156 B free** (the option builds above, now the default). `MELODEE_BLE_EDITOR=0` gives the 575,576 / 576,404 B
+images.
 
 After it: FM-1 image 575,576 B, **1,672 B free**; SMK image 576,404 B, **844 B free**. With `MELODEE_BLE_EDITOR=1`: FM-1
 576,280 B, **968 B free**; SMK 577,092 B, **156 B free** (savings −216 / −784 B, parameter learn +1,136 / +1,088 B). It fits
