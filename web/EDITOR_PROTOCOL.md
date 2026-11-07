@@ -2069,3 +2069,25 @@ F2 transcripts natively and in WebAssembly byte for byte), `tests/run_tests.sh` 
 against the branch tip (`feat/studio-export` de24e07a, F1 and F3 included): 200,000 random and shaped requests (4
 seeds), every reply and the state after it identical, leaving out only what F2 changes on purpose (`CAPS`, commands 44
 and 45, `MOTION` op 5, `PATTERN` ops 3..5, `WATCH` bit 6).
+
+| F4 (branch from `studio-kits-7e034d` ad00b4b0) | Studio device (see "Studio device"), per command: the full build minus a build without it | FM-1 | SMK |
+|---|---|---:|---:|
+| — savings found (7770da38) | the HOME menu's rows in `menu_rows.c`: a row's values, its step, its value set (`menu_put`) and its words (`menu_value`) once, for the menu's drawing, its knob and OCT+ (one generic step instead of twenty row blocks) and for `SETTINGS`; `menu_words` and MIDI LEARN's table edits moved with them. Removes nothing: every UI render (331 screens x 8 palettes, FM-1 / SMK-37 / Bluetooth builds), `settingsdump`'s table and 2,478 menu gestures (each row: KNOB 1 +1, +2, -1, -3, OCT+, ...; both boards) identical before and after | **−928 B** | **−1,012 B** |
+| — SETTINGS 50 | the rows' values, the rows paged (kind, values, step, name, words), a set through `menu_put` saved as `UI_SET` | +408 B | +432 B |
+| — MLEARN 51 | the controls' messages and names, forget one, forget all, learn from the next message (the wait: its 3 s, the device's page) | +592 B | +560 B |
+| — BLE 52 | the Bluetooth page's state (flags, links, code, status, pairings, the scan's list) and its rows (radio, Mode, disconnect, last device, forget, scan, connect), the editor's scan ending | +660 B | +536 B |
+| — DRUM 53 | a kit track's DRUM SOUND / MIX values, read and write, names | +532 B | +524 B |
+| — push 60 | DEVICE_CHANGED on WATCH bit 7 (four signatures: the rows' values, MIDI LEARN, Bluetooth, the drums) | +268 B | +476 B |
+| — shared | the CAPS `C` tag and `W`'s second byte, `WATCH`'s second byte, the handler entry, `editor_device.c` built for size: the total minus the commands' sum (layout, not additive) | −68 B | +8 B |
+| **F4 total** | the commands over the savings | **+2,392 B** | **+2,536 B** |
+
+After F4: FM-1 image 574,636 B, **2,612 B free**; SMK image 576,104 B, **1,144 B free** (with the savings: +1,464 / +1,524 B over
+the kit maker's 573,172 / 574,580 B). F4 fits both boards. RAM .data+.bss +16 B on both (FM-1 95,480, SMK 96,008 of
+98,304): the four DEVICE_CHANGED signatures, MLEARN's and BLE's editor state.
+
+How F4 was checked: `editor_test` `studio_device` (also under ASan/UBSan), `ble_cal_editor_test` (BLE 52, one and two links,
+ASan/UBSan), the menu's differential above (renders, `settingsdump`, gestures), F0's differential harness against ad00b4b0's
+`editor*.c`: 200,000 random and shaped requests (4 seeds), every reply and the state after it (the drum values, MIDI LEARN's
+table and the settings included) identical, leaving out only what F4 changes on purpose (`CAPS`, commands 50..53, a `WATCH`
+of two bytes), the virtual FM-1's transcripts (`core_check`: SETTINGS, MLEARN, DRUM natively and in WebAssembly) and
+`tests/run_tests.sh` once.
