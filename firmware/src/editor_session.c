@@ -32,6 +32,7 @@ static const uint8_t ED_CAPS_TLV[] = {
                                                             * another track; steps, notes */
     'C', 4, 1, 2, ED_BT, 1,                               /* the FM-1 page (editor_device.c): SETTINGS v1, MLEARN v2 (v1 and the
                                                             * parameters), BLE v1 (0: none), DRUM v1 */
+    'R', 1, 1,                                            /* reads in bulk v1: DESC takes a count */
 };
 
 static uint32_t ed_sig(uint32_t at) { return fnv(2166136261u, ed_out + at, ed_n - at); }   /* the reply's bytes from at */

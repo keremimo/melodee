@@ -626,6 +626,46 @@ static int scale_catalogue(void)
     }
     return check("SCL DESC carries every legacy and microtonal name in one complete frame", good && at == n - 1);
 }
+/* DESC with a count (CAPS R): from id on, length-prefixed bodies, each the same bytes as that id's own DESC after
+ * scope, id; whole ones only, the next request goes on where a reply stopped */
+static int desc_bulk(void)
+{
+    static uint8_t one[1024];
+    uint8_t a[3];
+    uint32_t n, m, at, len, id, scope, reads, cuts = 0, ok = 1;
+    int bad;
+    reset();
+    n = request(ED_CAPS, a, 0);
+    for (at = 6; at + 1u < n && host_wire[at] != 'R'; at += 2u + host_wire[at + 1]) ;
+    bad = check("CAPS: tag R (DESC takes a count, v1)", at + 2u < n && host_wire[at + 1] == 1 && host_wire[at + 2] == 1);
+    for (scope = 0; scope < 2u; scope++) {
+        uint32_t count = scope ? G_COUNT : P_COUNT;
+        for (id = 0, reads = 0; id < count && reads < 200u; reads++) {
+            a[0] = (uint8_t)scope; a[1] = (uint8_t)id; a[2] = 127;
+            n = request(ED_DESC, a, 3);
+            if (n < 8u || host_wire[5] != scope || host_wire[6] != id) { ok = 0; break; }
+            static uint8_t got[1024];
+            memcpy(got, host_wire, n);
+            for (at = 7; at + 1u < n; id++) {
+                len = got[at] | got[at + 1] << 7;
+                a[1] = (uint8_t)id;
+                m = request(ED_DESC, a, 2);
+                memcpy(one, host_wire, m);
+                ok &= at + 2u + len < n && m == 8u + len && !memcmp(one + 7, got + at + 2, len);
+                at += 2u + len;
+            }
+            ok &= at == n - 1u;
+            cuts += id < count;
+        }
+        ok &= id == count;
+    }
+    a[0] = 0; a[1] = P_COUNT; a[2] = 5;
+    ok &= !request(ED_DESC, a, 3);                       /* past the last: no reply, as one id */
+    a[1] = 0; a[2] = 0;
+    n = request(ED_DESC, a, 3);
+    ok &= n > 9u && (host_wire[7] | host_wire[8] << 7) == n - 10u;   /* count 0: one */
+    return bad + check("DESC with a count: every id's own bytes, whole ones a reply, paged on", ok && cuts > 0);
+}
 static int project_scale_protocol(void)
 {
     reset();
@@ -1695,7 +1735,7 @@ static int studio_bluetooth(void)
 int main(void)
 {
     int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
-              native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + project_scale_protocol() + studio_session() +
+              native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + desc_bulk() + project_scale_protocol() + studio_session() +
               studio_song() + studio_patterns() + studio_device();
 #if MELODEE_BLE_EDITOR
     bad += studio_bluetooth();

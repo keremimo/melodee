@@ -394,7 +394,7 @@ static void ed_motion_reply(uint32_t k, uint32_t bank, uint32_t rc)   /* (the co
 static const uint16_t ED_ARGN[ED_FAV_SET + 1] = {
     [ED_INFO] = ED_N(0), [ED_DUMP] = ED_N(0), [ED_SMP_INFO] = ED_N(0), [ED_PING] = ED_N(0),
     [ED_UI_STATE] = ED_N(0), [ED_UI_PALETTES] = ED_N(0),
-    [ED_GET] = ED_N(2), [ED_DESC] = ED_N(2), [ED_PROJECT] = ED_N(2), [ED_UP_LIST] = ED_N(2),
+    [ED_GET] = ED_N(2), [ED_DESC] = ED_N(2) | ED_N(3), [ED_PROJECT] = ED_N(2), [ED_UP_LIST] = ED_N(2),
     [ED_PRESET] = ED_N(2) | ED_N(3), [ED_TRACK_PARAM] = ED_N(2) | ED_N(4), [ED_SET] = ED_N(4),
     [ED_STEP_GET] = ED_N(1), [ED_SMP_BEGIN] = ED_N(1), [ED_SMP_ERASE] = ED_N(1), [ED_UP_GET] = ED_N(1),
     [ED_UP_LOAD] = ED_N(1), [ED_UP_ERASE] = ED_N(1), [ED_WATCH] = ED_N(1) | ED_N(2), [ED_TRACK_DUMP] = ED_N(1),
@@ -862,20 +862,39 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             ed_v(*ed_val(P_COUNT + i));
         ed_b(TSEL->preset >> 7);
         break;
-    case ED_DESC:
-        if (!(d = ed_desc(a[0], a[1], &vp)))
-            return;
+    case ED_DESC: {                       /* scope, id [, count (CAPS R)]: with a count, from id on, each as its length (14
+                                           * bits) and the one-id body, as many whole ones as fit (one at least): a Bluetooth
+                                           * read is a round trip a request */
+        uint32_t k = 0, at;
         ed_bytes(a, 2u);
-        ed_b(d->fmt);
-        ed_v(d->min);
-        ed_v(d->max);
-        ed_v(d->def);
-        ed_str(d->label, 8);
-        ed_str(d->unit, 8);
-        if (d->fmt == F_ENUM && d->names)                  /* the full SCL catalogue fits the 1024-byte reply */
-            for (i = 0; i <= (uint32_t)(d->max - d->min) && i < 96u; i++)
-                ed_str(d->names[i+d->min], 8);
+        do {
+            if (!(d = ed_desc(a[0], a[1] + k, &vp)))
+                break;
+            at = ed_n;
+            if (na > 2u)
+                ed_n += 2u;
+            ed_b(d->fmt);
+            ed_v(d->min);
+            ed_v(d->max);
+            ed_v(d->def);
+            ed_str(d->label, 8);
+            ed_str(d->unit, 8);
+            if (d->fmt == F_ENUM && d->names)              /* the full SCL catalogue fits the 1024-byte reply */
+                for (i = 0; i <= (uint32_t)(d->max - d->min) && i < 96u; i++)
+                    ed_str(d->names[i+d->min], 8);
+            if (k && ed_n >= sizeof ed_out - 1u) {         /* (cut: the next request starts with it) */
+                ed_n = at;
+                break;
+            }
+            if (na > 2u) {
+                ed_out[at] = (uint8_t)((ed_n - at - 2u) & 127u);
+                ed_out[at + 1u] = (uint8_t)((ed_n - at - 2u) >> 7);
+            }
+        } while (++k < (na > 2u ? a[2] : 1u));
+        if (!k)
+            return;
         break;
+    }
     case ED_STEP_GET:
     case ED_STEP_SET:
     case ED_TRACK_STEP: {                                  /* [track,] index [, step] -> [track,] index, step (11 bytes) */
