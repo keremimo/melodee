@@ -2183,3 +2183,27 @@ How F5 was checked: both boards built with and without the option (default image
 `tests/run_tests.sh` and `tests/ble_tests.py`), the virtual FM-1 core and the studio bundle rebuilt from the clean commit
 (`core_check`), `tests/run_tests.sh` once. Not on hardware: nothing was flashed; the radio path (CoreMIDI's or Chrome's BLE-MIDI
 against the FM-1, MTU, connection interval, pairing) is untested.
+
+| MIDI LEARN per parameter (branch from F5 `sweet-haslett-97603a` c1206d82) | `MLEARN` v2 (see "MLEARN (51)", "v2: parameters"): a CC to a track's parameter on every page, kept with the settings | FM-1 | SMK |
+|---|---|---:|---:|
+| — savings found (cf06c4a8) | main-loop-only code built for size (`tools/size_fns.py`): `ui_smk.c` (the SMK-37's knob / fader banks and their picker), `storage_stream.c` (staged store writes), `res.c` (the resource region's reads), and `usb_start`, `pattern_copy_to`, `pattern_double`, `recording_double`, `pattern_half`, `pattern_init`, `motion_valid`, `motion_clear`, `motion_replace_track`, `motion_delete_event_at`, `song_sound_valid`, `chain_valid` (none in the audio interrupt's resident set: `build/melodee_audio.json`). Removes nothing: the code is the same, only its optimisation | **−192 B** | **−784 B** |
+| — the CC to the parameter | `mparam_receive` in the audio interrupt's MIDI dispatch (resident in SRAM, so it travels LZMA-packed in the boot images: 464 B of code, +364 B there), its call from `mlearn_receive` | +382 B | |
+| — `MLEARN` ops 5 / 6 and the list's parameters | `ed_device_handle`, the wait (`ed_device_poll`, `ed_learn_end`), `DEVICE_CHANGED` bit 1's signature over both tables | +446 B | |
+| — the table | learn (`mparam_bind`), one job per CC (`mparam_drop`, `mlearn_bind`), the count and FORGET LEARNED with the parameters (`mlearn_count`, `mlearn_forget`) | +314 B | |
+| — kept with the settings | rows 5..7 of the favorites in and out (`settings_import`, `settings_export`) | +46 B | |
+| **parameter learn** | the full build minus the savings-only build (cf06c4a8) | **+1,132 B** | **+1,084 B** |
+| **total over F5** | | **+940 B** | **+300 B** |
+
+After it: FM-1 image 575,576 B, **1,672 B free**; SMK image 576,404 B, **844 B free**. With `MELODEE_BLE_EDITOR=1`: FM-1
+576,280 B, **968 B free**; SMK 577,092 B, **156 B free** (savings −216 / −784 B, parameter learn +1,136 / +1,088 B). It fits
+both boards, with and without the option. RAM .data+.bss unchanged (95,480 / 96,008 B); the table (96 B) and the editor's wait
+(2 B) are in the audio pool (`.pool`, zeroed at boot before the settings load): pool 139,652 / 141,272 B of 357,888. Per part:
+`nm -S` against F5 (the savings' own functions left out), FM-1; the SMK-37's parts are the same code.
+
+How it was checked: `editor_test` (`studio_mlearn_params`: the list, a wait and its end, CC on its channel / any, MIDI MODE
+relative, one job per CC both ways, the parameter before a control, forget one / all, the checks, a full table, old stars kept),
+`midi_knob_test` (`param_learn_test`: the whole MIDI path on the device's UI, a menu up, a list over its names, the CC's old job
+gone, notes still playing, the record's rows 5..7 out and in, FORGET LEARNED's question and OCT+), F0's differential harness
+against c1206d82's `editor*.c`: 200,000 random and shaped requests (4 seeds), every reply and the state after it identical,
+leaving out only what this changes on purpose (`CAPS`, `MLEARN`, a `WATCH` of two bytes: 2,491 frames), the virtual FM-1's
+transcripts (`core_check`), the four full builds and `tests/run_tests.sh` once. Not on hardware: nothing was flashed.
