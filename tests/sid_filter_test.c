@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Original Melodee SID renderer retained from 8e5ce97, including its
- * reSID model/curve provenance documented in firmware/src/eng_sid.c. */
+ * reSID model/curve provenance documented in firmware/modules/sid/eng_sid.c. */
 #define MELODEE_SID_FAST 1
 #define main hostsim_main
 #include "hostsim.c"

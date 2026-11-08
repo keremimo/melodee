@@ -237,10 +237,10 @@ static int bankl_pack_tail(uint8_t *raw, const project_t *q)   /* runtime only (
         }
     }
     memcpy(raw + BT(BL.motion), cap_motion_tags, sizeof cap_motion_tags);
-    if (q->fm6_fn_ok) {
+    if (q->voice_fn_ok) {
         uint32_t m = BANK_FN_MAGIC;
         memcpy(raw + BT(BL.fn), &m, 4);
-        memcpy(raw + BT(BL.fn) + 4u, q->fm6_fn, sizeof q->fm6_fn);
+        memcpy(raw + BT(BL.fn) + 4u, q->voice_fn, sizeof q->voice_fn);
     }
     /* the timed notes' counts: FBKP every owner's (in their order in the FUN record), FBKL those past its own */
     for (uint32_t o = 0, first = bank_p16 ? 0u : PROJ_TRK * NPAT_V1; first + o < proj_owners(); o++) {
@@ -306,10 +306,10 @@ static int bank_pack_tail(uint8_t *raw,const project_t *q,int runtime)
                 raw[(BANK_CHAIN_OFF - BANK_ACTIVE_OFF) + r * PROJ_TRK + k] = cap_map(k) < NTRK ? chain_patterns[r][cap_map(k)] : 0u;
         memcpy(raw + (BANK_MOTION_OFF - BANK_ACTIVE_OFF), cap_motion_tags, sizeof cap_motion_tags);
     }
-    if (q->fm6_fn_ok) {
+    if (q->voice_fn_ok) {
         uint32_t m = BANK_FN_MAGIC;
         memcpy(raw + (BANK_FN_OFF - BANK_ACTIVE_OFF), &m, 4);
-        memcpy(raw + (BANK_FN_OFF - BANK_ACTIVE_OFF) + 4u, q->fm6_fn, sizeof q->fm6_fn);
+        memcpy(raw + (BANK_FN_OFF - BANK_ACTIVE_OFF) + 4u, q->voice_fn, sizeof q->voice_fn);
     }
     motion_unguard(f);return 1;
 }
@@ -344,8 +344,8 @@ static int bank_tail_common(const uint8_t *raw, uint32_t motion_off, uint32_t fn
             for (k = 0; k < PROJ_TRK; k++)               /* (as 1.x checked them: the synth's schema, MOD3_R_CHECK) */
                 if (!patch_settings_ok(MOD_SCH_STORE_VOICE, f + k * PROJ_FN_BYTES))
                     return 0;
-            memcpy(proj_scratch.fm6_fn, f, sizeof proj_scratch.fm6_fn);
-            proj_scratch.fm6_fn_ok = 1;
+            memcpy(proj_scratch.voice_fn, f, sizeof proj_scratch.voice_fn);
+            proj_scratch.voice_fn_ok = 1;
             proj_scratch.sum = proj_sum(&proj_scratch);
         }
     }

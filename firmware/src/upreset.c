@@ -53,7 +53,7 @@ typedef struct {
     uint8_t packed[UP_PMAX * 2u];                /* the values + 64 (UP_VER_CZ: the native tone) */
     uint8_t note[16], flags[16];                 /* note 0 = rest; flags 1 accent, 2 slide, 4 tie (UP_VER_GRID:
                                                   * lane hits, their accents) */
-    uint8_t cz_extra[46];                        /* UP_VER_KIT*: the packed KIT patch's first bytes (up_kit_wire) */
+    uint8_t tone_extra[46];                        /* UP_VER_KIT*: the packed KIT patch's first bytes (up_kit_wire) */
 } up_rec_t;
 typedef struct {
     uint32_t magic;
@@ -130,7 +130,7 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
     }
     for(uint32_t i=0;i<UP_PER_BANK;i++){
         up_disk_rec_t r;
-        memcpy(r.head,&bank->r[i],160u);memcpy(r.extra,bank->r[i].cz_extra,46u);
+        memcpy(r.head,&bank->r[i],160u);memcpy(r.extra,bank->r[i].tone_extra,46u);
         uint32_t k=b*UP_PER_BANK+i;
         if((up_fav_dirty>>b&1u) && k<UP_SLOTS && (r.head[0]&~UP_STAR)==UP_USED)
             r.head[0]=(uint8_t)((r.head[0]&~UP_STAR)|(up_meta[k].favorite?UP_STAR:0));
@@ -141,7 +141,7 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
     int rc=st_save(up_obj(b),bank,sizeof(up_disk_bank_t));
     for(uint32_t i=UP_PER_BANK;i--;){
         up_disk_rec_t r;memcpy(&r,(uint8_t *)bank+8u+i*sizeof r,sizeof r);
-        memcpy(&bank->r[i],r.head,160u);memcpy(bank->r[i].cz_extra,r.extra,46u);
+        memcpy(&bank->r[i],r.head,160u);memcpy(bank->r[i].tone_extra,r.extra,46u);
         memcpy(bank->r[i].note,saved[i].phrase,16u);memcpy(bank->r[i].flags,saved[i].phrase+16u,16u);
         if(rc)bank->r[i].used=saved[i].used;
     }
@@ -154,7 +154,7 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
 static up_rec_t *up_rec(uint32_t k) { return &up_cache_bank(k / UP_PER_BANK)->r[k % UP_PER_BANK]; }
 
 /* the layouts by the format a synth's patch is stored in (module_schema.h MOD_SCH_STORE_*): the native layout (the
- * patch's sound bytes in packed, the voice's values in cz_extra) by its version, a KIT patch bit packed after the
+ * patch's sound bytes in packed, the voice's values in tone_extra) by its version, a KIT patch bit packed after the
  * values (UP_VER_KIT*), else the values only */
 static uint32_t up_native_ver(uint32_t e)
 {
@@ -175,21 +175,21 @@ static int up_bank_shape(uint32_t len,uint32_t rsize){return len==sizeof(up_bank
 static int up_kit_wire(const up_rec_t *r,uint8_t *b)  /* a KIT patch's bits (MOD_SCH_KIT_PACKED) */
 {
     if(r->np>sizeof r->packed-8u)return 0;
-    memcpy(b,r->cz_extra,sizeof r->cz_extra);memcpy(b+sizeof r->cz_extra,r->packed+r->np,8u);return 1;
+    memcpy(b,r->tone_extra,sizeof r->tone_extra);memcpy(b+sizeof r->tone_extra,r->packed+r->np,8u);return 1;
 }
 
 static int up_valid(const up_rec_t *r)
 {
     if((r->used & ~UP_STAR)==UP_USED && up_native(r)){
         if(!r->name[0] || (r->np && r->np!=sizeof UP_NATIVE_PARAMS))return 0;
-        for(uint32_t i=0;i<r->np;i++)if(r->cz_extra[i]>191u)return 0;
+        for(uint32_t i=0;i<r->np;i++)if(r->tone_extra[i]>191u)return 0;
         if (r->engine >= NENGINES)
             return 0;
 #ifndef UP_HOST
         return patch_stored_ok(r->ver == UP_VER_FM ? MOD_SCH_STORE_VOICE : r->ver == UP_VER_P5 ? MOD_SCH_STORE_PROGRAM :
                               r->ver == UP_VER_NATIVE_CZ ? MOD_SCH_STORE_TONE : MOD_SCH_STORE_NONE, r->packed);
 #else
-        if (r->ver == UP_VER_NATIVE_CZ) return cz_patch_valid(r->packed);
+        if (r->ver == UP_VER_NATIVE_CZ) return UP_HOST_TONE_OK(r->packed);
         if (r->ver == UP_VER_FM) { for (uint32_t i = 0; i < 128u; i++) if (r->packed[i] > 127u) return 0; return 1; }
         return r->ver != UP_VER_P5 || r->packed[133] == 128u || r->packed[133] == 133u;
 #endif
@@ -198,7 +198,7 @@ static int up_valid(const up_rec_t *r)
 #ifndef UP_HOST
         patch_stored_ok(MOD_SCH_STORE_TONE, r->packed);
 #else
-        cz_patch_valid(r->packed);
+        UP_HOST_TONE_OK(r->packed);
 #endif
     if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID) && r->engine < USER_GENERAL &&
           r->np >= 8u && r->np <= UP_PMAX * 2u && r->name[0])) return 0;
@@ -296,7 +296,7 @@ static void up_params(const up_rec_t *r, int16_t *out, const int16_t *def)
 {
     if(up_native(r)){
         memcpy(out,def,P_COUNT*sizeof *out);
-        for(uint32_t i=0;i<r->np;i++)out[UP_NATIVE_PARAMS[i]]=(int16_t)r->cz_extra[i]-64;
+        for(uint32_t i=0;i<r->np;i++)out[UP_NATIVE_PARAMS[i]]=(int16_t)r->tone_extra[i]-64;
         return;
     }
     if (up_native_cz(r)) { memcpy(out, def, P_COUNT * sizeof *out); return; }
@@ -574,7 +574,7 @@ static int up_store_to(uint32_t k,uint32_t tr,const char *name)
         r.ver=(uint8_t)nv;
         memcpy(r.packed,patch_of(tr),patch_sound_len(r.engine));
         r.np=sizeof UP_NATIVE_PARAMS;
-        for(uint32_t i=0;i<r.np;i++)r.cz_extra[i]=(uint8_t)(motion_base_value(t,UP_NATIVE_PARAMS[i])+64);
+        for(uint32_t i=0;i<r.np;i++)r.tone_extra[i]=(uint8_t)(motion_base_value(t,UP_NATIVE_PARAMS[i])+64);
         if(name && name[0])up_native_name(&r,name);
         return up_put(k,&r);
     }
@@ -584,7 +584,7 @@ static int up_store_to(uint32_t k,uint32_t tr,const char *name)
         uint32_t any=0;for(uint32_t i=0;i<16u;i++)any|=step_lanes(t, &t->step[i]);
         if(any){r.ver=UP_VER_GRID;for(uint32_t i=0;i<16u;i++){r.note[i]=(uint8_t)step_lanes(t, &t->step[i]);r.flags[i]=(uint8_t)step_accents(t, &t->step[i]);}}
     }
-    if(nv==UP_VER_KIT){uint8_t b[MOD_SCH_KIT_PACKED];patch_pack(MOD_SCH_STORE_KIT,b,patch_of(tr),MOD_SCH_KIT_PACKED);memcpy(r.cz_extra,b,sizeof r.cz_extra);memcpy(r.packed+r.np,b+sizeof r.cz_extra,8u);r.ver=r.ver==UP_VER_GRID?UP_VER_KIT_GRID:UP_VER_KIT;}
+    if(nv==UP_VER_KIT){uint8_t b[MOD_SCH_KIT_PACKED];patch_pack(MOD_SCH_STORE_KIT,b,patch_of(tr),MOD_SCH_KIT_PACKED);memcpy(r.tone_extra,b,sizeof r.tone_extra);memcpy(r.packed+r.np,b+sizeof r.tone_extra,8u);r.ver=r.ver==UP_VER_GRID?UP_VER_KIT_GRID:UP_VER_KIT;}
     return up_put(k,&r);
 }
 static int up_store(uint32_t k,const char *name){return up_store_to(k,song.sel,name);}

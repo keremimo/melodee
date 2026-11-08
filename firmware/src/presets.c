@@ -21,7 +21,7 @@ static int mod_pst_name(uint32_t s, uint32_t k, char *nm, uint32_t cap);        
 /* the patch built-in engine e's preset k carries (its makers: host builds, engines.c), its length */
 static uint32_t preset_patch_make(uint32_t e, uint32_t k, uint8_t *p)
 {
-#if MELODEE_P5_BUILTIN || MELODEE_CZ_BUILTIN || MELODEE_FM6_BUILTIN
+#if MELODEE_HOST_ENGINES && HOST_MAKERS
     uint8_t q[MOD3_PATCH_MAX];
     uint32_t n = preset_builtin_patch(e, k, q);
     if (n > PST_PATCH_MAX)

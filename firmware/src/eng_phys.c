@@ -28,7 +28,7 @@
  * mixes the exciter itself into the output (the mallet / pick). The track's ENV / LFO -> FLT move BRIT.
  *
  * MODEL 4 was DRUM before 1.0: the kit is its own engine now (DRUM, a module); projects and user presets
- * that saved it load as that engine (core.h drum_from_phys).
+ * that saved it load as that engine (a 1.x migration, gone since: none reads it).
  *
  * DUST (resonant particles, value 2 before 1.0) was dropped: MODEL 2 is MEMB now. Projects and
  * user presets saved before say so (project.c, upreset.c) and load DUST as MODAL bowed, its nearest

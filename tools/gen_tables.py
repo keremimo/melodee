@@ -93,7 +93,8 @@ def main(path):
     L += arr("CUTOFF_HZ", "uint16_t", [int(round(f)) for f in fc])
     # trapezoidal (Simper) SVF: g = tan(pi fc / FS), Q12; stable at any cutoff/resonance
     L += arr("SVF_G", "uint16_t", [int(4096 * math.tan(math.pi * min(f, 0.45 * FS) / FS)) for f in fc])
-    L += ["#if !defined(MELODEE_PROPHET) || MELODEE_PROPHET"]
+    L += ["#ifndef P5_OVERSAMPLE", "#define P5_OVERSAMPLE 1 /* prototype: benchmark base rate before enabling optional 2x */",
+          "#endif", "#if !defined(MELODEE_PROPHET) || MELODEE_PROPHET"]
     L += [f"#define P5_KEYTRACK_HALF_Q7 {round(128 * 256 * 127 * math.log(2) / (2 * 192 * math.log(fc[-1] / fc[0])))}"]
     # LFO rate, raw 0..127. Measured on a Rev-4 factory demo (rates 74..97 -> 2.4..8.4 Hz,
     # within 2 %): ln Hz = -3.1005 + 0.05387 raw, bent at the ends to the documented .022 / 500 Hz.
@@ -143,6 +144,11 @@ def main(path):
     L += fm6_tables()
     L += sid_tables()
     L += sid_kit_tables()
+    # the host table's shared tables by id (mod_abi3.h MOD3_T_*, frozen): the firmware hands a module these (eng_module.c
+    # mod_h_table); their names stay here, the firmware's sources name none
+    ids = ["SINE", "TANH_Q15", "SVF_G", "PITCH_OCT", "A4_RATIO", "A4_LOG", "P5_TANH", "FM6_SIN", "FM6_MKI_LOG",
+           "FM6_MKI_EXP", "FM6_OPL_LOG", "FM6_OPL_EXP"]
+    L += ["#ifndef MOD_SIDE", "#define SHARED_TABLES(X) " + " ".join(f"X(MOD3_T_{n}, {n})" for n in ids), "#endif"]
     Path(path).write_text("\n".join(L) + "\n")
     print(f"tables: {path}")
 

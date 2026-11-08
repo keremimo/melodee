@@ -90,17 +90,26 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #undef MELODEE_SLICE
 #endif
 #define MELODEE_SLICE 0
-#ifndef P5_OVERSAMPLE
-#define P5_OVERSAMPLE 1 /* prototype: benchmark base rate before enabling optional 2x */
-#endif
 #ifndef MELODEE_LEGACY_EXTRAS
 #define MELODEE_LEGACY_EXTRAS 0 /* reference tests only: retired TRIO, WHEEL and PHYS; PHASE, VOICE and NOISE (retired
                                  * 2026-10-10: the flash for the redesign; CZ-1 keeps PHASE's phase-distortion core) */
 #endif
-#define MELODEE_PROPHET 1
-#define ENGI_FM6 12u
-#define ENGI_CZ 15u
-#define ENGI_PROPHET 19u /* 16..18 reserved: historical preset namespaces */
+/* host builds (every build but the device's): the synths Melodee ships built in, the reference their modules are held to
+ * (firmware/modules/host: their engines, numbers and names live outside the firmware's sources) */
+#ifndef MELODEE_HOST_ENGINES
+#ifdef FM1_IRQ_TARGET
+#define MELODEE_HOST_ENGINES 0
+#else
+#define MELODEE_HOST_ENGINES 1
+#endif
+#endif
+#if MELODEE_HOST_ENGINES && !MOD_SIDE
+#include "../modules/host/host_engines.h"
+#endif
+#ifndef HOST_NENG
+#define HOST_NENG 0u
+#define HOST_BUILTIN(e) 0                        /* (the device: every synth is a module) */
+#endif
 #define USER_GENERAL 16u
 #define USER_NATIVE_P5 20u
 #define ENGI_MIDI 21u            /* 20 reserved for the Prophet user-preset namespace */
@@ -117,7 +126,7 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #define USER_NONE 65535u
 #define ENGI_ANALOG 0u           /* retired in 1.2: never selectable (eng_ok), its stored sounds play silent */
 #define ENGI_DIGITAL 1u          /* retired: never selectable (eng_ok), its stored sounds play silent */
-#define NENG_SHOWN (1u + MELODEE_P5_BUILTIN + MELODEE_FM6_BUILTIN + MELODEE_CZ_BUILTIN + MELODEE_SID_BUILTIN + MELODEE_DRUM_BUILTIN + MELODEE_SLICE + 6u * MELODEE_LEGACY_EXTRAS)   /* the engines one can pick: PRESETS, the EDIT
+#define NENG_SHOWN (1u + HOST_NENG + MELODEE_SLICE)   /* the engines one can pick: PRESETS, the EDIT
                                                 * layer, the editor, in the display order of engines.c ENGINE_ORDER */
 #define NENG_SHOWN_MAX (NENG_SHOWN + NMOD * MELODEE_MODULES)   /* and the loaded modules after them (eng_nshown) */
 #define ENGI_SLICE 13u           /* reserved without MELODEE_SLICE: never selectable (eng_ok) */
@@ -294,19 +303,6 @@ static void params_by_count(int16_t *out, const int16_t *in, uint32_t np, const 
 
 /* engine indices the stores name (engines.c ENGINES[]: append-only) */
 #define ENGI_PHYS 9u
-#define ENGI_DRUM 10u
-/* PHYS MODEL DRUM (MODEL 4, before 1.0) -> the DRUM engine, its E values in place: {MODEL, TUNE, TONE, DECY,
- * SNAP, ACC, KICK 0..127, PERC 0..127} -> {KIT, TUNE, TONE, DECY, SNAP, ACC, KICK 0..1, DRV 0}. 1 = it was one
- * (its engine is ENGI_DRUM now); projects (project.c) and user presets (upreset.c) */
-static int drum_from_phys(uint32_t engine, int16_t *e)
-{
-    if (engine != ENGI_PHYS || e[0] != 4)
-        return 0;
-    e[0] = 4; /* Retired custom drum variants now play the synthesized 808. */
-    e[6] = (int16_t)(e[6] >= 64);                                       /* KICK: PUNCH, ROUND */
-    e[7] = 0;
-    return 1;
-}
 
 /* ------------------------------------------------- voices, engines --- */
 enum { V_POLY, V_MONO, V_LEGATO, V_UNISON };   /* P_VOICE */
@@ -450,27 +446,6 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     uint32_t (*rec_take)(uint32_t slot, uint32_t pad, int16_t *pcm, uint32_t n, uint32_t cap);
     int (*rec_pad)(uint32_t slot, uint32_t pad);
 } engine_t;
-#endif
-/* Built-in engines that are synth modules on the device (firmware/modules/<name>): host builds compile them in, the
- * reference the module tests hold the modules to; the device's image leaves them out (eng_module.c plays them) */
-#ifndef MELODEE_SID_BUILTIN
-#ifdef FM1_IRQ_TARGET
-#define MELODEE_SID_BUILTIN 0
-#else
-#define MELODEE_SID_BUILTIN 1
-#endif
-#endif
-#ifndef MELODEE_DRUM_BUILTIN
-#define MELODEE_DRUM_BUILTIN MELODEE_SID_BUILTIN
-#endif
-#ifndef MELODEE_CZ_BUILTIN
-#define MELODEE_CZ_BUILTIN MELODEE_SID_BUILTIN
-#endif
-#ifndef MELODEE_FM6_BUILTIN
-#define MELODEE_FM6_BUILTIN MELODEE_SID_BUILTIN
-#endif
-#ifndef MELODEE_P5_BUILTIN
-#define MELODEE_P5_BUILTIN MELODEE_SID_BUILTIN
 #endif
 /* voice_start: what the voice it starts did just before (0 free, 1 released, 2 its key down: a steal or a move);
  * engine_t.note_on may read it  */

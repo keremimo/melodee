@@ -123,19 +123,10 @@ static void mod_h_no_profile(uint32_t cls, uint32_t ticks) { (void)cls; (void)ti
 #endif
 static const void *mod_h_table(uint32_t id)
 {
+#define MOD_TAB(i, t) case i: return t;
     switch (id) {
-    case MOD3_T_SINE: return SINE;
-    case MOD3_T_TANH_Q15: return TANH_Q15;
-    case MOD3_T_SVF_G: return SVF_G;
-    case MOD3_T_PITCH_OCT: return PITCH_OCT;
-    case MOD3_T_A4_RATIO: return A4_RATIO;
-    case MOD3_T_A4_LOG: return A4_LOG;
-    case MOD3_T_P5_TANH: return P5_TANH;
-    case MOD3_T_FM6_SIN: return FM6_SIN;
-    case MOD3_T_FM6_MKI_LOG: return FM6_MKI_LOG;
-    case MOD3_T_FM6_MKI_EXP: return FM6_MKI_EXP;
-    case MOD3_T_FM6_OPL_LOG: return FM6_OPL_LOG;
-    case MOD3_T_FM6_OPL_EXP: return FM6_OPL_EXP;
+    SHARED_TABLES(MOD_TAB)                          /* (build/gen/melodee_tables.h: the generator's tables by id) */
+#undef MOD_TAB
     default: return 0;
     }
 }

@@ -155,9 +155,9 @@ static int mod_pst_get(uint32_t k, uint32_t i, preset_t *pr, char *name, uint8_t
         memcpy(patch, b + MOD_PST_COMMON, u - MOD_PST_COMMON);
     return (int)(u - MOD_PST_COMMON);
 }
-/* every engine the image left to a synth module (SID, DRUM, CZ-1, FM6, the Prophet) has one on the device: a fresh
- * install's setup wrote them (the web installer: web/fm1mods.js). Else the start asks for setup (main.c, ui_boot.c), as
- * for the resources */
+/* every synth Melodee ships as a module (../modules/shipped.h SHIP_F_MODS) is on the device, or built in (host
+ * builds): a fresh install's setup wrote them (the web installer: web/fm1mods.js). Else the start asks for setup
+ * (main.c, ui_boot.c), as for the resources */
 static int mod_have(uint32_t e)
 {
     for (uint32_t k = 0; k < NMOD; k++)
@@ -167,9 +167,10 @@ static int mod_have(uint32_t e)
 }
 static int mod_shipped_ok(void)
 {
-    return (MELODEE_SID_BUILTIN || mod_have(3)) && (MELODEE_DRUM_BUILTIN || mod_have(ENGI_DRUM)) &&
-           (MELODEE_CZ_BUILTIN || mod_have(ENGI_CZ)) && (MELODEE_FM6_BUILTIN || mod_have(ENGI_FM6)) &&
-           (MELODEE_P5_BUILTIN || mod_have(ENGI_PROPHET));
+    for (uint32_t k = 0; k < NSHIP; k++)
+        if ((SHIP[k].flags & SHIP_F_MODS) && !mod_have(SHIP[k].num) && !HOST_BUILTIN(SHIP[k].num))
+            return 0;
+    return 1;
 }
 /* main loop: e is about to be used (picked, its presets listed, a sound or project on it loaded): into SRAM now */
 static void mod_want(uint32_t e)
@@ -204,13 +205,11 @@ static void mod_unguard(uint32_t f)
 }
 static int mod_engine_ok(uint32_t e)               /* a number a module may play as */
 {
+    const ship_t *r = ship_of(e);
     return (e >= ENGI_MOD0 && e < NENGINES) || e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u ||
-           e == 3u || e == ENGI_DRUM || e == ENGI_CZ || e == ENGI_FM6 ||
-           e == ENGI_PROPHET;                    /* (SID, DRUM, CZ-1, FM6, the Prophet: modules on the device; built
-                                                  * in, a clash) */
+           (r && (r->flags & SHIP_F_MODS));     /* (a shipped synth's: a module on the device; built in, a clash) */
 }
-/* e into the engines shown, at its place (engines.c eng_order_rank: the Prophet, FM6, CZ-1, SID and DRUM where they
- * were built in) */
+/* e into the engines shown, at its place (engines.c eng_order_rank: the manifest's order) */
 static void mod_order_add(uint32_t e)
 {
     uint32_t r = eng_order_rank(e), at = eng_nshown;

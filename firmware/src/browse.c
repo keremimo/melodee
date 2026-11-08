@@ -21,28 +21,19 @@ static const uint8_t CAT_ORDER[] = {CAT_BASS, CAT_LEAD, CAT_PAD, CAT_KEYS, CAT_O
 /* the factory presets' categories, a letter per preset in its engine's order; tests/ui_test.c checks each string's
  * length against its engine's preset count. An engine without one: cat_of_engine. A synth module's are its file's
  * (module_presets.h: tools/mod_build.py writes these there; the device's image has none of them) */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
 static const char *const PRESET_CAT[NENGINES] = {
     [ENGI_MIDI] = "O",                                  /* non-audio destination: OTHER */
-#if MELODEE_LEGACY_EXTRAS                                /* (retired: PHASE VOICE NOISE) */
-    [2] = "RGSLEU",                                     /* PHASE: BRASS ORGAN STRING RESO BELL WIRE */
+#if MELODEE_LEGACY_EXTRAS                                /* (retired: VOICE NOISE) */
     [5] = "PLBF",                                       /* VOICE: CHOIR AAH, VOX LEAD, WOW BASS, WHISPER */
     [11] = "FFFF",                                      /* NOISE */
 #endif
-#if MELODEE_SID_BUILTIN
-    [3] = "OLBBBBBBLLLLLLLLPSPPGGKKUUERFFFF",          /* SID */
-#endif
-#if MELODEE_FM6_BUILTIN
-    [12] = "KEBRPEGUKRBEEKGSPLUEWEBEO",                 /* FM6, INIT VOICE */
-#endif
-#if MELODEE_CZ_BUILTIN
-    [ENGI_CZ] = "ORRRSSSSSUUUBBBBURWSWWWWUKKKKKKKKGGGGGPPPEEEEEDEESSULLLLFDDDEFFFF",   /* INIT TONE, Casio's 64 */
-#endif
-#if MELODEE_P5_BUILTIN
-    [ENGI_PROPHET] =                                    /* INIT, Sequential's 200 */
-        "OOOKBPROOOGKLPWPOLOUUBEOEGFPOOBOEOOODDDEOOGKSGBPEPPLBROOOOPOKPKOFOSOOEPRODFLFOOEOULWOPBOLOPKFORGLPOBULROOSKOO"
-        "PSBUEFDEEEWEUOUEOOOOSERPUOBOOOBOFLGUGRLOOOBUFOOFEUFORSKKWKLGLGGKROGBGLKSLOOFOFOFLUUEFFEOFEPF",
+#if MELODEE_HOST_ENGINES
+    HOST_CATS                                           /* (host builds: the built-in engines' makers' categories) */
 #endif
 };
+#pragma clang diagnostic pop
 static uint32_t cat_of_engine(uint32_t e) { return pads_eng(e) ? CAT_DRUM : e == 11u ? CAT_FX : CAT_OTHER; }   /* (a synth with
                                                   * pads: its kits) */
 static uint32_t preset_cat(uint32_t e, uint32_t k)           /* factory preset k of engine e */

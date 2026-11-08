@@ -68,19 +68,9 @@ static const menu_credit_t MENU_CREDITS[] = {
     {"MIT", MC_TEXT},
     {"https://github.com/electro-smith/DaisySP", MC_URL},
     {"", MC_TEXT},
-    {"uPD933 / NATIVE CZ", MC_TITLE},
-    {"Devin Acker / BSD-3-Clause", MC_TEXT},
-    {"https://github.com/mamedev/mame", MC_URL},
-    {"", MC_TEXT},
-    {"DEXED + MSFA / FM6 PORT", MC_TITLE},
-    {"Pascal Gauthier, Google Inc.", MC_TEXT},
-    {"msfa: Apache-2.0, Dexed: GPL-3.0", MC_TEXT},
-    {"https://github.com/asb2m10/dexed", MC_URL},
-    {"", MC_TEXT},
-    {"RESID / SID MODEL", MC_TITLE},
-    {"Dag Lem / GPL-2.0-or-later", MC_TEXT},
-    {"https://github.com/libsidplayfp/resid", MC_URL},
-    {"", MC_TEXT},
+#define SHIP_CREDIT(t, k) {t, k},
+    SHIP_CREDITS(SHIP_CREDIT)          /* (the shipped synths' code: ../modules/shipped.h) */
+#undef SHIP_CREDIT
     {"RINGS / PHYS PORT", MC_TITLE},
     {"Emilie Gillet / MIT", MC_TEXT},
     {"https://github.com/pichenettes/eurorack", MC_URL},
@@ -159,7 +149,7 @@ static int32_t menu_document(int32_t y, int draw)
         else y = menu_text(text, y, c->kind == MC_TITLE ? T_THEME : c->kind == MC_URL ? T_MID : T_TEXT, draw);
     }
     y = menu_text("LICENSES + SOURCE", y + 12, T_THEME, draw);
-    y = menu_text("DRUM + own samples: GPL-3.0-only", y, T_TEXT, draw);
+    y = menu_text(SHIP_LICENCE, y, T_TEXT, draw);
     y = menu_text("Fonts and icons: their licences travel with the source and the release files.", y, T_TEXT, draw);
     y = menu_text("NO WARRANTY", y, T_TEXT, draw);
     y = menu_text("Full notices in source:", y + 8, T_TEXT, draw);

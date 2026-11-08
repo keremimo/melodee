@@ -5,8 +5,11 @@
  * are built in write their chunks at first use from the same descriptions (MELODEE_SCH_BUILTIN) */
 #pragma once
 #ifndef MELODEE_SCH_BUILTIN
-#define MELODEE_SCH_BUILTIN (MELODEE_P5_BUILTIN || MELODEE_CZ_BUILTIN || MELODEE_FM6_BUILTIN || MELODEE_DRUM_BUILTIN || \
-                             MELODEE_SID_BUILTIN || MELODEE_LEGACY_EXTRAS)
+#if MELODEE_HOST_ENGINES
+#define MELODEE_SCH_BUILTIN HOST_SCHEMAS
+#else
+#define MELODEE_SCH_BUILTIN MELODEE_LEGACY_EXTRAS
+#endif
 #endif
 #if !MELODEE_SCH_BUILTIN
 #define MOD_SCH_NO_WRITER

@@ -64,7 +64,7 @@ static int native_update(uint32_t e,uint32_t k,const uint8_t *raw)
     if(!native_used(e,k))return 1;
     up_rec_t old=*up_rec(k),r;int16_t values[P_COUNT];up_values(&old,values);
     shared_native_record(&r,e,raw);r.np=sizeof UP_NATIVE_PARAMS;
-    for(uint32_t i=0;i<r.np;i++)r.cz_extra[i]=(uint8_t)(values[UP_NATIVE_PARAMS[i]]+64);
+    for(uint32_t i=0;i<r.np;i++)r.tone_extra[i]=(uint8_t)(values[UP_NATIVE_PARAMS[i]]+64);
     memcpy(r.name,old.name,12u);return up_valid(&r)?up_put(k,&r):1;
 }
 static int native_load(uint32_t e,uint32_t k,uint32_t tr){return native_used(e,k)?up_load_to(k,tr):1;}
@@ -135,13 +135,13 @@ static uint32_t shared_p5_slot(uint32_t slot)
 static int up_decode_bank(uint32_t b,int n)
 {
     if(n==(int)sizeof(up_disk_bank_t) && up_cache.magic==UP_DISK_MAGIC && up_cache.rsize==sizeof(up_disk_rec_t) && up_cache.nslot==UP_PER_BANK){
-        for(uint32_t j=UP_PER_BANK;j--;){up_disk_rec_t r;memcpy(&r,(uint8_t *)&up_cache+8u+j*sizeof r,sizeof r);memset(&up_cache.r[j],0,sizeof(up_rec_t));memcpy(&up_cache.r[j],r.head,160u);memcpy(up_cache.r[j].cz_extra,r.extra,46u);}
+        for(uint32_t j=UP_PER_BANK;j--;){up_disk_rec_t r;memcpy(&r,(uint8_t *)&up_cache+8u+j*sizeof r,sizeof r);memset(&up_cache.r[j],0,sizeof(up_rec_t));memcpy(&up_cache.r[j],r.head,160u);memcpy(up_cache.r[j].tone_extra,r.extra,46u);}
     }
 #if MELODEE_LEGACY_STORE
     else if(b<4u && ((b<2u && n==3816 && up_cache.magic==UP_BANK_MAGIC && up_cache.rsize==238u && up_cache.nslot==16u) || (b>=2u && n==3808))){
         if(b>=2u)for(uint32_t j=16u;j--;){up_rec_t r;memcpy(&r,(uint8_t *)&up_cache+j*sizeof r,sizeof r);up_cache.r[j]=r;}
         for(uint32_t j=0;j<16u;j++)if(up_valid(&up_cache.r[j])){
-            uint32_t k=b*16u+j;int star=b<4u?((k<32u?favorites.user:favorites_user_hi)>>(k%32u)&1u):b<8u?((favorites.factory[ENGI_FM6][(24u+(b-4u)*16u+j)/8u]>>((24u+(b-4u)*16u+j)%8u))&1u):((favorites.factory[ENGI_CZ][(65u+(b-8u)*16u+j)/8u]>>((65u+(b-8u)*16u+j)%8u))&1u);
+            uint32_t k=b*16u+j;int star=b<4u?((k<32u?favorites.user:favorites_user_hi)>>(k%32u)&1u):b<8u?((favorites.factory[ship_store(MOD_SCH_STORE_VOICE)][(24u+(b-4u)*16u+j)/8u]>>((24u+(b-4u)*16u+j)%8u))&1u):((favorites.factory[ship_store(MOD_SCH_STORE_TONE)][(65u+(b-8u)*16u+j)/8u]>>((65u+(b-8u)*16u+j)%8u))&1u);
             if(star)up_cache.r[j].used|=UP_STAR;
         }
         memset(&up_cache.r[16],0,2u*sizeof(up_rec_t));
@@ -151,23 +151,23 @@ static int up_decode_bank(uint32_t b,int n)
         up_migrate|=1u<<b;
     }else if(b>=4u && b<8u && n==(int)sizeof(native_fm_t) && native_fm_valid((const native_fm_t *)&up_cache)){
         uint32_t used=((const native_fm_t *)&up_cache)->used;
-        for(uint32_t j=16u;j--;){uint8_t raw[MOD_SCH_VOICE_BYTES];memcpy(raw,((const native_fm_t *)&up_cache)->tone[j],sizeof raw);if(used>>j&1u)shared_native_record(&up_cache.r[j],ENGI_FM6,raw);else memset(&up_cache.r[j],0,sizeof(up_rec_t));}
+        for(uint32_t j=16u;j--;){uint8_t raw[MOD_SCH_VOICE_BYTES];memcpy(raw,((const native_fm_t *)&up_cache)->tone[j],sizeof raw);if(used>>j&1u)shared_native_record(&up_cache.r[j],ship_store(MOD_SCH_STORE_VOICE),raw);else memset(&up_cache.r[j],0,sizeof(up_rec_t));}
         for(uint32_t j=0;j<16u;j++)if(up_valid(&up_cache.r[j])){
-            uint32_t k=b*16u+j;int star=b<4u?((k<32u?favorites.user:favorites_user_hi)>>(k%32u)&1u):b<8u?((favorites.factory[ENGI_FM6][(24u+(b-4u)*16u+j)/8u]>>((24u+(b-4u)*16u+j)%8u))&1u):((favorites.factory[ENGI_CZ][(65u+(b-8u)*16u+j)/8u]>>((65u+(b-8u)*16u+j)%8u))&1u);
+            uint32_t k=b*16u+j;int star=b<4u?((k<32u?favorites.user:favorites_user_hi)>>(k%32u)&1u):b<8u?((favorites.factory[ship_store(MOD_SCH_STORE_VOICE)][(24u+(b-4u)*16u+j)/8u]>>((24u+(b-4u)*16u+j)%8u))&1u):((favorites.factory[ship_store(MOD_SCH_STORE_TONE)][(65u+(b-8u)*16u+j)/8u]>>((65u+(b-8u)*16u+j)%8u))&1u);
             if(star)up_cache.r[j].used|=UP_STAR;
         }
         memset(&up_cache.r[16],0,2u*sizeof(up_rec_t));up_migrate|=1u<<b;
     }else if(b>=8u && b<16u && n==(int)sizeof(tone_bank_t) && tone_bank_valid((const tone_bank_t *)&up_cache)){
         uint32_t used=((const tone_bank_t *)&up_cache)->used;
-        for(uint32_t j=16u;j--;){uint8_t raw[MOD_SCH_TONE_BYTES];memcpy(raw,((const tone_bank_t *)&up_cache)->tone[j],sizeof raw);if(used>>j&1u)shared_native_record(&up_cache.r[j],ENGI_CZ,raw);else memset(&up_cache.r[j],0,sizeof(up_rec_t));}
+        for(uint32_t j=16u;j--;){uint8_t raw[MOD_SCH_TONE_BYTES];memcpy(raw,((const tone_bank_t *)&up_cache)->tone[j],sizeof raw);if(used>>j&1u)shared_native_record(&up_cache.r[j],ship_store(MOD_SCH_STORE_TONE),raw);else memset(&up_cache.r[j],0,sizeof(up_rec_t));}
         for(uint32_t j=0;j<16u;j++)if(up_valid(&up_cache.r[j])){
-            uint32_t k=b*16u+j;int star=b<4u?((k<32u?favorites.user:favorites_user_hi)>>(k%32u)&1u):b<8u?((favorites.factory[ENGI_FM6][(24u+(b-4u)*16u+j)/8u]>>((24u+(b-4u)*16u+j)%8u))&1u):((favorites.factory[ENGI_CZ][(65u+(b-8u)*16u+j)/8u]>>((65u+(b-8u)*16u+j)%8u))&1u);
+            uint32_t k=b*16u+j;int star=b<4u?((k<32u?favorites.user:favorites_user_hi)>>(k%32u)&1u):b<8u?((favorites.factory[ship_store(MOD_SCH_STORE_VOICE)][(24u+(b-4u)*16u+j)/8u]>>((24u+(b-4u)*16u+j)%8u))&1u):((favorites.factory[ship_store(MOD_SCH_STORE_TONE)][(65u+(b-8u)*16u+j)/8u]>>((65u+(b-8u)*16u+j)%8u))&1u);
             if(star)up_cache.r[j].used|=UP_STAR;
         }
         memset(&up_cache.r[16],0,2u*sizeof(up_rec_t));up_migrate|=1u<<b;
     }else if(b>=16u && b<21u && n==(int)sizeof(program_bank_t) && program_bank_valid((const program_bank_t *)&up_cache,b-16u)){
         uint32_t used=((const program_bank_t *)&up_cache)->used,stars=((const program_bank_t *)&up_cache)->favorites;
-        for(uint32_t j=18u;j--;){uint8_t raw[MOD_SCH_PROGRAM_BYTES];memcpy(raw,((const program_bank_t *)&up_cache)->patch[j],sizeof raw);if(used>>j&1u)shared_native_record(&up_cache.r[j],ENGI_PROPHET,raw);else memset(&up_cache.r[j],0,sizeof(up_rec_t));}
+        for(uint32_t j=18u;j--;){uint8_t raw[MOD_SCH_PROGRAM_BYTES];memcpy(raw,((const program_bank_t *)&up_cache)->patch[j],sizeof raw);if(used>>j&1u)shared_native_record(&up_cache.r[j],ship_store(MOD_SCH_STORE_PROGRAM),raw);else memset(&up_cache.r[j],0,sizeof(up_rec_t));}
         for(uint32_t j=0;j<18u;j++)if((used&stars)>>j&1u)up_cache.r[j].used|=UP_STAR;
         up_migrate|=1u<<b;
     }
@@ -245,13 +245,13 @@ static __attribute__((noinline)) int shared_repair_bank(uint32_t b)
      * programs. Embed their sidecars before replacing its source. */
     if (legacy && b < 4u) for (uint32_t j = 0; j < 16u; j++) {
         up_rec_t *r = &bank.r[j];
-        if (!up_valid(r) || r->engine != ENGI_FM6 || up_native(r)) continue;
+        if (!up_valid(r) || r->engine != ship_store(MOD_SCH_STORE_VOICE) || up_native(r)) continue;
         up_rec_t kept = *r; int16_t values[P_COUNT]; up_values(&kept, values);
         uint8_t raw[MOD_SCH_VOICE_BYTES];
         shared_voice_sidecar(b*16u+j, raw);
-        shared_native_record(r, ENGI_FM6, raw); memcpy(r->name, kept.name, 12u); r->used |= kept.used & UP_STAR;
+        shared_native_record(r, ship_store(MOD_SCH_STORE_VOICE), raw); memcpy(r->name, kept.name, 12u); r->used |= kept.used & UP_STAR;
         r->np = sizeof UP_NATIVE_PARAMS;
-        for (uint32_t i = 0; i < sizeof UP_NATIVE_PARAMS; i++) r->cz_extra[i] = (uint8_t)(values[UP_NATIVE_PARAMS[i]] + 64);
+        for (uint32_t i = 0; i < sizeof UP_NATIVE_PARAMS; i++) r->tone_extra[i] = (uint8_t)(values[UP_NATIVE_PARAMS[i]] + 64);
     }
 #endif
     bank.magic = UP_BANK_MAGIC; bank.rsize = sizeof(up_rec_t); bank.nslot = UP_PER_BANK;
@@ -269,11 +269,11 @@ static __attribute__((noinline)) int shared_migrate_general(uint32_t b)
 {
     up_bank_t bank=*up_cache_bank(b);
     if(!(up_migrate>>b&1u))return 0;
-    for(uint32_t j=0;j<16u;j++)if(up_valid(&bank.r[j]) && bank.r[j].engine==ENGI_FM6 && !up_native(&bank.r[j])){
+    for(uint32_t j=0;j<16u;j++)if(up_valid(&bank.r[j]) && bank.r[j].engine==ship_store(MOD_SCH_STORE_VOICE) && !up_native(&bank.r[j])){
         int16_t values[P_COUNT];up_values(&bank.r[j],values);
         uint8_t raw[MOD_SCH_VOICE_BYTES];shared_voice_sidecar(b*16u+j,raw);
-        uint8_t star=bank.r[j].used&UP_STAR;char name[12];memcpy(name,bank.r[j].name,12u);shared_native_record(&bank.r[j],ENGI_FM6,raw);memcpy(bank.r[j].name,name,12u);bank.r[j].used|=star;
-        bank.r[j].np=sizeof UP_NATIVE_PARAMS;for(uint32_t i=0;i<sizeof UP_NATIVE_PARAMS;i++)bank.r[j].cz_extra[i]=(uint8_t)(values[UP_NATIVE_PARAMS[i]]+64);
+        uint8_t star=bank.r[j].used&UP_STAR;char name[12];memcpy(name,bank.r[j].name,12u);shared_native_record(&bank.r[j],ship_store(MOD_SCH_STORE_VOICE),raw);memcpy(bank.r[j].name,name,12u);bank.r[j].used|=star;
+        bank.r[j].np=sizeof UP_NATIVE_PARAMS;for(uint32_t i=0;i<sizeof UP_NATIVE_PARAMS;i++)bank.r[j].tone_extra[i]=(uint8_t)(values[UP_NATIVE_PARAMS[i]]+64);
     }
     *up_cache_bank(b)=bank;
     if(up_save_bank(b))return -1;
@@ -285,12 +285,12 @@ static __attribute__((noinline)) int shared_migrate_prophet(uint32_t b)
     program_bank_t old;int n=st_load(up_obj(b),&old,sizeof old);
     if(n==(int)sizeof old && program_bank_valid(&old,b-16u)){
         if(b==16u && (old.favorites&0x80000000u)){
-            if(!favorite_has(ENGI_PROPHET,0))favorite_set(ENGI_PROPHET,0,1);
+            if(!favorite_has(ship_store(MOD_SCH_STORE_PROGRAM),0))favorite_set(ship_store(MOD_SCH_STORE_PROGRAM),0,1);
             if(shared_preferences_save())return -1;
         }
         for(uint32_t j=18u;j<26u && (b-16u)*26u+j<128u;j++)if(old.used>>j&1u){
             uint32_t k=shared_p5_slot((b-16u)*26u+j);up_rec_t r;
-            shared_native_record(&r,ENGI_PROPHET,old.patch[j]);
+            shared_native_record(&r,ship_store(MOD_SCH_STORE_PROGRAM),old.patch[j]);
             if(old.favorites>>j&1u)r.used|=UP_STAR;
             /* Refuse a foreign/unknown occupied destination. An interrupted
              * conversion may already have committed this exact record. */

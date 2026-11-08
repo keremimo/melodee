@@ -41,6 +41,7 @@ int memcmp(const void *a, const void *b, size_t n);
 #include "mod_abi3.h"
 #include "melodee_tables.h"
 #include "core.h"
+#include "../shipped.h"                       /* (the shipped synths' engine numbers) */
 #include "dsp.c"
 #include "audio_batch.h"                         /* (the firmware's queue for CPU1: the host's) */
 #include "audio_worker.h"                        /* (CPU1's pairing: the host's) */

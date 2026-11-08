@@ -19,7 +19,7 @@
 #define drum909_get mod_drum909_get
 #define drum909_active mod_drum909_active
 #endif
-#include "eng_sid.c"                             /* (KIT SID's chip: the module's own copy) */
+#include "../sid/eng_sid.c"                             /* (KIT SID's chip: the module's own copy) */
 #include "eng_drum.c"
 
 /* the part's working memory for SID's chip (eng_drum.c has its kits') */

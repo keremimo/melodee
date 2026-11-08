@@ -230,7 +230,7 @@ static int compact_save_parity(void)
         original.r[i].used=(uint8_t)(i%3u?UP_USED:0x33u);
         up_meta[i].favorite=(uint8_t)(i&1u);
         memcpy(disk.r[i].head,&original.r[i],160u);
-        memcpy(disk.r[i].extra,original.r[i].cz_extra,46u);
+        memcpy(disk.r[i].extra,original.r[i].tone_extra,46u);
         if((disk.r[i].head[0]&~UP_STAR)==UP_USED)
             disk.r[i].head[0]=(uint8_t)(UP_USED|(i&1u?UP_STAR:0));
     }

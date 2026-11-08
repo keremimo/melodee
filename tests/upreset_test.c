@@ -66,7 +66,8 @@ static int patch_stored_ok(uint32_t tag, const uint8_t *p)
         if (c[0] < -24 || c[0] > 24 || c[1] < -64 || c[2] < -64 || c[3] < 0) return 0;
     return 1;
 }
-#include "../firmware/src/cz_patch.h"                /* (a CZ-1 tone record's check: the stored layout's) */
+#include "../firmware/modules/cz/cz_patch.h"                /* (a CZ-1 tone record's check: the stored layout's) */
+#define UP_HOST_TONE_OK cz_patch_valid                       /* (upreset.c UP_HOST: the TONE store's check) */
 #include "../firmware/src/upreset.c"
 
 static int up_pat_empty(const up_rec_t *r)          /* (the record's 16 steps: no note) */

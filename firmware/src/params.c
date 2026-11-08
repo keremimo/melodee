@@ -101,9 +101,20 @@ static int16_t boot_cell;
 static const char *const N_MSRC[] = {"OFF", "LFO", "ENV", "VEL", "KEY", "RAND", "MODW", "AT", "EXPR", "S&H", "SLEW"};
 static const char *const N_MDST[] = {"OFF", "PITCH", "CUT", "SHP", "AMP", "PAN", "", "", "", "", "RATE",
                                      "VIB", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "DEPTH"};
-static const char *const N_ENGNAME[] = {"-", "-", MELODEE_LEGACY_EXTRAS ? "PHASE" : "-", "SID", "-", MELODEE_LEGACY_EXTRAS ? "VOICE" : "-", MELODEE_LEGACY_EXTRAS ? "TRIO" : "-", MELODEE_LEGACY_EXTRAS ? "WHEEL" : "-", "-", MELODEE_LEGACY_EXTRAS ? "PHYS" : "-",
-                                             "DRUM", MELODEE_LEGACY_EXTRAS ? "NOISE" : "-", "FM6", MELODEE_SLICE ? "SLICE" : "-", "-", "CZ-1", "-", "-", "-", "PROPHET", "-", "MIDI Track",
-                                             "-", "-", "-", "-", "-", "-", "-", "-"};   /* 22..: synth modules (INFO names them) */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
+#define SHIP_NAME(n, u, nm, tg, wc, st, ns, f) [n] = (f) & SHIP_F_MODS ? nm : "-",
+static const char *const N_ENGNAME[] = {[0 ... NENGINES - 1] = "-",   /* (retired and reserved numbers; 22..: synth
+                                                                       * modules, INFO names them) */
+    SHIP_ROWS(SHIP_NAME)                                               /* the shipped synths (../modules/shipped.h) */
+    [5] = MELODEE_LEGACY_EXTRAS ? "VOICE" : "-", [ENGI_PHYS] = MELODEE_LEGACY_EXTRAS ? "PHYS" : "-",
+    [11] = MELODEE_LEGACY_EXTRAS ? "NOISE" : "-", [ENGI_SLICE] = MELODEE_SLICE ? "SLICE" : "-", [ENGI_MIDI] = "MIDI Track",
+#if MELODEE_HOST_ENGINES
+    HOST_ENGNAMES                                                      /* (reference builds: PHASE TRIO WHEEL) */
+#endif
+};
+#undef SHIP_NAME
+#pragma clang diagnostic pop
 _Static_assert(sizeof N_ENGNAME / sizeof *N_ENGNAME == NENGINES, "G_ENGSEL: one name per engine number");
 
 #define PD(l, f, mn, mx, df) {l, f, mn, mx, df, 0, 0}
@@ -282,11 +293,11 @@ static const param_desc_t *global_desc(uint32_t id)
 static uint32_t scale_count(const track_t *t);          /* seq.c */
 /* PHASE's split envelopes (engine 2, eng_phase.c): the retired FM4 parameter storage. The
  * ids, ranges and defaults remain compatible with existing projects/presets. */
-static const param_desc_t CZ_ED[20] = {
-#define CZ_ROW(n) {"A" n, F_TIME, 0,127,0,0,0}, {"D" n, F_TIME,0,127,0,0,0}, \
+static const param_desc_t PH_ED[20] = {
+#define PH_ROW(n) {"A" n, F_TIME, 0,127,0,0,0}, {"D" n, F_TIME,0,127,0,0,0}, \
     {"S" n,F_PCT,0,127,127,0,0}, {"R" n,F_TIME,0,127,0,0,0}, {"LV" n,F_PCT,0,127,127,0,0}
-    CZ_ROW("W1"), CZ_ROW("W2"), CZ_ROW("A2"), CZ_ROW("P"),
-#undef CZ_ROW
+    PH_ROW("W1"), PH_ROW("W2"), PH_ROW("A2"), PH_ROW("P"),
+#undef PH_ROW
 };
 static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 {
@@ -319,7 +330,7 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
         return &fx_desc;
     }
     if (t->eng_req == 2u && id >= P_FM1_ATK && id <= P_FM4_LEVEL)
-        return &CZ_ED[id - P_FM1_ATK];
+        return &PH_ED[id - P_FM1_ATK];
     if (id == P_MPCDEG) {                             /* a degree of the track's scale */
         static param_desc_t degree;
         degree = TP[P_MPCDEG];
@@ -339,7 +350,7 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 static const param_desc_t *param_desc_of(uint32_t e, uint32_t id)
 {
     if (e == 2u && id >= P_FM1_ATK && id <= P_FM4_LEVEL)
-        return &CZ_ED[id - P_FM1_ATK];
+        return &PH_ED[id - P_FM1_ATK];
     return id >= P_E0 ? &ENGINES[e]->edit[id - P_E0] : &TP[id];
 }
 
@@ -594,7 +605,7 @@ static const page_t PAGE_TAB[] = {
     {"DCW2 ENV", FAM_EDIT, SC_CZ, GR_NONE, {P_FM2_ATK, P_FM2_DEC, P_FM2_SUS, P_FM2_REL}},
     {"DCA2 ENV", FAM_EDIT, SC_CZ, GR_NONE, {P_FM3_ATK, P_FM3_DEC, P_FM3_SUS, P_FM3_REL}},
     {"DCO ENV", FAM_EDIT, SC_CZ, GR_NONE, {P_FM4_ATK, P_FM4_DEC, P_FM4_SUS, P_FM4_REL}},
-    {"CZ LEVEL", FAM_EDIT, SC_CZ, GR_NONE, {P_FM1_LEVEL, P_FM2_LEVEL, P_FM3_LEVEL, P_FM4_LEVEL}},
+    {"PD LEVEL", FAM_EDIT, SC_CZ, GR_NONE, {P_FM1_LEVEL, P_FM2_LEVEL, P_FM3_LEVEL, P_FM4_LEVEL}},
     {"OP1 ENV", FAM_EDIT, SC_TRACK, GR_ADSR, {P_FM1_ATK, P_FM1_DEC, P_FM1_SUS, P_FM1_REL}},
     {"OP2 ENV", FAM_EDIT, SC_TRACK, GR_ADSR, {P_FM2_ATK, P_FM2_DEC, P_FM2_SUS, P_FM2_REL}},
     {"OP3 ENV", FAM_EDIT, SC_TRACK, GR_ADSR, {P_FM3_ATK, P_FM3_DEC, P_FM3_SUS, P_FM3_REL}},
@@ -703,8 +714,18 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
         return track_desc(TSEL, P_RECQ);
     }
     if (pg->scope == SC_GLOBAL && id >= G_WP5 && id <= G_SAFETY) {   /* GLO > WEIGHTS: the device's settings */
-        static const param_desc_t weights[] = {PE("P5", N_VPOINTS, 0), PE("CZ-1", N_VPOINTS, 0), PE("FM6", N_VPOINTS, 0),
-            PE("SID", N_VPOINTS, 0), PE("DRUM", N_VPOINTS, 0), PE("GUARD", N_ONOFF, 0)};
+        static param_desc_t weights[VOICE_KINDS + 1u];    /* a cost class's row: its synth's tag (the manifest's) */
+        if (!weights[VOICE_KINDS].label) {
+            static const param_desc_t guard = PE("GUARD", N_ONOFF, 0);
+            for (uint32_t c = 0; c < VOICE_KINDS; c++) {
+                static const param_desc_t row = PE("-", N_VPOINTS, 0);
+                weights[c] = row;
+                for (uint32_t k = 0; k < NSHIP; k++)
+                    if (SHIP[k].wclass == c + 1u)
+                        weights[c].label = SHIP[k].tag;
+            }
+            weights[VOICE_KINDS] = guard;
+        }
         *valp = id == G_SAFETY ? &settings_safety : &settings_vpoints[id - G_WP5];
         return &weights[id - G_WP5];
     }

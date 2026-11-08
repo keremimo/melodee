@@ -12,7 +12,7 @@
 #define SEC_TAB_H 26                                    /* the tabs: rows 30 .. 55 (a pill 24 tall at 31) */
 static const struct { const char *prefix, *name; } SEC_RULE[] = {   /* a firmware page's section by its title (first
                                                                      * match; a synth's page: its schema's) */
-    {"CZ ", "Line"}, {"DCW", "Env"}, {"DCA", "Env"}, {"DCO", "Env"}, {"CZ LEVEL", "Env"}, {"OP", "Env"},
+    {"PD ", "Line"}, {"DCW", "Env"}, {"DCA", "Env"}, {"DCO", "Env"}, {"PD LEVEL", "Env"}, {"OP", "Env"},
     {"LANES", "Lanes"}, {"VOICE", "Voice"}, {"EDIT", "Sound"}};   /* (a kit's pages: its pads block's section) */
 static struct {
     uint8_t n, eng, e7, ok, gen;
@@ -153,7 +153,7 @@ static void sec_turn(int32_t s)                         /* PRESETS on an EDIT pa
  * R1-4" -> "R1-4": a synth's page, its schema's short name; EDIT 1 / 2: the engine's page titles, "OSC") */
 static void sec_chip(uint32_t i, char *b, uint32_t n)
 {
-    static const char *const STRIP[] = {"CZ "};  /* (PHASE's CZ LEVEL) */
+    static const char *const STRIP[] = {"PD "};  /* (PHASE's PD LEVEL) */
     const char *t = PG(i).title;
     uint32_t k;
     sch_page_t g;

@@ -19,11 +19,11 @@ SRC = _ROOT / "firmware" / \
     "src"   # either layout
 # the UI, the stores, the editor and the console: main loop only, never called by sound code
 SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.c", "ui_menu.c", "ui_input.c",
-              "scale_picker.c", "seq_edit.c", "seq_notes.c", "seq_undo.c", "prophet_patch.c", "native_presets.c", "note_tools.c", "sysex_library.c", "sysex_route.c", "editor_synth.c", "ui_browser.c", "ui_designer.c", "ui_designer_input.c", "ui_layer.c", "ui_list.c", "ui_motion.c", "ui_name.c",
+              "scale_picker.c", "seq_edit.c", "seq_notes.c", "seq_undo.c", "../modules/prophet/prophet_patch.c", "native_presets.c", "note_tools.c", "sysex_library.c", "sysex_route.c", "editor_synth.c", "ui_browser.c", "ui_designer.c", "ui_designer_input.c", "ui_layer.c", "ui_list.c", "ui_motion.c", "ui_name.c",
               "ui_boot.c", "ui_view.c", "ui_midi_knobs.c", "editor_library.c", "shared_presets.c", "tracks.c",
               "ui_new.c", "ui_pages.c", "ui_patterns.c", "ui_popup.c", "ui_scales.c", "ui_sections.c", "ui_slots.c", "ui_stage.c",
               "storage.c", "upreset.c", "project.c", "project_stream.c", "settings_persist.c",
-              "editor.c", "cz_patch.h", "pattern_store.c", "editor_preferences.c", "editor_backup.c", "console.c",
+              "editor.c", "../modules/cz/cz_patch.h", "pattern_store.c", "editor_preferences.c", "editor_backup.c", "console.c",
               # main-loop only too: the boot and the main loop (main.c, not its ISR), parameters and their text, the
               # browser, the screen saver, calibration, the CZ / Prophet editing helpers, the update entry
               "main.c", "smk_controls.h", "boot_lzma.h", "params.c", "browse.c", "screen.c", "panel.c", "ota.c", "favorites.c",

@@ -184,7 +184,7 @@ static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
     const up_bank_t *h=(const up_bank_t *)raw;
     if(len==sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && h->rsize==sizeof(up_disk_rec_t) && h->nslot==UP_PER_BANK){
         const up_disk_bank_t *d=(const up_disk_bank_t *)raw;
-        for(uint32_t j=0;j<UP_PER_BANK;j++){up_rec_t r;memset(&r,0,sizeof r);memcpy(&r,d->r[j].head,160u);memcpy(r.cz_extra,d->r[j].extra,46u);
+        for(uint32_t j=0;j<UP_PER_BANK;j++){up_rec_t r;memset(&r,0,sizeof r);memcpy(&r,d->r[j].head,160u);memcpy(r.tone_extra,d->r[j].extra,46u);
             if(r.used && (r.ver==UP_VER || r.ver==UP_VER_GRID || r.ver==UP_VER_CZ || r.ver==UP_VER_KIT || r.ver==UP_VER_KIT_GRID || r.ver==UP_VER_FM || r.ver==UP_VER_P5 || r.ver==UP_VER_NATIVE_CZ) && !up_valid(&r))return 0;
         }
         return 1;

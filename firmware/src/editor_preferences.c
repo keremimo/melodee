@@ -100,7 +100,10 @@ static uint32_t ed_ui_set(const uint8_t *a, uint32_t n)
 /* a favourite's kind (FAV_GET / FAV_SET): an engine, the shared library (USER_GENERAL) or a native pool */
 static uint32_t ed_fav_native(uint32_t kind)        /* a native pool's engine, else NENGINES */
 {
-    return kind == USER_NATIVE_P5 ? ENGI_PROPHET : kind == USER_NATIVE_FM ? ENGI_FM6 : kind == USER_NATIVE_CZ ? ENGI_CZ : NENGINES;
+    for (uint32_t k = 0; k < NSHIP; k++)                /* (the manifest: the synth whose 1.x namespace it is) */
+        if (kind != USER_GENERAL && SHIP[k].ns == kind)
+            return SHIP[k].num;
+    return NENGINES;
 }
 static uint32_t ed_fav_limit(uint32_t kind)
 {
@@ -145,7 +148,7 @@ static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             if (preset >= 0 && (uint32_t)preset < limit &&
                 (a[0] != USER_GENERAL || !a[3] || up_used((uint32_t)preset)) &&
                 (e >= NENGINES || !a[3] || native_used(e, (uint32_t)preset))) {
-                int p5=a[0]==ENGI_PROPHET || a[0]==USER_NATIVE_P5;
+                int p5=a[0]==ship_store(MOD_SCH_STORE_PROGRAM) || a[0]==USER_NATIVE_P5;
                 int before=favorite_has(a[0],(uint32_t)preset);
                 int changed=favorite_set(a[0], (uint32_t)preset, a[3]);
                 if(p5 && !changed && before!=a[3]){ed_b(transport_busy()?4u:3u);ed_b(a[0]);ed_v(preset);ed_b(before);return 1;}

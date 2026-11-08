@@ -85,7 +85,7 @@ static int compact_project(void)
     {
         static uint8_t fbk[BANK_STORE_SIZE];
         bad += check("FBKK keeps the tracks' FM6 function settings", bank_pack(fbk, &before, 1) &&
-                     bank_valid(fbk, sizeof fbk) && trk[1].eng_req == ENGI_FM6 && proj_scratch.fm6_fn_ok && proj_scratch.fm6_fn[1][FN_PTIME] == 33u);
+                     bank_valid(fbk, sizeof fbk) && trk[1].eng_req == ENGI_FM6 && proj_scratch.voice_fn_ok && proj_scratch.voice_fn[1][FN_PTIME] == 33u);
     }
     proj_fn_none(&before); proj_pack(&packed,&before);
     bad += check("FUN16 round trip preserves signed values/FM params/probability/motion", proj_import(&after, &packed, sizeof packed) &&

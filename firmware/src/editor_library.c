@@ -28,8 +28,8 @@ static int ed_library_handle(uint32_t cmd,const uint8_t *a,uint32_t n)
                 else if(wire){
                     memset(p,0,sizeof p);patch_unpack(MOD_SCH_STORE_KIT,p,raw,MOD_SCH_KIT_PACKED);
                     if(!patch_stored_ok(MOD_SCH_STORE_KIT,p))rc=1;
-                    else {r.ver=UP_VER_KIT;r.np=P_COUNT;for(uint32_t j=0;j<P_COUNT;j++)up_set_value(&r,j,values[j]);memcpy(r.cz_extra,raw,46u);memcpy(r.packed+r.np,raw+46u,8u);}
-                }else {shared_native_record(&r,e,raw);r.np=defaults?0:sizeof UP_NATIVE_PARAMS;for(uint32_t j=0;j<r.np;j++)r.cz_extra[j]=(uint8_t)(values[UP_NATIVE_PARAMS[j]]+64);}
+                    else {r.ver=UP_VER_KIT;r.np=P_COUNT;for(uint32_t j=0;j<P_COUNT;j++)up_set_value(&r,j,values[j]);memcpy(r.tone_extra,raw,46u);memcpy(r.packed+r.np,raw+46u,8u);}
+                }else {shared_native_record(&r,e,raw);r.np=defaults?0:sizeof UP_NATIVE_PARAMS;for(uint32_t j=0;j<r.np;j++)r.tone_extra[j]=(uint8_t)(values[UP_NATIVE_PARAMS[j]]+64);}
             }else if(n!=end+1u || len>12u || native_limit(r.engine))rc=1;
             else {for(uint32_t j=0;j<P_COUNT;j++)up_set_value(&r,j,values[j]);}
             if(!rc){up_set_name(&r,k,name);if(up_native(&r) && !preserve_name)up_native_name(&r,name);if(!up_valid(&r))rc=1;}
