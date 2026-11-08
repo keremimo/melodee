@@ -6,6 +6,8 @@
  * cap, the panel's hints) */
 #pragma once
 #include "prophet_patch.c"
+#define P5_FACTORY_N 200u                        /* Sequential's programs: the Prophet's presets after INIT (its
+                                                  * module's file; melodee_prophet_factory.h on host builds) */
 #if MELODEE_DUAL_CORE
 #define P5_POLY 8u
 #else

@@ -913,6 +913,7 @@ static const char *const N_FM6_ALG[] = {"PAT", "1", "2", "3", "4", "5", "6", "7"
                                         "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25",
                                         "26", "27", "28", "29", "30", "31", "32", 0};
 /* {ALG, FB, MLVL, MRAT, MEG, VMOD, DTUN, unused}: neutral macros, DTUN on the pad. */
+#if !MOD_NATIVE_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
 #define FM6_PR(name, mono) {name, {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, mono}
 static const preset_t FM6_PRESETS[] = {
     {"TINE EP", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
@@ -944,6 +945,7 @@ static const preset_t FM6_PRESETS[] = {
 };
 #undef FM6_PR
 _Static_assert(NELEM(FM6_PRESETS) == FM6_NFAC + 1u, "FM6: F1..F24, then INIT VOICE");
+#endif
 
 static uint32_t fm6_pstate(const track_t *t) { (void)t; return sizeof(fm6_part_t); }   /* (its part memory) */
 /* the part's memory as it is (bytes 0: none): a voice sounds or runs on (CPU0 keeps its larger service reserve while
@@ -972,8 +974,10 @@ static const engine_t ENG_FM6 = {
         {"DTUN", F_PCT, 0, 127, 0, 0, 0},
         {"-", F_INT, 0, 0, 0, 0, 0},
     },
+#if !MOD_NATIVE_SIDE
     .presets = FM6_PRESETS,
-    .npresets = NELEM(FM6_PRESETS),
+#endif
+    .npresets = FM6_NFAC + 1u,
     .note_on = fm6_note_on,
     .render = fm6_render,
     .knob = {P_E2, P_E3, P_E4, P_E6},

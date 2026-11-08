@@ -23,10 +23,17 @@ typedef struct {
     uint16_t version;
     uint32_t len;                                   /* the file's length (0: empty) */
     char name[MOD_NAME_MAX + 1u];
-    uint8_t npresets;                               /* (its head: the browser's list without loading it) */
+    uint8_t npresets;                               /* (its head: the browser's list without loading it; a native
+                                                     * module's: its PRST chunk's, 0 without one) */
     uint8_t abi;                                    /* MOD_ABI or MOD_ABI_NATIVE */
     uint32_t crc, key;                              /* its head's CRC and (native) layout key: what the installer
                                                      * compares with its own files (editor_module.c) */
+    uint32_t copy, xcopy, cut;                      /* where its file is (st_current's copies, the first record's
+                                                     * length: mod_open) */
+    uint32_t pst, pst_len, pst_dat;                 /* its factory presets (module_presets.h): the PRST payload's place
+                                                     * in the file, its length (0: none), its dictionary's place in it */
+    uint16_t pst_init, pst_dict, pst_ulen;          /* .. its INIT, dictionary and entry bytes */
+    uint16_t cat_at;                                /* .. their categories in mod_cat (MOD_PST_NONE: in the file) */
     const mod_desc_t *d;                            /* MS_LOADED, ABI 1: the descriptor in the block */
     const mod_native_t *nd;                         /* MS_LOADED, native: its descriptor */
 } mod_slot_t;
@@ -68,7 +75,7 @@ static const mod_imports_t MOD_IMPORTS = {
     trk, &song, &voice_was, &tuning_a4, dith, dith_f, midi_verb, drum_patch, &drum_patch_none,
     &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen, mod_part_mem, voice_scale_pitch,
     SINE, TANH_Q15, PITCH_OCT, A4_RATIO, P5_TANH,
-    cz_patch, &cz_patch_none, FM6_SIN, cz_preset_make,
+    cz_patch, &cz_patch_none, FM6_SIN,
     fm6_patch, fm6_patch_none, fm6_pgen, fm6_lgen, fm6_on, fm6_fn,
 #if MELODEE_DUAL_CORE
     &fm6_pairs,
@@ -87,7 +94,7 @@ static const mod_imports_t MOD_IMPORTS = {
     0,
 #endif
     FM6_MKI_LOG, FM6_MKI_EXP, FM6_OPL_LOG, FM6_OPL_EXP, A4_LOG,
-    p5_patch, p5_ready, p5_preset_make, p5_update_bend,
+    p5_patch, p5_ready, p5_update_bend,
 };
 #ifdef FM1_IRQ_TARGET
 _Static_assert(sizeof(mod_native_t) == 28u && MOD_NHEAD == sizeof(mod_file_t) + 4u, "tools/mod_build.py ABI_NATIVE");

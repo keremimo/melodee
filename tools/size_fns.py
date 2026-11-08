@@ -36,7 +36,9 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               # the take's encoder, stays at -Os: its speed is the wait on "Saving")
               "kit_store.c", "kit_take.c", "kit_rec_ui.c",
               # the synth modules' loader, slots, editor command and registration (their audio callbacks: eng_module.c, -Os)
-              "module_store.c", "editor_module.c", "eng_module_main.c"]
+              "module_store.c", "editor_module.c", "eng_module_main.c",
+              # the factory presets: fetched, named, a pick's patch put on its part (a module's: read from its file)
+              "presets.c"]
 DEF = re.compile(
     r"^(?:static|void|int|uint\w*|int\w*|const)\b[^;=(]*?\b([A-Za-z_]\w*)\s*\(", re.M)
 # Stopped note transforms are infrequent main-loop work.

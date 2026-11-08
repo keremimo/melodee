@@ -32,5 +32,5 @@ static drk_part_t *drk_part(uint32_t part) { return mod_part_mem(part, sizeof(dr
 #endif
 
 MOD_NATIVE_EXPORT(mod_native_drum) = {
-    MOD_NATIVE_HEAD, .engine = ENGI_DRUM, .name = "DRUM", .npresets = NELEM(DRUM_PRESETS), .eng = &ENG_DRUM,
+    MOD_NATIVE_HEAD, .engine = ENGI_DRUM, .name = "DRUM", .npresets = DRUM_NPRESETS, .eng = &ENG_DRUM,
 };

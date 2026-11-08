@@ -97,7 +97,7 @@ static void browser_list(uint32_t cur, uint32_t total)
                     hc = T_KNOB(eng_rank(src_engine(src, k)));
                     entry_label(src, k, tag, nm);
                     if (src == ENGI_PROPHET)                /* (the Prophet's own name, whole) */
-                        p5_preset_name(k, nm, sizeof nm);
+                        eng_preset_name(src, k, nm, sizeof nm);
                     if (!r) {                               /* the card: the name, its engine, its star */
                         uint16_t bg = out ? T_SURF : ux_mix(T_BG, hc, 18);
                         uint32_t e = src_engine(src, k);

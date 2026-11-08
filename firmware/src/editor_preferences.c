@@ -105,7 +105,7 @@ static uint32_t ed_fav_native(uint32_t kind)        /* a native pool's engine, e
 static uint32_t ed_fav_limit(uint32_t kind)
 {
     uint32_t e = ed_fav_native(kind);
-    return e < NENGINES ? native_limit(e) : kind == USER_GENERAL ? UP_SLOTS : ENGINES[kind]->npresets;
+    return e < NENGINES ? native_limit(e) : kind == USER_GENERAL ? UP_SLOTS : eng_npresets(kind);
 }
 #endif
 static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)

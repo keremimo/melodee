@@ -12,7 +12,8 @@
  *
  * File: mod_file_t, then `image` bytes (code, constants, initialised data; offset 0 = the block's first byte), then
  * `nrel` 32-bit offsets into the image (each one: an unaligned little-endian word that gets the block's address
- * added). `bss` zero bytes follow the image in RAM. `crc` = CRC-32 (st_crc32) of every byte after the header.
+ * added), then the chunks if flags says so (module_presets.h: the factory presets). `bss` zero bytes follow the image
+ * in RAM. `crc` = CRC-32 (st_crc32) of every byte after the header.
  *
  * Calls: note_on and render from the audio interrupt (one part at a time, never two at once), block once per part
  * and audio block before its voices. Nothing may block, allocate or touch hardware. The part's memory (part_bytes,
@@ -32,14 +33,14 @@ typedef struct {                                 /* the file's head (52 bytes) *
     uint32_t magic;                              /* MOD_FILE_MAGIC */
     uint16_t abi;                                /* MOD_ABI */
     uint8_t engine;                              /* the engine number it plays as */
-    uint8_t flags;                               /* 0 */
-    uint32_t total;                              /* the file's length: 52 + image + 4 nrel */
+    uint8_t flags;                               /* MOD_FILE_CHUNKS: chunks follow (module_presets.h), else 0 */
+    uint32_t total;                              /* the file's length: 52 + image + 4 nrel (+ the chunks) */
     uint32_t image, bss, nrel;
     uint32_t desc;                               /* the descriptor's offset in the image */
     uint32_t crc;                                /* CRC-32 of the bytes after this head */
     char name[MOD_NAME_MAX];                     /* the engine's name, 0-padded (lists without loading) */
     uint16_t version;                            /* the module's own */
-    uint8_t npresets;                            /* the descriptor's (the browser's list without loading) */
+    uint8_t npresets;                            /* the descriptor's (its PRST chunk's count, when it has one) */
     uint8_t rsv;                                 /* 0 */
 } mod_file_t;
 

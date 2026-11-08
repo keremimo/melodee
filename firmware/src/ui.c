@@ -1042,28 +1042,37 @@ static void scale_share(const track_t *from)
 #include "scale_picker.c"
 
 
-/* preset pi of the engine the track asked for: the sound only (not the steps, not param_kept) */
-static void apply_preset_to(track_t *t, uint32_t pi)
+/* engine e's preset pi (wrapped) as a pick needs it, read now (a synth module's: unpacked from its file); 0: e has none */
+static preset_entry_t pe_pick __attribute__((section(".pool")));
+static const preset_entry_t *preset_pick(uint32_t e, uint32_t pi)
 {
-    mod_want(t->eng_req % NENGINES);                  /* (a synth module: into SRAM first) */
-    const engine_t *e = ENGINES[t->eng_req % NENGINES];
-    uint32_t i;
+    uint32_t np = eng_npresets(e % NENGINES);
+    if (!np)
+        return 0;
+    preset_fetch_into(e, pi % np, &pe_pick, 1);
+    return &pe_pick;
+}
+/* preset pi of the engine the track asked for, as preset_pick read it (x): the sound only (not the steps, not
+ * param_kept) */
+static void apply_preset_with(track_t *t, uint32_t pi, const preset_entry_t *x)
+{
+    uint32_t i, np = eng_npresets(t->eng_req % NENGINES);
     load_begin(t, UNDO_SOUND);
     panic_req |= (uint8_t)(1u << trk_index(t));       /* MONO/POLY may change: release what sounds */
     t->user = 0; t->user_native=0;
     if (t == TSEL)
         sync_reload = 1;
-    if (!e->npresets) {
+    if (!np || !x) {
         load_end(t);
         return;
     }
-    pi %= e->npresets;
+    pi %= np;
     t->preset = (uint8_t)pi;
     memset(drum_patch_of(t-trk),0,sizeof(drum_patch_t));
     for (i = 0; i < P_E0; i++)                        /* the rest of the sound to its defaults: a preset */
         if (!param_kept(i))                           /* sounds the same after any edit */
             t->p[i] = TP[i].def;
-    const preset_t *pr = eng_preset(e, pi);
+    const preset_t *pr = &x->pr;
     for (i = 0; i < 8u; i++)
         t->p[P_E0 + i] = (int16_t)pr->e[i];
     if (midi_track_only(t)) {
@@ -1079,11 +1088,14 @@ static void apply_preset_to(track_t *t, uint32_t pi)
     t->p[P_REL] = pr->env[3];
     t->p[P_ED_FLT] = pr->fenv;
     t->p[P_VOICE] = pr->mono ? V_LEGATO : V_POLY;   /* mono presets keep the legato feel */
-    if(t->eng_req==ENGI_PROPHET)p5_preset_loaded(t,pi);
-    cz_factory_loaded(t);
+    preset_patch_put(t, x);                           /* the Prophet's program, the CZ-1's tone, FM6's voice */
     cz_track_accept(t);
-    fm6_track_loaded(t);                              /* FM6: the preset's patch */
     load_end(t);
+}
+static void apply_preset_to(track_t *t, uint32_t pi)
+{
+    mod_want(t->eng_req % NENGINES);                  /* (a synth module: into SRAM first) */
+    apply_preset_with(t, pi, preset_pick(t->eng_req, pi));
 }
 
 /* the engine's defaults and its preset pi. With the audio IRQ off: the ISR sees the old engine with
@@ -1093,13 +1105,14 @@ static void engine_load_of(track_t *t, uint32_t ei, uint32_t pi)
     if (t >= &trk[NPART] && t < &trk[NTRK]) { ei = ENGI_MIDI; pi = 0; }   /* (tracks 5..8: MIDI Track only) */
     mod_want(ei % NENGINES);                          /* (a synth module: into SRAM first) */
     const engine_t *e = ENGINES[ei % NENGINES];
+    const preset_entry_t *x = preset_pick(ei, pi);    /* (read before the audio is held off) */
     uint32_t i;
     load_begin(t, UNDO_SOUND);
     fm1_irq_off();
     t->eng_req = (uint8_t)(ei % NENGINES);
     for (i = 0; i < 8u; i++)
         t->p[P_E0 + i] = e->edit[i].def;
-    apply_preset_to(t, pi);
+    apply_preset_with(t, pi, x);
     fm1_irq_on();
     load_end(t);
 }
@@ -1112,6 +1125,10 @@ static uint32_t preset_init(uint32_t e)
 {
     const engine_t *en = ENGINES[e % NENGINES];
     uint32_t k;
+#if MELODEE_MODULES
+    if ((k = mod_pst_of(e % NENGINES)) < NMOD)        /* (a synth module's: its file says which) */
+        return mods[k].pst_init < mods[k].npresets ? mods[k].pst_init : 0u;
+#endif
     for (k = 0; k < en->npresets; k++) {
         const char *n = eng_preset(en, k)->name;
         if (n[0] == 'I' && n[1] == 'N' && n[2] == 'I' && n[3] == 'T' && (n[4] == ' ' || !n[4]))

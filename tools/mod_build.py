@@ -6,14 +6,19 @@
     tools/mod_build.py firmware/modules/trio/trio.c [-o out.mmod] [--version N]
     tools/mod_build.py firmware/modules/sid/sid.c [-DNAME=V ...]   (a native module: firmware/src/module_native.h,
                                               built with the image's -D flags; tools/build.py passes them)
-    tools/mod_build.py --check file.mmod      (the file's head, CRC, address list and descriptor)
+    tools/mod_build.py --check file.mmod      (the file's head, CRC, address list and descriptor, its presets)
 
 The module compiles with the firmware's flags, links at address 0 (firmware/modules/sdk/module.ld, mod_rt.c) with
 --emit-relocs and again at another base. The absolute words come from the relocations (R_PI32V2_ABS32: the word at
 r_offset; R_PI32V2_MOV_ABS32: a 6-byte `rX = imm32`, the word at r_offset + 2); every other relocation must be
 PC-relative inside the image. The two links must differ exactly in those words, by the base difference: a word the
-list misses (an absolute address in some other form) fails the build instead of crashing the device."""
+list misses (an absolute address in some other form) fails the build instead of crashing the device.
+
+A native module's factory presets follow its address words as its PRST chunk (firmware/src/module_presets.h,
+tools/mod_presets.py): the presets the host firmware's makers make for its engine (tools/mod_presets.c, built with the
+host's C compiler, HOST_CC or CC or cc), packed; build/modules/<name>.prst keeps the last chunk for the same presets."""
 import argparse
+import hashlib
 import os
 import re
 import platform
@@ -23,6 +28,9 @@ import subprocess
 import sys
 import zlib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mod_presets                                  # noqa: E402  (the PRST chunk)
 
 SRC = Path(__file__).resolve().parent.parent
 SDK = SRC / "firmware" / "modules" / "sdk"
@@ -278,12 +286,38 @@ def build_native(src, out, version, defs):
         raise SystemExit(f"mod_build: image {len(img)} B / bss {nbss} B, at most {NIMAGE_MAX} / {NBSS_MAX}")
     engine, name, npre, key = describe_native(img, words, nbss)
     body = img + b"".join(struct.pack("<I", w) for w in words)
-    head = HEADN.pack(FILE_MAGIC, ABI_NATIVE, engine, 0, HEADN.size + len(body), len(img), nbss, len(words), 0,
-                      zlib.crc32(body), name.encode()[:16].ljust(16, b"\0"), version, npre, 0, key)
+    prst = presets_chunk(stem, engine, npre) if npre else b""
+    chunks = mod_presets.chunk(mod_presets.TAG, prst) if prst else b""
+    head = HEADN.pack(FILE_MAGIC, ABI_NATIVE, engine, 1 if chunks else 0, HEADN.size + len(body) + len(chunks),
+                      len(img), nbss, len(words), 0, zlib.crc32(body + chunks), name.encode()[:16].ljust(16, b"\0"),
+                      version, npre, 0, key)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(head + body)
+    out.write_bytes(head + body + chunks)
     print(f"module {name}: native, engine {engine}, key {key:08x}, image {len(img)} B, bss {nbss} B, {len(words)} "
-          f"address words, stack {need} B, file {len(head) + len(body)} B -> {out}")
+          f"address words, stack {need} B, {npre} presets {len(prst)} B, file {len(head) + len(body) + len(chunks)} B "
+          f"-> {out}")
+
+
+def presets_chunk(stem, engine, npre):
+    """engine's factory presets as the host firmware makes them, packed (tools/mod_presets.py): the PRST payload"""
+    tool = mod_presets.host_tool(SRC / "build" / "modules" / (stem + "_presets"))
+    init, presets = mod_presets.dump(tool, engine)
+    if len(presets) != npre:
+        raise SystemExit(f"mod_build: engine {engine}: {len(presets)} presets made, the descriptor says {npre}")
+    key = hashlib.sha256(repr((mod_presets.VERSION, init, presets)).encode() +
+                         Path(mod_presets.__file__).read_bytes()).hexdigest()
+    cache = SRC / "build" / "modules" / (stem + ".prst")
+    if cache.exists() and cache.with_suffix(".prst.key").exists() and \
+            cache.with_suffix(".prst.key").read_text() == key:
+        payload = cache.read_bytes()
+    else:
+        payload = mod_presets.build(presets, init)
+        cache.write_bytes(payload)
+        cache.with_suffix(".prst.key").write_text(key)
+    _, out = mod_presets.parse(payload)                # (the firmware's reading of it: every entry as made)
+    if [(n, c, e) for n, c, e in out] != [(n.decode(), c, com + p) for n, c, com, p in presets]:
+        raise SystemExit(f"mod_build: engine {engine}: the PRST chunk does not read back as its presets")
+    return payload
 
 
 def build(src, out, version):
@@ -320,7 +354,9 @@ def check(path):
     b = path.read_bytes()
     if struct.unpack_from("<H", b, 4)[0] == ABI_NATIVE:
         magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, _, key = HEADN.unpack_from(b)
-        if magic != FILE_MAGIC or total != len(b) or total != HEADN.size + image + 4 * nrel or desc:
+        end = HEADN.size + image + 4 * nrel
+        if magic != FILE_MAGIC or total != len(b) or (total != end if not flags else flags != 1 or total < end + 8) \
+                or desc:
             raise SystemExit(f"{path}: not a native module file")
         if zlib.crc32(b[HEADN.size:]) != crc:
             raise SystemExit(f"{path}: CRC mismatch")
@@ -329,8 +365,15 @@ def check(path):
         e, n, k, kk = describe_native(img, words, bss)
         if e != engine or n.encode()[:16] != name.rstrip(b"\0") or k != npre or kk != key:
             raise SystemExit(f"{path}: head and native descriptor differ")
+        chunks = mod_presets.chunks(b, end) if flags else {}
+        if npre or mod_presets.TAG in chunks:
+            if mod_presets.TAG not in chunks:
+                raise SystemExit(f"{path}: {npre} presets, no PRST chunk")
+            init, presets = mod_presets.parse(chunks[mod_presets.TAG])
+            if len(presets) != npre:
+                raise SystemExit(f"{path}: PRST holds {len(presets)} presets, the head says {npre}")
         print(f"{path}: {n} native engine {engine}, key {key:08x}, image {image} B, bss {bss} B, {nrel} address "
-              f"words, version {version}: ok")
+              f"words, {npre} presets, version {version}: ok")
         return
     magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, _ = HEAD.unpack_from(b)
     if magic != FILE_MAGIC or abi != ABI or total != len(b) or total != HEAD.size + image + 4 * nrel:

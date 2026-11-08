@@ -30,11 +30,12 @@ static void cz_bank_empty(cz_bank_t *b,uint32_t k)
     memset(b,0,sizeof *b);b->magic=CZ_BANK_MAGIC;b->ver=1;b->slots=16;
     memcpy(b->name,"BANK A",6);b->name[5]=(char)('A'+k);
 }
-/* a bank never saved: BANK A..D Casio's CZ-1 preset tones (A-1 .. H-8, 16 a bank), E..H empty */
+/* a bank never saved: BANK A..D Casio's CZ-1 preset tones (A-1 .. H-8, 16 a bank: the CZ-1's presets, its module's
+ * file on the device), E..H empty; without the tones (no CZ-1 module) every bank empty */
 static void cz_bank_default(cz_bank_t *b,uint32_t k)
 {
     cz_bank_empty(b,k);
-    if(k>=CZ_FACTORY_N/CZ_BANK_SLOTS)return;
+    if(k>=CZ_FACTORY_N/CZ_BANK_SLOTS || eng_npresets(ENGI_CZ)<CZ_FACTORY_N+1u)return;
     memcpy(b->name,"CZ-1 A1-B8",10);b->name[5]=(char)('A'+2u*k);b->name[8]=(char)('B'+2u*k);
     b->used=0xFFFFu;
     for(uint32_t i=0;i<CZ_BANK_SLOTS;i++)cz_factory(k*CZ_BANK_SLOTS+i,b->tone[i].raw);

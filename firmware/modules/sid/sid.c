@@ -7,5 +7,5 @@
 static sid_part_t *sid_part(uint32_t part) { return mod_part_mem(part, sizeof(sid_part_t)); }   /* (engines.c's) */
 
 MOD_NATIVE_EXPORT(mod_native_sid) = {
-    MOD_NATIVE_HEAD, .engine = 3, .name = "SID", .npresets = NELEM(SID_PRESETS), .eng = &ENG_SID,
+    MOD_NATIVE_HEAD, .engine = 3, .name = "SID", .npresets = SID_NPRESETS, .eng = &ENG_SID,
 };

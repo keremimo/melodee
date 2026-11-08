@@ -538,6 +538,8 @@ static uint32_t sid_cap(const track_t *t) { return sid_c64(t->p) ? 1u : SID_POLY
 #define SIDP(n, mo, wa, st, pw, cu, re, md, dr, a, d, s, r, fe, mi, di, ch, de, rv) \
     {n, {mo, wa, st, pw, cu, re, md, dr}, {a, d, s, r}, fe, mi}
 
+#define SID_NPRESETS 32u
+#if !MOD_NATIVE_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
 static const preset_t SID_PRESETS[] = {
     SIDP("INIT SID",    0, 1, 0, 64, 127,  0, 0,  0,   0, 36, 127, 36,   0, 0,  0,  0, 0,  0),
     SIDP("BREADBOX",    0, 2, 1, 40,  60,  6, 0, 30,   0, 78, 100, 57,  16, 0,  0, 10, 0,  8),
@@ -572,6 +574,8 @@ static const preset_t SID_PRESETS[] = {
     SIDP("NOISE SWEEP", 0, 3, 0, 64,  40, 12, 1, 60,  63, 97,  40, 97,  50, 0,  0,  0, 0, 36),
     SIDP("DATA STORM",  1, 3, 1, 64,  80, 10, 0, 40,   0, 85,  60, 78,   0, 0,  0, 18, 0, 28),
 };
+_Static_assert(NELEM(SID_PRESETS) == SID_NPRESETS, "SID's presets");
+#endif
 #undef SIDP
 
 static const engine_t ENG_SID = {
@@ -587,8 +591,10 @@ static const engine_t ENG_SID = {
         {"MODE", F_ENUM, 0, 7, 0, N_SID_MODE, 0},
         {"DRIVE", F_PCT, 0, 127, 0, 0, 0},
     },
+#if !MOD_NATIVE_SIDE
     .presets = SID_PRESETS,
-    .npresets = NELEM(SID_PRESETS),
+#endif
+    .npresets = SID_NPRESETS,
     .note_on = sid_note_on,
     .render = sid_render, .block = sid_block,
     .knob = {P_E1, P_E3, P_E4, P_E5},

@@ -2,11 +2,13 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* What the firmware keeps of FM6 (the engine: eng_fm6.c, a synth module on the device: firmware/modules/fm6): the
- * function settings, the factory voices (F1..F24, INIT VOICE), the patch formats (155-byte voice, 128-byte packed
- * record), the parts' patches as the stores, the pages and SysEx write them (fm6_parts.h holds them), and the DX7
- * SysEx bytes the USB interrupt collects (fm6_store.c serves them). */
+ * function settings, the factory voices (F1..F24) as the presets and the editor have them, the patch formats (155-byte
+ * voice, 128-byte packed record, INIT VOICE), the parts' patches as the stores, the pages and SysEx write them
+ * (fm6_parts.h holds them), and the DX7 SysEx bytes the USB interrupt collects (fm6_store.c serves them). The device's
+ * image makes no factory voice: F1..F24 are the FM6 module's presets (its file's PRST chunk, module_presets.h), which
+ * tools/mod_build.py writes from the makers below as host builds compile them (MELODEE_FM6_BUILTIN) */
 #include "x0x/fastmath.h"
-#include "melodee_fm6.h"         /* tools/gen_fm6_patches.py: FM6_INIT, FM6_FACTORY[FM6_NFACTORY] (F1..F8) */
+#include "melodee_fm6.h"         /* tools/gen_fm6_patches.py: FM6_INIT, FM6_FACTORY[FM6_NFACTORY] (F1..F8: host builds) */
 
 static const uint8_t FM6_FNMAX[FM6_NFN] = {12, 12, 12, 1, 127, 1, 99, 7, 99, 7, 99, 7, 99, 7, 1, 2};
 static const uint8_t FM6_FNDEF[FM6_NFN] = {3, 3, 0, 0, 0, 0, 99, 1, 0, 0, 0, 0, 0, 0, 0, FM6_MARK1};   /* Dexed's */
@@ -30,6 +32,7 @@ static int fm6_fn_ok(const uint8_t *f)                    /* a stored set: every
     return 1;
 }
 
+#if MELODEE_FM6_BUILTIN
 /* a Melodee factory voice: OP1..OP6 in patch order within an operator (DET 0..14, 7 = none), ALG 0..31,
  * TRNSP 24 = no transposition */
 typedef struct {
@@ -39,6 +42,7 @@ typedef struct {
 } fm6_rom_t;
 #include "eng_fm6_rom.h"         /* FM6_ROM[FM6_NROM]: F9.. */
 _Static_assert(FM6_NROM == 16u && FM6_NFACTORY + FM6_NROM == FM6_NFAC, "FM6: F1..F8, F9..F24");
+#endif
 
 /* ------------------------------------------------------- patch formats --- */
 /* the highest value of each byte of the 155-byte voice */
@@ -130,6 +134,7 @@ static void fm6_pack(const uint8_t *v, uint8_t *b)
         b[118 + i] = v[FP_NAME + i] & 0x7Fu;
 }
 
+#if MELODEE_FM6_BUILTIN
 static void fm6_rom_patch(const fm6_rom_t *r, uint8_t *v)   /* a Melodee factory voice -> 155-byte voice */
 {
     uint32_t n, i;
@@ -156,9 +161,12 @@ static void fm6_rom_patch(const fm6_rom_t *r, uint8_t *v)   /* a Melodee factory
     fm6_sanitize(v);
 }
 
-/* factory patch k (F1..F24) as a packed record */
+#endif
+/* factory patch k (F1..F24) as a packed record: made on host builds, the FM6 module's preset k on the device; INIT
+ * VOICE without either */
 static void fm6_factory(uint32_t k, uint8_t *pk)
 {
+#if MELODEE_FM6_BUILTIN
     uint8_t v[FP_SIZE + 1u];
     if (!RES_OK()) { memcpy(pk, FM6_INIT, FM6_PACKED); return; }   /* (res.c: the factory voices not installed) */
     if (k < FM6_NFACTORY) {
@@ -168,6 +176,10 @@ static void fm6_factory(uint32_t k, uint8_t *pk)
     fm6_rom_patch(&FM6_ROM[(k - FM6_NFACTORY) % FM6_NROM], v);
     memset(pk, 0, FM6_PACKED);
     fm6_pack(v, pk);
+#else
+    if (k >= FM6_NFAC || !preset_patch(ENGI_FM6, k, pk, FM6_PACKED))
+        memcpy(pk, FM6_INIT, FM6_PACKED);           /* (no module: no factory voices) */
+#endif
 }
 
 static void fm6_name(char *d, const uint8_t *v)          /* the voice name, trailing spaces cut */

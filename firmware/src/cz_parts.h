@@ -4,6 +4,8 @@
  * the panel, read by the CZ-1 engine (eng_cz.c: a synth module on the device, firmware/modules/cz) */
 #pragma once
 #include "cz_patch.h"
+#define CZ_FACTORY_N 64u                         /* Casio's tones: the CZ-1's presets after INIT TONE (its module's
+                                                  * file; melodee_cz1.h on host builds) */
 #if MOD_NATIVE_SIDE                              /* (a native synth module: the firmware's, module_native.h) */
 static cz_patch_t *mod_imp_cz_patch, *mod_imp_cz_patch_none;
 #define cz_patch mod_imp_cz_patch

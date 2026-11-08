@@ -5,7 +5,6 @@
 #define P5_USER_SLOTS UP_SLOTS
 #define P5_BANK_SLOTS 26u
 #define P5_BANK_MAGIC 0x31553550u
-#include "melodee_prophet_factory.h"
 typedef struct {uint32_t magic,used,favorites;p5_patch_t patch[P5_BANK_SLOTS];} p5_bank_t;
 static uint32_t p5_bank_mask(uint32_t bank) { return (1u<<(bank==4u?24u:26u))-1u; }
 /* Missing storage starts empty. Sequential's programs already live in the

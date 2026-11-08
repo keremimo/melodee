@@ -8,11 +8,147 @@ static const char *eng_name(uint32_t e)
     uint32_t k = ENGINES[e % NENGINES] == &ENG_MOD_IDLE ? mod_slot_of(e % NENGINES) : NMOD;
     return k < NMOD ? mods[k].name : ENGINES[e % NENGINES]->name;
 }
+/* the slot whose file holds e's factory presets (its PRST chunk) while e plays from it or waits for it, NMOD: none (a
+ * built-in engine, an ABI 1 module: its descriptor's rows) */
+static uint32_t mod_pst_of(uint32_t e)
+{
+    uint32_t k = e < NENGINES ? mod_slot_of(e) : NMOD;
+    return k < NMOD && mods[k].pst && (mod_at[e] == k + 1u || ENGINES[e] == &ENG_MOD_IDLE) ? k : NMOD;
+}
 /* e's preset count (a module not in SRAM: its file's) */
 static uint32_t eng_npresets(uint32_t e)
 {
-    uint32_t k = ENGINES[e % NENGINES] == &ENG_MOD_IDLE ? mod_slot_of(e % NENGINES) : NMOD;
+    uint32_t k = mod_pst_of(e % NENGINES);
+    if (k >= NMOD && ENGINES[e % NENGINES] == &ENG_MOD_IDLE)
+        k = mod_slot_of(e % NENGINES);
     return k < NMOD ? mods[k].npresets : ENGINES[e % NENGINES]->npresets;
+}
+/* ---- a file's factory presets (module_presets.h), read where the file is (module_store.c checked them when it listed
+ * the file): two windows of its PRST payload (the lists read records and names in order), the categories of every
+ * listed file in RAM (mod_cat: the LIST filters read them on every pass), one preset unpacked into the main loop's
+ * scratch (scratch.h dec: filled and consumed inside mod_pst_get) */
+#include "scratch.h"
+static int (*mod_pread)(uint32_t k, uint32_t off, void *dst, uint32_t n);   /* module_store.c mod_rd: slot k's file */
+#define MOD_WIN 128u
+#define MOD_CATS 512u                               /* the factory presets whose categories RAM holds, every slot's */
+static uint8_t mod_win[2][MOD_WIN] __attribute__((section(".pool")));
+static uint8_t mod_cat[MOD_CATS / 2u] __attribute__((section(".pool")));
+static struct { uint8_t slot; uint16_t n; uint32_t at; } mod_winq[2] = {{0xFFu, 0, 0}, {0xFFu, 0, 0}};
+static uint8_t mod_win_last;
+static uint16_t mod_cat_n;                          /* mod_cat's nibbles in use */
+static void mod_win_drop(uint32_t k)
+{
+    for (uint32_t w = 0; w < 2u; w++)
+        if (mod_winq[w].slot == k)
+            mod_winq[w].slot = 0xFFu;
+}
+static uint32_t mod_le32(const uint8_t *b) { return b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24; }
+/* n bytes of slot k's PRST payload at off (more than a window: straight from the flash) */
+static int mod_pst_rd(uint32_t k, uint32_t off, void *dst, uint32_t n)
+{
+    const mod_slot_t *s = &mods[k];
+    uint32_t w;
+    if (!s->pst || off > s->pst_len || n > s->pst_len - off)
+        return 1;
+    if (n > MOD_WIN)
+        return mod_pread(k, s->pst + off, dst, n);
+    for (w = 0; w < 2u; w++)
+        if (mod_winq[w].slot == k && off >= mod_winq[w].at && off + n <= mod_winq[w].at + mod_winq[w].n)
+            break;
+    if (w == 2u) {                                  /* (the window read longest ago, from off on) */
+        uint32_t m = s->pst_len - off < MOD_WIN ? s->pst_len - off : MOD_WIN;
+        w = mod_win_last ^ 1u;
+        mod_winq[w].slot = 0xFFu;
+        if (mod_pread(k, s->pst + off, mod_win[w], m))
+            return 1;
+        mod_winq[w].slot = (uint8_t)k;
+        mod_winq[w].at = off;
+        mod_winq[w].n = (uint16_t)m;
+    }
+    mod_win_last = (uint8_t)w;
+    memcpy(dst, mod_win[w] + (off - mod_winq[w].at), n);
+    return 0;
+}
+/* preset i's record and the next one (its ends) */
+static int mod_pst_recs(uint32_t k, uint32_t i, uint8_t r[2u * MOD_PST_REC])
+{
+    return i >= mods[k].npresets || mod_pst_rd(k, MOD_PST_HEAD + MOD_PST_REC * i, r, 2u * MOD_PST_REC);
+}
+/* preset i's name into nm (cap bytes, cut as str_cpy cuts): 0, or 1 (none) */
+static int mod_pst_name(uint32_t k, uint32_t i, char *nm, uint32_t cap)
+{
+    uint8_t r[2u * MOD_PST_REC];
+    char b[MOD_PST_NAME];
+    if (!cap || mod_pst_recs(k, i, r))
+        return 1;
+    uint32_t no = r[4] | (uint32_t)r[5] << 8, n = (r[12] | (uint32_t)r[13] << 8) - no;
+    if (n > MOD_PST_NAME || (n && mod_pst_rd(k, MOD_PST_HEAD + MOD_PST_REC * (mods[k].npresets + 1u) + no, b, n)))
+        return 1;
+    n = n < cap - 1u ? n : cap - 1u;
+    memcpy(nm, b, n);
+    nm[n] = 0;
+    return 0;
+}
+/* preset i's category (the browser's CAT_*; 0 none) */
+static uint32_t mod_pst_cat(uint32_t k, uint32_t i)
+{
+    const mod_slot_t *s = &mods[k];
+    uint8_t r[2u * MOD_PST_REC];
+    if (i >= s->npresets)
+        return 0;
+    if (s->cat_at != MOD_PST_NONE) {
+        uint32_t c = s->cat_at + i;
+        return (uint32_t)(mod_cat[c / 2u] >> (c % 2u * 4u)) & 15u;
+    }
+    return mod_pst_recs(k, i, r) ? 0u : r[6] & 15u;
+}
+/* a packed entry as dsp.c lz_unpack reads it: nb bytes making exactly n, no copy reaching before the dictionary */
+static int mod_lz_ok(const uint8_t *b, uint32_t nb, uint32_t n, uint32_t dict)
+{
+    uint32_t i = 0, o = 0;
+    while (o < n) {
+        if (i >= nb)
+            return 0;
+        uint32_t c = b[i++];
+        if (c < 0x80u) {
+            c++;
+            if (c > nb - i || c > n - o)
+                return 0;
+            i += c;
+        } else {
+            if (nb - i < 2u || (b[i] | (uint32_t)b[i + 1u] << 8) + 1u > dict + o || (c = (c & 0x7Fu) + 3u) > n - o)
+                return 0;
+            i += 2u;
+        }
+        o += c;
+    }
+    return i == nb;
+}
+/* preset i of slot k's file unpacked: its values into pr (pr->name is the caller's), its name into name
+ * (MOD_PST_NAME + 1 bytes), its patch into patch (cap bytes; 0: not wanted). Its patch's length, or -1 */
+static int mod_pst_get(uint32_t k, uint32_t i, preset_t *pr, char *name, uint8_t *patch, uint32_t cap)
+{
+    const mod_slot_t *s = &mods[k];
+    uint8_t r[2u * MOD_PST_REC], *b = main_scratch.dec;
+    if (mod_pst_name(k, i, name, MOD_PST_NAME + 1u) || mod_pst_recs(k, i, r))
+        return -1;
+    uint32_t at = mod_le32(r), pn = mod_le32(r + MOD_PST_REC) - at, d = s->pst_dict, u = s->pst_ulen, j;
+    if (pn > MOD_PST_WIN || d + u + pn > MOD_PST_BUF || (d && mod_pst_rd(k, s->pst_dat, b, d)) || mod_pst_rd(k, at, b + MOD_PST_BUF - pn, pn) ||
+        !mod_lz_ok(b + MOD_PST_BUF - pn, pn, u, d))
+        return -1;
+    lz_unpack(b + d, b + MOD_PST_BUF - pn, u);
+    b += d;
+    for (j = 0; j < 8u; j++)
+        pr->e[j] = (int8_t)b[j];
+    for (j = 0; j < 4u; j++)
+        pr->env[j] = b[8u + j];
+    pr->fenv = (int8_t)b[12];
+    pr->mono = b[13];
+    if (patch && u - MOD_PST_COMMON > cap)
+        return -1;
+    if (patch)
+        memcpy(patch, b + MOD_PST_COMMON, u - MOD_PST_COMMON);
+    return (int)(u - MOD_PST_COMMON);
 }
 /* every engine the image left to a synth module (SID, DRUM, CZ-1, FM6, the Prophet) has one on the device: a fresh
  * install's setup wrote them (the web installer: web/fm1mods.js). Else the start asks for setup (main.c, ui_boot.c), as

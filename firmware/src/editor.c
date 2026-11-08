@@ -857,16 +857,18 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         break;
     case ED_NAMES: {                                       /* engine [, first lo, hi] -> preset names of an engine */
         const engine_t *en;
-        uint32_t s0, n = 0, room;
+        uint32_t s0, n = 0, room, np;
+        char nm[MOD_PST_NAME + 1u];                        /* (a synth module's names: its file's, not loaded) */
         if (a[0] >= NENGINES)
             return;
         en = ENGINES[a[0]];
+        np = eng_npresets(a[0]);
         s0 = na >= 3u ? a[1] | (uint32_t)a[2] << 7 : 0u;
         /* the names that fit (at most 127): engine, count, names, titles (2 x 9), total and first (4) */
         room = ed_left() - 2u - 18u - 4u;
-        for (i = s0; i < en->npresets && n < 127u; i++, n++) {
+        for (i = s0; i < np && n < 127u; i++, n++) {
             uint32_t len = 0;
-            const char *nm = eng_preset(en, i)->name;
+            eng_preset_name(a[0], i, nm, sizeof nm);
             while (len < 20u && nm[len])
                 len++;
             if (len + 1u > room)
@@ -875,11 +877,13 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         }
         ed_b(a[0]);
         ed_b(n);
-        for (i = 0; i < n; i++)
-            ed_str(eng_preset(en, s0 + i)->name, 20);
+        for (i = 0; i < n; i++) {
+            eng_preset_name(a[0], s0 + i, nm, sizeof nm);
+            ed_str(nm, 20);
+        }
         for (i = 0; i < 2u; i++)                           /* then the two edit-page titles */
             ed_str(en->page_title[i], 8);
-        ed_u14(en->npresets);                              /* then all presets and this page's first: the */
+        ed_u14(np);                                        /* then all presets and this page's first: the */
         ed_u14(s0);                                        /* editor asks again from s0 + n until it has them */
         break;
     }

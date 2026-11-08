@@ -24,7 +24,10 @@ static const engine_t ENG_CZ = {
         {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
         {"-", F_INT, 0, 0, 0, 0, 0}, {"TONE", F_INT, CZ_NATIVE, CZ_NATIVE, CZ_NATIVE, 0, 0},
     },
-    .preset_make = cz_preset_make, .npresets = CZ_FACTORY_N + 1u,
+#if !MOD_NATIVE_SIDE
+    .preset_make = cz_preset_make,     /* (host builds; a synth module's presets are in its file) */
+#endif
+    .npresets = CZ_FACTORY_N + 1u,
     .ownenv = 1, .done = cz_native_done, .keep = 0x0fu,
     .note_on = cz_native_note_on, .render = cz_native_render, .block = cz_native_block,
     .knob = {P_E0, P_E1, P_E7, P_E7},

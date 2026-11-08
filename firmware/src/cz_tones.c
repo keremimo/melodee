@@ -1,17 +1,27 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* What the firmware keeps of the CZ-1 (the engine: eng_cz.c, a synth module on the device: firmware/modules/cz):
- * Casio's 64 tones and the presets made from them (cz_preset_make, the engine's preset_make), the default banks' and
- * user banks' picks, COMP's copy, the SysEx bytes the USB interrupt collects. The parts' tones: cz_parts.h */
+ * Casio's 64 tones as the default banks and the presets have them, the default banks' and user banks' picks, COMP's
+ * copy, the SysEx bytes the USB interrupt collects. The parts' tones: cz_parts.h. The device's image makes no preset:
+ * INIT TONE and Casio's tones are the CZ-1 module's presets (its file's PRST chunk, module_presets.h), which
+ * tools/mod_build.py writes from the makers below as host builds compile them (MELODEE_CZ_BUILTIN: melodee_cz1.h) */
+#if MELODEE_CZ_BUILTIN
 #include "melodee_cz1.h"            /* Casio's 64 CZ-1 preset tones (tools/gen_cz1_factory.py) */
-/* Casio's tone k (0..CZ_FACTORY_N-1) into raw (CZ_BYTES), unpacked against CZ_DICT (tools/gen_cz1_factory.py) */
+#endif
+/* Casio's tone k (0..CZ_FACTORY_N-1) into raw (CZ_BYTES): unpacked against CZ_DICT (tools/gen_cz1_factory.py) on host
+ * builds, the CZ-1 module's preset k + 1 on the device; INIT TONE without either */
 static void cz_factory(uint32_t k, uint8_t *raw)
 {
+#if MELODEE_CZ_BUILTIN
     uint8_t b[2u * CZ_BYTES];
     if (!RES_OK()) { cz_patch_init(raw); return; }  /* (res.c: Casio's tones not installed) */
     memcpy(b, CZ_DICT, CZ_BYTES);
     lz_unpack(b + CZ_BYTES, CZ_LZ + CZ_LZ_AT[k % CZ_FACTORY_N], CZ_BYTES);
     memcpy(raw, b + CZ_BYTES, CZ_BYTES);
+#else
+    if (!preset_patch(ENGI_CZ, k % CZ_FACTORY_N + 1u, raw, CZ_BYTES))
+        cz_patch_init(raw);                         /* (no module: no factory tones) */
+#endif
 }
 /* A factory preset: Casio's tone at its BANK A..D / PTCH 1..16 (the CZ-1's A-1 .. H-8, as the default
  * banks hold them, cz_bank.c), INIT TONE the init voice. Restored and imported tones bypass this hook */
@@ -40,6 +50,7 @@ static void cz_compare_take(uint32_t tr)
 }
 static void cz_track_accept(track_t *t){uint32_t tr=(uint32_t)(t-trk)%NTRK;cz_user_pick[tr]=(uint16_t)(t->p[P_E0]*17+t->p[P_E1]);cz_compare_drop(tr);}
 static void cz_bank_poll(void);
+#if MELODEE_CZ_BUILTIN
 /* INIT TONE, then Casio's tones (BANK A..D, PTCH 1..16), dry as the CZ-1 (no effects); named as their LCD shows
  * them, or shorter (CZ_SHORT) */
 static void cz_preset_make(uint32_t k, preset_t *pr, char *name)
@@ -60,6 +71,7 @@ static void cz_preset_make(uint32_t k, preset_t *pr, char *name)
     for (i = 0; a < z; ) name[i++] = (char)raw[a++];
     name[i] = 0;
 }
+#endif
 
 /* USB interrupt only collects bytes; the main loop validates and publishes. */
 #define CZ_RX 296u

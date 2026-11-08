@@ -30,8 +30,9 @@
                                                   * callback: tools/stack_budget.py; tools/mod_build.py --native
                                                   * checks each native module against it) */
 
-/* the firmware's side, handed over before any call (mod_native_t.bind). Append only, MOD_NATIVE_IMPORTS + 1 */
-#define MOD_NATIVE_IMPORTS 4u
+/* the firmware's side, handed over before any call (mod_native_t.bind). Append only, MOD_NATIVE_IMPORTS + 1 (5: the
+ * presets left the firmware for the modules' files, module_presets.h: the two preset makers are no longer imported) */
+#define MOD_NATIVE_IMPORTS 5u
 typedef struct {
     track_t *im_trk;                                 /* trk[NTRK] */
     song_t *im_song;
@@ -54,10 +55,9 @@ typedef struct {
     const uint32_t *im_PITCH_OCT, *im_A4_RATIO;
     const float *im_P5_TANH;
     /* 2: CZ-1. The parts' tones (cz_parts.h: cz_patch[NPART], cz_patch_none), FM6's sine (filled at power-on:
-     * dsp_tables_init), the presets made from Casio's tones (cz_tones.c: main loop) */
+     * dsp_tables_init) */
     cz_patch_t *im_cz_patch, *im_cz_patch_none;
     float *im_FM6_SIN;
-    void (*im_cz_preset_make)(uint32_t k, preset_t *p, char *name);
     /* 3: FM6. The parts' voices (fm6_parts.h: fm6_patch[NPART], fm6_patch_none, the write counts, the operator
      * switches, the function settings, the CPU lab's pair count), voice.c's voice count, the firmware's queue for CPU1
      * (audio_batch.h), CPU1's own pairing (audio_worker.h; without MELODEE_DUAL_CORE a worker never online, no calls),
@@ -81,12 +81,10 @@ typedef struct {
     void (*im_audio_profile_add)(uint32_t id, uint32_t ticks);
     uint16_t *im_FM6_MKI_LOG, *im_FM6_MKI_EXP, *im_FM6_OPL_LOG, *im_FM6_OPL_EXP;
     const int32_t *im_A4_LOG;
-    /* 4: the Prophet. The parts' programs (p5_parts.h: p5_patch[NPART], p5_ready[NPART]), the presets made from
-     * Sequential's programs (prophet_programs.c: main loop), the pitch wheel's target (voice.c p5_update_bend: the
-     * part's block) */
+    /* 4: the Prophet. The parts' programs (p5_parts.h: p5_patch[NPART], p5_ready[NPART]), the pitch wheel's target
+     * (voice.c p5_update_bend: the part's block) */
     p5_patch_t *im_p5_patch;
     uint8_t *im_p5_ready;
-    void (*im_p5_preset_make)(uint32_t k, preset_t *p, char *name);
     void (*im_p5_update_bend)(track_t *t);
 } mod_imports_t;
 
@@ -136,9 +134,7 @@ typedef struct {                                  /* the image's first bytes (mo
  * becomes the pointer's), then its data and calls into the pointers core.h & co. declared, then its descriptor */
 static void *(*mod_imp_part_mem)(uint32_t part, uint32_t bytes);
 static void (*mod_imp_voice_scale_pitch)(const track_t *t, voice_t *v, uint32_t note);
-static void (*mod_imp_cz_preset_make)(uint32_t k, preset_t *p, char *name);   /* (modules/cz/cz.c calls it) */
 static uint32_t (*mod_imp_trk_nvoice)(const track_t *t);
-static void (*mod_imp_p5_preset_make)(uint32_t k, preset_t *p, char *name);   /* (modules/prophet/prophet.c) */
 static void (*mod_imp_p5_update_bend)(track_t *t);
 #define voice_scale_pitch (*mod_imp_voice_scale_pitch)
 #define trk_nvoice (*mod_imp_trk_nvoice)
@@ -170,7 +166,6 @@ static void mod_native_bind(const mod_imports_t *im)
     mod_imp_cz_patch = im->im_cz_patch;
     mod_imp_cz_patch_none = im->im_cz_patch_none;
     mod_imp_FM6_SIN = im->im_FM6_SIN;
-    mod_imp_cz_preset_make = im->im_cz_preset_make;
     mod_imp_fm6_patch = im->im_fm6_patch;
     mod_imp_fm6_patch_none = im->im_fm6_patch_none;
     mod_imp_fm6_pgen = im->im_fm6_pgen;
@@ -195,7 +190,6 @@ static void mod_native_bind(const mod_imports_t *im)
     mod_imp_A4_LOG = im->im_A4_LOG;
     mod_imp_p5_patch = im->im_p5_patch;
     mod_imp_p5_ready = im->im_p5_ready;
-    mod_imp_p5_preset_make = im->im_p5_preset_make;
     mod_imp_p5_update_bend = im->im_p5_update_bend;
 }
 #ifdef FM1_IRQ_TARGET

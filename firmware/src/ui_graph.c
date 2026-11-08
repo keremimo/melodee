@@ -864,9 +864,13 @@ static void entry_label(uint32_t e, uint32_t k, char *tag, char *nm)
         up_slot_label(tag, k);
         up_name(k, nm);
     } else {
-        mod_want(e % NENGINES);                     /* (a synth module's presets: loaded to name them) */
+#if MELODEE_MODULES
+        if (mod_pst_of(e % NENGINES) >= NMOD)
+            mod_want(e % NENGINES);                 /* (an ABI 1 module's presets: loaded to name them; a native
+                                                     * module's are named from its file, not loaded) */
+#endif
         str_cpy(tag, eng_abbr(eng_name(e)), 6);
-        str_cpy(nm, k < ENGINES[e % NENGINES]->npresets ? eng_preset(ENGINES[e % NENGINES], k)->name : "-", 13);
+        eng_preset_name(e, k, nm, 13);
     }
 }
 static void p5_short_name(const track_t *t,char *out,uint32_t size)

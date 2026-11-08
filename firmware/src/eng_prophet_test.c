@@ -540,7 +540,10 @@ static const engine_t ENG_P5_TEST = {
            {"TUNA",F_SEMI,-24,24,0,0,0},{"TUNB",F_SEMI,-24,24,0,0,0},
            {"PWA",F_INT,-63,63,0,0,0},{"PWB",F_INT,-63,63,0,0,0},
            {"MIXA",F_INT,-63,63,0,0,0},{"MIXB",F_INT,-63,63,0,0,0}},
-    .preset_make=p5_preset_make,.npresets=P5_FACTORY_N+1u,.poly=P5_POLY,.ownenv=1,
+#if !MOD_NATIVE_SIDE
+    .preset_make=p5_preset_make,       /* (host builds; a synth module's presets are in its file) */
+#endif
+    .npresets=P5_FACTORY_N+1u,.poly=P5_POLY,.ownenv=1,
     .note_on=p5_note_on,.render=p5_render,.done=p5_done,.block=p5_block,.units=p5_units,.cap=p5_cap,.legato=p5_legato,
     .post=p5_post,
     .knob={P_E0,P_E1,P_RESERVED34,P_RESERVED36},

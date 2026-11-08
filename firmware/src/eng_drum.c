@@ -333,6 +333,8 @@ static int32_t drum_keys(const track_t *t, uint32_t k)
 }
 
 /* {KIT, TUNE, TONE, DECY, SNAP, ACC, KICK, DRV} (SID: DIGI, RES; CR78: HATS); every kit suggests the BEAT pattern (GM notes) */
+#define DRUM_NPRESETS 6u
+#if !MOD_NATIVE_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
 static const preset_t DRUM_PRESETS[] = {
     DRUM_PRESET_808,
     {"909 KIT", {DK_909, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
@@ -341,6 +343,8 @@ static const preset_t DRUM_PRESETS[] = {
     {"CR78 KIT", {DK_CR78, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
     {"FM KIT", {DK_FM, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
 };
+_Static_assert(NELEM(DRUM_PRESETS) == DRUM_NPRESETS, "DRUM's presets");
+#endif
 /* KIT SID: KICK is DIGI (KICK and SNARE on $D418), DRV the filter's resonance */
 static const char *const N_DRUM_DIGI[] = {"OFF", "ON"};
 static const param_desc_t DRUM_SID_DIGI = {"DIGI", F_ENUM, 0, 1, 0, N_DRUM_DIGI, 0};
@@ -371,8 +375,10 @@ static const engine_t ENG_DRUM = {
         {"KICK", F_ENUM, 0, 1, 0, N_DRUM_KICK, 0},
         {"DRV", F_PCT, 0, 127, 0, 0, 0},
     },
+#if !MOD_NATIVE_SIDE
     .presets = DRUM_PRESETS,
-    .npresets = NELEM(DRUM_PRESETS),
+#endif
+    .npresets = DRUM_NPRESETS,
     .note_on = drum_note_on,
     .render = drum_render,
     .amp = drum_amp,

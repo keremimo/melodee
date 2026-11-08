@@ -630,14 +630,14 @@ static void sound_name(const track_t *t, char *b)
         const song_sound_t *s = song_sound_get(song_sounds.active[t - trk]);
         if (s) { str_cpy(b, s->name, 16); return; }
     }
-    const engine_t *e = ENGINES[t->eng_req % NENGINES];
+    uint32_t np = eng_npresets(t->eng_req % NENGINES);
     b[0] = 0;
     if(t->eng_req==ENGI_PROPHET)p5_short_name(t,b,16);
     else if(t->user_native && user_of(t)<USER_NONE)native_name(t->eng_req,user_of(t),b);
     else if (user_of(t) < UP_SLOTS)
         up_name(user_of(t), b);
-    else if (e->npresets)
-        str_cpy(b, eng_preset(e, t->preset % e->npresets)->name, 16);
+    else if (np)
+        eng_preset_name(t->eng_req, t->preset % np, b, 16);   /* (a synth module's: its file's) */
 }
 
 #if MELODEE_UART

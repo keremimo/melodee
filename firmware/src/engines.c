@@ -5,6 +5,8 @@
  * sounds at power-on. */
 #include "dsp.c"
 #include "audio_batch.h"
+#include "module_presets.h"     /* a synth module's factory presets, in its file (module_store.c reads them) */
+static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (below: factory preset k's patch) */
 #if MELODEE_PROPHET
 #include "p5_parts.h"           /* the parts' Prophet programs (the firmware's: the engine reads them), the voice count */
 #include "prophet_programs.c"   /* Sequential's programs, the presets made from them, a program accepted on a part */
@@ -226,23 +228,8 @@ static const engine_t *eng_of(uint32_t e) { return ENGINES[eng_idx(e)]; }
 /* the KIT parameter's value names (DRUM's E1): a user kit's value shows the kit's own name (params.c, ui_draw.c) */
 static int drum_kit_names(const param_desc_t *d) { return d->names && d->names == ENGINES[ENGI_DRUM]->edit[0].names; }
 
-/* preset k (< npresets) of e: its row, or one made on demand (Prophet, CZ-1: their names live in the native data).
- * Made presets take turns in two slots: two can be held at once (main loop only) */
-static const preset_t *eng_preset(const engine_t *e, uint32_t k)
-{
-    static preset_t made[2];
-    static char made_name[2][21];
-    static uint8_t turn;
-    if (e->presets)
-        return &e->presets[k];
-    turn ^= 1u;
-    memset(&made[turn], 0, sizeof made[turn]);
-    made_name[turn][0] = 0;
-    made[turn].name = made_name[turn];
-    if (e->preset_make)                             /* (a synth module not in SRAM has neither) */
-        e->preset_make(k, &made[turn], made_name[turn]);
-    return &made[turn];
-}
+#include "presets.c"            /* the factory presets: fetched, named, their patches put on a part (a synth
+                                 * module's from its file) */
 
 /* the order the engines are shown in (PRESETS browsing and its ENG knob, the editor's list):
  * engine indices, never a retired one. The indices stay as they are (the

@@ -7,7 +7,9 @@
  * starting). A module is loaded when it is wanted (eng_module.c mod_want, mod_service below) and goes back to the
  * flash when nothing has used it for a while; an upload is loaded once when it is committed (its check). The loader
  * checks the file's head, copies the image into the audio working arena, checks the CRC while it moves the address
- * words, then the descriptor, and only then registers the engine. */
+ * words (and reads the chunks after them for it: never into SRAM), then the descriptor, and only then registers the
+ * engine. A file's factory presets (its PRST chunk, module_presets.h) are read where the file is: checked when it is
+ * listed, their names and categories for the lists, one preset unpacked when it is picked, the module loaded or not */
 #define MODULE_STORE 1
 
 /* ---- loading: a file's bytes through rd (off, dst, n -> 0 ok) into slot k. Returns MS_LOADED or why not */
@@ -63,8 +65,10 @@ static int mod_check(const mod_desc_t *d, const uint8_t *p, uint32_t len, uint32
 static int mod_head_ok(const mod_head_t *h, uint32_t len)
 {
     const mod_file_t *f = &h->f;
+    uint32_t body = mod_head_len(f) + f->image + 4u * f->nrel;   /* (then the chunks, if any: module_presets.h) */
     if (f->magic != MOD_FILE_MAGIC || f->total != len || !mod_engine_ok(f->engine) || f->image % 4u ||
-        f->nrel > f->image / 4u || f->total != mod_head_len(f) + f->image + 4u * f->nrel || !f->name[0])
+        f->nrel > f->image / 4u || f->image > len || f->nrel > len || (f->flags & ~MOD_FILE_CHUNKS) ||
+        (f->flags & MOD_FILE_CHUNKS ? f->total < body + 8u || (f->total - body) % 4u : f->total != body) || !f->name[0])
         return 0;
     if (f->abi == MOD_ABI_NATIVE)
         return h->key == MOD_NATIVE_KEY && f->desc == 0 && f->image >= sizeof(mod_native_t) &&
@@ -125,6 +129,13 @@ static int mod_load(uint32_t k, mod_read_t rd)
             a[0] = (uint8_t)v; a[1] = (uint8_t)(v >> 8); a[2] = (uint8_t)(v >> 16); a[3] = (uint8_t)(v >> 24);
         }
     }
+    for (uint32_t at = hl + f.image + 4u * f.nrel; at < f.total; ) {   /* the chunks: in the CRC, never in SRAM */
+        uint32_t m = f.total - at < sizeof w ? f.total - at : (uint32_t)sizeof w;
+        if (rd(at, w, m))
+            goto bad;
+        crc = st_crc32_update(crc, w, m);
+        at += m;
+    }
     if (~crc != f.crc)
         goto bad;                                   /* (.bss: the arena's blocks come zeroed) */
     if (native) {
@@ -167,29 +178,85 @@ gone:
 /* ---- the pool records: slot k's file in ST_MFILE0 + k, past ST_PROJECT_MAX bytes on in ST_MXFILE0 + k */
 static uint32_t mod_obj(uint32_t k) { return ST_MFILE0 + k; }
 static uint32_t mod_xobj(uint32_t k) { return ST_MXFILE0 + k; }
-static uint32_t mod_rd_obj, mod_rd_copy, mod_rd_xcopy, mod_rd_cut;   /* the open file: its records, the first's length */
-static int mod_flash_read(uint32_t off, void *dst, uint32_t n)
+/* n bytes of slot k's file at off, from the records mod_open found */
+static int mod_rd(uint32_t k, uint32_t off, void *dst, uint32_t n)
 {
+    const mod_slot_t *s = &mods[k];
     uint8_t *d = dst;
-    if (off < mod_rd_cut) {
-        uint32_t m = n < mod_rd_cut - off ? n : mod_rd_cut - off;
-        if (st_read_range(mod_rd_obj, mod_rd_copy, off, d, m))
+    if (off < s->cut) {
+        uint32_t m = n < s->cut - off ? n : s->cut - off;
+        if (st_read_range(mod_obj(k), s->copy, off, d, m))
             return 1;
         d += m; off += m; n -= m;
     }
-    return n && st_read_range(mod_rd_obj - ST_MFILE0 + ST_MXFILE0, mod_rd_xcopy, off - mod_rd_cut, d, n) ? 1 : 0;
+    return n && st_read_range(mod_xobj(k), s->xcopy, off - s->cut, d, n) ? 1 : 0;
 }
-static uint32_t mod_open(uint32_t k)                /* slot k's records for mod_flash_read: the file's length, 0 none */
+static uint32_t mod_rd_slot;                        /* the file mod_flash_read reads (the last mod_open) */
+static int mod_flash_read(uint32_t off, void *dst, uint32_t n) { return mod_rd(mod_rd_slot, off, dst, n); }
+static uint32_t mod_open(uint32_t k)                /* slot k's records for mod_rd: the file's length, 0 none */
 {
     st_hdr_t h, x;
-    int copy = st_current(mod_obj(k), &h), xcopy = h.len == ST_PROJECT_MAX ? st_current(mod_xobj(k), &x) : -1;
+    mod_slot_t *s = &mods[k];
+    int copy = st_current(mod_obj(k), &h), xcopy = copy >= 0 && h.len == ST_PROJECT_MAX ? st_current(mod_xobj(k), &x) : -1;
     if (copy < 0)
         return 0;
-    mod_rd_obj = mod_obj(k);
-    mod_rd_copy = (uint32_t)copy;
-    mod_rd_cut = h.len;
-    mod_rd_xcopy = xcopy < 0 ? 0u : (uint32_t)xcopy;
+    mod_win_drop(k);
+    s->copy = (uint32_t)copy;
+    s->cut = h.len;
+    s->xcopy = xcopy < 0 ? 0u : (uint32_t)xcopy;
+    mod_rd_slot = k;
+    mod_pread = mod_rd;                             /* (the presets' reader: eng_module_main.c) */
     return h.len + (xcopy < 0 ? 0u : x.len);
+}
+
+/* slot k's factory presets (module_presets.h): its PRST chunk found among the chunks, checked (head, CRC: the lists read
+ * it from here on), its categories into mod_cat. 1, or 0 (none: the file has no presets, or not as this firmware reads
+ * them) */
+static int mod_pst_find(uint32_t k, const mod_file_t *f)
+{
+    mod_slot_t *s = &mods[k];
+    uint32_t at = mod_head_len(f) + f->image + 4u * f->nrel, c[2] = {0, 0}, crc = 0xFFFFFFFFu, n = f->npresets, off, m;
+    mod_pst_head_t ph;
+    uint8_t r[MOD_PST_REC];
+    for (;; at += 8u + ((c[1] + 3u) & ~3u)) {      /* (mod_head_ok: the chunks fill the file to its end) */
+        if (!(f->flags & MOD_FILE_CHUNKS) || at + 8u > f->total || mod_rd(k, at, c, 8u) || c[1] > f->total - at - 8u)
+            return 0;
+        if (c[0] == MOD_PST_TAG)
+            break;
+    }
+    at += 8u;
+    if (c[1] < MOD_PST_HEAD + MOD_PST_REC * (n + 1u) || mod_rd(k, at, &ph, sizeof ph) || ph.version != MOD_PST_VERSION ||
+        ph.count != n || ph.ulen < MOD_PST_COMMON || ph.dict + ph.ulen > MOD_PST_BUF)
+        return 0;
+    mod_winq[0].slot = 0xFFu;                       /* (window 0: the CRC's buffer) */
+    for (off = MOD_PST_HEAD; off < c[1]; off += m) {
+        m = c[1] - off < MOD_WIN ? c[1] - off : MOD_WIN;
+        if (mod_rd(k, at + off, mod_win[0], m))
+            return 0;
+        crc = st_crc32_update(crc, mod_win[0], m);
+    }
+    if (~crc != ph.crc || mod_rd(k, at + MOD_PST_HEAD + MOD_PST_REC * n, r, sizeof r))
+        return 0;
+    off = MOD_PST_HEAD + MOD_PST_REC * (n + 1u) + (r[4] | (uint32_t)r[5] << 8);   /* (the dictionary's place) */
+    if (off > c[1] || ph.dict > c[1] - off || mod_le32(r) > c[1])
+        return 0;
+    s->pst = at;
+    s->pst_len = c[1];
+    s->pst_dat = off;
+    s->pst_init = ph.init;
+    s->pst_dict = ph.dict;
+    s->pst_ulen = ph.ulen;
+    s->cat_at = MOD_PST_NONE;
+    if (mod_cat_n + n > MOD_CATS)
+        return 1;                                   /* (RAM full: its categories read from the file) */
+    for (uint32_t i = 0, q = mod_cat_n; i < n; i++, q++) {   /* the categories into RAM, the records in order */
+        if (mod_pst_rd(k, MOD_PST_HEAD + MOD_PST_REC * i, r, sizeof r))
+            return (int)(s->pst = 0);
+        mod_cat[q / 2u] = (uint8_t)((mod_cat[q / 2u] & ~(15u << (q % 2u * 4u))) | (r[6] & 15u) << (q % 2u * 4u));
+    }
+    s->cat_at = mod_cat_n;
+    mod_cat_n = (uint16_t)(mod_cat_n + n);
+    return 1;
 }
 /* slot k listed from its record's head, nothing loaded (power-on, an upload): MS_STORED or why not */
 static int mod_catalog(uint32_t k)
@@ -198,6 +265,7 @@ static int mod_catalog(uint32_t k)
     mod_slot_t *s = &mods[k];
     mod_unregister(k, 0);
     memset(s, 0, sizeof *s);
+    mod_win_drop(k);
     uint32_t len = mod_open(k);
     if (!len)
         return MS_EMPTY;
@@ -225,6 +293,11 @@ static int mod_catalog(uint32_t k)
         return s->state = MS_SKIPPED;
     if (ENGINES[f.engine] != &ENG_RETIRED)
         return s->state = MS_CLASH;                 /* a built-in engine has the number */
+    if (!mod_pst_find(k, &f) && f.abi == MOD_ABI_NATIVE) {
+        s->npresets = 0;                            /* (a native module's presets are its file's) */
+        if (f.npresets)
+            return s->state = MS_BAD;
+    }
     mod_list_idle(k);
     return MS_STORED;
 }
@@ -250,6 +323,7 @@ static void mod_boot(void)
 {
     mod_skipped = bootguard.failed != 0;            /* the last boot died in its first 30 s */
     mod_fetch = mod_bring;
+    mod_cat_n = 0;
     for (uint32_t k = 0; k < NMOD; k++)
         (void)mod_catalog(k);
 }
@@ -311,6 +385,8 @@ static int mod_put_begin(uint32_t k, uint32_t len)
         return -1;
     int rc = st_stream_begin(&mod_up, mod_obj(k), len < ST_PROJECT_MAX ? len : ST_PROJECT_MAX);
     if (!rc) {
+        mods[k].pst = 0;                            /* (its presets: the new file's, once it is committed) */
+        mod_win_drop(k);
         mod_up_slot = (uint8_t)k;
         mod_up_part = 0;
         mod_up_len = len;
@@ -382,6 +458,7 @@ static int mod_delete(uint32_t k)
         return -1;
     mod_unregister(k, 0);                           /* unloaded, the slot empty */
     memset(&mods[k], 0, sizeof mods[k]);
+    mod_win_drop(k);
     if (st_exists(mod_xobj(k)))
         (void)st_project_delete(mod_xobj(k));
     return st_project_delete(mod_obj(k));
