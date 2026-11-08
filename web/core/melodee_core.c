@@ -220,7 +220,7 @@ static void core_mix_block_taps(int32_t *out, uint32_t n, int32_t tap[TAPS][2u *
     fx_bus_select();fx_send_on=(uint8_t)fx_bus_active();if(fx_send_on){memset(fx_send_l,0,n*sizeof *fx_send_l);memset(fx_send_r,0,n*sizeof *fx_send_r);
         if(fx_bus_separate){memset(fx_send_extra_l,0,sizeof fx_send_extra_l);memset(fx_send_extra_r,0,sizeof fx_send_extra_r);}}
     uint32_t nt=trk_parts();
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
     mix_prepare_batch(n,nt);
 #endif
     memset(tap, 0, TAPS * 2u * CTL * sizeof tap[0][0]);
@@ -229,7 +229,7 @@ static void core_mix_block_taps(int32_t *out, uint32_t n, int32_t tap[TAPS][2u *
         mix_part(&trk[i],n);
         for (uint32_t j = 0; j < n; j++) { tap[i][2u * j] = mix_l[j] - tap_pre_l[j]; tap[i][2u * j + 1u] = mix_r[j] - tap_pre_r[j]; }
     }
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
     batch_ready=0;part_buf=part_storage;spread_buf=spread_storage;
 #endif
     fx_bus_start(n);

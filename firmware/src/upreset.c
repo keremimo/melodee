@@ -24,7 +24,7 @@
 #define UP_PER_BANK 18u
 #endif
 #define UP_BANKS ((UP_SLOTS+UP_PER_BANK-1u)/UP_PER_BANK)
-#define UP_DISK_MAGIC 0x32425055u
+#define UP_DISK_MAGIC 0x33425055u             /* "UPB3": Melodee 2.0, the synths it names in its EMA2 entries (UPB2 and before: 1.x) */
 #define UP_VER_FM 11u
 #define UP_VER_P5 12u
 #define UP_VER_NATIVE_CZ 13u
@@ -239,7 +239,7 @@ static int up_valid(const up_rec_t *r)
 #else
         UP_HOST_TONE_OK(r->packed);
 #endif
-    if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID) && (r->engine < USER_GENERAL || (r->engine >= ENGI_MOD0 && r->engine < NENGINES)) &&
+    if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID) && (r->engine > ENG_H_NONE && r->engine < NENGINES) &&
           r->np >= 8u && r->np <= UP_PMAX * 2u && r->name[0])) return 0;
     for (uint32_t i = 0; i < r->np; i++) if (r->packed[i] > 191u) return 0;
     if(r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID){   /* (a KIT patch's bits: its offsets in their ranges) */
@@ -456,7 +456,7 @@ static void up_values(const up_rec_t *r, int16_t *v)   /* mapped and clamped for
     up_params(r, v, def);
     for (i = 0; i < P_COUNT; i++) if (param_reserved(i) || i == P_TUNING) v[i] = 0;   /* (a sound never brings a tuning) */
     for (i = 0; i < P_COUNT; i++)
-        if (!(eng_extra_retired(r->engine) && i >= P_E0))
+        if (!(eng_silent(r->engine) && i >= P_E0))
         v[i] = (int16_t)clamp(v[i], param_desc_of(r->engine, i)->min, param_desc_of(r->engine, i)->max);
 }
 
@@ -805,7 +805,7 @@ static int general_sysex_send(uint32_t k)
 #if MELODEE_OTA
     if(!usb.config || !up_used(k))return 1;
     struct { up_rec_t r; uint8_t entry[EMAP_ENTRY]; } x;x.r=*up_rec(k);eng_map_put(x.entry,x.r.engine);
-    uint8_t frame[5u+(sizeof x+6u)/7u*8u+2u];memcpy(frame,(uint8_t[]){0xf0,0x7d,0x4d,0x4c,2},5);uint32_t n=5;
+    uint8_t frame[5u+(sizeof x+6u)/7u*8u+2u];memcpy(frame,(uint8_t[]){0xf0,0x7d,0x4d,0x4c,3},5);   /* (3: Melodee 2.0's, its synth's entry) */uint32_t n=5;
     up_pack7(frame,&n,(const uint8_t *)&x,sizeof x);
     frame[n]=sx_checksum(frame+1,n-1u);n++;frame[n++]=0xf7;
     return ota_wire_send(frame,n);
@@ -817,16 +817,14 @@ static int general_sysex_frame(const uint8_t *body,uint32_t n)
 {
     if(n<4u || body[0]!=0x7d || body[1]!=0x4d || body[2]!=0x4c)return 0;
     struct { up_rec_t r; uint8_t entry[EMAP_ENTRY]; } x;
-    uint32_t len=body[3]==2u?(uint32_t)sizeof x:(uint32_t)sizeof x.r;
-    if((body[3]!=1u && body[3]!=2u) || n!=4u+len+(len+6u)/7u+1u){ui_message("INVALID PRESET SYSEX");return 1;}
+    uint32_t len=(uint32_t)sizeof x;                  /* (3: Melodee 2.0's; 1 and 2 are 1.x's, the web installer converts them) */
+    if(body[3]!=3u || n!=4u+len+(len+6u)/7u+1u){ui_message("INVALID PRESET SYSEX");return 1;}
     for(uint32_t i=0;i<n;i++)if(body[i]>127u){ui_message("INVALID PRESET SYSEX");return 1;}
     if(sx_checksum(body,n)){ui_message("INVALID PRESET SYSEX");return 1;}
     up_rec_t r;uint8_t *raw=(uint8_t *)&x;uint32_t pos=0;
     for(uint32_t i=4;i<n-1u;){uint32_t count=len-pos;if(count>7u)count=7;uint32_t mask=body[i++];if(!count || mask>>count){ui_message("INVALID PRESET SYSEX");return 1;}for(uint32_t j=0;j<count;j++)raw[pos++]=(uint8_t)(body[i++]|((mask>>j)&1u)<<7);}
     r=x.r;
-    if(body[3]==2u && mod_le64(x.entry+4)){   /* (an entry with no ID: a number of Melodee's own history, as it is) */
-        uint32_t from,e=eng_map_get(x.entry,&from);if(from!=r.engine || e>=NENGINES){ui_message("INVALID PRESET SYSEX");return 1;}r.engine=(uint8_t)e;}
-    else if(body[3]==2u && x.entry[0]!=r.engine){ui_message("INVALID PRESET SYSEX");return 1;}
+    {uint32_t from,e=eng_map_get(x.entry,&from);if(from!=r.engine || e>=NENGINES){ui_message("INVALID PRESET SYSEX");return 1;}r.engine=(uint8_t)e;}
     if(!up_valid(&r)){ui_message("INVALID PRESET SYSEX");return 1;}
     sysex_stage(r.engine,(const uint8_t *)&r,1,sizeof r);return 1;
 }

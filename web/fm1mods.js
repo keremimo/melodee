@@ -78,8 +78,8 @@ async function modSlots(ask) {
   return { list: out, own };
 }
 
-/* a slot holding a file's synth: by their IDs when both have one (a synth's number is the device's), else the number */
-const mod_same = (s, f) => (s.id && f.id ? s.id === f.id : s.engine === f.engine);
+/* a slot holding a file's synth: by their IDs (Melodee 2.0: engine numbers are the device's handles, never a synth's) */
+const mod_same = (s, f) => !!s.id && !!f.id && s.id === f.id;
 // request([cmd, args], {timeout}) -> reply bytes (fm1backup.js BackupConnection). Resolves "current" when every module
 // is on the device already, "written" after the missing ones were written and loaded or stored.
 export async function installModules(request, bundle, onProgress = () => {}) {

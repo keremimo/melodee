@@ -192,20 +192,6 @@ static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
         }
         return 1;
     }
-#ifndef MELODEE_LEGACY_STORE                   /* (fm1_cc.h; host builds of this file alone: on) */
-#if BOARD_SMK37
-#define MELODEE_LEGACY_STORE 0
-#else
-#define MELODEE_LEGACY_STORE 1
-#endif
-#endif
-#if MELODEE_LEGACY_STORE                       /* (the old bank formats: an SMK-37 never converts them) */
-    if(bank>=2u && bank<4u && len==3808u)return 1;
-    if(bank<4u && len==3816u && h->magic==UP_BANK_MAGIC && h->rsize==238u && h->nslot==16u)return 1;
-    if(bank>=4u && bank<8u)return len==sizeof(native_fm_t) && native_fm_valid((const native_fm_t *)raw);
-    if(bank>=8u && bank<16u)return len==sizeof(tone_bank_t) && tone_bank_valid((const tone_bank_t *)raw);
-    if(bank>=16u && bank<21u)return len==sizeof(program_bank_t) && program_bank_valid((const program_bank_t *)raw,bank-16u);
-#endif
     return 0;
 }
 #endif
@@ -251,7 +237,7 @@ static uint32_t ed_bk_commit_inner(void)
 #if !MELODEE_FLASH || MELODEE_AUDIO_PROFILE
         int full = bank_full(ed_bk_len);
         bank_wide = bank_p16 = 0;
-        if (ed_bk_len && !(full ? bank_valid(raw, ed_bk_len) : (eng_remap_reset(), proj_import(&proj_scratch, raw, (int)ed_bk_len)))) return 2;
+        if (ed_bk_len && !(full && bank_valid(raw, ed_bk_len))) return 2;
         if (ed_bk_id == 0u) {
             if (!ed_bk_len) return 2;
             up_boot();
@@ -278,7 +264,7 @@ static uint32_t ed_bk_commit_inner(void)
         /* Guarded diagnostics restore preferences in RAM only. No template
          * replacement, persistence bookkeeping or flash commit is allowed. */
         if(AUDIO_LAB_GUARDED()){
-            if(ed_bk_len!=sizeof(persist_t) || !settings_legacy_valid((const persist_t *)raw) ||
+            if(ed_bk_len!=sizeof(persist_t) || ((const persist_t *)raw)->magic!=PERSIST_MAGIC ||
                !ed_bk_panel_valid(&((const persist_t *)raw)->panel))return 2;
             settings_import((persist_t *)raw,sizeof(persist_t));
             panel_init();settings_init();palette_set(settings.palette);

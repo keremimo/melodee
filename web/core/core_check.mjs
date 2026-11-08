@@ -35,7 +35,21 @@ const MEL = opt("mel", [join(ROOT, "build/host/studio/mel"), join(ROOT, "build/h
 const SECONDS = Number(opt("seconds", 10));
 const ABI = 4;
 const MODDIR = resolve(opt("modules", join(ROOT, "build/modules/wasm")));
-const SYNTHS = [["sid", 3], ["drum", 10], ["cz", 15], ["fm6", 12], ["prophet", 19]];
+const SYNTHS = [["sid", "SID"], ["drum", "DRUM"], ["cz", "CZ-1"], ["fm6", "FM6"], ["prophet", "PROPHET"]];
+/* a synth's handle on this core by its name (INFO: the version, five bytes, then each handle's name; Melodee 2.0's
+   handles are the device's own, never a synth's identity) */
+const handleOf = (c, name) => {
+  const a = c.ask(1);
+  let i = a.indexOf(0) + 1;
+  const n = a[i];
+  i += 5;
+  for (let e = 0; e < n; e++) {
+    const j = a.indexOf(0, i);
+    if (String.fromCharCode(...a.slice(i, j)) === name.slice(0, 8)) return e;
+    i = j + 1;
+  }
+  return -1;
+};
 const modFiles = SYNTHS.map(([s]) => readFileSync(join(MODDIR, `${s}.mmod`)));
 const hex = (a) => Array.from(a, (b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
 const report = {};
@@ -318,9 +332,10 @@ async function songCore({ taps = false, midi = 0 } = {}) {                      
 }
 
 // ------------------------------------------------------------------ 3. the synths ---
-for (const [name, e] of SYNTHS) for (const p of [0, 5]) {
+for (const [name, label] of SYNTHS) for (const p of [0, 5]) {
   const c = await core();
   await power(c);
+  const e = handleOf(c, label);
   c.exchange(req(8, [e, p]));
   c.x.core_poll(30);
   const s = c.x.core_scratch(), on = [0x90, 48, 100, 0x90, 55, 90, 0x90, 64, 80], off = [0x80, 48, 0, 0x80, 55, 0, 0x80, 64, 0];

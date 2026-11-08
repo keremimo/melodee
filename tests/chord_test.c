@@ -429,64 +429,15 @@ static int strumming(void)
     return bad;
 }
 
-/* Recreate the previous parameter layout without changing the fixed native
- * patches or FX tail. Its engine slots must never become strum settings. */
+/* Strum and stroke in a 2.0 record (the 1.x layouts before them: the web installer converts those) */
 static int strum_storage(void)
 {
     reset(); track_t *t = &trk[0];
     t->p[P_STRUM]=4; t->p[P_STROKE]=2; t->p[P_E3]=23;
-    t->p[P_FXTONE]=-20; song.g[G_MFXTONE]=17;
     project_capture(&proj_scratch);
-    proj_scratch.motion.count=1; proj_scratch.motion.on=1;
-    proj_scratch.motion.event[0]=(motion_event_t){0,P_E3,23};
-    static project_store_t old;
-    int bad=check("strum project serializes",proj_pack(&old,&proj_scratch));
-    uint32_t src=68, dst=68;
-    for(uint32_t k=0;k<NPART;k++) {
-        memmove(old.raw+dst,old.raw+src,114);dst+=114;src+=116;
-        uint32_t tail=8+2+NSTEP*8;
-        memmove(old.raw+dst,old.raw+src,tail);dst+=tail;src+=tail;
-    }
-    uint32_t motion_at=dst+sizeof(chain_legacy_t);
-    memmove(old.raw+dst,old.raw+src,PROJ_TONE_WIRE-src);
-    memset(old.raw+PROJ_TONE_WIRE-(src-dst),0,src-dst);
-    /* Rewrite the source-era engine motion ID and count, then authenticate. */
-    old.raw[motion_at+__builtin_offsetof(motion_store_t,event)+__builtin_offsetof(motion_event_t,param)]=117;
-    old.raw[66]=122;
-    uint32_t hash=proj_hash(old.raw,sizeof old-4);
-    memcpy(old.raw+sizeof old-4,&hash,4);
-    int ok=proj_import(&proj_scratch,&old,sizeof old);
-    bad+=check("pre-strum project imports with OFF, original engine values/motion and FX tones",
-        ok && !proj_scratch.t[0].p[P_STRUM] && !proj_scratch.t[0].p[P_STROKE] &&
-        proj_scratch.t[0].p[P_E3]==23 && proj_scratch.motion.event[0].param==P_E3 &&
-        proj_scratch.t[0].p[P_FXTONE]==-20 && proj_scratch.g[G_MFXTONE]==17);
-    persist_old=tmpl_old=0; template_save();
-    static uint8_t blob[sizeof(tmpl_t)]; memcpy(blob,&tmpl,sizeof tmpl);
-    src=dst=2*PROJ_GLOBALS+2;
-    for(uint32_t k=0;k<NPART;k++) {
-        uint32_t head=2+114*2;
-        memmove(blob+dst,blob+src,head);dst+=head;src+=head+4;
-        memmove(blob+dst,blob+src,16);dst+=16;src+=16;
-    }
-    memmove(blob+dst,blob+src,sizeof tmpl-src);
-    uint32_t len=sizeof tmpl-(src-dst);
-    memcpy(blob+len-8,&len,4);
-    ok=tmpl_take(blob,len);
-    bad+=check("pre-strum template imports with OFF and original native/engine/FX data",
-        ok && !tmpl.t[0].p[P_STRUM] && !tmpl.t[0].p[P_STROKE] &&
-        tmpl.t[0].p[P_E3]==23 && tmpl.t[0].p[P_FXTONE]==-20 && tmpl.master[14]==81);
-    up_rec_t preset; memset(&preset,0,sizeof preset);
-    preset.used=UP_USED; preset.ver=UP_VER_CZ; preset.engine=ENGI_CZ;
-    preset.np=122; memcpy(preset.name,"OLD CZ",7); cz_patch_init(preset.packed);
-    bad+=check("pre-strum CZ preset remains valid",up_valid(&preset));
-    memset(&preset,0,sizeof preset); preset.np=125;
-    int16_t defaults[P_COUNT],values[P_COUNT];
-    for(uint32_t i=0;i<P_COUNT;i++)defaults[i]=TP[i].def;
-    for(uint32_t i=0;i<125;i++)up_set_value(&preset,i,0);
-    up_set_value(&preset,114,39);up_set_value(&preset,115,27);up_set_value(&preset,120,23);
-    up_params(&preset,values,defaults);
-    bad+=check("retired high-cut preset values cannot enable strum or change its direction",
-        !values[P_STRUM] && !values[P_STROKE] && values[P_E3]==23);
+    static project_store_t wire;
+    int bad=check("strum project serializes and reads back",proj_pack(&wire,&proj_scratch) &&
+        proj_import_same(&proj_scratch,&wire,sizeof wire) && proj_scratch.t[0].p[P_STRUM]==4 && proj_scratch.t[0].p[P_STROKE]==2);
     t->p[P_STRUM]=t->p[P_STROKE]=0;go_page(GR_CHORD);
     turn(EN_K3,4);turn(EN_K4,2);
     bad+=check("CHORD knobs 3 and 4 edit strum duration and stroke direction",t->p[P_STRUM]==4 && t->p[P_STROKE]==2);

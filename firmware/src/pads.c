@@ -70,7 +70,7 @@ static void pads_sync(void)
     pads_nc = 0;
     for (e = 0; e < NENGINES; e++) {
         sch_info[e].pads = 0;
-        if (pads_nc >= NPART || ENGINES[e] == &ENG_RETIRED || pads_head(e, b, &wid))
+        if (pads_nc >= NPART || ENGINES[e] == &ENG_NONE || pads_head(e, b, &wid))
             continue;
         pads_make(&pads_c[pads_nc], e);
         if (pads_c[pads_nc].map[0].npads)

@@ -373,7 +373,9 @@
 /* Melodee's synths by their IDs (firmware/modules/shipped.h: 16 hex digits, as desc.json MAP has them): who a device's
    engine number is comes from its engine map (editor 84 op 6), these are the ones Melodee ships */
 const UID = { SID: "8757cdd57f9158d4", TRIO: "c273261a2cf92788", WHEEL: "dfd389dd5b2da920", DRUM: "241aacc57d998ffe",
-  FM6: "918284c33909e71a", CZ1: "62dc75aa6adc0530", PROPHET: "4624e600c585ed74" };
+  FM6: "918284c33909e71a", CZ1: "62dc75aa6adc0530", PROPHET: "4624e600c585ed74", MIDI: "21eb3550e8d4bf9e" };
+/* Melodee 2.0's user kinds (core.h: never engine handles) */
+const KIND = { GENERAL: 0x40, FM: 0x41, CZ: 0x42, P5: 0x43 };
 const SCALE_INFO = [{"name": "CHR", "title": "Chromatic", "family": "Western", "count": 12}, {"name": "MAJ", "title": "Major", "family": "Western", "count": 7}, {"name": "MIN", "title": "Natural minor", "family": "Western", "count": 7}, {"name": "DOR", "title": "Dorian", "family": "Western", "count": 7}, {"name": "MIX", "title": "Mixolydian", "family": "Western", "count": 7}, {"name": "PEN", "title": "Major pentatonic", "family": "Western", "count": 5}, {"name": "MPEN", "title": "Minor pentatonic", "family": "Western", "count": 5}, {"name": "HARM", "title": "Harmonic minor", "family": "Western", "count": 7}, {"name": "PHRY", "title": "Phrygian", "family": "Western", "count": 7}, {"name": "LYD", "title": "Lydian", "family": "Western", "count": 7}, {"name": "LOC", "title": "Locrian", "family": "Western", "count": 7}, {"name": "MEL", "title": "Melodic minor", "family": "Western", "count": 7}, {"name": "BLUES", "title": "Blues", "family": "Western", "count": 6}, {"name": "WHOLE", "title": "Whole tone", "family": "Western", "count": 6}, {"name": "DIMHW", "title": "Half-whole diminished", "family": "Western", "count": 8}, {"name": "DIMWH", "title": "Whole-half diminished", "family": "Western", "count": 8}, {"name": "5EDO", "title": "5-tone equal division", "family": "Equal divisions", "count": 5}, {"name": "7EDO", "title": "7-tone equal division", "family": "Equal divisions", "count": 7}, {"name": "9EDO", "title": "9-tone equal division", "family": "Equal divisions", "count": 9}, {"name": "10EDO", "title": "10-tone equal division", "family": "Equal divisions", "count": 10}, {"name": "13EDO", "title": "13-tone equal division", "family": "Equal divisions", "count": 13}, {"name": "14EDO", "title": "14-tone equal division", "family": "Equal divisions", "count": 14}, {"name": "15EDO", "title": "15-tone equal division", "family": "Equal divisions", "count": 15}, {"name": "16EDO", "title": "16-tone equal division", "family": "Equal divisions", "count": 16}, {"name": "17EDO", "title": "17-tone equal division", "family": "Equal divisions", "count": 17}, {"name": "18EDO", "title": "18-tone equal division", "family": "Equal divisions", "count": 18}, {"name": "19EDO", "title": "19-tone equal division", "family": "Equal divisions", "count": 19}, {"name": "20EDO", "title": "20-tone equal division", "family": "Equal divisions", "count": 20}, {"name": "21EDO", "title": "21-tone equal division", "family": "Equal divisions", "count": 21}, {"name": "22EDO", "title": "22-tone equal division", "family": "Equal divisions", "count": 22}, {"name": "23EDO", "title": "23-tone equal division", "family": "Equal divisions", "count": 23}, {"name": "24EDO", "title": "24-tone equal division", "family": "Equal divisions", "count": 24}, {"name": "26EDO", "title": "26-tone equal division", "family": "Equal divisions", "count": 26}, {"name": "27EDO", "title": "27-tone equal division", "family": "Equal divisions", "count": 27}, {"name": "29EDO", "title": "29-tone equal division", "family": "Equal divisions", "count": 29}, {"name": "31EDO", "title": "31-tone equal division", "family": "Equal divisions", "count": 31}, {"name": "34EDO", "title": "34-tone equal division", "family": "Equal divisions", "count": 34}, {"name": "36EDO", "title": "36-tone equal division", "family": "Equal divisions", "count": 36}, {"name": "41EDO", "title": "41-tone equal division", "family": "Equal divisions", "count": 41}, {"name": "53EDO", "title": "53-tone equal division", "family": "Equal divisions", "count": 53}, {"name": "JI-MAJ", "title": "Just major", "family": "Just intonation", "count": 7}, {"name": "JI-MIN", "title": "Just minor", "family": "Just intonation", "count": 7}, {"name": "JI-12", "title": "Just chromatic", "family": "Just intonation", "count": 12, "retired": true}, {"name": "JI-7L", "title": "7-limit chromatic", "family": "Just intonation", "count": 12, "retired": true}, {"name": "JI-7", "title": "Just diatonic", "family": "Just intonation", "count": 7}, {"name": "HARM8", "title": "Harmonic series 8", "family": "Harmonic", "count": 8}, {"name": "HARM16", "title": "Harmonic series 16", "family": "Harmonic", "count": 16}, {"name": "PARTCH", "title": "Partch 43-tone", "family": "Just intonation", "count": 43}, {"name": "HARRIS", "title": "Harrison 8-tone", "family": "Just intonation", "count": 8}, {"name": "PYTH", "title": "Pythagorean", "family": "Historical", "count": 12, "retired": true}, {"name": "MT-1/4", "title": "Quarter-comma meantone", "family": "Historical", "count": 12, "retired": true}, {"name": "MT-1/3", "title": "Third-comma meantone", "family": "Historical", "count": 12, "retired": true}, {"name": "MT-1/6", "title": "Sixth-comma meantone", "family": "Historical", "count": 12, "retired": true}, {"name": "WERCK3", "title": "Werckmeister III", "family": "Historical", "count": 12, "retired": true}, {"name": "KIRN3", "title": "Kirnberger III", "family": "Historical", "count": 12, "retired": true}, {"name": "VALLOT", "title": "Vallotti", "family": "Historical", "count": 12, "retired": true}, {"name": "YOUNG2", "title": "Young II", "family": "Historical", "count": 12, "retired": true}, {"name": "RAST-J", "title": "Rast 11-limit", "family": "Regional", "count": 7}, {"name": "SABA-J", "title": "Saba just", "family": "Regional", "count": 8}, {"name": "SHRUTI", "title": "Indian 22 shruti", "family": "Regional", "count": 22}, {"name": "SLENDR", "title": "Slendro average", "family": "Regional", "count": 5}, {"name": "PELOG", "title": "Pelog", "family": "Regional", "count": 7}, {"name": "BP-ET", "title": "Bohlen-Pierce equal", "family": "Non-octave", "count": 13}, {"name": "BP-JI", "title": "Bohlen-Pierce just", "family": "Non-octave", "count": 13}, {"name": "RAST-D", "title": "Rast", "family": "Maqam models", "count": 7, "retired": true}, {"name": "BAYAT-D", "title": "Bayati", "family": "Maqam models", "count": 7, "retired": true}, {"name": "HIJAZ-D", "title": "Hijaz", "family": "Maqam models", "count": 7, "retired": true}, {"name": "SABA-D", "title": "Saba", "family": "Maqam models", "count": 7, "retired": true}, {"name": "HUSAY-D", "title": "Husayni", "family": "Maqam models", "count": 7, "retired": true}, {"name": "SIKAH-D", "title": "Sikah", "family": "Maqam models", "count": 7, "retired": true}, {"name": "RAST", "title": "Rast", "family": "Maqam models", "count": 7}, {"name": "BAYATI", "title": "Bayati", "family": "Maqam models", "count": 7}, {"name": "HIJAZ", "title": "Hijaz", "family": "Maqam models", "count": 7}, {"name": "SABA", "title": "Saba", "family": "Maqam models", "count": 7}, {"name": "HUSAYN", "title": "Husayni", "family": "Maqam models", "count": 7}, {"name": "SIKAH", "title": "Sikah", "family": "Maqam models", "count": 7}]; /* generated scale metadata */
 /* Match metadata by stable short name, keeping older/unknown device lists usable. */
 function scaleRows(desc, family = "All scales", query = "", favorites = [], current = -1) {
@@ -495,7 +497,7 @@ const parse = {
     for (let i = 0; i < o.nengines; i++) {
       const name = r.s();
       /* INFO caps engine names at 8 bytes; keep MIDI Track's UI identity intact. */
-      o.engines.push(i === 21 && name === "MIDI Tra" ? "MIDI Track" : name);
+      o.engines.push(name === "MIDI Tra" ? "MIDI Track" : name);
     }
     o.chainRows = 0;
     o.ntrk = r.i < a.length ? r.b() : 0;             /* v3: tracks (0 = older firmware, one instrument) */
@@ -520,6 +522,10 @@ const parse = {
     /* the user slots' favorites row: 1.x's tag 0x35 said it, core.h USER_GENERAL with the shared slots, else past the engines */
     const ns=trailer.findIndex((x,i)=>i>=15&&x===0x35&&trailer[i+1]===1);
     o.namespace={general:ns>=0?trailer[ns+3]:o.shared?16:o.nengines};
+    /* Melodee 2.0 ('I' 1): engine handles are this session's (84 op 6 names their IDs): the MIDI Track's, the user kinds */
+    const id=trailer.findIndex((x,i)=>i>=15&&x===0x49&&trailer[i+1]===1);
+    o.midi=id>=0?trailer[id+2]:21;
+    if(id>=0)o.namespace={general:trailer[id+3],fm:trailer[id+4],cz:trailer[id+5],p5:trailer[id+6]};
     return o;
   },
   [CMD.UI_STATE](a) {
@@ -1594,7 +1600,6 @@ const MODS = {
       k = -1;
       for (const s of list.slots) if (s.len && (await MODS.slotId(rq, s.slot)) === id) { k = s.slot; break; }
     }
-    if (k == null) k = list.slots.findIndex((s) => s.len && s.engine === h.engine);
     if (k < 0) k = list.slots.findIndex((s) => !s.len);
     if (k < 0) throw new Error("every module slot is in use: delete one first");
     const opt = { timeout: 4000, retries: 0 };
@@ -1809,8 +1814,7 @@ function makeMockDevice(opt = {}) {
     ...Array.from({length:8},()=>D("",F.INT,0,127,0)),
     E("MIDI", ["USB", "TRS", "BLE"], 0), E("DRUM", ["OFF", ...Array.from({ length: 16 }, (_, i) => String(i + 1))], 10), E("ROUT", ["CH1-4", "SEL", "CH5-8", "CH9-12", "CH13-16"], 0), D("CPU", F.INT, 0, 0, 0),
     D("SLOT", F.INT, 1, 33, 1), E("BOOT", ["OFF", ...Array.from({ length: 32 }, (_, i) => String(i + 1))], 0), E("LOAD", NGO, 0), E("SAVE", NGO, 0),
-    E("ENG", ["-", "-", "-", "SID", "-", "-", "-", "-",
-      "-", "-", "DRUM", "-", "FM6", "-", "-", "CZ-1", "-", "-", "-", "PROPHET", "-", "MIDI Track", ...Array(26).fill("-")], 0), D("A4", F.INT, 400, 480, 440, null, "Hz"),
+    E("ENG", ["-", "MIDI Track", "PROPHET", "FM6", "CZ-1", "SID", "DRUM", ...Array(23).fill("-")], 0), D("A4", F.INT, 400, 480, 440, null, "Hz"),
     E("CLRSQ", NGO, 0), E("INIT", NGO, 0),
     ...Array.from({length:3},()=>D("",F.INT,0,127,0)),
   ];
@@ -1889,11 +1893,19 @@ function makeMockDevice(opt = {}) {
   ENG.push({name:"-",titles:["-","-"],edit:Array(8).fill(NONE),presets:[]},
     {name:"MIDI Track",titles:["MIDI Track","-"],edit:[D("CH",F.INT,1,16,1),E("TRS",["OFF","ON"],0),...Array(6).fill(NONE)],
       presets:[P("MIDI Track",[1,0,0,0,0,0,0,0],[0,0,0,0],0)]});
-  ENG.push(...Array.from({length:26},()=>({name:"-",titles:["-","-"],edit:Array(8).fill(NONE),presets:[]})));   /* 22..47: synth modules' numbers */
+  ENG.push(...Array.from({length:26},()=>({name:"-",titles:["-","-"],edit:Array(8).fill(NONE),presets:[]})));
+  /* Melodee 2.0: engine handles (firmware core.h: 0 none, 1 the MIDI Track, the manifest's synths from 2 in its order,
+     then the modules; never stored): the mock's engines laid out as a 2.0 device hands them out */
+  {
+    const by = (n) => ENG.find((e) => e.name === n), H = [ENG[0], by("MIDI Track"), by("PROPHET"), by("FM6"), by("CZ-1"), by("SID"), by("DRUM")];
+    while (H.length < 30) H.push({name:"-",titles:["-","-"],edit:Array(8).fill(NONE),presets:[]});
+    ENG.splice(0, ENG.length, ...H);
+  }
+  const MOCK_MIDI = 1;
   /* the mock device's engine map (firmware eng_map.c: each number's synth ID, 0 none; == desc.json MAP): the
      synths it plays by who they are, not by their numbers */
-  const MOCK_MAP = Array(48).fill(0);
-  [[3, UID.SID], [6, UID.TRIO], [7, UID.WHEEL], [10, UID.DRUM], [12, UID.FM6], [15, UID.CZ1], [19, UID.PROPHET]]
+  const MOCK_MAP = Array(30).fill(0);
+  [[1, UID.MIDI], [2, UID.PROPHET], [3, UID.FM6], [4, UID.CZ1], [5, UID.SID], [6, UID.DRUM]]
     .forEach(([n, u]) => { MOCK_MAP[n] = u; });
   const MOCK_ENGI = (uid) => MOCK_MAP.indexOf(uid);
   const FM6_E = ENG.findIndex((e) => e.name === "FM6"), FM6_BANK = 0;
@@ -1938,18 +1950,15 @@ function makeMockDevice(opt = {}) {
     uiCaps: opt.legacy || opt.v3 || opt.v5 ? 0 : opt.uiCaps ?? 121,
     palette: 0, font: 0, monitor: 0, filter: 0, bankSig: 0, click:0, clickLevel:(opt.uiCaps ?? 121) & 64 ? 12 : 1, countin:0, preview:0, chordAdd:0, retiredPreference:127, screenOff:0,
     palettes: ["MONO", "GREEN", "AMBER", "ICE", "VIOLET", "ROSE", "PAPER", "HI-CON"],
-    favorites: Array.from({ length: ENG.length + 3 }, () => []),
+    favorites: Array.from({ length: KIND.P5 + 1 }, () => []),
     watch: false, v4: false, lastReq: 0,
   };
   for (const k of ["engine", "preset", "p", "step"]) {
     Object.defineProperty(st, k, { enumerable: false, get: () => st.tracks[st.sel][k], set: (v) => { st.tracks[st.sel][k] = v; } });
   }
   const watchMs = opt.watchMs || 3000;
-  const czDesc = (id) => { const n = ["W1", "W2", "A2", "P"][Math.floor((id - 61) / 5)];
-    const k = (id - 61) % 5; return D(["A", "D", "S", "R", "LV"][k] + n,
-      [F.TIME,F.TIME,F.PCT,F.TIME,F.PCT][k], 0,127,k === 2 || k === 4 ? 127 : 0); };
-  const midiAudioDisabled = (engine, id) => engine === 21 && ([0,39,95].includes(id) || (id >= 96 && id <= 113));
-  const rawDesc = (scope, id) => scope === 0 && midiAudioDisabled(st.engine,id) ? {...TP[id],min:st.p[id],max:st.p[id],def:st.p[id]} : scope === 0 && id === P_MPCDEG ? {...TP[id], max: SCALE_DEGREES[st.p[26]] ?? 12} : scope === 0 && st.engine === 2 && id >= 61 && id <= 80 ? czDesc(id) : (scope === 0 && id < P_COUNT ? (id >= P_E0 ? ENG[st.engine].edit[id - P_E0] : TP[id])
+  const midiAudioDisabled = (engine, id) => engine === MOCK_MIDI && ([0,39,95].includes(id) || (id >= 96 && id <= 113));
+  const rawDesc = (scope, id) => scope === 0 && midiAudioDisabled(st.engine,id) ? {...TP[id],min:st.p[id],max:st.p[id],def:st.p[id]} : scope === 0 && id === P_MPCDEG ? {...TP[id], max: SCALE_DEGREES[st.p[26]] ?? 12} : (scope === 0 && id < P_COUNT ? (id >= P_E0 ? ENG[st.engine].edit[id - P_E0] : TP[id])
     : scope === 1 && id < G_COUNT ? GP[id] : null);
   const desc = (scope, id) => {
     const original = rawDesc(scope, id), start = scope === 0 ? 96 : 27, third = scope === 0 ? 111 : 42;
@@ -2003,7 +2012,7 @@ function makeMockDevice(opt = {}) {
     for (let i = P_RESERVED45; i < P_E0; i++) if (!trackOwn(i, P_E0)) st.p[i] = TP[i].def;   /* a factory preset turns the
                                                      matrix off; the chord keys, the steps and the other track
                                                      settings stay (ui.c apply_preset_to) */
-    if (st.engine === 21) {
+    if (st.engine === MOCK_MIDI) {
       st.p[P_E0] = st.sel + 1;
       for (let slot=0;slot<3;slot++) {st.p[96+slot*4]=0;st.p[108+slot]=0;}
     }
@@ -2030,7 +2039,7 @@ function makeMockDevice(opt = {}) {
     if (a.length >= 12) x.chance = Math.min(100, a[11]);
   }
   /* a few user presets to start with; BREADBOX stored with the ACID steps (as UP_STORE would) */
-  [[0, 0, 0, "MY LEAD"], [1, FM6_E, 1, "GLASS BELL"], [2, 3, 1, "BREADBOX"], [5, 3, 2, "RUBBER BASS"]].forEach(([slot, e, p, name]) => {
+  [[0, 0, 0, "MY LEAD"], [1, FM6_E, 1, "GLASS BELL"], [2, MOCK_ENGI(UID.SID), 1, "BREADBOX"], [5, MOCK_ENGI(UID.SID), 2, "RUBBER BASS"]].forEach(([slot, e, p, name]) => {
     setEngine(e); applyPreset(p);
     if (slot === 2) loadDemo(0);
     st.bank[slot] = snapshot(name);
@@ -2152,7 +2161,7 @@ function makeMockDevice(opt = {}) {
       }
       case CMD.UP_ERASE:
         if (a.length < 1) return null;
-        if (a[0] < NB) { st.bank[a[0]] = null; st.favorites[16][a[0]] = false; }
+        if (a[0] < NB) { st.bank[a[0]] = null; st.favorites[KIND.GENERAL][a[0]] = false; }
         b(a[0]); b(a[0] < NB ? 0 : 1);
         break;
       case CMD.WATCH:
@@ -2175,11 +2184,11 @@ function makeMockDevice(opt = {}) {
       case CMD.FAV_GET: case CMD.FAV_SET: {
         if (!(st.uiCaps & 8)) { b(2); break; }
         const engine = a[0], preset = v14dec(a[1], a[2]), count = a[3];
-        const limit=[16,17,18,20].includes(engine)?st.bank.length:engine<ENG.length?ENG[engine].presets.length:0;   /* (17, 18, 20: 1.x's
+        const limit=Object.values(KIND).includes(engine)?st.bank.length:engine<ENG.length?ENG[engine].presets.length:0;   /* (17, 18, 20: 1.x's
                                                       * namespaces of the synths' slots, the shared ones now) */
         /* Released firmware accepts favorite namespaces only through USER_NATIVE_P5 (20). */
-        if (a.length !== 4 || engine > 20 || preset < 0 || preset >= limit ||
-            (cmd === CMD.FAV_GET ? !count || count > 32 || preset + count > limit : count > 1 || engine === 16 && count && !st.bank[preset])) { b(1); break; }
+        if (a.length !== 4 || engine > KIND.P5 || preset < 0 || preset >= limit ||
+            (cmd === CMD.FAV_GET ? !count || count > 32 || preset + count > limit : count > 1 || engine === KIND.GENERAL && count && !st.bank[preset])) { b(1); break; }
         if (cmd === CMD.FAV_SET) st.favorites[engine][preset] = !!count;
         b(cmd === CMD.FAV_SET ? (opt.noFlash ? 3 : opt.deferSettings ? 4 : 0) : 0); b(engine); v(preset); b(count);
         if (cmd === CMD.FAV_GET) for (let i = 0; i < count; i++) b(!!st.favorites[engine][preset + i]);
@@ -2268,7 +2277,7 @@ function makeMockDevice(opt = {}) {
         if (!opt.legacy) b(NTRK);
         if (!opt.legacy && !opt.v3 && !opt.v5) {
           b(0);
-          if (st.uiCaps) { [0x55,1,st.uiCaps,0x4d,2,64,1,0x42,1,3,0x50,opt.songLoop?4:opt.advancedSong?3:1,8,opt.advancedSong?64:16].forEach(b); if(opt.shared)[0x55,1,0,3].forEach(b); else [0x35,1,19,16,17,18,20,0,1].forEach(b);   /* (1.x: its slots' favorites row 16) */ if (st.schemaParsed.size) [0x59,1,CMD.SCHEMA].forEach(b); }
+          if (st.uiCaps) { [0x55,1,st.uiCaps,0x4d,2,64,1,0x42,1,3,0x50,opt.songLoop?4:opt.advancedSong?3:1,8,opt.advancedSong?64:16].forEach(b); if(opt.shared)[0x55,1,0,3].forEach(b); else [0x35,1,19,16,17,18,20,0,1].forEach(b);   /* (1.x: its slots' favorites row 16) */ if (st.schemaParsed.size) [0x59,1,CMD.SCHEMA].forEach(b); [0x49,1,MOCK_MIDI,KIND.GENERAL,KIND.FM,KIND.CZ,KIND.P5].forEach(b); }
         }
         break;
       case CMD.GET: case CMD.SET: {
@@ -2302,7 +2311,7 @@ function makeMockDevice(opt = {}) {
         if (a.length < 1 || a[0] >= NTRK) return null;
         const t = st.tracks[a[0]];
         if (a.length >= 4) {
-          if (t.engine !== 21) t.p[0] = clamp(v14dec(a[1], a[2]), 0, 127);
+          if (t.engine !== MOCK_MIDI) t.p[0] = clamp(v14dec(a[1], a[2]), 0, 127);
           t.p[40] = a[3] ? 1 : 0;
         }
         b(a[0]); v(t.p[0]); b(t.p[40] ? 1 : 0);
@@ -2477,9 +2486,10 @@ function makeMockDevice(opt = {}) {
           let h = null; try { h = m.up && m.up.pos === m.up.len ? MODS.head(m.up.buf) : null; } catch (e) { h = null; }
           if (!h) { b(5); b(0); b(0); }
           else if (st.mods.some((x, j) => j !== a[1] && x.len && sameSynth(x, h, MODS.id(m.up.buf)))) { b(6); b(0); b(0); }
-          else {                                 /* (its number: the one it asks for if free, else the first free from 22: the device's handle) */
-            const taken = (e) => st.mods.some((x, j) => j !== a[1] && x.len && x.engine === e);
-            let e = h.engine; if (taken(e)) for (e = 22; taken(e); e++);
+          else {                                 /* (its handle: the first free past the manifest's synths, 7; the
+                                                      * number in its file means nothing since 2.0) */
+            const taken = (e) => MOCK_MAP[e] || st.mods.some((x, j) => j !== a[1] && x.len && x.engine === e);
+            let e = 7; while (taken(e)) e++;
             Object.assign(m, { len: h.total, engine: e, name: h.name, buf: m.up.buf }); m.up = null; b(0); b(1); b(e);
           }
         } else { Object.assign(m, { len: 0, engine: 0, name: "", buf: null }); b(0); }
@@ -2604,7 +2614,7 @@ async function readDevicePreferences(rq, info, names, previous = null) {
     if (!previous || state.favoriteSig !== previous.state.favoriteSig || state.bankSig !== previous.state.bankSig) {
       favorites = [];
       /* Stable engine 21 (MIDI Track) has a preset but no factory favorite storage. */
-      const counts=Array.from({length:info.nengines},(_,engine)=>[engine,(names[engine]||[]).length]).filter(([engine,total])=>total>0 && engine!==21);
+      const counts=Array.from({length:info.nengines},(_,engine)=>[engine,(names[engine]||[]).length]).filter(([engine,total])=>total>0 && engine!==info.midi);
       counts.push([info.namespace?.general??info.nengines,slots.total]);
       for(const [engine,total] of counts) {
         const flags = favorites[engine] = [];
@@ -3349,7 +3359,7 @@ function buildGroups() {
   const { info } = dev;
   if (knownLayout(info)) {
     for (const g of LAYOUT(info.pe0)) {
-      if (dev.dump.engine===15 && ["ENV","EDIT"].includes(g.t)) continue;
+      if (info.engines[dev.dump.engine]==="CZ-1" && ["ENV","EDIT"].includes(g.t)) continue;
       const div = el("div", { class: "group" }, el("h2", { ic: HEAD_IC[g.t], text: g.engine ? `EDIT ${info.engines[dev.dump.engine] || ""}` : g.t }));
       if (g.mod != null) {                          /* MOD: slot number, SRC, DST, AMT in one row */
         for (let k = 0; k < 4; k++) {

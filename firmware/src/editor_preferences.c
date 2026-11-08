@@ -102,8 +102,12 @@ static uint32_t ed_fav_native(uint32_t kind)        /* a native pool's engine, e
 {
     for (uint32_t k = 0; k < NSHIP; k++)                /* (the manifest: the synth whose 1.x namespace it is) */
         if (kind != USER_GENERAL && SHIP[k].ns == kind)
-            return SHIP[k].num;
+            return ENG_H_SHIP0 + k;
     return NENGINES;
+}
+static int ed_fav_kind(uint32_t kind)               /* a handle, or one of the user kinds (core.h) */
+{
+    return kind < NENGINES || (kind >= USER_GENERAL && kind <= USER_NATIVE_P5);
 }
 static uint32_t ed_fav_limit(uint32_t kind)
 {
@@ -126,7 +130,7 @@ static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         return 1;
     case ED_FAV_GET:
 #ifdef MELODEE_FAVORITES
-        if (n == 4u && a[0] <= USER_NATIVE_P5) {
+        if (n == 4u && ed_fav_kind(a[0])) {
             int32_t start = ed_rv(a + 1);
             uint32_t limit = ed_fav_limit(a[0]);
             if (start >= 0 && a[3] && a[3] <= 32u && (uint32_t)start + a[3] <= limit) {
@@ -142,7 +146,7 @@ static int ed_ui_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         return 1;
     case ED_FAV_SET:
 #ifdef MELODEE_FAVORITES
-        if (n == 4u && a[0] <= USER_NATIVE_P5 && a[3] <= 1u) {
+        if (n == 4u && ed_fav_kind(a[0]) && a[3] <= 1u) {
             int32_t preset = ed_rv(a + 1);
             uint32_t limit = ed_fav_limit(a[0]), e = ed_fav_native(a[0]);
             if (preset >= 0 && (uint32_t)preset < limit &&

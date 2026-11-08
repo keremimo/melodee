@@ -11,7 +11,7 @@ static int cache_tests(void)
     reset();audio_resources_reset();up_boot();fm6_factory(3,fm);cz_patch_init(cz);
     for(uint32_t b=0;b<4u;b++){fm[118]=(uint8_t)('A'+b);bad+=check("native FM cache writes across bank evictions",!native_put(ENGI_FM6,72u+b*18u,fm));}
     for(uint32_t b=0;b<8u;b++){cz[128]=(uint8_t)('A'+b);bad+=check("native CZ cache writes across bank evictions",!native_put(ENGI_CZ,144u+b*18u,cz));}
-    for(uint32_t b=0;b<4u;b++){set_engine_of(TSEL,3);TSEL->p[P_E1]=(int16_t)b;   /* (SID's WAVE) */bad+=check("general cache writes across bank evictions",!up_store(b*18u,"BANK SOUND"));}
+    for(uint32_t b=0;b<4u;b++){set_engine_of(TSEL, ENGI_SID);TSEL->p[P_E1]=(int16_t)b;   /* (SID's WAVE) */bad+=check("general cache writes across bank evictions",!up_store(b*18u,"BANK SOUND"));}
     up_boot();uint32_t reads=preset_reads;
     for(uint32_t k=0;k<64u;k++){up_used(k);up_engine(k);up_name(k,name);native_used(ENGI_FM6,k);native_name(ENGI_FM6,k,name);}
     for(uint32_t k=0;k<128u;k++){native_used(ENGI_CZ,k);native_name(ENGI_CZ,k,name);}
@@ -29,7 +29,7 @@ static int cache_tests(void)
                 !p5_user_get(30,&got) && !memcmp(got.raw+P5_NAME,"SHARED BANK P5",14);
         }
         bad+=check("one bank cache: user, FM6, CZ-1 (both views) and Prophet banks interleaved read back intact",ok);
-        set_engine_of(TSEL,3);up_store(5,"AFTER EDIT");native_raw(ENGI_FM6,90u);up_name(5,name);
+        set_engine_of(TSEL, ENGI_SID);up_store(5,"AFTER EDIT");native_raw(ENGI_FM6,90u);up_name(5,name);
         bad+=check("one bank cache: a user bank evicted after an edit keeps its index (the new name, no reload)",
                    up_cached==5u && !strcmp(name,"AFTER EDIT"));
         bad+=check("one bank cache: the largest bank's size, not the sum (8208 + 3600 B before)",
@@ -51,7 +51,7 @@ static int audio_tests(void)
 {
     int bad=0;int32_t in[CTL]={0},out[CTL],c[CTL]={0},d[CTL]={0},r[CTL]={0};
     audio_resources_reset();host_tracks_init();
-    const uint8_t engines[4]={0,ENGI_FM6,3,ENGI_DRUM};uint32_t expected=sizeof(fm6_part_t)+sizeof(sid_part_t)+sizeof(drum_lane_t)*DV_NLANE;
+    const uint8_t engines[4]={0,ENGI_FM6,ENGI_SID,ENGI_DRUM};uint32_t expected=sizeof(fm6_part_t)+sizeof(sid_part_t)+sizeof(drum_lane_t)*DV_NLANE;
     for(uint32_t k=0;k<4u;k++){trk[k].engine=engines[k];eng_state_prepare(&trk[k]);}
     bad+=check("default engine setup and derived caches stay within 16 KiB",resource_used()==expected && expected<=16u*1024u);
     for(uint32_t cycle=0;cycle<2048u;cycle++){

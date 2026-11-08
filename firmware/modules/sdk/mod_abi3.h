@@ -385,9 +385,9 @@ typedef struct mod_desc_v3 {
     uint16_t abi, size;                          /* MOD3_ABI, sizeof(mod_desc_v3) */
     uint16_t host;                               /* the lowest host table version it needs */
     uint16_t eng_size;                           /* sizeof(mod_engine_v3) it was built with */
-    uint8_t engine, npresets;                    /* the engine number it would like (a device gives it its own: the
-                                                  * number its UID has there, else this one if free, else the first free;
-                                                  * bind's self says which); its presets (the PRST chunk's) */
+    uint8_t engine, npresets;                    /* unused since Melodee 2.0 (it was the engine number a module asked for:
+                                                  * a device gives every synth a handle of its own, bind's self says
+                                                  * which), 0; its presets (the PRST chunk's) */
     uint8_t flags, rsv;                          /* 0 */
     uint32_t key;                                /* (host 1..3: the legacy data's key it was built against) 0 */
     const char *name;                            /* its engine's */
@@ -436,7 +436,7 @@ typedef struct mod_ident_v3 {                    /* the IDNT chunk's payload, 96
 typedef struct mod_file3_t {                     /* the file's head (60 bytes) */
     uint32_t magic;                              /* MOD3_FILE_MAGIC */
     uint16_t abi;                                /* MOD3_ABI */
-    uint8_t engine;                              /* = the descriptor's */
+    uint8_t engine;                              /* = the descriptor's (unused since 2.0) */
     uint8_t flags;                               /* MOD3_FILE_CHUNKS or 0 */
     uint32_t total;                              /* the file's length */
     uint32_t image, bss, nrel;

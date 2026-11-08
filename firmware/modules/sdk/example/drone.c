@@ -53,7 +53,7 @@ MOD3_PRESETS = {                                  /* name, category (8: OTHER), 
 };
 MOD3_EXPORT(mod_drone) = {
     MOD3_SDK_HEAD,
-    .engine = 22,                                 /* the number it asks for (a device gives the first free one if taken) */
+    .engine = 0,                                  /* (unused since Melodee 2.0: a device gives every synth a handle) */
     .name = "DRONE",
     .npresets = 2,
     .eng = &DRONE,

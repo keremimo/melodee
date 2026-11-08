@@ -100,7 +100,7 @@ static void reset(void)
     so_r = so_w = mi_r = mi_w = 0; midi_in_overflow = 0; usb.config = 1;
     for (i = 0; i < G_COUNT; i++) song.g[i] = GP[i].def;
     for (t = 0; t < NPART; t++) {
-        track_defaults(&trk[t]); set_engine_of(&trk[t], 3); apply_preset_to(&trk[t], 0);   /* (SID: values on p[]) */
+        track_defaults(&trk[t]); set_engine_of(&trk[t], ENGI_SID); apply_preset_to(&trk[t], 0);   /* (SID: values on p[]) */
         trk[t].engine = trk[t].eng_req; track_defaults_steps(&trk[t]);
     }
     for (t = NPART; t < NTRK; t++) {                    /* the MIDI-only tracks, as melodee_init (FBKP carries them) */
@@ -134,8 +134,9 @@ static int preferences(void)
     uint8_t a[4] = {0, 2, 0, 0};
     reset();
     uint32_t n = request(ED_INFO, a, 0);
-    const uint8_t caps[]={0,0x55,1,121,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,4,NPAT,CHAIN_ROWS,0x55,1,0,3,0x53,1,39,0x59,1,85};
-    bad+=check("INFO preserves existing IDs, the shared 384-slot library, Studio's tag, then the synths' (85..88)",ED_SONG==33&&ED_FAV_SET==38&&n>sizeof caps&&!memcmp(host_wire+n-sizeof caps-1,caps,sizeof caps));
+    const uint8_t caps[]={0,0x55,1,121,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,4,NPAT,CHAIN_ROWS,0x55,1,0,3,0x53,1,39,0x59,1,85,
+        0x49,1,ENGI_MIDI,USER_GENERAL,USER_NATIVE_FM,USER_NATIVE_CZ,USER_NATIVE_P5};   /* (2.0: the MIDI Track's handle, the user kinds) */
+    bad+=check("INFO preserves existing IDs, the shared 384-slot library, Studio's tag, the synths' (85..88), 2.0's handles (0x49)",ED_SONG==33&&ED_FAV_SET==38&&n>sizeof caps&&!memcmp(host_wire+n-sizeof caps-1,caps,sizeof caps));
     request(ED_UI_SET, a, 2);
     bad += check("UI_SET updates the actual palette and reports RAM-only saving",
         host_wire[5] == 3 && settings.palette == 2 && T_BG == UI_PALETTES[2].bg);
@@ -721,11 +722,11 @@ static int native_motion_protocol(void)
     a[1] = 3; a[2] = 0; a[3] = P_LEVEL; a[4] = 64; a[5] = 64; request(ED_MOTION, a, 6);
     bad += check("legacy motion wire writes retain the original format", !host_wire[6] && motion.event[0].param == P_LEVEL && motion.event[0].value == 64);
     motion_clear(&trk[0]);a[2]=0;a[3]=P_E1;a[4]=7;a[5]=64;request(ED_MOTION,a,6);
-    a[3]=P_E1;a[4]=80;a[5]=70;request(ED_MOTION,a,6); /* FM6 tag 3, byte 80 */
+    {uint16_t fm=(uint16_t)((MO_TAG_FM6<<8|80)+8192);a[3]=P_E1;a[4]=fm&127u;a[5]=(uint8_t)(fm>>7);request(ED_MOTION,a,6);} /* FM6's tag, byte 80 */
     bad+=check("overlapping native/common IDs coexist through the protocol",!host_wire[6] && motion.count==2);
     a[1]=4;request(ED_MOTION,a,6);
     bad+=check("typed native delete retains the common engine event",!host_wire[6] && motion.count==1 && motion.event[0].param==P_E1 && motion.event[0].value==7);
-    a[1]=3;request(ED_MOTION,a,6);a[1]=4;a[4]=7;a[5]=64;request(ED_MOTION,a,6);
+    {uint16_t fm=(uint16_t)((MO_TAG_FM6<<8|80)+8192);a[4]=fm&127u;a[5]=(uint8_t)(fm>>7);}a[1]=3;request(ED_MOTION,a,6);a[1]=4;a[4]=7;a[5]=64;request(ED_MOTION,a,6);
     bad+=check("typed common delete retains the native event",!host_wire[6] && motion.count==1 && motion.event[0].value==(MO_TAG_FM6<<8|80));
     request(ED_MOTION,a,4);bad+=check("legacy delete clears the remaining raw ID",!host_wire[6] && !motion.count);
     return bad;
@@ -743,7 +744,7 @@ static int library_transfers(void)
     reset();up_store(2,"NAMED GENERAL");up_rec_t saved=*up_rec(2);int16_t level=TSEL->p[P_LEVEL];
     bad+=check("general slot exports a complete 7-bit USB frame",!library_send(TSEL->eng_req,2));host_drain();
     n=host_wire_n;memcpy(frame,host_wire,n);
-    bad+=check("general export has a valid checksum and exact bounded length (02: the record and its synth's entry)",n==311u&&frame[4]==2u&&frame[0]==240&&frame[n-1]==247&&!sx_checksum(frame+1,n-2));
+    bad+=check("general export has a valid checksum and exact bounded length (03: the record and its synth's entry)",n==311u&&frame[4]==3u&&frame[0]==240&&frame[n-1]==247&&!sx_checksum(frame+1,n-2));
     frame[15]^=1;receive_library(frame,n);
     bad+=check("bad general checksum cannot stage or mutate a saved preset",!sx_import.count&&!memcmp(up_rec(2),&saved,sizeof saved));
     frame[15]^=1;receive_library(frame,n);

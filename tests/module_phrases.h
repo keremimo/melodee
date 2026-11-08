@@ -55,7 +55,7 @@ static void mp_block(uint32_t b, uint32_t batch)
 static uint32_t mp_sid(uint32_t pi, uint32_t mono, int32_t model, uint32_t env3, uint32_t batch)
 {
     mp_start();
-    host_preset(&inst, 3, pi);
+    host_preset(&inst, ENGI_SID, pi);
     inst.p[P_VOICE] = (int16_t)(mono ? V_LEGATO : V_POLY);
     if (model >= 0)
         inst.p[P_E0] = (int16_t)model;

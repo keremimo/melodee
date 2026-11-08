@@ -69,9 +69,6 @@
 #                   and its manifest's hashes; with web/core/build.sh's WebAssembly, the virtual FM-1 core
 #                   (web/core/core_check.mjs): Studio's commands, a render, taps, events, kits, the NOR, WASM == native,
 #                   the five synths' modules in WebAssembly (tools/mod_build.py --wasm) == the native core's.
-# PHYS (tests/phys_test.c): stability over the whole parameter and pitch range, the worst-case cost against
-#                   the heaviest factory preset, demos in build/phys_demo/; tests/phys_ref.cpp compares the
-#                   fixed-point models with DaisySP's float originals when DaisySP is there (DAISYSP=path).
 # DRUM (tests/drum_test.c): the drum voices (src/drum_voice.c): pitch, decay, centroid and level against
 #                   Melodee's targets, the controls' directions, no clipping, DC, retriggers, the hat choke, the
 #                   kick on a small speaker; the DRUM engine (src/eng_drum.c): its key map, the 8 lanes together,
@@ -83,9 +80,6 @@
 #                   src/drum_lanes.c: every drum alone, one voice, a lane struck again without a step, the hat choke,
 #                   a recorded length, kit switches, the knobs' directions, levels next to the 808, no wrapped
 #                   sample, the corners; demos in build/drum_kits_demo/.
-# NOISE (tests/noise_test.c): the engine (src/eng_noise.c): COLR's slope (white, pink, brown), the filter and the
-#                   register clock following the key, META periodic at the key, no DC, no clipping at the
-#                   corners, a note from silence the same twice, the cost per voice; demos in build/noise_demo/.
 # FM6 (tests/fm6_test.c): the 6-operator FM engine (src/eng_fm6.c, src/fm6_core.c) against the DX7: the 32 algorithms
 #                   against its diagrams, pitch, levels, envelopes, modulation; no DC / clipping over the factory
 #                   patches, the macros (neutral at 0, their directions), factory presets, pack / unpack and the SysEx layouts,
@@ -445,19 +439,6 @@ prophet() {
             "$P5/P5_Factory_Programs_FACTORY_v1.03.syx" "$P5/P5_Factory_Programs_USER_v1.03.syx"
     fi
 }
-phys_ref() {
-    D=${DAISYSP:-vendor/DaisySP}/Source
-    if [ ! -d "$D/PhysicalModeling" ] || ! command -v c++ >/dev/null 2>&1; then
-        echo "== skip PHYS reference test (no DaisySP: set DAISYSP to a checkout)"
-        return
-    fi
-    $CC -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -Itests -c -o "$OUT/phys_fixed.o" tests/phys_fixed.c &&
-        c++ -O2 -std=c++14 -w -I"$D" -I"$D/Utility" -o "$OUT/phys_ref" tests/phys_ref.cpp \
-            "$D/PhysicalModeling/modalvoice.cpp" "$D/PhysicalModeling/resonator.cpp" "$D/PhysicalModeling/stringvoice.cpp" \
-            "$D/PhysicalModeling/KarplusString.cpp" "$D/Filters/svf.cpp" "$D/Utility/dcblock.cpp" \
-            "$D/Dynamics/crossfade.cpp" "$OUT/phys_fixed.o" || { fail "compile tests/phys_ref.cpp"; return; }
-    step "PHYS: the fixed-point models against DaisySP's float originals (mode frequencies, decays, Svf)" "$OUT/phys_ref"
-}
 
 # ------------------------------------------------------------------ tests ---
 # the longest first: they set the length of the run
@@ -501,7 +482,7 @@ if core; then
     run "CPU sequence runner: memory fixtures, external-clock timing and guarded restoration" "$PY" tests/audio_cpu_sequence_test.py
     run "CPU live takes: native replay comparison, timed input, failure cleanup and guarded restoration" "$PY" tests/audio_cpu_take_test.py
     run "target budget: natural loops and FPU decoding" "$PY" tests/target_budget_test.py
-    t "retired synth identities, project/user patch preservation and favorites" engine_retirement_test -O2 $FW
+    t "synth identity: 2.0 handles, a synth not on this device lent a handle, its project and user preset kept" engine_retirement_test -O2 $FW
     job module_tests
     job outside_author
     job outside_j106
@@ -511,7 +492,7 @@ if core; then
         identity_test -O1 $FW
     t "the resource region's freed sectors to the pool: a c53538c9 install (53,884-B region) updated, cut at every step, nothing lost, the pool 6 sectors bigger" \
         res_pool_test -O1 $FW -- "$OUT/res_pool_test" tests/fixtures/pre-phase1-c53538c9-fm1.bin build/melodee-res.bin
-    t "capture gating, derived caches and silent-track clocks" performance_test -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
+    t "capture gating, derived caches and silent-track clocks" performance_test -O2 $FW
     t "canvas drawing overlaps DMA without changing pending pixels" lcd_overlap_test -O1 -w -Ibuild/gen
     t "user presets (UP_PUT parser, bank round trip, versions, PHYS DRUM -> DRUM, grid records)" upreset_test
     t "keys and buttons: fast press, long release, bouncy contacts (one note each), glitches, encoders, fast spins" input_test
@@ -580,7 +561,6 @@ if core && [ $TABLES = 1 ]; then
     t "MIDI recording: raw events, quantization at take end, independent releases, banks and capacity" recording_test \
         -O1 $FW
     t "Recorded-note layout: legacy bytes, 64 owners and 128 steps without event growth" recorded_note_test -O2 $FW
-    t "Packed note RAM: frozen FBKK/FUN22 bytes across 168 workloads" recorded_note_wire_test -O1 $FW
     t "16 x 128 recording core: positions, release queues, copies and pitch cache" recording_capacity_test -O1 -DMELODEE_RECORD_INDEX=1 $FW
     t "Recording scheduler: reference-state parity, cache invalidation and live lists" recording_scheduler_test -O1 $FW
     t "Recording RAM: shared capture/deadline counters and mode handoffs" recording_runtime_test -O1 $FW
@@ -595,7 +575,7 @@ if core && [ $TABLES = 1 ]; then
     t "MIDI IN through the scale layouts (WHITE, ALL, MPC), shared SCL / QNT" midi_scale_test -O1 $FW
     t "MPC bank octaves: controls, held notes, persistence and compatibility" mpc_octave_test -O1 $FW
     t "Concert pitch: A4 frequency, engines, modulation, held notes and project-independent settings" tuning_test \
-        -DMELODEE_LEGACY_EXTRAS=1 -O1 -DMELODEE_USB_AUDIO=1 $FW
+        -O1 -DMELODEE_USB_AUDIO=1 $FW
     t "themes: contrast, text blending and font metrics" theme_test -O1 $FW
     t "text: pens, kerning and pixels equal the reference renderer" text_ref_test -O1 $FW
     if [ $PIL = 1 ]; then
@@ -621,12 +601,10 @@ if core && [ $TABLES = 1 ]; then
         -DMELODEE_BENCH_SILENT=1 $FW
     t "384 shared presets: all-engine capacity, conversion, torn writes and high-slot identity" unified_presets_test $FW
     t "persistence: deferred settings, retry and failed-save rollback" persistence_test $FW
-    t "synths' patches as bytes: a894c6f7's project, template, user presets and song sounds load byte for byte" \
-        schema_load_test -O1 $FW
     t "flash JEDEC gate: accepted parts (Puya, UCUN) enable writes, unknown IDs stay RAM-only" flash_id_test $FW
     t "first boot: foreign settings, safe defaults, ownership and interrupted cleanup" settings_origin_test $FW
     t "first boot: reset unsupported preset banks, preserve good entries and retry cuts" preset_boot_reset_test $FW
-    t "first boot: moved preset banks leave the resource region to the update loader" res_boot_test $FW
+    t "resource region: the installed header's window (none or torn: the floor)" res_boot_test $FW
     t "storage safety: protect unreadable records until confirmed replacement" storage_safety_test $FW
     t "full backup: CRC before writes, stale runtime, USB reset / timeout, malformed objects, older projects" backup_test $FW
     t "CPU laboratory: persistence guard and RAM-only preference restoration" backup_lab:backup_test -DMELODEE_AUDIO_PROFILE=1 $FW
@@ -649,17 +627,13 @@ if core && [ $TABLES = 1 ]; then
         pads_test $FW
     run "no synth code in firmware/src: every hit of a synth's name, number or symbol under a rule with its reason (tests/no_synth_code.py)" \
         "$PY" tests/no_synth_code.py
-    t "pads: 70111e91's kit tracks, lanes, recorded hits, KIT user preset and user kit record load, play and save the same" \
-        pads_load_test -DMELODEE_USB_AUDIO=1 $FW -- "$OUT/pads_load_test" tests/fixtures/pads-70111e91.bin
 fi
 
 if sound && [ $TABLES = 1 ]; then
     mkdir -p build/mod_demo \
-        build/phys_demo build/drum_demo build/noise_demo build/fm6_demo
+        build/drum_demo build/fm6_demo
     t "regression: golden renders, health, voices, CPU budget" regress -O2 $FW -- \
         "$OUT/regress" tests/golden.txt tests/cpu_baseline.txt
-    t "PHYS: stability C-1..G9 over the parameter corners, worst-case cost against PHASE WIRE, demos" phys_test \
-        -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -- "$OUT/phys_test" build/phys_demo
     t "paired FM6/Prophet voices: serial/concurrent sample equality and eight-voice allocation" dual_core_test \
         -O2 $FW -pthread
     t "audio: 1296 ordered engine assignments, releases, controls and concurrent PCM parity" audio_matrix_test -O2 $FW -pthread
@@ -668,7 +642,7 @@ if sound && [ $TABLES = 1 ]; then
         -O2 $FW
     job prophet
     t "modulation matrix: off = bit-identical, the math, MIDI CC1 / CC11 / aftertouch, cost, demos" mod_test \
-        -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -- "$OUT/mod_test" build/mod_demo
+        -O2 $FW -- "$OUT/mod_test" build/mod_demo
     t "matrix S&H / SLEW / DEPTH, SPREAD: off = bit-identical, stereo sides and routing" mod_spread_test -O2 $FW
     t "FM6 ROM symmetry: exact original operators and envelope wrap" fm6_table_test -O2 $FW
     t "synth kernels: exact Prophet/FM6 PCM and state, all modes and live edits" synth_kernel_test -O2 $FW
@@ -692,9 +666,8 @@ if sound && [ $TABLES = 1 ]; then
     t "mono mixer fast path: output/send/peak/stem reference parity and cost" mix_fast_test -O2 $FW
     t "master output: final volume, held notes/punch tails, exact ramps and dry-pass cost" master_output_test -O2 $FW
     t "CZ: oscillator boundaries, native rate/target envelopes and independent lines" phase_test \
-        -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
+        -O2 $FW
     t "SID: oscillator/LFSR/register semantics, revisions and 32 factory presets" sid_test -O2 $FW
-    job phys_ref
     t "DRUM: 808 instruments, velocity, hat choke, release, eight lanes and shared voice budget" drum_test -O2 $FW -- \
         "$OUT/drum_test" build/drum_demo
     t "DRUM SID: one 6581 on one voice, frame programs, DIGI on \$D418, filter routing, levels" drum_sid_test -O2 $FW -- \
@@ -705,8 +678,6 @@ if sound && [ $TABLES = 1 ]; then
         user_kit_test -O2 $FW
     t "RECORD KIT: USB take trigger/end, device encoder == tools/drum_codec.c, 22/44 kHz, cymbal loop, 11 pads fit, clear" \
         kit_take_test -O2 -DMELODEE_USB_AUDIO=1 $FW -- "$OUT/kit_take_test" build/kit_take_demo
-    t "NOISE: colour slopes, key-tracked filter and clock, META period, DC, clipping, retrigger, cost, demos" noise_test \
-        -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW -- "$OUT/noise_test" build/noise_demo
     t "FM6: the DX7's algorithms, pitch, levels, envelopes, modulation; DC, clipping, macros, patches, voices, cost, demos" \
         fm6_test -O2 $FW -- "$OUT/fm6_test" build/fm6_demo
     t "FM6: native fp32 AMS against the double reference, every modulation" fm6_ams_test -O2 $FW

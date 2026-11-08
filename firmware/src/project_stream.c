@@ -356,14 +356,9 @@ static int proj_stream_load(uint32_t obj,uint32_t copy,uint32_t len)
     if(bank_full(len)){
         uint32_t header[2]={pj.h.map[0],len};uint8_t *tail=proj_image_tail();
         pz_in_t in;memset(&in,0,sizeof in);in.obj=obj;in.copy=copy;in.at=PJ_HEAD;
-        if((pj.on!=2u&&pj_read(obj,copy,0,header,sizeof header))||(header[0]!=BANK_MAGIC&&header[0]!=BANKL_MAGIC&&header[0]!=BANKM_MAGIC&&header[0]!=BANKN_MAGIC&&header[0]!=BANKO_MAGIC&&header[0]!=BANKP_MAGIC&&header[0]!=BANKQ_MAGIC&&header[0]!=BANKR_MAGIC)||header[1]!=len)return 0;
-        uint32_t fbkr=header[0]==BANKR_MAGIC;
-        bank_patterns=(uint8_t)(header[0]==BANKQ_MAGIC);
-        bank_p16=(uint8_t)(header[0]==BANKP_MAGIC || fbkr || bank_patterns);
-        bank_sounds=(uint8_t)(header[0]==BANKO_MAGIC);
-        bank_songfx=(uint8_t)(header[0]==BANKN_MAGIC || bank_sounds || bank_p16);
-        bank_song64=(uint8_t)(header[0]==BANKM_MAGIC || bank_songfx);
-        bank_wide=(uint8_t)(header[0]!=BANK_MAGIC);
+        if((pj.on!=2u&&pj_read(obj,copy,0,header,sizeof header))||header[0]!=BANKS_MAGIC||header[1]!=len)return 0;   /* (2.0's only) */
+        uint32_t fbkr=1;
+        bank_p16=1;bank_sounds=0;bank_songfx=1;bank_song64=1;bank_wide=1;
         if(pj.on==2u){                                  /* the tail first: its directory of timed notes, then again */
             if(pz_block(&in,pj.h.map[2],tail,PZ_TAIL,0))return 0;
             memcpy(tail+PZ_TAIL,&pj.h.map[1],4u);
@@ -387,34 +382,6 @@ static int proj_stream_load(uint32_t obj,uint32_t copy,uint32_t len)
         if(sum!=hash||!bank_tail_valid(tail))return 0;
         proj_source_hash=fnv(hash,&sum,4u);return 1;
     }
-    eng_remap_reset();                                  /* (a FUN record alone: its numbers as they are) */
-    if(len==sizeof(project_store_t)){
-        if(st_read_range(obj,copy,0,proj_image_store(),len))return 0;
-        return proj_import(q,proj_image_store(),(int)len);
-    }
-    if(len==sizeof *q){
-        if(st_read_range(obj,copy,0,q,len))return 0;
-        return proj_ok(q);
-    }
-    /* Prior raw snapshots: expand/convert each ten-byte note without ever
-     * holding the complete old and new layouts at once. */
-    if(len==sizeof *q+RECORD_MAX){
-        uint32_t sum,head[2];
-        if(st_read_range(obj,copy,0,head,sizeof head)||head[0]!=PROJ_MAGIC||head[1]!=len||
-           st_read_range(obj,copy,len-4u,&sum,4u)||proj_stream_read_hash(obj,copy,0,len-4u,&hash,0)||hash!=sum)return 0;
-        uint32_t at=__builtin_offsetof(project_t,recording),end=__builtin_offsetof(project_t,pattern);
-        if(st_read_range(obj,copy,0,q,at))return 0;
-        for(uint32_t i=0;i<RECORD_MAX;i++){
-            uint8_t r[10];if(st_read_range(obj,copy,at+i*10u,r,sizeof r))return 0;
-            recorded_note_t v={0};
-            if(r[5]){
-                if(r[4]>127u||r[5]>127u||(int8_t)r[8]<-24||(int8_t)r[8]>24||r[9]>=8u)return 0;
-                v=(recorded_note_t){.on=(uint16_t)(r[0]|r[1]<<8),.duration=(uint16_t)(r[2]|r[3]<<8),.note7=r[4],.vel=r[5],.owner=r[6],.step=r[7],.pitch=(int8_t)r[8],.length=r[9]&1u,.extended=r[9]>>1};
-            }
-            q->recording[i]=v;
-        }
-        if(st_read_range(obj,copy,at+RECORD_MAX*10u,(uint8_t *)q+end,sizeof *q-end))return 0;
-        q->size=sizeof *q;q->sum=proj_sum(q);return proj_ok(q);
-    }
+    /* (a FUN record alone, a raw snapshot: Melodee 1.x's; the web installer converts them) */
     return 0;
 }

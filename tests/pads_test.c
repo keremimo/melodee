@@ -91,16 +91,16 @@ int main(int argc, char **argv)
     }
     {   /* flags: what the firmware asks of a kit */
         track_t *t = &trk[3], *s = &trk[0];
-        host_preset(s, 3, 0);                     /* (SID: no pads) */
+        host_preset(s, ENGI_SID, 0);                     /* (SID: no pads) */
         int ok = pads_on(t) && pads_flag(t, MOD3_PD_NOBEND) && pads_flag(t, MOD3_PD_NOSUS) && pads_flag(t, MOD3_PD_HITS) &&
                  pads_flag(t, MOD3_PD_RECORD) && !pads_on(s) && !pads_flag(s, MOD3_PD_NOBEND | MOD3_PD_NOSUS | MOD3_PD_HITS) &&
-                 lane_note(s, 2) == 39u && !pads_lane(s, 49) && pads_rec(s) < 0 && !pads_eng(3) && pads_eng(ENGI_DRUM);
+                 lane_note(s, 2) == 39u && !pads_lane(s, 49) && pads_rec(s) < 0 && !pads_eng(ENGI_SID) && pads_eng(ENGI_DRUM);
         t->p[P_E0] = 9; ok &= pads_rec(t) == 0; t->p[P_E0] = 16; ok &= pads_rec(t) == 7; t->p[P_E0] = 5; ok &= pads_rec(t) < 0;
         check("a kit: no bend, no sustain, hits, records (KIT 1..8: records 0..7); a synth without pads never a kit (its "
               "lanes the pattern format's notes)", ok);
         t->p[P_E0] = 4;
         ok = pads_rec_value(&ENGINES[ENGI_DRUM]->edit[0], 9) == 0 && pads_rec_value(&ENGINES[ENGI_DRUM]->edit[0], 16) == 7 &&
-             pads_rec_value(&ENGINES[ENGI_DRUM]->edit[0], 8) < 0 && pads_rec_value(&ENGINES[3]->edit[0], 9) < 0 &&
+             pads_rec_value(&ENGINES[ENGI_DRUM]->edit[0], 8) < 0 && pads_rec_value(&ENGINES[ENGI_SID]->edit[0], 9) < 0 &&
              pads_rec_names(&ENGINES[ENGI_DRUM]->edit[0]) == 9;
         check("the KIT card's values 9..16 name records 0..7 (another synth's values never)", ok);
     }

@@ -86,13 +86,13 @@ static void song_sound_capture(song_sound_t *s, const track_t *t, const char *na
 /* stored: the bank record's form (song_sound_stored), else RAM's */
 static int song_sound_valid(const song_sound_t *s, int stored)
 {
-    uint32_t e = stored ? eng_in(s->engine) : s->engine;   /* (a stored sound: its number here, eng_map.c) */
+    uint32_t e = stored ? eng_in(s->engine) : s->engine;   /* (a stored sound: its handle here, eng_map.c) */
     uint32_t tag = patch_store_tag(e);
-    if (eng_sound_idx(e) != e || !s->name[0] || s->name[15] || s->user_native > 1u) return 0;
+    if (s->engine >= NENGINES || eng_sound_idx(e) != e || !s->name[0] || s->name[15] || s->user_native > 1u) return 0;   /* (a handle past them: damaged) */
     for (uint32_t i = 0; i < P_COUNT; i++) {
         int32_t v = (int32_t)s->p[i] - 64;
         const param_desc_t *d = param_desc_of(e, i);
-        if (i >= P_E0 && eng_extra_retired(e)) continue;   /* (a synth module not in SRAM: kept as it is) */
+        if (i >= P_E0 && eng_silent(e)) continue;   /* (a synth module not in SRAM: kept as it is) */
         if (v < d->min || v > d->max) return 0;
     }
     for (uint32_t i = 0; s->name[i]; i++) if ((uint8_t)s->name[i] < 32u || (uint8_t)s->name[i] > 126u) return 0;

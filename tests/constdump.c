@@ -39,22 +39,20 @@ static void record(const char *name, const char *what, uint32_t at, const uint32
 int main(void)
 {
     uint32_t i;
-    /* project.c proj_import: FUN22 (PROJ_MAGIC), FUN21 (two cuts), the one before the high-pass, and older */
+    /* project.c proj_import: FUN22 (PROJ_MAGIC) inside a 2.0 record (Melodee 1.x's: the web installer converts them) */
     static const uint32_t wire_w[] = {PROJ_MAGIC};
-    static const uint32_t wire_r[] = {PROJ_MAGIC, PROJ_CUT_MAGIC, PROJ_PRE_HP_MAGIC, 0x46554E46u, 0x46554E45u, 0x46554E44u,
-                                      0x46554E43u};
-    /* pattern_store.c bank_magic / bank_unpack: the whole record, its magic at 0 */
-    static const uint32_t rec_w[] = {BANKP_MAGIC, BANKQ_MAGIC};
-    static const uint32_t rec_r[] = {BANK_MAGIC, BANKL_MAGIC, BANKM_MAGIC, BANKN_MAGIC, BANKO_MAGIC, BANKP_MAGIC, BANKQ_MAGIC};
+    static const uint32_t wire_r[] = {PROJ_MAGIC};
+    /* pattern_store.c bank_magic / bank_valid: the whole record, its magic at 0: FBKS only (2.0) */
+    static const uint32_t rec_w[] = {BANKS_MAGIC};
+    static const uint32_t rec_r[] = {BANKS_MAGIC};
     /* project_stream.c: a saved project as stored (and as BACKUP_GET / PUT carry it): packed; compact still read */
     static const uint32_t pj_w[] = {PZ_MAGIC};
-    static const uint32_t pj_r[] = {PZ_MAGIC, PJ_MAGIC, BANK_MAGIC, BANKL_MAGIC, BANKM_MAGIC, BANKN_MAGIC, BANKO_MAGIC,
-                                    BANKP_MAGIC, BANKQ_MAGIC};
+    static const uint32_t pj_r[] = {PZ_MAGIC, PJ_MAGIC, BANKS_MAGIC};
     static const uint32_t kit_w[] = {DRK_KIT_MAGIC};
     static const uint32_t set_w[] = {PERSIST_MAGIC};
-    /* project.c template_np: TPLL, TPLK (two cuts) .. TPLF */
+    /* project.c template: TPLM (2.0) only */
     static const uint32_t tpl_w[] = {TMPL_MAGIC};
-    static const uint32_t tpl_r[] = {TMPL_MAGIC, 0x4B4C5054u, 0x4A4C5054u, 0x494C5054u, 0x484C5054u, 0x474C5054u, 0x464C5054u};
+    static const uint32_t tpl_r[] = {TMPL_MAGIC};
 
     printf("{\"board\":\"FM-1\",\n");
     printf("\"music\":{\"parts\":%u,\"midi_tracks\":%u,\"tracks\":%u,\"patterns\":%u,\"patterns_midi\":%u,\"steps\":%u,"

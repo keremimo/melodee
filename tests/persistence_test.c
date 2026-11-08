@@ -239,7 +239,7 @@ int main(void)
                   !memcmp(got + 8u, &old, sizeof old));
     project_save(0);
     bad += check("successful project save publishes new RAM", !strcmp(ui.msg, "SAVED") &&
-                  proj_import(&proj_scratch, &proj_slot[0], sizeof proj_slot[0]) &&
+                  proj_import_same(&proj_scratch, &proj_slot[0], sizeof proj_slot[0]) &&
                   proj_scratch.t[0].step[0].note[0] == 72u && proj_ok(&proj_scratch));
     before = erases;
     transport_req = 1;
@@ -305,6 +305,7 @@ int main(void)
     memset(&r, 0, sizeof r);
     r.used = UP_USED;
     r.ver = UP_VER;
+    r.engine = ENGI_SID;                             /* (2.0: a record names a synth; none is no record) */
     r.np = P_COUNT;
     memcpy(r.name, "First", 6);
     erase_error = 1;

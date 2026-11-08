@@ -23,11 +23,11 @@ static const mod_desc_v3 *(*mod_host_desc_id)(uint32_t uid);    /* .. by its fil
 /* the image's bytes in SRAM (a packed one's unpacked) */
 static uint32_t mod_ram(const mod_file3_t *f) { return f->flags & MOD3_FILE_PACKED ? f->unpacked : f->image; }
 /* the file's head, as far as it can be checked without its body (any ABI's: an older firmware's module is known by
- * its engine and name); 0 when bad */
+ * its name; the number a file asks for, `engine`, means nothing since Melodee 2.0); 0 when bad */
 static int mod_head_ok(const mod_file3_t *f, uint32_t len)
 {
     uint32_t body = MOD3_HEAD + f->image + 4u * f->nrel, ram = mod_ram(f);   /* (then the chunks, if any) */
-    if (f->magic != MOD3_FILE_MAGIC || f->total != len || !mod_engine_ok(f->engine) || !f->name[0])
+    if (f->magic != MOD3_FILE_MAGIC || f->total != len || !f->name[0])
         return 0;
     if (f->abi != MOD3_ABI)
         return f->abi == 1u || f->abi == 2u;        /* (ABI 1, ABI 2: an older firmware's, MS_STALE) */
@@ -71,7 +71,7 @@ static int mod_load(uint32_t k, mod_read_t rd)
     mod_slot_t *s = &mods[k];
     if (s->state == MS_LOADED || (s->state != MS_STORED && s->state != MS_NORAM))
         return s->state;
-    if (rd(0, &f, sizeof f) || !mod_head_ok(&f, s->len) || !mod_head_mine(&f) || f.engine != s->want)
+    if (rd(0, &f, sizeof f) || !mod_head_ok(&f, s->len) || !mod_head_mine(&f) || f.crc != s->crc)
         goto gone;
     uint32_t ram = mod_ram(&f), body = (ram + f.bss + 7u) & ~7u;   /* (then its engine_t: mod_register) */
     uint32_t keep = body + (uint32_t)sizeof(engine_t), need = keep;
@@ -334,7 +334,7 @@ static int mod_catalog(uint32_t k)
     s->len = len;
     if (len < sizeof f || mod_flash_read(0, &f, sizeof f) || !mod_head_ok(&f, len))
         return s->state = MS_BAD;
-    s->engine = s->want = f.engine;                 /* (the number it asks for, until the map gives it one) */
+    s->engine = ENG_H_NONE;                         /* (until the map gives it a handle) */
     s->version = f.version;
     s->need = ((f.image + f.bss + 7u) & ~7u) + (uint32_t)sizeof(engine_t);   /* (as mod_load allocates it) */
     s->npresets = f.npresets;
@@ -350,17 +350,17 @@ static int mod_catalog(uint32_t k)
     if (mod_id_find(k, &f))
         return s->state = MS_BAD;
     {
-        uint32_t e = eng_map_take(s->uid, s->name, f.engine);   /* its number here (eng_map.c) */
-        if (e >= NENGINES || (e < ENGI_MOD0 && eng_map_default(e) != s->uid))
-            return s->state = MS_CLASH;             /* no number left, or Melodee's own number for another UID */
+        uint32_t e = eng_map_take(s->uid, s->name);   /* its handle here (eng_map.c) */
+        if (e >= NENGINES)
+            return s->state = MS_CLASH;             /* no handle left */
         s->engine = (uint8_t)e;
     }
     if (mod_slot_of(s->engine) < NMOD)
         return s->state = MS_CLASH;                 /* two modules for one UID: the first one plays */
     if (mod_skipped || mod_blamed == k + 1u)
         return s->state = MS_SKIPPED;
-    if (ENGINES[s->engine] != &ENG_RETIRED)
-        return s->state = MS_CLASH;                 /* a built-in engine has the number */
+    if (ENGINES[s->engine] != &ENG_NONE)
+        return s->state = MS_CLASH;                 /* a built-in engine is this synth (host builds) */
     if (!mod_pst_find(k, &f)) {
         s->npresets = 0;                            /* (a module's presets are its file's) */
         if (f.npresets)
@@ -390,15 +390,15 @@ static int mod_bring(uint32_t k)
     }
     return rc;
 }
-/* ---- the data records' owners in the pool (eng_map.c): the record ST_MAPOBJ, "OWN1", MOD3_NREC, 0, 0, then the
- * owners' IDs (8 bytes each; none of them but the default's: no record). The engine numbers are made again at every
+/* ---- the data records' owners in the pool (eng_map.c): the record ST_MAPOBJ, "OWN2", MOD3_NREC, 0, 0, then the
+ * owners' IDs (8 bytes each, 0: an empty slot; none at all: no record). The engine handles are made again at every
  * power-on: nothing stored names one without the ID it is */
 static void mod_map_load(void)
 {
     uint8_t *b = wire_take();
     int n = st_load(ST_MAPOBJ, b, ST_SECTOR);
     if (n != (int)(8u + 8u * MOD3_NREC) || mod_le32(b) != EMAP_MAGIC || b[4] != MOD3_NREC)
-        return;                                     /* (none, or another layout: the default owner for every slot) */
+        return;                                     /* (none, or Melodee 1.x's OWN1: the web installer's) */
     for (uint32_t u = 0; u < MOD3_NREC; u++)
         rec_uid[u] = mod_le64(b + 8u + 8u * u);
 }

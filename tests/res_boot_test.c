@@ -26,28 +26,7 @@ static int records_in_region(void)                  /* sectors that start with a
 int main(void)
 {
     int bad = 0;
-    uint8_t up[80], fm[80], got[80], junk[4096];
     reset();
-    memset(up, 0x5A, sizeof up); memset(fm, 0x3C, sizeof fm); memset(junk, 0xA5, sizeof junk);
-    st_pair_save(OBJ_UPRESET0, up, sizeof up);       /* an older layout's banks, in their fixed pairs here */
-    st_pair_save(OBJ_NATIVEFM0, fm, sizeof fm);
-    memcpy(nor + RES_BASE, junk, sizeof junk);        /* foreign data without a record (the official's VM) */
-    bad += check("fixture: two preset banks in the region", records_in_region() == 2);
-    res_boot(0);
-    bad += check("banks not moved yet: nothing erased, not installed", records_in_region() == 2 && !res_ok);
-    erases = 0;
-    st_old_scan();
-    int left = st_convert(wire_take(), 0);
-    int moved = st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR);
-    res_boot(moved == 0);
-    bad += check("banks moved: their old copies leave the region", !left && !moved && !records_in_region() && !res_ok);
-    bad += check(".. foreign data left for the loader", !memcmp(nor + RES_BASE, junk, sizeof junk));
-    bad += check(".. both banks read back from the pool", st_load(OBJ_UPRESET0, got, sizeof got) == sizeof up &&
-                 !memcmp(got, up, sizeof up) && st_load(OBJ_NATIVEFM0, got, sizeof got) == sizeof fm &&
-                 !memcmp(got, fm, sizeof fm));
-    uint32_t before = erases;
-    res_boot(1);
-    bad += check("the next boot erases nothing more", erases == before);
     {   /* the installed header's window */
         res_hdr_t h;
         int ok = 1;

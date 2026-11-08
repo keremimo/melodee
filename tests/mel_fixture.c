@@ -251,15 +251,14 @@ static int kit_project_is(int32_t a, int32_t b, int32_t e)
 
 static int do_emit(void)
 {
-    static const char *fx[3] = {"tests/fixtures/fun19-send-chain.bin", "tests/fixtures/fun20-split.bin", "tests/fixtures/fun21-cuts.bin"};
     static const struct { const char *name; uint32_t pats, density, notes, rows, sounds, motions; } S[3] = {
         {"sketch", 2, 35, 0, 1, 0, 0}, {"song", 6, 45, 200, 12, 2, 10}, {"big", 8, 40, 1024, 48, 4, 64}};
     FILE *f = file("layout.json", "w");
-    fprintf(f, "{\"REC_BYTES\":%u,\"KIT_MAX\":%u,\"KIT_FIRST\":%u,\"KIT_COUNT\":%u,\"KIT_HEAD\":%u,\"ENGI_DRUM\":%u,\n",
-            (unsigned)BANK_STORE_SIZE, (unsigned)DRK_KIT_MAX, (unsigned)DK_USER0, (unsigned)DK_NUSER, (unsigned)DRK_KIT_BYTES, (unsigned)ENGI_DRUM);
-    fprintf(f, " \"FUN_BYTES\":%u,\"TAIL_AT\":%u,\"FUN_MAGIC\":%u,\"FBKP\":%u,\"FBKQ\":%u,\"FBKR\":%u,\"KIT_MAGIC\":%u,\"PJ_MAGIC\":%u,\"PZ_MAGIC\":%u,\"PROJECTS\":%u,\n",
-            (unsigned)PROJ_STORE_SIZE, (unsigned)BANK_ACTIVE_OFF, (unsigned)PROJ_MAGIC, (unsigned)BANKP_MAGIC, (unsigned)BANKQ_MAGIC,
-            (unsigned)BANKR_MAGIC, (unsigned)DRK_KIT_MAGIC, (unsigned)PJ_MAGIC, (unsigned)PZ_MAGIC, (unsigned)PROJ_SLOTS);
+    fprintf(f, "{\"REC_BYTES\":%u,\"KIT_MAX\":%u,\"KIT_FIRST\":%u,\"KIT_COUNT\":%u,\"KIT_HEAD\":%u,\n",
+            (unsigned)BANK_STORE_SIZE, (unsigned)DRK_KIT_MAX, (unsigned)DK_USER0, (unsigned)DK_NUSER, (unsigned)DRK_KIT_BYTES);
+    fprintf(f, " \"FUN_BYTES\":%u,\"TAIL_AT\":%u,\"FUN_MAGIC\":%u,\"FBKS\":%u,\"KIT_MAGIC\":%u,\"PJ_MAGIC\":%u,\"PZ_MAGIC\":%u,\"PROJECTS\":%u,\n",
+            (unsigned)PROJ_STORE_SIZE, (unsigned)BANK_ACTIVE_OFF, (unsigned)PROJ_MAGIC, (unsigned)BANKS_MAGIC,
+            (unsigned)DRK_KIT_MAGIC, (unsigned)PJ_MAGIC, (unsigned)PZ_MAGIC, (unsigned)PROJ_SLOTS);
     fprintf(f, " \"KIT_OWNER_UID\":\"%016llx\",\n", (unsigned long long)rec_owner_uid(MOD3_NREC));
     fprintf(f, " \"layout\":{\"np\":%u,\"e0\":%u,\"track\":%u,\"tracks\":%u,\"motion\":%u,\"funSum\":%u,\"name\":%u,\"tags\":%u,\"song\":%u,"
             "\"sounds\":%u,\"soundHead\":%u,\"soundBytes\":%u}}\n",
@@ -275,15 +274,6 @@ static int do_emit(void)
     printf("mel: %-7s stored in %u bytes\n", "blank", (unsigned)emit("blank"));
     assert(*(uint32_t *)(void *)big == PZ_MAGIC);
     for (uint32_t i = 0; i < 3u; i++) {
-        static uint8_t b[PROJ_STORE_SIZE];
-        char name[16];
-        FILE *in = fopen(fx[i], "rb"); assert(in);
-        uint32_t n = (uint32_t)fread(b, 1, sizeof b, in); fclose(in);
-        reset(); assert(proj_import(&proj_scratch, b, (int)n)); assert(!project_restore_runtime(&proj_scratch));
-        snprintf(name, sizeof name, "fun%u", (unsigned)(19u + i));
-        printf("mel: %-7s stored in %u bytes\n", name, (unsigned)emit(name));
-    }
-    for (uint32_t i = 0; i < 3u; i++) {
         song_project(S[i].pats, S[i].density, S[i].notes, S[i].rows, S[i].sounds, S[i].motions);
         printf("mel: %-7s stored in %u bytes\n", S[i].name, (unsigned)emit(S[i].name));
     }
@@ -294,7 +284,7 @@ static int do_emit(void)
     kit_project();
     assert(kit_project_is(KIT_A, KIT_B, KIT_E));
     uint32_t n = emit("kits");
-    assert(*(uint32_t *)(void *)rec == BANKQ_MAGIC);
+    assert(*(uint32_t *)(void *)rec == BANKS_MAGIC);
     printf("mel: %-7s stored in %u bytes: kits %d and %d, %d named and empty\n", "kits", (unsigned)n, KIT_A, KIT_B, KIT_E);
     {   /* its kits where test_mel.mjs's device has room for them: KIT 5 is there as KIT 1, KIT 2 goes to 4, the empty one to 7 */
         static const uint8_t from[3] = {KIT_A, KIT_B, KIT_E}, to[3] = {12, 9, 15};
@@ -302,12 +292,12 @@ static int do_emit(void)
         assert(kit_project_is(12, 9, 15));
         emit("kits-moved");
     }
-    {   /* the pattern-less form (FBKP): no pattern's own sound */
+    {   /* the pattern-less form (no pattern's own sound) */
         kit_project();
         memset(pattern_sound, 0, sizeof pattern_sound);
         chain_config.sound[3][T_OTHER] = (uint8_t)snd_drum_a;      /* (every sound still in use) */
         emit("kits-p");
-        assert(*(uint32_t *)(void *)rec == BANKP_MAGIC);
+        assert(*(uint32_t *)(void *)rec == BANKS_MAGIC);
         static const uint8_t from[3] = {KIT_A, KIT_B, KIT_E}, to[3] = {12, 9, 15};
         kit_rename(from, to, 3);
         emit("kits-p-moved");
@@ -326,7 +316,8 @@ static int do_verify(void)
     /* the device test_mel.mjs imported into: KIT 1 held the 808 kit already; the page sent KIT 4 and the project */
     n = load("kit-808.bin", big, sizeof big);
     bad += check("mel: a kit record goes in through the backup's PUT", put_object(92, big, n) == 0 && rec_len[0] == n);
-    bad += check("mel: .. its owner the default (DRUM's): the engine map as it was, nothing to save", !rec_uid[0] && !eng_map_dirty);
+    bad += check("mel: .. its owner the default (DRUM's), named in the owners record (2.0: every owner is)",
+                 rec_uid[0] == rec_owner_uid(MOD3_NREC) && eng_map_dirty);
     n = load("out-kit-12.bin", big, sizeof big);
     uint32_t n909 = load("kit-909.bin", kit[0], sizeof kit[0]);
     bad += check("mel: the kit the page sent is the file's, byte for byte, and plays", n == n909 && !memcmp(big, kit[0], n) &&

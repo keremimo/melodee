@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKUP_CMD, bkU32, bkR32, bkPack, bkUnpack, bkCrc } from "./fm1backup.js";
-import { MEL_CONST, MEL_MAX, recLayout, cmEncode, cmDecode, lzPack, lzUnpack, pjPacked, pjCompact, pjExpand, recInfo, recRemap,
+import { MEL_CONST, MEL_MAX, REC_BYTES, recLayout, fnv, cmEncode, cmDecode, lzPack, lzUnpack, pjPacked, pjCompact, pjExpand, recInfo, recRemap,
   melPack, melUnpack, melExport, melImport, melProjectId } from "./mel_file.js";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "../build/host/mel");
@@ -30,7 +30,7 @@ ok(Object.keys(MEL_CONST).every((k) => MEL_CONST[k] === fw[k]) && melProjectId(3
 ok(Object.keys(fw.layout).every((k) => recLayout(fw.layout.np)[k] === fw.layout[k]), "where a record keeps its tracks, sounds and automation: the firmware's");
 
 // ------------------------------------------------------------------------------------------ the coder ---
-const projects = ["blank", "fun19", "fun20", "fun21", "sketch", "song", "big", "kits"];
+const projects = ["blank", "sketch", "song", "big", "kits"];
 const kitNames = ["909", "808", "cr78"], kit = Object.fromEntries(kitNames.map((n) => [n, read(`kit-${n}.bin`)]));
 const rec = Object.fromEntries([...projects, "kits-moved", "kits-p", "kits-p-moved"].map((n) => [n, read(`${n}.rec`)]));
 const SECTOR = 4056, sectors = (n) => Math.ceil(n / SECTOR);   // a pool record's payload a sector (storage.c ST_LIN_PAYLOAD_MAX)
@@ -84,9 +84,9 @@ ok(same(pjExpand(rec.song), rec.song) && says(() => pjExpand(rec.song.subarray(0
 const info = recInfo(rec.kits), moved = new Map([[10, 12], [13, 9], [16, 15]]);
 ok(same(info.kits, [10, 13, 16]) && info.refs.length === 7 && info.name === "KIT SONG" && info.np === fw.layout.np,
   "a project's kits: the drum tracks', a section's and a pattern's own sound's, automation's (7 places, 3 kits)");
-ok(recInfo(rec.song).kits.length === 0 && recInfo(rec.blank).kits.length === 0 && recInfo(rec.fun19).kits.length === 0, "the built-in kits (808, 909, ..) are no file's business");
-ok(same(recRemap(rec.kits, moved), rec["kits-moved"]), "kits renamed by the page == the firmware's record of the project with them renamed (FBKQ)");
-ok(same(recInfo(rec["kits-p"]).kits, [10, 13, 16]) && same(recRemap(rec["kits-p"], moved), rec["kits-p-moved"]), ".. without a pattern's own sound too (FBKP)");
+ok(recInfo(rec.song).kits.length === 0 && recInfo(rec.blank).kits.length === 0, "the built-in kits (808, 909, ..) are no file's business");
+ok(same(recRemap(rec.kits, moved), rec["kits-moved"]), "kits renamed by the page == the firmware's record of the project with them renamed");
+ok(same(recInfo(rec["kits-p"]).kits, [10, 13, 16]) && same(recRemap(rec["kits-p"], moved), rec["kits-p-moved"]), ".. without a pattern's own sound too");
 ok(same(recRemap(rec.kits, new Map()), rec.kits) && same(recRemap(recRemap(rec.kits, moved), new Map([[12, 10], [9, 13], [15, 16]])), rec.kits),
   "no change leaves every byte; renamed and back is the record again");
 ok(same(recInfo(recRemap(rec.kits, new Map([[10, 13], [13, 10]]))).kits, [10, 13, 16]) && !same(recRemap(rec.kits, new Map([[10, 13], [13, 10]])), rec.kits),
@@ -96,6 +96,10 @@ ok(same(recInfo(recRemap(rec.kits, new Map([[10, 13], [13, 10]]))).kits, [10, 13
   const old = Uint8Array.from(rec.kits); old[8] ^= 1; put32(old, old.length - 4, 0); // (a FUN magic of before)
   ok(says(() => recInfo(bad), /Not a Melodee project record/) && says(() => recInfo(rec.kits.subarray(0, 27000)), /Not a Melodee/) &&
      says(() => recRemap(rec.kits, new Map([[10, 5]])), /Invalid kit/), "a record whose sum is off, a short one, a rename to a built-in kit: refused");
+  // Melodee 1.x's records (FBKP / FBKQ / FBKR), their sums right: 2.0 refuses them (the installer converts them)
+  const v1 = (magic) => { const r = Uint8Array.from(rec.kits); put32(r, 0, magic); put32(r, REC_BYTES - 4, fnv(r, 0, REC_BYTES - 4)); return r; };
+  ok(u32(rec.kits, 0) === MEL_CONST.FBKS && u32(rec["kits-p"], 0) === MEL_CONST.FBKS &&
+     [0x504B4246, 0x514B4246, 0x524B4246].every((m) => says(() => recInfo(v1(m)), /from Melodee 1\.x/)), "2.0 records are FBKS; a 1.x record (FBKP / FBKQ / FBKR) is refused");
 }
 
 // ------------------------------------------------------------------------------------------- the file ---

@@ -9,7 +9,7 @@
  *     #include "../mod_engine.h"
  *     #include "eng_x.c"
  *     static x_part_t *x_part(uint32_t part) { return mod_part_mem(part, sizeof(x_part_t)); }
- *     MOD3_ENGINE_EXPORT(mod_x) = {MOD3_ENGINE_HEAD, .engine = N, .name = "X", .npresets = .., .eng = &ENG_X};
+ *     MOD3_ENGINE_EXPORT(mod_x) = {MOD3_ENGINE_HEAD, .engine = 0, .name = "X", .npresets = .., .eng = &ENG_X};
  * tools/mod_build.py builds it with the image's flags (tools/build.py: beside the image, for its board); host tests
  * compile the same file natively (no section, the descriptor by its name).
  * The part's patch is the firmware's bytes, read through host patch() (core.h mod_patch); the engine's own headers
@@ -41,7 +41,8 @@ int memcmp(const void *a, const void *b, size_t n);
 #include "sdk/mod_abi3.h"
 #include "melodee_tables.h"
 #include "core.h"
-#include "shipped.h"                          /* (the shipped synths' engine numbers) */
+#define MOD_HANDLE(row) ((uint32_t)MOD3_SELF_ENGINE(mod_self))   /* the module's own handle on this device (bind's self) */
+#include "shipped.h"                          /* (the shipped synths' handles in a host build) */
 #include "dsp.c"
 #include "audio_batch.h"                         /* (the firmware's queue for CPU1: the host's) */
 #include "audio_worker.h"                        /* (CPU1's pairing: the host's) */

@@ -33,7 +33,7 @@ def pack(b):
         out += [sum((x >> 7) << j for j, x in enumerate(group))] + [x & 127 for x in group]
     return out
 
-PROPHET = 19   # engines.c ENGI_PROPHET
+PROPHET = 2    # the Prophet's handle on a 2.0 device: its manifest row (firmware/modules/shipped.h ENGI_PROPHET)
 
 # a synth's patch and parameters through the editor's synth commands (firmware/src/editor_synth.c: PATCH 86, PARAM 88)
 def patch_get(d, part, engine=127):

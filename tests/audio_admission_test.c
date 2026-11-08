@@ -12,7 +12,7 @@ static int audio_worker_join(void){return 1;}
 #include <assert.h>
 static uint32_t sounding(const track_t *t)
 {uint32_t n=0;for(uint32_t i=0;i<NVOICE;i++)n+=t->v[i].active && t->v[i].stage!=4u;return n;}
-static const uint8_t family[6]={ENGI_PROPHET,ENGI_FM6,15,3,ENGI_DRUM,ENGI_DRUM};
+static const uint8_t family[6]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_DRUM,ENGI_DRUM};
 static void setup(const uint32_t cat[4])
 {
     memset(trk,0,sizeof trk);trk_voices_bind();memset(&song,0,sizeof song);eng_state_reset();

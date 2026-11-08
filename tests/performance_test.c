@@ -79,8 +79,6 @@ static void silent_clocks(void)
     host_preset(t,ENGI_FM6,0);fm6_part_t *p=fm6_part(0);p->dc_x1=123;p->dc_y1=456;
     uint32_t tick=p->pt.tick;track_render_audio(t,b,CTL,0);
     assert(p->pt.tick!=tick && !p->dc_x1 && !p->dc_y1);
-    host_preset(t,7,0);t->p[P_E7]=2;drw_part_t *wheel=drw_of(t);
-    phase=wheel->t.rph[0];track_render_audio(t,b,CTL,0);assert(wheel->t.rph[0]!=phase);
-    puts("performance: silent tracks retain LFO/bend/rotor/FM6 clocks, fades and DIST zeros");
+    puts("performance: silent tracks retain LFO/bend/FM6 clocks, fades and DIST zeros");
 }
 int main(void){capture_transitions();cache_transitions();silent_clocks();puts("Performance transition tests passed");return 0;}

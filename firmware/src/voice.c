@@ -374,9 +374,6 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
     int sounding = v->active && v->stage != 0;
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
     int32_t s0 = v->s[0], s1 = v->s[1], s4 = v->s[4], s5 = v->s[5];
-#if MELODEE_LEGACY_EXTRAS
-    int32_t s6 = v->s[6], s7 = v->s[7];
-#endif
     uint32_t keep = e->keep;
     /* MIDI replaces a repeated press by releasing its old owner first. A
      * same-pitch one-shot then retriggers the same circuit regardless of gate;
@@ -415,12 +412,6 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
             v->s[4] = s4;
         if (keep & 0x20u)
             v->s[5] = s5;
-#if MELODEE_LEGACY_EXTRAS
-        if (keep & 0x40u)
-            v->s[6] = s6;
-        if (keep & 0x80u)
-            v->s[7] = s7;
-#endif
     }
 }
 

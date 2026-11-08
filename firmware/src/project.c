@@ -216,6 +216,10 @@ static int proj_import(project_t *q, const void *b, int n)
     if(n==(int)(sizeof *q+RECORD_MAX))return proj_import_note10(q,b,(uint32_t)n);
     return 0;
 }
+#ifndef FM1_IRQ_TARGET
+/* host tests: a FUN record packed and read back in one run (its handles this device's: eng_map.c eng_remap_same) */
+static int proj_import_same(project_t *q, const void *b, int n) { eng_remap_same(); return proj_import(q, b, n); }
+#endif
 static int proj_fn_none(project_t *q)          /* a record without FM6 function settings: Dexed's */
 {
     memset(q->voice_fn, 0, sizeof q->voice_fn);
@@ -325,6 +329,7 @@ static int proj_pack(project_store_t *out, const project_t *q)
     if (q->g[G_FXRETURN]<0 || q->g[G_FXRETURN]>127 || q->g[G_FXMODE]<0 || q->g[G_FXMODE]>1 || !chain_legacy_valid(&q->chain) || !motion_valid(&q->motion) || P_COUNT > 127u) return 0;
     memset(out, 0, sizeof *out); memcpy(b, &magic, 4); memcpy(b + 4, &size, 4);
     memcpy(b + 8, q->g, 2u*PROJ_GLOBALS);
+    memset(b + 8u + 2u * G_ENGSEL, 0, 2u);            /* (a handle: never stored, core.h) */
     b[PROJ_FX_MODE_OFF]=(uint8_t)q->g[G_FXMODE];b[PROJ_FX_MODE_OFF+1u]=0;
     b[PROJ_FX_WIRE_OFF]='M';b[PROJ_FX_WIRE_OFF+1u]='F';b[PROJ_FX_WIRE_OFF+2u]='X';b[PROJ_FX_WIRE_OFF+3u]=(uint8_t)q->g[G_FXRETURN];
     for(i=0;i<FX_SLOTS*FX_PARAMS;i++){uint32_t id=G_MFXTYPE+i;if(q->g[id]<GP[id].min || q->g[id]>GP[id].max)return 0;b[PROJ_MASTER_WIRE+i]=(uint8_t)q->g[id];} b[62] = q->sel; b[63] = q->parts; b[64] = q->phys; b[66] = P_COUNT;
@@ -397,7 +402,7 @@ static int proj_unpack(project_t *q, const uint8_t *b)
         68u + PROJ_TRK * (np - (magic==0x46554E44u?PROJ_FX_FIELDS:0u) + 2u + NSTEP * ((magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC || magic==PROJ_PRE_HP_MAGIC || magic==0x46554E46u || magic==0x46554E45u)?8u:9u)) + sizeof q->chain + sizeof q->motion > end)
         return 0;
     memset(q, 0, sizeof *q); q->magic = PROJ_MAGIC; q->size = sizeof *q;
-    memcpy(q->g,b+8,2u*PROJ_GLOBALS);
+    memcpy(q->g,b+8,2u*PROJ_GLOBALS);q->g[G_ENGSEL]=0;   /* (a handle: never stored) */
     for(i=G_MFXTYPE;i<G_COUNT;i++)q->g[i]=GP[i].def;
     if(magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC || magic==PROJ_PRE_HP_MAGIC || magic==0x46554E46u){
         if(b[PROJ_FX_WIRE_OFF]!='M' || b[PROJ_FX_WIRE_OFF+1u]!='F' || b[PROJ_FX_WIRE_OFF+2u]!='X' || b[PROJ_FX_WIRE_OFF+3u]>127u)return 0;
@@ -426,8 +431,8 @@ static int proj_unpack(project_t *q, const uint8_t *b)
                 if(value>(uint32_t)TP[i].max)return 0;values[i]=(int16_t)value;
             }else {if(b[pos]>191u)return 0;values[i]=(int16_t)b[pos++]-64;}
         }
-        q->t[t].engine = (uint8_t)eng_in(b[pos++]); q->t[t].preset = b[pos++];   /* (FBKR: the number here, eng_map.c) */
-        if (q->t[t].engine >= NENGINES) return 0;  /* a fork's engine ID must not wrap into ours */
+        if (b[pos] >= NENGINES) return 0;          /* (a handle past ours: damaged, a fork's) */
+        q->t[t].engine = (uint8_t)eng_in(b[pos++]); q->t[t].preset = b[pos++];   /* (its handle here: the record's entries, eng_map.c) */
         for (i = 0; i < P_COUNT; i++) def[i] = param_desc_of(q->t[t].engine % NENGINES, i)->def;
         params_by_count(q->t[t].p, values, np, def);
         if (magic != PROJ_MAGIC)
@@ -643,7 +648,7 @@ static int proj_read_slot(uint32_t slot)
 #endif
 #if !MELODEE_FLASH
     bank_wide = bank_p16 = 0;
-    int valid = bank_full((uint32_t)n) ? bank_valid(proj_wire_u.raw, n) : (eng_remap_reset(), proj_import(&proj_scratch, proj_wire_u.raw, n));
+    int valid = bank_full((uint32_t)n) && bank_valid(proj_wire_u.raw, n);   /* (2.0: FBKS records only) */
 #endif
 #if MELODEE_FLASH && !defined(FM1_IRQ_TARGET)
     if (valid && slot < 4u) {                    /* (the host mirrors hold slots 1..4) */
@@ -1056,10 +1061,10 @@ static int project_restore_runtime(const project_t *input)
         t->user = 0; t->user_native=0;                                    /* (no user preset slot is saved) */
         for (i = 0; i < P_COUNT; i++) {                 /* every value back inside its range */
             const param_desc_t *d = param_desc_of(e, i);
-            t->p[i] = param_reserved(i) ? 0 : eng_extra_retired(e) && i >= P_E0 ? s->p[i] : (int16_t)clamp(s->p[i], d->min, d->max);
+            t->p[i] = param_reserved(i) ? 0 : eng_silent(e) && i >= P_E0 ? s->p[i] : (int16_t)clamp(s->p[i], d->min, d->max);
         }
         track_fx_normalize(t->p);
-        t->preset = eng_extra_retired(e) ? s->preset : (uint8_t)(ENGINES[e]->npresets ? (s->preset >= PROJ_DEF_KEEP ? 0u : s->preset) % ENGINES[e]->npresets : 0u);
+        t->preset = eng_silent(e) ? s->preset : (uint8_t)(ENGINES[e]->npresets ? (s->preset >= PROJ_DEF_KEEP ? 0u : s->preset) % ENGINES[e]->npresets : 0u);
         t->pattern = p->pattern[k];
         memcpy(t->step, s->step, sizeof t->step);
         proj_steps(t->step);
@@ -1137,7 +1142,7 @@ static void project_load(uint32_t slot)
  * from it (every pattern empty, LEN / DIV / SWG / GATE their defaults, no name, SLOT on a free slot), and power-on
  * loads it when BOOT is OFF or its slot empty. No flash sector is free: it follows the settings in their record
  * (set_rec, its size and magic last). P_COUNT, G_COUNT or PROJ_VOICE_BYTES changing changes it (the assert): convert. */
-#define TMPL_MAGIC 0x4C4C5054u                    /* "TPLL": one TONE per FX slot; TPLK (two cuts) and earlier convert */
+#define TMPL_MAGIC 0x4D4C5054u                    /* "TPLM": Melodee 2.0, its synths' entries in it (TPLL and before: 1.x) */
 typedef struct {
     int16_t g[PROJ_GLOBALS];
     uint8_t sel, ntrk;                            /* (G_COUNT odd: the tracks start on a word); ntrk: the tracks in
@@ -1150,6 +1155,8 @@ typedef struct {
     uint8_t drum[PROJ_TRK][PROJ_KIT_BYTES];
     uint8_t master[20];                           /* shared FX: 12 slot values, RETURN, MODE, TONEs + 64,
                                                    * 3 zero (TPLK: the low cuts, the high cuts) */
+    uint8_t nid, rsv[3];                          /* the synths its tracks name: nid entries (eng_map.c: handle, ID, name) */
+    uint8_t id[PROJ_TRK][EMAP_ENTRY];
     uint32_t size, magic;                         /* last: the record's end */
 } tmpl_t;
 typedef struct {
@@ -1174,7 +1181,7 @@ typedef struct {
     uint8_t drum[PROJ_TRK][PROJ_KIT_BYTES];
     uint32_t size, magic;                         /* last: the record's end */
 } tmpl_fx_legacy_t;
-_Static_assert(sizeof(tmpl_t) == 2u * PROJ_GLOBALS + 2u + PROJ_TRK * (2u + 2u * P_COUNT) + PROJ_TRK * (PROJ_VOICE_BYTES + PROJ_FN_BYTES) + PROJ_CZ_BYTES + PROJ_P5_BYTES + PROJ_TRK*PROJ_KIT_BYTES + 20u + 8u,
+_Static_assert(sizeof(tmpl_t) == 2u * PROJ_GLOBALS + 2u + PROJ_TRK * (2u + 2u * P_COUNT) + PROJ_TRK * (PROJ_VOICE_BYTES + PROJ_FN_BYTES) + PROJ_CZ_BYTES + PROJ_P5_BYTES + PROJ_TRK*PROJ_KIT_BYTES + 20u + 4u + PROJ_TRK * EMAP_ENTRY + 8u,
                "template layout (P_COUNT, G_COUNT, PROJ_VOICE_BYTES: a conversion)");
 static struct { persist_t p; tmpl_t t; } set_rec;   /* the settings record (data SRAM: the engines' arena keeps the pool) */
 #define tmpl set_rec.t                                /* the template lives where the settings record stages it */
@@ -1187,17 +1194,12 @@ static void settings_old_accept(void) { persist_old = tmpl_old = 0; }
 static int template_used(void) { return tmpl.magic == TMPL_MAGIC && tmpl.size == sizeof tmpl; }
 
 /* a stored template (len bytes, as tmpl_t is laid out) is today's: its size and magic, valid tones */
-static uint32_t tmpl_param_count(uint32_t len)   /* (TPLJ, TPLI: a 16-byte master; TPLH none) */
-{
-    return len==sizeof(tmpl_t)?P_COUNT:len==sizeof(tmpl_t)-PROJ_TRK*2u*(P_COUNT-122u)?122u:len==sizeof(tmpl_t)+PROJ_TRK*2u*(PROJ_CUT_NP-P_COUNT)?PROJ_CUT_NP:
-           len==sizeof(tmpl_t)-PROJ_TRK*2u*(P_COUNT-119u)-4u?119u:len==sizeof(tmpl_t)-PROJ_TRK*2u*(P_COUNT-117u)-4u?117u:
-           len==sizeof(tmpl_t)-PROJ_TRK*2u*(P_COUNT-116u)-20u?116u:len==sizeof(tmpl_fx_single_t)?108u:len==sizeof(tmpl_fx_legacy_t)?104u:0u;
-}
+static uint32_t tmpl_param_count(uint32_t len) { return len == sizeof(tmpl_t) ? P_COUNT : 0u; }   /* (2.0's only) */
 static uint32_t tmpl_blob_schema(const uint8_t *b,uint32_t len)
 {
     uint32_t np=tmpl_param_count(len),size,magic;if(!np)return 0;
     memcpy(&size,b+len-8u,4);memcpy(&magic,b+len-4u,4);
-    return size==len && magic==((np==P_COUNT || np==122u)?TMPL_MAGIC:np==PROJ_CUT_NP?0x4B4C5054u:np==119u?0x4A4C5054u:np==117u?0x494C5054u:np==116u?0x484C5054u:np==108u?0x474C5054u:0x464C5054u) ? np : 0u;
+    return size==len && magic==TMPL_MAGIC ? np : 0u;
 }
 static int tmpl_blob_valid(const uint8_t *b,uint32_t len)
 {
@@ -1243,6 +1245,8 @@ static int tmpl_take(const uint8_t *b,uint32_t len)
     for(uint32_t i=0;i<FX_SLOTS*FX_PARAMS;i++){uint32_t id=G_MFXTYPE+i;uint32_t v=np>=117u?b[off+native+i]:(uint32_t)GP[id].def;if(v>GP[id].max)return 0;tmpl.master[i]=(uint8_t)((i%FX_PARAMS==0u && fx_retired((int32_t)v))?FX_OFF:v);}
     tmpl.master[12]=np>=117u?b[off+native+12u]:(uint8_t)GP[G_FXRETURN].def;if(tmpl.master[12]>127u)return 0;
     tmpl.master[13]=np>=119u?b[off+native+13u]:0;
+    tmpl.nid=b[__builtin_offsetof(tmpl_t,nid)];memcpy(tmpl.id,b+__builtin_offsetof(tmpl_t,id),sizeof tmpl.id);
+    if(tmpl.nid>PROJ_TRK)return 0;
     for(uint32_t i=0;i<FX_SLOTS;i++)
         tmpl.master[14u+i]=(np==P_COUNT || np==122u)?b[off+native+14u+i]:(uint8_t)(64+(np==PROJ_CUT_NP?proj_tone_of_cuts(b[off+native+14u+i],b[off+native+17u+i]):0));
     tmpl.magic=TMPL_MAGIC;tmpl.size=sizeof tmpl;
@@ -1276,10 +1280,15 @@ static void glo_poll(void)
     }
 }
 
-/* The template's end block (pool record ST_TPLX), laid out as a project's FBKR end block (pattern_store.c bank_ext_*):
- * the numbers its tracks name that are not Melodee's defaults (eng_map.c entries), the patches of its tracks' synths
- * that have no Melodee 1.x store format; what the settings record's layout cannot keep. Only when needed: a template of
- * Melodee's own synths has none (its settings record as it always was). Not in a backup (its settings record is) */
+/* the template's synths (its entries, eng_map.c): its handles' remap for template_load (none it names: none) */
+static void tmpl_remap(void)
+{
+    if (tmpl.nid > PROJ_TRK || eng_remap_read(tmpl.id[0], tmpl.nid))
+        eng_remap_reset();
+}
+/* The template's end block (pool record ST_TPLX), laid out as a project's end block (pattern_store.c bank_ext_*) with
+ * no entries (the template has them): the patches of its tracks' synths that have no Melodee 1.x store format, what the
+ * settings record's layout cannot keep. Only when needed. Not in a backup (its settings record is) */
 #if MELODEE_FLASH
 static const uint8_t *tmpl_ext_patch(uint32_t k, uint32_t *len)   /* track k's patch it keeps (template_save), 0 none */
 {
@@ -1292,16 +1301,8 @@ static const uint8_t *tmpl_ext_patch(uint32_t k, uint32_t *len)   /* track k's p
 }
 static int tmpl_ext_save(void)                    /* template_save, the template in tmpl: 0 kept */
 {
-    uint8_t *b = wire_take(), ne = 0, np = 0;
+    uint8_t *b = wire_take(), ne = 0, np = 0;      /* (its synths' entries are in the template itself) */
     uint32_t pos = 0, len;
-    for (uint32_t e = 0; e < NENGINES; e++)
-        for (uint32_t k = 0; k < PROJ_TRK; k++)
-            if (tmpl.t[k].engine == e && eng_map_own(e)) {
-                eng_map_put(b + pos, e);
-                pos += EMAP_ENTRY;
-                ne++;
-                break;
-            }
     for (uint32_t k = 0; k < PROJ_TRK; k++) {
         const uint8_t *q = tmpl_ext_patch(k, &len);
         if (!q)
@@ -1325,13 +1326,14 @@ static void tmpl_ext_load(void)
     uint8_t *b = wire_take();
     int n = st_exists(ST_TPLX) ? st_load(ST_TPLX, b, sizeof proj_wire_u) : 0;
     bank_ext_none();
+    tmpl_remap();
     if (n > (int)BANKR_TRAIL && (bank_ext_head(b + n - BANKR_TRAIL, (uint32_t)n - BANKR_TRAIL) != (uint32_t)n ||
                                  !bank_ext_body(b + n - BANKR_TRAIL)))
         bank_ext_none();
 }
 #else
 static int tmpl_ext_save(void) { return 0; }
-static void tmpl_ext_load(void) { bank_ext_none(); }
+static void tmpl_ext_load(void) { bank_ext_none(); tmpl_remap(); }
 #endif
 
 /* the music without its patterns -> the template, saved with the settings */
@@ -1347,6 +1349,7 @@ static void template_save(void)
     memset(&tmpl, 0, sizeof tmpl);
     for (i = 0; i < PROJ_GLOBALS; i++)
         tmpl.g[i] = song.g[i];
+    tmpl.g[G_ENGSEL] = 0;                            /* (a handle: never stored) */
     for(i=0;i<FX_SLOTS*FX_PARAMS;i++)tmpl.master[i]=(uint8_t)song.g[G_MFXTYPE+i];
     tmpl.master[12]=(uint8_t)song.g[G_FXRETURN];
     tmpl.master[13]=(uint8_t)song.g[G_FXMODE];
@@ -1364,6 +1367,12 @@ static void template_save(void)
             tmpl.t[k].p[i] = motion_base_value(&trk[k], i);
         proj_areas_put(tmpl.fm6[k], tmpl.voice_fn[k], tmpl.cz[k], tmpl.p5[k], tmpl.drum[k], patch_eng_of(k), patch_of(k));
     }
+    for (uint32_t e = 0; e < NENGINES; e++)          /* (the synths it names: their entries) */
+        for (k = 0; k < PROJ_TRK; k++)
+            if (tmpl.t[k].engine == e && eng_map_own(e)) {
+                eng_map_put(tmpl.id[tmpl.nid++], e);
+                break;
+            }
     tmpl.size = sizeof tmpl;
     tmpl.magic = TMPL_MAGIC;
     tmpl_dirty = 1;
@@ -1537,9 +1546,6 @@ static void project_boot(void)
     song.g[G_SLOT] = (int16_t)(project_free_slot() + 1u);
 }
 #include "tracks.c"                               /* adding and removing tracks */
-#if MELODEE_FLASH && MELODEE_SLICE
-#include "slice_store.c"                          /* SLICE's MAN slices, kept in the user slots */
-#endif
 #if MELODEE_FLASH
 static persist_t persist_saved;
 static uint8_t persist_pending;                 /* 1 requested, 2 waiting after a flash error */
@@ -1608,7 +1614,7 @@ static void proj_boot_scan(void)
  * tracks, the song's sounds, the indexed user presets, the template. 1: eng_map.c may give it to another synth */
 static int proj_engine_spare(uint32_t e)
 {
-    if (e < ENGI_MOD0 || e >= NENGINES || !eng_map[e].uid || mod_slot_of(e) < NMOD)
+    if (e < ENG_H_FREE0 || e >= NENGINES || !eng_map[e].uid || mod_slot_of(e) < NMOD)
         return 0;
     for (uint32_t t = 0; t < NTRK; t++)
         if (trk[t].engine == e || trk[t].eng_req == e)
@@ -1667,9 +1673,6 @@ static void persist_boot(void)                    /* before settings_init / pane
     rec_scan();                                    /* the synths' data records, for the audio (rec_store.c): after
                                                     * mod_boot, which lists their owners (the map, the pads) */
 #endif
-#if MELODEE_SLICE
-    slc_store_boot();                              /* (the scans read each slot's stored slices) */
-#endif
     {   /* the settings, then a template if one follows them */
         int n = st_load(OBJ_SETTINGS, wire_take(), sizeof proj_wire_u);
 #if MELODEE_BLE
@@ -1691,7 +1694,8 @@ static void persist_boot(void)                    /* before settings_init / pane
             !memcmp(p.favorites.factory[1] + 28, SETTINGS_OWNER, 3) && !owned;
         /* Never truncate a foreign extension into our ext block. Legacy PER5
          * is shared with forks, so both settings and the whole tail must match. */
-        foreign = future_owner || (!owned && !(settings_legacy_valid(&p) && tail_ok));
+        int old1x = n >= (int)sizeof p && p.magic == PERSIST_MAGIC_1X;   /* (Melodee 1.x's: the web installer converts it) */
+        foreign = future_owner || old1x || (!owned && !(settings_legacy_valid(&p) && tail_ok));
         persist_old = tmpl_old = 0;
         persist_pending = persist_repair = 0;
         memset(&tmpl, 0, sizeof tmpl);
@@ -1700,7 +1704,8 @@ static void persist_boot(void)                    /* before settings_init / pane
         }
         if (foreign) {
 #if MELODEE_BLE
-            memset(&mb_saved, 0, sizeof mb_saved);
+            if (!old1x)
+                memset(&mb_saved, 0, sizeof mb_saved);   /* (1.x's bonds are this device's: kept) */
 #endif
             memset(&p, 0, sizeof p);
             p.magic = PERSIST_MAGIC;
@@ -1716,7 +1721,8 @@ static void persist_boot(void)                    /* before settings_init / pane
         }
         settings_export(&p);
         persist_saved = p;
-        persist_old = (uint8_t)future_owner;       /* an unknown Melodee schema is protected, not foreign */
+        persist_old = (uint8_t)(future_owner || old1x);   /* an unknown Melodee schema or 1.x's is protected: defaults in
+                                                          * RAM, the record left as it is */
         /* Unknown owned templates stay protected. Otherwise commit defaults
          * or the ownership/normalization repair once through settings' A/B save. */
         if (!template_old() && (foreign || memcmp(&p, &original, sizeof p))) {
@@ -1746,7 +1752,6 @@ static int project_used(uint32_t slot)
     slot &= 3u;
     int valid = bank_valid(proj_bank_slot[slot], BANK_STORE_SIZE) &&
         !memcmp(proj_bank_slot[slot] + 8u, &proj_slot[slot], sizeof proj_slot[slot]);
-    if (!valid) valid = (eng_remap_reset(), proj_import(&proj_scratch, &proj_slot[slot], sizeof proj_slot[slot]));
     proj_meta[slot].used = (uint8_t)valid;
     if (valid) proj_name_get(proj_meta[slot].name, (const uint8_t *)proj_scratch.name);
 #endif
@@ -1784,9 +1789,6 @@ static void settings_poll(void)
     if(AUDIO_LAB_GUARDED())return;
 #if MELODEE_FLASH
     persist_t p;
-#if MELODEE_SLICE
-    slc_store_poll();                              /* SLICE's slices edited on the SLICES page */
-#endif
     up_favorite_poll();
     if (!persist_pending || !flash_ok || transport_busy() ||
         (persist_pending == 2u && (uint32_t)(fm1_ms - persist_retry_ms) < 1000u))

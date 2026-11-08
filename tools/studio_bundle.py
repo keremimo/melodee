@@ -205,7 +205,7 @@ def check(out, consts, layout, desc, proto, settings, palettes):
              ("layout KIT_FIRST", layout["KIT_FIRST"], kits["user_first"]),
              ("layout KIT_COUNT", layout["KIT_COUNT"], kits["user_count"]),
              ("layout PROJECTS", layout["PROJECTS"], music["project_slots"]),
-             ("layout FBKP", layout["FBKP"], next(m["u32"] for m in rec["project_record"]["writes"] if m["le"] == "FBKP")),
+             ("layout FBKS", layout["FBKS"], next(m["u32"] for m in rec["project_record"]["writes"] if m["le"] == "FBKS")),
              ("layout PZ_MAGIC", layout["PZ_MAGIC"], rec["project_stored"]["writes"][0]["u32"]),
              ("layout KIT_MAGIC", layout["KIT_MAGIC"], rec["kit"]["writes"][0]["u32"]),
              ("desc P_COUNT", desc["P_COUNT"], music["p_count"]), ("desc G_COUNT", desc["G_COUNT"], music["g_count"]),

@@ -133,7 +133,7 @@ static void song_sounds_stream(int patterns)
     chain_config.sound[1][0] = chain_config.sound[2][1] = (uint8_t)id;
     if (patterns) pattern_sound[1][15] = (uint8_t)id;
     project_capture(&proj_scratch); assert(bank_pack(oracle, &proj_scratch, 1));
-    assert(*(uint32_t *)oracle == (patterns ? BANKQ_MAGIC : BANKP_MAGIC));
+    assert(*(uint32_t *)oracle == BANKS_MAGIC);
     assert(proj_image_capture(1)); st_stream_t w;
     assert(!proj_stream_generate(&w, OBJ_BANK0)); assert(!st_stream_publish(&w));
     assert(!ps_saved(OBJ_BANK0, actual) && !memcmp(oracle, actual, sizeof actual));
@@ -381,7 +381,7 @@ int main(void)
     }
     for(uint32_t i=0;i<RECORD_MAX;i++)if(recording[i].vel)assert(recorded_owner(&recording[i])<3u*NPAT);
     assert(proj_image_capture(1));assert(proj_ok(&proj_scratch));
-    /* Earlier raw snapshots use ten-byte notes, not the FUN wire codec. */
+    /* An earlier raw snapshot (ten-byte notes): refused, kept */
     static uint8_t legacy[sizeof(project_t)+RECORD_MAX];
     workload(RECORD_MAX,1,1,0,0);project_capture(&proj_scratch);
     static project_t expected;expected=proj_scratch;
@@ -394,10 +394,8 @@ int main(void)
     }
     memcpy(legacy+at+RECORD_MAX*10u,(const uint8_t *)&expected+end,sizeof expected-end);
     uint32_t len=sizeof legacy,sum;memcpy(legacy+4,&len,4);sum=proj_hash(legacy,len-4u);memcpy(legacy+len-4u,&sum,4);
-    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(proj_read_slot(3)==len);
-    assert(!memcmp(&expected,&proj_scratch,sizeof expected));
-    legacy[at+8u]=25;sum=proj_hash(legacy,len-4u);memcpy(legacy+len-4u,&sum,4);
-    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(!proj_read_slot(3)&&proj_meta[3].old);
+    /* (Melodee 1.x's: 2.0 never reads it, the slot keeps it as OLD FORMAT until replaced) */
+    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(!proj_read_slot(3)&&proj_meta[3].old&&stored_len(OBJ_BANK0+3u)==len);
     packed_images();
     boot_repack();
     midi_tracks_stream();

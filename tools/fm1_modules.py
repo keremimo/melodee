@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Write a build's synth modules (ABI 3: SID, DRUM, CZ-1, FM6, the Prophet) into the connected FM-1's module slots
 through USB editor command 84, as the web installer does (web/fm1mods.js): pool records, first come first served like
-projects and preset banks. A slot holding the very file stays; one holding a module for the same engine (another
+projects and preset banks. A slot holding the very file stays; one holding a module of the same synth (its ID: another
 firmware's, damaged) is emptied and written again. tools/fm1_install.py runs this after the resources when
 melodee-mods.bin sits beside the package.
   fm1_modules.py build/melodee-mods.bin [--port NAME]"""
@@ -15,7 +15,7 @@ from pathlib import Path
 COMMAND = 84
 FILE_MAGIC = 0x31444D4D
 RC = {1: "bad request", 2: "storage full: delete a project or kit", 3: "flash error", 4: "busy: stop playback",
-      5: "not a module for this firmware", 6: "its engine number is taken", 7: "no room in RAM (stored)"}
+      5: "not a module for this firmware", 6: "no handle left for its synth", 7: "no room in RAM (stored)"}
 PLAYING = (1, 2, 4, 6)                               # module_store.c MS_LOADED, MS_STORED, MS_NORAM, MS_SKIPPED
 BAD = 3
 
@@ -55,8 +55,8 @@ def file_id(b):
 
 
 def same(s, f):
-    """a slot holding a file's synth: by their IDs when both have one (a synth's number is the device's), else the number"""
-    return s["id"] == f["id"] if s["id"] and f["id"] else s["engine"] == f["engine"]
+    """a slot holding a file's synth: by their IDs"""
+    return bool(s["id"]) and s["id"] == f["id"]          # (2.0: engine numbers are the device's handles)
 
 
 def bundle(data):

@@ -87,7 +87,7 @@ static uint32_t mapping_faults(uint32_t e, uint32_t k, int verbose)
 static int mapping_tests(void)
 {
     int bad = 0;
-    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, 3u /* SID */};
+    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, ENGI_SID};
     for (uint32_t i = 0; i < 5u; i++) {
         char what[96];
         ui_power_on();
@@ -169,7 +169,7 @@ static int cc_sets_role(uint32_t cc, uint32_t value, uint32_t role)
 static int role_tests(void)
 {
     int bad = 0;
-    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, 3u /* SID */};
+    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, ENGI_SID};
     for (uint32_t i = 0; i < 5u; i++) {
         char what[96];
         snprintf(what, sizeof what, "%s: every role names a parameter or a page it has", ENGINES[E[i]]->name);
@@ -240,7 +240,7 @@ static int blob_tests(void)
         patch_of(3)[5] = 9;
         memcpy(keep, patch_of(2), sizeof keep);
         project_capture(&q);
-        bad += check("a project packs and unpacks", proj_pack(&packed, &q) && proj_import(&r, &packed, sizeof packed));
+        bad += check("a project packs and unpacks", proj_pack(&packed, &q) && proj_import_same(&r, &packed, sizeof packed));
         uint8_t was[4][MOD3_PATCH_MAX];
         for (uint32_t k = 0; k < 4u; k++) memcpy(was[k], patch_of(k), MOD3_PATCH_MAX);
         same &= !project_save(0);                /* (the whole project: FM6's functions live in its bank, FBKK) */
@@ -257,7 +257,7 @@ static int blob_tests(void)
         }
         bad += check("the four synths' patches come back from a project byte for byte (FM6's functions too)", same);
         packed.raw[200] ^= 0x10u;
-        bad += check("mutation: a stored byte changed is refused (the record's check)", !proj_import(&r, &packed, sizeof packed));
+        bad += check("mutation: a stored byte changed is refused (the record's check)", !proj_import_same(&r, &packed, sizeof packed));
     }
     return bad;
 }

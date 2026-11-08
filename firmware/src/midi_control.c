@@ -295,13 +295,6 @@ static __attribute__((noinline)) void midi_parameter(track_t *t,uint32_t cc,uint
     switch(cc){case 5:id=P_GLIDE;break;case 7:id=P_LEVEL;break;case 10:id=P_PAN;break;
     case 72:id=P_REL;break;case 73:id=P_ATK;break;case 75:id=P_DEC;break;
     case 74:case 71:
-#if MELODEE_LEGACY_EXTRAS
-        {   /* (the retired PHASE, VOICE and NOISE: no schema) */
-            static const uint8_t map[12]={0,0,0x30,0,0,0x07,0,0,0,0,0,0x34};
-            uint32_t macro=t->eng_req<12u?(map[t->eng_req]>>(cc==74?4:0))&15u:0u;
-            if(macro)id=P_E0+macro-1u;
-        }
-#endif
         break;
     default:return;}
     if((role==MOD3_R_CC_ATK || role==MOD3_R_CC_DEC || role==MOD3_R_CC_REL) && midi_role_env(t,role,value))return;

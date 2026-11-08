@@ -9,7 +9,7 @@
  *                                   dealt by KEYB through its alloc (one key a voice, all eight on one key, a split),
  *                                   the common pitch bend held off, its pages from its schema (GROUP edits group B,
  *                                   TABLE both, SEMI every voice, the dim hints), a project of it saved and loaded
- *                                   (FBKR), on another device where it has another number. DIR: scratch.
+ *                                   (FBKS), on another device where it has another handle. DIR: scratch.
  *                                   OUTSIDE_PPG_RENDER=DIR also writes each program's phrase (M-kkk.raw: Saadet's
  *                                   comparison) */
 #define BACKUP_TEST_NO_MAIN
@@ -188,7 +188,7 @@ static uint32_t keyb_keys(uint32_t e, uint32_t k, const uint8_t *notes, uint32_t
 #define OP_N (1400u * CTL)                          /* (about a second) */
 static int32_t snd_a[2u * OP_N], snd_b[2u * OP_N], eng_a[OP_N];
 
-/* the device the project goes to ("another device"): the PPG alone, number 24 */
+/* the device the project goes to ("another device"): the PPG alone, the first free handle */
 static uint32_t fresh_device(void)
 {
     for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
@@ -209,13 +209,13 @@ static int run(void)
     /* ---- installed: the number through the engine map */
     install_other(0);
     boot();
-    bad += check("another outside synth (acme/OTHER) asked for 24 first and has it", mods[0].engine == 24u &&
-                 !strcmp(eng_name(24), "OTHER"));
+    bad += check("another outside synth (acme/OTHER) installed first: the first free handle", mods[0].engine == ENG_H_FREE0 &&
+                 !strcmp(eng_name(ENG_H_FREE0), "OTHER"));
     ui.msg[0] = 0;
     int rc = put(3, file, file_n);
     uint32_t e = mods[3].engine;
-    bad += check("PPG installs as an upload (slot 3), its code in SRAM; it asked for 24 too: the first free number",
-                 rc == MS_LOADED && e != 24u && e >= ENGI_MOD0 && eng_ok(e) && !strcmp(eng_name(e), "PPG") && mod_at[e] == 4u);
+    bad += check("PPG installs as an upload (slot 3), its code in SRAM, on another free handle (what its file asks for "
+                 "means nothing)", rc == MS_LOADED && e != ENG_H_FREE0 && e >= ENG_H_FREE0 && eng_ok(e) && !strcmp(eng_name(e), "PPG") && mod_at[e] == 4u);
     eng_map_service(1);
     boot();
     bad += check("power-on: listed from its record, the same number, its code not loaded", mods[3].state == MS_STORED &&
@@ -387,7 +387,7 @@ static int run(void)
     memcpy(p1, patch_of(1), sizeof p1);
     play(snd_a, OP_N, 2);
     bad += check("two parts of it (two programs, one edited) play", energy(snd_a, 2u * OP_N) > 1000u);
-    bad += check("the project saves as FBKR (an outside synth's patch: its end block)",
+    bad += check("the project saves as FBKS (its synths' entries, an outside synth's patch: its end block)",
                  !project_save_as(1, "PPG SONG") && proj_meta[1].used);
     host_tracks_init();
     project_load(1);
@@ -401,8 +401,8 @@ static int run(void)
     project_load(1);
     serve();
     play(snd_b, OP_N, 2);
-    bad += check("another device (the PPG alone: number 24): the project's parts play it there, the same samples",
-                 e2 == 24u && trk[0].eng_req == 24u && trk[1].eng_req == 24u && !memcmp(patch_of(1), p1, sizeof p1) &&
+    bad += check("another device (the PPG alone: the first free handle): the project's parts play it there, the same samples",
+                 e2 == ENG_H_FREE0 && trk[0].eng_req == ENG_H_FREE0 && trk[1].eng_req == ENG_H_FREE0 && !memcmp(patch_of(1), p1, sizeof p1) &&
                  !memcmp(snd_a, snd_b, sizeof snd_a));
     return bad;
 }

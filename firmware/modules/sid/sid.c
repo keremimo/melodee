@@ -8,5 +8,5 @@ static sid_part_t *sid_part(uint32_t part) { return mod_part_mem(part, sizeof(si
 
 MOD3_IDENT("melodee", "sid", "SID");
 MOD3_ENGINE_EXPORT(mod_sid) = {
-    MOD3_ENGINE_HEAD, .engine = 3, .name = "SID", .npresets = SID_NPRESETS, .eng = &ENG_SID,
+    MOD3_ENGINE_HEAD, .engine = ENGI_SID, .name = "SID", .npresets = SID_NPRESETS, .eng = &ENG_SID,
 };

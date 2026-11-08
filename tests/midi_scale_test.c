@@ -96,7 +96,7 @@ static int mpc_test(void)
     scale_reset();
     t->p[P_SCALE] = 1; t->p[P_ROOT] = 2; t->p[P_QUANT] = Q_MPC; t->p[P_MPCDEG] = 1;   /* D major */
     for (uint32_t k = 0; k < 4u; k++) {
-        set_engine_of(&trk[k], 3);
+        set_engine_of(&trk[k], ENGI_SID);
         trk[k].p[P_QUANT] = Q_MPC; trk[k].p[P_SCALE] = 1; trk[k].p[P_MPCDEG] = 1;
         for (note = 0; note < 128u; note++) {
             int pad = -1;
@@ -130,7 +130,7 @@ static void mpc_setup(void)
     scale_reset();
     for (uint32_t k = 0; k < 4u; k++) {
         track_t *t = &trk[k];
-        set_engine_of(t, 3);
+        set_engine_of(t, ENGI_SID);
         t->p[P_QUANT] = Q_MPC; t->p[P_SCALE] = 1; t->p[P_MPCDEG] = 1;
         t->p[P_ROOT] = (int16_t)(k * 2u); t->p[P_TRANS] = 0;
         t->p[P_CHRD] = 0; t->p[P_AMODE] = 0; t->p[P_VOICE] = V_POLY;

@@ -11,7 +11,7 @@ static void setup_mpc(void)
     ui_power_on();
     midi_hint = 0;
     for (uint32_t k = 0; k < NPART; k++) {
-        set_engine_of(&trk[k], 3);
+        set_engine_of(&trk[k], ENGI_SID);
         trk[k].p[P_QUANT] = Q_MPC; trk[k].p[P_SCALE] = 1;
         trk[k].p[P_ROOT] = trk[k].p[P_TRANS] = 0;
         trk[k].p[P_MPCDEG] = 1; trk[k].p[P_CHRD] = 0;

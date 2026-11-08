@@ -9,7 +9,7 @@
  *                                          its presets listed and picked from its file with its code not loaded, played,
  *                                          its pages from its schema, its SysEx (patch and manual messages imported into
  *                                          user slots, a single control edits the part, the patch out as the
- *                                          instrument's message), a project of it saved and loaded (FBKR), on another
+ *                                          instrument's message), a project of it saved and loaded (FBKS), on another
  *                                          device where it has another number; in stereo through the mixer (host 5:
  *                                          its chorus's sides, PAN a balance, the FX send post balance), mono on a host
  *                                          4 table (the middle of the sides). DIR: the project as the device stores it
@@ -240,7 +240,7 @@ static int32_t peak(const int32_t *a, uint32_t n)
 #define OJ_N (1400u * CTL)                          /* (about a second) */
 static int32_t snd_a[2u * OJ_N], snd_b[2u * OJ_N], eng_a[OJ_N], eng_b[OJ_N];
 
-/* the device the project goes to (.mel and "another device"): the JUNO alone, number 22 */
+/* the device the project goes to (.mel and "another device"): the JUNO alone, the first free handle */
 static uint32_t fresh_device(void)
 {
     for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
@@ -261,8 +261,8 @@ static int run(void)
     /* ---- installed: the number through the engine map */
     install_other(0);
     boot();
-    bad += check("another outside synth (acme/OTHER) asked for 22 first and has it", mods[0].engine == 22u &&
-                 !strcmp(eng_name(22), "OTHER"));
+    bad += check("another outside synth (acme/OTHER) installed first: the first free handle", mods[0].engine == ENG_H_FREE0 &&
+                 !strcmp(eng_name(ENG_H_FREE0), "OTHER"));
     ui.msg[0] = 0;
     int rc = put(3, file, file_n);
     uint32_t e = mods[3].engine, idnt = 0;
@@ -270,10 +270,10 @@ static int run(void)
     for (uint32_t at = MOD3_HEAD + ((mod_file3_t *)(void *)file)->image + 4u * ((mod_file3_t *)(void *)file)->nrel;
          at + 8u <= file_n && !uid; at += 8u + ((file[at + 4] | (uint32_t)file[at + 5] << 8) + 3u & ~3u))
         if (mod_le32(file + at) == MOD3_IDNT_TAG && (idnt = at + 8u)) uid = mod_le64(file + idnt);   /* (its ID: IDNT's) */
-    bad += check("JUNO-106 installs as an upload (slot 3), its code in SRAM; it asked for 22 too: the first free number, 23",
-                 rc == MS_LOADED && e == 23u && eng_ok(e) && !strcmp(eng_name(e), "JUNO-106") && mod_at[e] == 4u);
+    bad += check("JUNO-106 installs as an upload (slot 3), its code in SRAM, on the next free handle (what its file asks "
+                 "for means nothing)", rc == MS_LOADED && e == ENG_H_FREE0 + 1u && eng_ok(e) && !strcmp(eng_name(e), "JUNO-106") && mod_at[e] == 4u);
     bad += check(".. who it is: its ID (its author's key and juno-106), in the device's engine map", mods[3].uid == uid &&
-                 eng_map[e].uid == uid && eng_map[22].uid == other_uid);
+                 eng_map[e].uid == uid && eng_map[ENG_H_FREE0].uid == other_uid);
     bad += check(".. signed by its author's key: no warning", mods[3].sig == MOD_SIG_AUTHOR && !ui.msg[0]);
     eng_map_service(1);
     boot();
@@ -524,7 +524,7 @@ static int run(void)
     for (uint32_t i = 0; i < OJ_N; i++) sides += snd_a[2u * i] != snd_a[2u * i + 1u];
     bad += check("two parts of it (ORGAN I, B12 VIOLIN edited: FREQ 90, CHORUS II) play, in stereo",
                  energy(snd_a, 2u * OJ_N) > 1000u && sides > OJ_N / 4u);
-    bad += check("the project saves as FBKR (an outside synth's patch: its end block)",
+    bad += check("the project saves as FBKS (its synths' entries, an outside synth's patch: its end block)",
                  !project_save_as(1, "JUNO SONG") && proj_meta[1].used);
     {
         st_hdr_t h;
@@ -537,7 +537,7 @@ static int run(void)
             if (!st_read_range(st_proj_obj(1), (uint32_t)copy, 0, big, n)) save_file("j106.hpj", big, n);
             if (!pj_image(st_proj_obj(1), (uint32_t)copy, raw)) memcpy(&m, raw, 4);
         }
-        bad += check(".. stored as the firmware keeps a project (written for the .mel round trip)", n > 0 && m == BANKR_MAGIC);
+        bad += check(".. stored as the firmware keeps a project (written for the .mel round trip)", n > 0 && m == BANKS_MAGIC);
         save_file("j106-render.bin", snd_a, sizeof snd_a);
     }
     host_tracks_init();
@@ -552,8 +552,8 @@ static int run(void)
     project_load(1);
     serve();
     play(snd_b, OJ_N, 2);
-    bad += check("another device (the JUNO-106 alone: number 22): the project's parts play it there, the same samples",
-                 e2 == 22u && trk[0].eng_req == 22u && trk[1].eng_req == 22u && !memcmp(patch_of(1), p1, sizeof p1) &&
+    bad += check("another device (the JUNO-106 alone: the first free handle): the project's parts play it there, the same samples",
+                 e2 == ENG_H_FREE0 && trk[0].eng_req == ENG_H_FREE0 && trk[1].eng_req == ENG_H_FREE0 && !memcmp(patch_of(1), p1, sizeof p1) &&
                  !memcmp(snd_a, snd_b, sizeof snd_a));
     return bad;
 }
@@ -568,7 +568,7 @@ static int run_mel(void)
     mod_boot();
     install_other(0);
     boot();
-    uint32_t e = fresh_device();                    /* (OTHER deleted: the JUNO alone, 22) */
+    uint32_t e = fresh_device();                    /* (OTHER deleted: the JUNO alone, the first free handle) */
     char path[512];
     snprintf(path, sizeof path, "%s/out-j106.bin", dir);
     uint32_t n = load_file(path, big, sizeof big);
@@ -580,8 +580,8 @@ static int run_mel(void)
     project_load(3);
     serve();
     play(snd_a, OJ_N, 2);
-    bad += check(".mel: .. loads: both parts JUNO-106 (22 here, 23 where it was made), the same samples",
-                 nr == sizeof want && e == 22u && trk[0].eng_req == 22u && trk[1].eng_req == 22u &&
+    bad += check(".mel: .. loads: both parts JUNO-106 (7 here, 8 where it was made), the same samples",
+                 nr == sizeof want && e == ENG_H_FREE0 && trk[0].eng_req == ENG_H_FREE0 && trk[1].eng_req == ENG_H_FREE0 &&
                  !memcmp(snd_a, want, sizeof want) && !strcmp(proj_meta[3].name, "JUNO SONG"));
     return bad;
 }

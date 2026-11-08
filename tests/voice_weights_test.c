@@ -5,7 +5,7 @@
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
-static const uint8_t kinds[VOICE_KINDS] = {ENGI_PROPHET, ENGI_CZ, ENGI_FM6, 3u /* SID */, 10u /* DRUM */};
+static const uint8_t kinds[VOICE_KINDS] = {ENGI_PROPHET, ENGI_CZ, ENGI_FM6, ENGI_SID, ENGI_DRUM};
 /* The rule before GLO > WEIGHTS (admission off): what AUTO must keep. */
 static uint32_t builtin(const track_t *t)
 {
@@ -71,7 +71,7 @@ int main(void)
     for (uint32_t i = 0; i < 32u; i++) favorites.factory[8][i] = (uint8_t)(0xA0u + i);
     settings_export(&p);
     const uint8_t *w = p.favorites.factory[8] + 8;
-    ok = settings_legacy_valid(&p);
+    ok = (p.magic == PERSIST_MAGIC && settings_owned(&p));
     for (uint32_t i = 0; i < 8u; i++) ok &= !w[i];
     for (uint32_t i = 0; i < 32u; i++) if (i < 8u || i >= 16u) ok &= p.favorites.factory[8][i] == (uint8_t)(0xA0u + i);
     bad += check("defaults store zeros in row 8 bytes 8..15 and keep its stars and FX key map", ok);
@@ -86,7 +86,7 @@ int main(void)
     static const int16_t custom[VOICE_KINDS] = {3, 0, 1, 15, 2};
     memcpy(settings_vpoints, custom, sizeof custom); settings_safety = 0;
     settings_export(&p);
-    ok = settings_legacy_valid(&p) && w[0] == 'W' && w[1] == 1u && w[7] == 1u;
+    ok = (p.magic == PERSIST_MAGIC && settings_owned(&p)) && w[0] == 'W' && w[1] == 1u && w[7] == 1u;
     for (uint32_t k = 0; k < VOICE_KINDS; k++) ok &= w[2u + k] == (uint8_t)custom[k];
     defaults();
     ok &= settings_import(&p, (int)sizeof p) && !settings_safety && !memcmp(settings_vpoints, custom, sizeof custom);

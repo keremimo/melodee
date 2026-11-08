@@ -597,20 +597,12 @@ static uint32_t st_cand(uint32_t obj, uint32_t i)
     return !st_small(obj) || i < ST_SP_N ? i + 2u : ST_SMALL_U0 + i - ST_SP_N;
 }
 #define ST_CANDS_MAX (ST_SP_N + ST_U_N + ST_LN)
-#ifndef MELODEE_LEGACY_STORE                   /* (fm1_cc.h; host builds of this file alone: on) */
-#if BOARD_SMK37
-#define MELODEE_LEGACY_STORE 0
-#else
-#define MELODEE_LEGACY_STORE 1
-#endif
-#endif
 static int st_current(uint32_t obj, st_hdr_t *h)
 {
     if (!st_listed(obj)) return st_legacy_current(obj, h);
     /* Retry older headers only after a failed payload CRC. Rejecting one
      * candidate in RAM avoids an erase merely to read storage. */
     uint32_t rejected[(ST_CANDS_MAX + 31u) / 32u] = {0}, n = st_cands(obj);
-    st_hdr_t legacy; int old = st_pfile(obj) || !MELODEE_LEGACY_STORE || !st_old ? -1 : st_legacy_current(obj, &legacy);
     for (;;) {
         st_hdr_t best = {0}; int current = -1; uint32_t at = 0;
         for (uint32_t i = 0; i < n; i++) {
@@ -618,7 +610,6 @@ static int st_current(uint32_t obj, st_hdr_t *h)
             if ((rejected[i / 32u] >> (i % 32u)) & 1u || st_head(obj, st_cand(obj, i), &candidate)) continue;
             if (current < 0 || (candidate.seq != best.seq && candidate.seq - best.seq < 0x80000000u)) { best = candidate; current = (int)st_cand(obj, i); at = i; }
         }
-        if (old >= 0 && (current < 0 || best.seq == legacy.seq || legacy.seq - best.seq < 0x80000000u)) { *h = legacy; return old; }
         if (current < 0) return -1;
         if (!st_body(obj, (uint32_t)current, &best)) { *h = best; return current; }
         rejected[at / 32u] |= 1u << (at % 32u);

@@ -45,18 +45,6 @@ static int fixture(const char *path)
     fclose(f);
     return ok;
 }
-static uint32_t tracks_hash(void)                   /* (the generator's: engine, preset, every parameter, the steps) */
-{
-    uint32_t h = 2166136261u;
-    for (uint32_t k = 0; k < NPART; k++) {
-        h = rp_fnv(&trk[k].eng_req, 1, h);
-        h = rp_fnv(&trk[k].preset, 1, h);
-        h = rp_fnv(trk[k].p, sizeof trk[k].p, h);
-        h = rp_fnv(trk[k].step, sizeof trk[k].step, h);
-    }
-    return h;
-}
-/* this firmware's boot over nor as it is (persist_boot's store steps), the pool's sectors (list records may take) */
 static uint32_t boot(void)
 {
     uint32_t n = 0;
@@ -90,19 +78,6 @@ static int records_kept(void)
         int copy = st_current(rec_obj(u), &h);
         uint32_t v = copy >= 0 && !st_read_range(rec_obj(u), (uint32_t)copy, 0, rec_buf, h.len) ? rp_fnv(rec_buf, h.len, 2166136261u) : 0u;
         ok &= v == fx_kit[u] && (rec_tab[u].n != 0) == (fx_kit[u] != 0);
-    }
-    return ok;
-}
-/* the projects loaded: c53538c9's tracks */
-static int projects_load(void)
-{
-    int ok = 1;
-    for (uint32_t j = 0; j < 4u; j++) {
-        host_tracks_init();
-        project_load(fx_proj[j][0]);
-        uint32_t h = tracks_hash();
-        if (h != fx_proj[j][2]) printf("  project %u: tracks %08x, c53538c9 %08x\n", fx_proj[j][0], h, fx_proj[j][2]);
-        ok &= h == fx_proj[j][2];
     }
     return ok;
 }
@@ -147,8 +122,8 @@ int main(int argc, char **argv)
     uint32_t before = boot();
     printf("res pool: c53538c9's install: window %u sectors, pool %u sectors (%u B)\n",
            (unsigned)((st_res_end - RES_BASE) / ST_SECTOR), (unsigned)before, (unsigned)(before * ST_LIN_PAYLOAD_MAX));
-    bad += check("before the update: c53538c9's window (15), every record as it wrote it, every project loads to its tracks",
-                 st_res_end == RES_BASE + FL_RES_RESERVE_OLD * ST_SECTOR && records_kept() && projects_load());
+    bad += check("before the update: c53538c9's window (15), every record as it wrote it (1.x's: kept, never read as music "
+                 "by 2.0, the web installer converts them)", st_res_end == RES_BASE + FL_RES_RESERVE_OLD * ST_SECTOR && records_kept());
     uint32_t total = ldr_write(0xFFFFFFFFu), cut_ok = 1;
     for (uint32_t k = 0; k < total; k++) {          /* the power gone after k of the loader's steps */
         memcpy(nor, fx_nor, sizeof nor);
@@ -167,10 +142,8 @@ int main(int argc, char **argv)
     uint32_t after = boot();
     printf("res pool: this build's region (%u B): window %u sectors, pool %u sectors (%u B)\n", (unsigned)res_n,
            (unsigned)((st_res_end - RES_BASE) / ST_SECTOR), (unsigned)after, (unsigned)(after * ST_LIN_PAYLOAD_MAX));
-    bad += check("installed: the window 9, the pool 6 sectors bigger, every record as c53538c9 wrote it, every project "
-                 "loads to c53538c9's tracks, the kits listed",
-                 st_res_end == RES_BASE + FL_RES_RESERVE * ST_SECTOR && after == before + ST_RES_GIVEN && records_kept() &&
-                 projects_load());
+    bad += check("installed: the window 9, the pool 6 sectors bigger, every record as c53538c9 wrote it, the kits listed",
+                 st_res_end == RES_BASE + FL_RES_RESERVE * ST_SECTOR && after == before + ST_RES_GIVEN && records_kept());
     {   /* the pool filled: the region's given sectors taken last, their old bytes erased on the way */
         uint32_t saved = 0, given = 0;
         static uint8_t big[ST_LIN_PAYLOAD_MAX * 8u], back[sizeof big];

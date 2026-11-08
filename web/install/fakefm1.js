@@ -246,10 +246,15 @@ Device.prototype.modules = function (a) {
     return out(list);
   }
   if (!s) return out([1]);
-  if (a[0] === 5) {   /* (the ID u70 and the signer after the keys, as since the synths have IDs: none here) */
+  if (a[0] === 5) {   /* (the ID u70 (its IDNT chunk's, 0 none) and the signer after the keys) */
     const h = head(s.bytes), abi = h ? h.getUint16(4, true) : 0;
+    let id = 0n;
+    if (h && s.bytes.length >= 60 && s.bytes[7] & 1)
+      for (let at = 60 + h.getUint32(12, true) + 4 * h.getUint32(20, true); at + 8 <= s.bytes.length; at += 8 + ((h.getUint32(at + 4, true) + 3) & ~3))
+        if (h.getUint32(at, true) === 0x544E4449 && h.getUint32(at + 4, true) === 96 && s.bytes[at + 16] === 2) { id = h.getBigUint64(at + 8, true); break; }
     return out([0, s.state, s.bytes ? s.bytes[6] : 0, abi, ...x7(h ? h.getUint32(28, true) : 0),
-                ...x7(abi >= 2 ? h.getUint32(52, true) : 0), ...x7(m.key), ...new Array(10).fill(0), 0]);
+                ...x7(abi >= 2 ? h.getUint32(52, true) : 0), ...x7(m.key),
+                ...Array.from({ length: 10 }, (_, j) => Number((id >> BigInt(7 * j)) & 0x7Fn)), 0]);
   }
   if (a[0] === 1) { const len = a.slice(2, 7).reduce((n, b, j) => n + b * 2 ** (7 * j), 0); s.up = { len, buf: new Uint8Array(len), pos: 0 }; return out([0]); }
   if (a[0] === 2 && s.up) {

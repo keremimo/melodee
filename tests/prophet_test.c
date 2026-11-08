@@ -2,7 +2,6 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Prototype DSP and exact native wire round trips. Pass real .syx libraries
  * as arguments; downloaded factory data stays outside the source repository. */
-#define MELODEE_PROPHET_PROTOTYPE 1
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
@@ -13,7 +12,7 @@ static void setup(void)
 {
     memset(trk,0,sizeof trk);trk_voices_bind(); eng_state_reset();
     p5_parts_init();
-    host_tracks_init(); host_preset(&trk[0],0,0);   /* (MELODEE_PROPHET_PROTOTYPE: engine 0 is ENG_P5_TEST) */
+    host_tracks_init(); host_preset(&trk[0],ENGI_PROPHET,0);
     trk[0].p[P_VOICE]=V_POLY;
     trk[0].p[P_RESERVED34]=trk[0].p[P_RESERVED35]=trk[0].p[P_RESERVED36]=0;
 }
@@ -93,7 +92,7 @@ static void voice_tests(void)
     check("eight notes cap at five sounding Prophet voices",active(t)==5u);
     check("five Prophet voices use fifteen of sixteen shared units",voices_busy()==15u);
     for(uint32_t part=1;part<4;part++){
-        host_preset(&trk[part],3,0);trk[part].p[P_VOICE]=V_POLY;
+        host_preset(&trk[part], ENGI_SID, 0);trk[part].p[P_VOICE]=V_POLY;
         trk_note_on(&trk[part],48+part,100);
     }
     check("shared allocation keeps three Prophet and all three other tracks",voices_busy()==15u&&active(t)==3u&&active(&trk[1])==1u&&active(&trk[2])==1u&&active(&trk[3])==1u);

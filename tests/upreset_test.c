@@ -30,10 +30,10 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 #include "../firmware/modules/sdk/mod_schema.h"
 static uint32_t patch_store_tag(uint32_t e)
 {
-    return e == ENGI_FM6 ? MOD_SCH_STORE_VOICE : e == ENGI_PROPHET ? MOD_SCH_STORE_PROGRAM : e == 15u ? MOD_SCH_STORE_TONE :
+    return e == ENGI_FM6 ? MOD_SCH_STORE_VOICE : e == ENGI_PROPHET ? MOD_SCH_STORE_PROGRAM : e == ENGI_CZ ? MOD_SCH_STORE_TONE :
            e == ENGI_DRUM ? MOD_SCH_STORE_KIT : MOD_SCH_STORE_NONE;
 }
-static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == 15u ? 144u : e == ENGI_DRUM ? 64u : 0u; }
+static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == ENGI_CZ ? 144u : e == ENGI_DRUM ? 64u : 0u; }
 static uint32_t patch_sound_len(uint32_t e) { return e == ENGI_FM6 ? 128u : patch_len(e); }
 /* DRUM's KIT patch as its schema packs and checks it (drum_schema.h MOD3_R_PACK, its MOD3_R_CHECK records): per pad TUNE
  * in 6 bits (+ 24), DECAY and the third in 7 (+ 64), the cut in 7; TUNE -24..24, the others in their bytes' range */
@@ -136,9 +136,9 @@ int main(void)
         bad += check("fork record hidden without changing its saved bytes", !up_used(0) && !memcmp(up_rec(0), &old, sizeof old));
     }
 
-    n = put_frame(a, 5, 2, "Bass One", -40);
+    n = put_frame(a, 5, ENGI_SID, "Bass One", -40);
     bad += check("UP_PUT frame < 640 bytes", 5u + n + 1u < 640u);
-    bad += check("UP_PUT parses", up_parse(a, n, &r, &slot) == 0 && slot == 5u && r.engine == 2u &&
+    bad += check("UP_PUT parses", up_parse(a, n, &r, &slot) == 0 && slot == 5u && r.engine == ENGI_SID &&
                                       up_valid(&r) && !memcmp(r.name, "Bass One", 8) && !r.name[8]);
     ok = 1;
     for (i = 0; i < P_COUNT; i++)
@@ -162,14 +162,13 @@ int main(void)
     bad += check("UP_PUT past last slot -> args", up_parse(a, n, &r, &slot) == 1);
     n = put_frame(a, 0, NENGINES, "X", 0);
     bad += check("UP_PUT bad engine -> args", up_parse(a, n, &r, &slot) == 1);
-    n = put_frame(a, 3, ENGI_DIGITAL, "OLD FM", 0);   /* (DIGITAL, retired: a record keeps it, it loads silent) */
-    bad += check("UP_PUT engine 1 (DIGITAL): kept as it is", up_parse(a, n, &r, &slot) == 0 && slot == 3u &&
-                                                        r.engine == ENGI_DIGITAL && up_valid(&r));
-    n = put_frame(a, 0, 0, "", 0);
+    n = put_frame(a, 3, ENG_H_NONE, "NONE", 0);      /* (handle 0: no synth, never a record's) */
+    bad += check("UP_PUT handle 0 (none): no record", up_parse(a, n, &r, &slot) != 0 || !up_valid(&r));
+    n = put_frame(a, 0, ENGI_SID, "", 0);
     bad += check("UP_PUT empty name -> args", up_parse(a, n, &r, &slot) == 1);
-    n = put_frame(a, 0, 0, "THIRTEEN CHRS", 0);
+    n = put_frame(a, 0, ENGI_SID, "THIRTEEN CHRS", 0);
     bad += check("UP_PUT 13-char name -> args", up_parse(a, n, &r, &slot) == 1);
-    n = put_frame(a, 0, 0, "TWELVE CHARS", 0);
+    n = put_frame(a, 0, ENGI_SID, "TWELVE CHARS", 0);
     bad += check("UP_PUT 12-char name ok", up_parse(a, n, &r, &slot) == 0 && !memcmp(r.name, "TWELVE CHARS", 12));
     {
         char nm[13];
@@ -180,14 +179,14 @@ int main(void)
     }
 
     /* bank round trip through storage.c */
-    n = put_frame(a, 17, 3, "Keys", 7);
+    n = put_frame(a, 17, ENGI_SID, "Keys", 7);
     up_parse(a, n, &r, &slot);
     up_cache_bank(1)->magic = UP_BANK_MAGIC;
     up_cache_bank(1)->rsize = sizeof(up_rec_t);
     up_cache_bank(1)->nslot = UP_PER_BANK;
     *up_rec(17) = r;
     bad += check("legacy wire bank fits one object", sizeof(up_bank_t) <= ST_PAYLOAD_MAX);
-    bad += check("bank save", st_pair_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))) == 0);
+    bad += check("bank save", st_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))) == 0);
     up_cache_reset();
     len = st_load(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
     up_bank_check(1, len);
@@ -197,9 +196,6 @@ int main(void)
     len = st_load(OBJ_UPRESET0, up_cache_bank(0), sizeof (*up_cache_bank(0)));
     up_bank_check(0, len);
     bad += check("bank 0 never written -> empty", len < 0 && !up_used(0) && up_cache_bank(0)->magic == 0);
-    bad += check("banks in 0xDC000..0xDFFFF", st_sector(OBJ_UPRESET0, 0) == 0xDC000u &&
-                                                   st_sector(OBJ_UPRESET0 + 1, 1) == 0xDF000u &&
-                                                   st_sector(OBJ_PROJECT0 + 3, 1) + 4096u <= 0xA0000u);
     up_cache_bank(1)->rsize = 190;                                 /* another record layout */
     up_bank_check(1, (int)sizeof (*up_cache_bank(1)));
     bad += check("bank with another record size -> empty", !up_used(17));
@@ -246,7 +242,7 @@ int main(void)
         }
         up_parse(g, m, &got, &slot);
         *up_rec(20) = got;
-        st_pair_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
+        st_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
         up_cache_reset();
         up_bank_check(1, st_load(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))));
         bad += check("a grid record: bank round trip", up_used(20) && !memcmp(up_rec(20), &got, sizeof got));

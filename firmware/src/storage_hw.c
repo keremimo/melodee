@@ -32,7 +32,6 @@ static void audio_silence(void)                 /* IRQs off: the DMA would loop 
 static void st_stock_release(void);             /* storage.c: the stock mapping's end marker */
 static int st_in_usrflash(uint32_t off);
 #endif
-#if !MELODEE_PROPHET_PROTOTYPE
 static int st_erase_raw(uint32_t off)           /* the sector erase itself, inside the allowed windows */
 {
     uint32_t took, f;
@@ -43,16 +42,11 @@ static int st_erase_raw(uint32_t off)           /* the sector erase itself, insi
     irq_restore(f);
     return rc;
 }
-#endif
 #if BOARD_SMK37
 #define ST_ERASE_MARKER() st_erase_raw(FL_STOCKTAG_LO)   /* (storage.c st_stock_release: not through st_erase's hook) */
 #endif
 static int st_erase(uint32_t off)
 {
-#if MELODEE_PROPHET_PROTOTYPE
-    (void)off;
-    return -8; /* measurement firmware must not persist the temporary index-0 renderer */
-#else
 #if BOARD_SMK37
     if (!FL_STORE_OK(off, 0x1000u) && !FL_STOCKTAG_OK(off, 0x1000u))   /* (the marker: only its release) */
         return -8;
@@ -63,14 +57,9 @@ static int st_erase(uint32_t off)
         return -8;
 #endif
     return st_erase_raw(off);
-#endif
 }
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
-#if MELODEE_PROPHET_PROTOTYPE
-    (void)off; (void)src; (void)n;
-    return -8;
-#else
     if (!FL_STORE_OK(off, n))                   /* only inside the storage areas */
         return -8;
 #if BOARD_SMK37
@@ -78,5 +67,4 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
         st_stock_release();                     /* before the first program in USRFLASH too */
 #endif
     return fl_write(off, src, n);
-#endif
 }

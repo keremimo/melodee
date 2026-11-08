@@ -19,7 +19,6 @@ enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
        MS_NEWER };                                 /* a module that needs a later host table than this firmware's */
 typedef struct {
     uint8_t state, engine;                          /* MS_*; its engine number here (eng_map.c: the device's map) */
-    uint8_t want;                                   /* the number its file asks for */
     char tag[4];                                    /* its four-letter tag (its IDNT chunk's), 0-padded */
     uint64_t uid;                                   /* who it is: its ID (its IDNT chunk's; mod_abi3.h mod_ident_v3) */
     uint16_t version;
@@ -132,9 +131,7 @@ _Static_assert(MOD3_SAME(voice_t, note, mod_voice_v3, note) && MOD3_SAME(voice_t
                MOD3_SAME(voice_t, age, mod_voice_v3, age) &&
                __builtin_offsetof(voice_t, s) == __builtin_offsetof(mod_voice_v3, s) &&
                sizeof(voice_t) >= sizeof(mod_voice_v3) && sizeof(voice_t) % 4u == 0, "voice_t begins with mod_voice_v3");
-#if !MELODEE_LEGACY_EXTRAS
 _Static_assert(MOD3_SAME(voice_t, s, mod_voice_v3, s) && MOD3_SAME(voice_t, rsv, mod_voice_v3, rsv), "voice_t s, rsv");
-#endif
 #define MOD3_SAME_E(f) MOD3_SAME(engine_t, f, mod_engine_v3, f)
 _Static_assert(MOD3_SAME_E(name) && MOD3_SAME_E(page_title) && MOD3_SAME_E(edit) && MOD3_SAME_E(presets) &&
                MOD3_SAME_E(npresets) && MOD3_SAME_E(knob) && MOD3_SAME_E(poly) && MOD3_SAME_E(sampled) &&
@@ -267,8 +264,8 @@ static const engine_t ENG_MOD_IDLE = {
     .edit = {{"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}},
-    .note_on = slice_gone_note_on,
-    .render = slice_gone_render,
+    .note_on = eng_none_note_on,
+    .render = eng_none_render,
     .knob = {P_E4, P_E5, P_E6, P_REL},
 };
 static int mod_idle(uint32_t e) { return ENGINES[e] == &ENG_MOD_IDLE; }

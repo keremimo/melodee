@@ -84,12 +84,12 @@ static int project_pool_test(void)
     for(uint32_t i=0;i<sizeof old;i++)old[i]=(uint8_t)(i*37u);
     for(uint32_t i=0;i<sizeof next;i++)next[i]=(uint8_t)(i*113u+7u);
     memset(nor,0xFF,sizeof nor);
-    for(uint32_t k=0;k<4u;k++){
-        legacy_project(k,0,old,sizeof old,4u);legacy_project(k,1,old,sizeof old,5u);
+    for(uint32_t k=0;k<4u;k++){                         /* (four projects as 2.0 keeps them: list records) */
+        ok &= !st_save(OBJ_BANK0+k,old,sizeof old);
         ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof old&&!memcmp(back,old,sizeof old);
     }
     memcpy(snapshot,nor,sizeof nor);
-    bad+=check("all four legacy A/B projects remain readable",ok);
+    bad+=check("all four projects read back",ok);
     for(uint32_t cut=0;cut<170u;cut++){
         memcpy(nor,snapshot,sizeof nor);fail_after=(int)cut;
         int rc=st_save(OBJ_BANK0,next,sizeof next);fail_after=-1;
@@ -97,7 +97,7 @@ static int project_pool_test(void)
         for(uint32_t k=1;k<4u;k++)ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof old&&!memcmp(back,old,sizeof old);
         if(!rc)break;
     }
-    bad+=check("migration survives every page cutoff without changing other slots",ok);
+    bad+=check("a save over one survives every page cutoff without changing other slots",ok);
     memcpy(nor,snapshot,sizeof nor);ok=1;
     for(uint32_t round=0;round<4u;round++)for(uint32_t k=0;k<4u;k++){
         next[0]=(uint8_t)(round*4u+k);
@@ -234,42 +234,7 @@ static int bridge_test(void)
     bad += check("resource window: the pool takes the region's tail only", ok);
     st_res_end = FL_RES_HI;
 
-    bridge_fixture(); st_old_scan();
-    ok = st_old == 1 && bridge_all();
-    int left = st_convert(buf, 0);
-    ok &= left == 0 && bridge_all() && bridge_guards();
-    for (uint32_t o = 0; o < ST_OBJ_END; o++) {
-        if (!(o < OBJ_COUNT ? st_listed(o) : st_pfile(o))) continue;
-        c = st_current(o, &h);
-        ok &= c < 0 || c >= (int)ST_LIN_C0;
-    }
-    st_old_scan();
-    bad += check("converter: every old form re-saved, old headers gone", ok && st_old == 0 && bridge_all());
-    bad += check("converter: once done, a boot finds nothing to do", st_convert(buf, 0) == 0 && st_old == 0);
-
-    static uint8_t snap[sizeof nor];
-    bridge_fixture(); memcpy(snap, nor, sizeof nor);
-    uint32_t p0 = program_calls; st_convert(buf, 0); uint32_t programs = program_calls - p0;
-    ok = programs > 0;
-    for (uint32_t cut = 0; ok && cut < programs; cut++) {
-        memcpy(nor, snap, sizeof nor);
-        fail_after = (int)cut; st_convert(buf, 0); fail_after = -1;
-        ok &= bridge_all();
-        ok &= st_convert(buf, 0) == 0 && bridge_all();
-        st_old_scan(); ok &= st_old == 0;
-    }
-    bad += check("converter: a cut at every program loses nothing, the next boot finishes", ok);
-
-    bridge_fixture();                               /* the pool filled to 4 free sectors: the kit needs 7 */
-    for (uint32_t s = 10u; st_project_free() > 4 + 8; s++) st_save(ST_PFILE0 + s, bd[0], 8u * ST_LIN_PAYLOAD_MAX);
-    st_save(ST_PFILE0 + 30u, bd[0], (uint32_t)(st_project_free() - 4) * ST_LIN_PAYLOAD_MAX);
-    int before = st_project_free();
-    left = st_convert(buf, 0);
-    c = st_current(B_KIT, &h);
-    ok = left >= 1 && c >= 0 && c < (int)ST_LIN_C0 && bridge_same(B_KIT, bd[5], 26656u) &&
-         st_current(OBJ_CZBANK0, &h) >= (int)ST_LIN_C0 && bridge_same(OBJ_CZBANK0, bd[3], 2332u);
-    st_old_scan();
-    bad += check("full pool: what does not fit stays readable in its old form", ok && before == 4 && st_old == 1);
+    /* (the converter of Melodee 1.x's store forms: the web installer's since 2.0) */
     st_old = 1;
     return bad;
 }

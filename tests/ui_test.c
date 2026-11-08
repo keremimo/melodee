@@ -292,7 +292,7 @@ static void ui_power_on(void)
 static void ui_power_on_general(void)
 {
     ui_power_on();
-    set_engine_of(&trk[0], 3);
+    set_engine_of(&trk[0], ENGI_SID);
     trk[0].engine = trk[0].eng_req;
 }
 
@@ -367,12 +367,12 @@ static void sheet_do(const char *label)
 static int16_t stored_param(uint32_t slot, uint32_t track, uint32_t id)
 {
     project_t p;
-    return proj_import(&p, &proj_slot[slot], sizeof proj_slot[slot]) ? p.t[track].p[id] : -32768;
+    return proj_import_same(&p, &proj_slot[slot], sizeof proj_slot[slot]) ? p.t[track].p[id] : -32768;
 }
 static uint8_t stored_note(uint32_t slot, uint32_t track, uint32_t step)
 {
     project_t p;
-    return proj_import(&p, &proj_slot[slot], sizeof proj_slot[slot]) ? p.t[track].step[step].note[0] : 0;
+    return proj_import_same(&p, &proj_slot[slot], sizeof proj_slot[slot]) ? p.t[track].step[step].note[0] : 0;
 }
 static int msg_is(const char *s) { return ui.msg_t && str_eq(ui.msg, s); }
 static void my_steps(track_t *t)                  /* "recorded" steps */
@@ -419,7 +419,7 @@ static int test_sound_loads(void)
         empty &= (uint32_t)seq_is_empty(&trk[i]);
     bad += check("power-on: the four sounds, every sequencer empty, no undo copy", empty && undo.trk == 0 && undo_depth == 0 &&
                  trk[3].eng_req == ENGI_DRUM && trk[3].preset == 0u && trk[0].preset == TRK_DEF[0][1]);
-    set_engine_of(t,3);
+    set_engine_of(t, ENGI_SID);
     my_steps(t);
     t->p[P_E0 + 1] = 77;                          /* a sound edit */
     t->p[P_AMODE] = 2;                            /* and the track's own settings */
@@ -432,13 +432,13 @@ static int test_sound_loads(void)
     t->p[P_LEVEL] = 90;
     before = *t;
     turn(EN_PRESET, 1);                           /* HOME: the next preset */
-    bad += check("PRESETS on HOME loads the sound: steps, LEN, DIV untouched", t->preset == (uint8_t)((before.preset + 1u) % ENGINES[3]->npresets) &&
+    bad += check("PRESETS on HOME loads the sound: steps, LEN, DIV untouched", t->preset == (uint8_t)((before.preset + 1u) % ENGINES[ENGI_SID]->npresets) &&
                  !memcmp(t->step, before.step, sizeof t->step) && t->p[P_SLEN] == 32 && t->p[P_SDIV] == 1);
     bad += check("..ARP, SCL, the SLICER and the mix stay the track's", t->p[P_AMODE] == 2 && t->p[P_AOCT] == 3 && t->p[P_SCALE] == 2 &&
                  t->p[P_TRANS] == 5 && !t->p[P_RESERVED45] && !t->p[P_RESERVED46] && t->p[P_LEVEL] == 90);
     bad += check("..and no warning about the sequence", !msg_is("T1 SEQ REPLACED"));
-    for (i = 0; i < ENGINES[3]->npresets; i++)
-        if (str_eq(eng_preset(ENGINES[3], i)->name, "ARP BASS"))
+    for (i = 0; i < ENGINES[ENGI_SID]->npresets; i++)
+        if (str_eq(eng_preset(ENGINES[ENGI_SID], i)->name, "ARP BASS"))
             break;
     t->p[P_AMODE] = 0;
     t->preset = (uint8_t)(i - 1u);
@@ -446,7 +446,7 @@ static int test_sound_loads(void)
     bad += check("ARP BASS (an arp-named preset) leaves the track arp off", t->preset == i && t->p[P_AMODE] == 0);
     t->p[P_AMODE] = 2;
     before = *t;
-    for (i = 0; i < ENGINES[3]->npresets - before.preset + 1u; i++) /* through SID's remaining sounds, into next engine */
+    for (i = 0; i < ENGINES[ENGI_SID]->npresets - before.preset + 1u; i++) /* through SID's remaining sounds, into next engine */
         turn(EN_PRESET, 1);
     bad += check("browsing on, into another engine: the steps still untouched", t->eng_req != before.eng_req &&
                  !memcmp(t->step, before.step, sizeof t->step) && t->p[P_AMODE] == 2);
@@ -477,7 +477,7 @@ static int test_sound_loads(void)
     bad += check("Init sound: the sound only (steps and SLICER kept), a copy of T2", undo.trk == 2u &&
                  !memcmp(trk[1].step, before.step, sizeof before.step) && !trk[1].p[P_RESERVED45]);
     track_select(0);
-    set_engine_of(&trk[0], 3);                    /* (a general sound: the Prophet keeps its own slots) */
+    set_engine_of(&trk[0], ENGI_SID);                    /* (a general sound: the Prophet keeps its own slots) */
     my_steps(&trk[0]);
     trk[0].p[P_SDIV] = 2;
     up_store(3, "MINE");
@@ -498,7 +498,7 @@ static int test_sound_loads(void)
     project_load(1);
     bad += check("a project load drops the copy and takes none", undo.trk == 0 && undo_depth == 0);
     ui_power_on();
-    bad += check("sample engines retired with reserved IDs",!eng_ok(4) && !eng_ok(8) && !eng_ok(13) && !eng_ok(14));
+    bad += check("none and a handle no synth has are not offered", !eng_ok(ENG_H_NONE) && !eng_ok(ENG_H_FREE0) && !eng_ok(NENGINES - 1u));
     host_808_kit(t);
     t->preset = 0;                             /* a project written before the factory removal */
     my_steps(t);
@@ -740,7 +740,7 @@ static int test_save(void)
     int bad = 0, ok;
     uint32_t i;
     ui_power_on();
-    set_engine_of(&trk[0], 3);                    /* (a general sound: the Prophet keeps its own slots) */
+    set_engine_of(&trk[0], ENGI_SID);                    /* (a general sound: the Prophet keeps its own slots) */
     trk[0].p[P_E1] = 5;
     press(B_SAVE);
     bad += check("SAVE opens USER on its slot, no sheet popped up, without writing a slot",
@@ -771,7 +771,7 @@ static int test_save(void)
                  ui.confirm == CF_OVR_USER && up_value(up_rec(0), P_E1) == 5);
     press(B_OCTDN);
     ui_power_on();
-    set_engine_of(&trk[0], 3);
+    set_engine_of(&trk[0], ENGI_SID);
     song.playing = 1;
     project_save(0);
     bad += check("project save while playing: refused, STOP TO SAVE", !project_used(0) && msg_is("STOP TO SAVE"));
@@ -865,7 +865,7 @@ static void storage_fake_synths(void)
     memset(mods, 0, sizeof mods);
     for (uint32_t k = 0; k < 3u; k++) {
         mods[k].state = F[k].state;
-        mods[k].engine = mods[k].want = k ? F[k].eng : (uint8_t)trk[0].eng_req;
+        mods[k].engine = k ? F[k].eng : (uint8_t)trk[0].eng_req;
         str_cpy(mods[k].name, F[k].name, sizeof mods[k].name);
         memcpy(mods[k].tag, F[k].tag, str_len(F[k].tag));
         mods[k].len = F[k].len;
@@ -1492,7 +1492,7 @@ static int test_grid(void)
         memcpy(keep, t->step, sizeof keep);
         go_home();
         turn(EN_PRESET, 1);
-        set_engine_of(t, 3);
+        set_engine_of(t, ENGI_SID);
         t->engine = t->eng_req;
         ok = !memcmp(keep, t->step, sizeof keep) && !grid_on();
         t->seq_hold = 0;
@@ -1600,7 +1600,7 @@ static int test_browser(void)
         ok = total > 0u;
     }
     bad += check("BROWSE: every sound is in exactly one category (their lists add up to ALL)", sum == all && ok);
-    set_engine_of(TSEL, 3);                                /* (a general sound: the Prophet keeps its own slots) */
+    set_engine_of(TSEL, ENGI_SID);                                /* (a general sound: the Prophet keeps its own slots) */
     up_store(5, "SUB BASS 2");
     list_set(LM_CAT);                                      /* BASS */
     preset_pos(&total);
@@ -2487,7 +2487,7 @@ static int test_native_env_lfo(void)
     open_family(FAM_LFO);
     bad += check("LFO on FM6: its LFO", str_eq(cur_page()->title, "FM LFO"));
     go_home();
-    set_engine_of(TSEL, 3);
+    set_engine_of(TSEL, ENGI_SID);
     open_family(FAM_ENV);
     bad += check("ENV on SID: the track's ADSR", str_eq(cur_page()->title, "ENV"));
     o = song.octave;
@@ -2885,7 +2885,7 @@ static int test_product_ux(void)
     int bad = 0, ok = 1;
     uint32_t i, p, b;
     for (i = 0; i < NPAGES; i++) {
-        ui_power_on(); set_engine_of(TSEL, 1);         /* (DIGITAL, retired: no OP pages) */
+        ui_power_on(); set_engine_of(TSEL, ENG_H_NONE);   /* (none: no OP pages) */
         ui.home = 0; ui.page = (uint8_t)i; page_entered();
         if (!page_visible(i))
             continue;
@@ -2924,7 +2924,7 @@ static int test_product_ux(void)
     ok = 1;
     for (i = 0; i < 8u; i++) { open_family(FAM_EDIT); ok &= page_visible(ui.page) && !(cur_page()->id[0] >= P_FM1_ATK && cur_page()->id[0] <= P_FM4_LEVEL); }
     bad += check("operator envelope pages are hidden on non-DIGITAL instruments", ok);
-    set_engine_of(TSEL, ENGI_DIGITAL); open_family(FAM_EDIT); ok = TSEL->eng_req == ENGI_DIGITAL;   /* (retired: silent) */
+    set_engine_of(TSEL, ENG_H_NONE); open_family(FAM_EDIT); ok = TSEL->eng_req == ENG_H_NONE;   /* (none: silent) */
     for (i = 0; i < 12u; i++) { ok &= !(cur_page()->id[0] >= P_FM1_ATK && cur_page()->id[0] <= P_FM4_LEVEL); open_family(FAM_EDIT); }
     for (i = 0; i < NPAGES; i++)
         if (PG(i).fam == FAM_EDIT && PG(i).id[0] >= P_FM1_ATK && PG(i).id[0] <= P_FM4_LEVEL)
@@ -3026,7 +3026,7 @@ static int test_product_ux(void)
     ok = 1;
     for (p = 0; p < NPALETTES; p++) for (b = 0; b < 1u; b++) {   /* (ENV: its knobs the strip under the curve) */
         uint16_t sound[240 * (240 - PV_SOUND_Y)], columns[240 * CARD_H];
-        ui_power_on(); set_engine_of(TSEL, 3); palette_set(p); settings.zoom = 1;   /* (the generic ENV) */
+        ui_power_on(); set_engine_of(TSEL, ENGI_SID); palette_set(p); settings.zoom = 1;   /* (the generic ENV) */
         open_family(FAM_ENV); frame();
         memcpy(sound, host_screen + PV_SOUND_Y * 240, sizeof sound);
         memcpy(columns, host_screen + Y_LABEL * 240, sizeof columns);
@@ -3041,7 +3041,7 @@ static int test_product_ux(void)
         ok &= changed;
     }
     bad += check("all palettes: the knob turning is lifted in place, the others and the page stay", ok);
-    bad += check("SAMPLE and SLICE retired from selectors with reserved stored IDs",!eng_ok(4) && !eng_ok(13) && !ENGINES[4]->npresets && !ENGINES[13]->npresets);
+    bad += check("none and a handle no synth has: not in the selectors, no presets", !eng_ok(ENG_H_NONE) && !eng_ok(ENG_H_FREE0) && !ENGINES[ENG_H_NONE]->npresets && !ENGINES[ENG_H_FREE0]->npresets);
     ui_power_on(); return bad;
 }
 
@@ -3535,25 +3535,14 @@ static int test_edit_cycle(void)
     for (i = 0; i < NPAGES; i++)
         ok &= !str_eq(PG(i).title, "ENGINE");
     bad += check("no ENGINE page (engines are the EDIT layer's)", ok);
-    set_engine_of(TSEL, 3);
+    set_engine_of(TSEL, ENGI_SID);
     bad += check("EDIT cycle (SID): EDIT 1 EDIT 2 VOICE VOICE 2 EDIT 1", engine_cycle(CYC_A, NELEM(CYC_A)));
-#if MELODEE_LEGACY_EXTRAS                           /* (PHASE: retired) */
-    set_engine_of(TSEL, 2);
-    TSEL->p[P_E7] = 0;
-    bad += check("PHASE LINK keeps the compact EDIT cycle", engine_cycle(CYC_A, NELEM(CYC_A)));
-    TSEL->p[P_E7] = 1;
-    static const char *const CYC_CZ[] = {"EDIT 1", "EDIT 2", "DCW1 ENV", "DCW2 ENV", "DCA2 ENV", "DCO ENV",
-        "CZ LEVEL", "VOICE", "EDIT 1"};
-    bad += check("PHASE SPLIT exposes native envelope pages", engine_cycle(CYC_CZ, NELEM(CYC_CZ)));
-    go_title("DCW1 ENV"); TSEL->p[P_FM1_ATK] = 0; turn(EN_K1, 1);
-    bad += check("PHASE DCW1 knob edits its saved parameter", TSEL->p[P_FM1_ATK] > 0);
-#endif
     set_engine_of(TSEL, ENGI_FM6);
     bad += check("EDIT cycle (FM6): EDIT 1 EDIT 2, FM6's 16 pages, VOICE VOICE 2",
                  TSEL->eng_req == ENGI_FM6 && engine_cycle(CYC_F, NELEM(CYC_F)));
     (void)CYC_D;
     go_title("OP2 ENV"); ui.fam_last[FAM_EDIT] = ui.page;
-    set_engine_of(TSEL, 3); frame();
+    set_engine_of(TSEL, ENGI_SID); frame();
     bad += check("an OP page of a track no longer DIGITAL falls back to EDIT 1", str_eq(cur_page()->title, "EDIT 1"));
     go_title("EDIT 2"); ui.fam_last[FAM_EDIT] = ui.page;
     go_home(); press(B_EDIT);
@@ -3567,8 +3556,8 @@ static int test_edit_cycle(void)
 static int test_old_storage_ui(void)
 {
     int bad = 0; char tag[8], name[16], title[32], detail[CF_DETAIL];
-    ui_power_on(); stop_transport(); set_engine(9u); up_cache_reset();
-    up_rec_t *old = up_rec(0); old->used = UP_USED; old->ver = 1; old->engine = 9u;
+    ui_power_on(); stop_transport(); set_engine(ENGI_SID); up_cache_reset();
+    up_rec_t *old = up_rec(0); old->used = UP_USED; old->ver = 1; old->engine = ENGI_SID;
     for (uint32_t p = 0; p < NPAGES; p++) if (PG(p).graph == GR_USER) { ui.page = (uint8_t)p; break; }
     ui.home = ui.menu = ui.layer = 0; ui.uslot = 0;
     bad += check("old user record appears occupied with OLD FORMAT", slot_row(SK_USER, 0, tag, name) && str_eq(name, "OLD FORMAT"));
@@ -3617,7 +3606,7 @@ static int test_boot_template(void)
     bad += check("  EDIT there: no NAME (the template has no name)", !name_on());
     trk[1].p[P_LEVEL] = 20;
     fm6_fn_set(1, FN_PBUP, 2);
-    set_engine_of(&trk[2], 3);
+    set_engine_of(&trk[2], ENGI_SID);
     trk[0].step[3].time = ST_NOTE; trk[0].step[3].n = 1; trk[0].step[3].note[0] = 60;
     project_save(0);                                     /* (A used: the template's project goes to B) */
     sheet_do("Load template");
@@ -3975,7 +3964,7 @@ static int test_fm6_pages(void)
                  fm6_fn_of(tr)[FN_PTIME] == 9u);
     {   /* a project saved before (no function settings in its record): Dexed's */
         uint8_t *raw = proj_bank_slot[3];
-        memset(raw + (*(const uint32_t *)raw == BANKP_MAGIC ? BANKP_FN_OFF : BANK_FN_OFF), 0, 4u + NPART * FM6_NFN);
+        memset(raw + (*(const uint32_t *)raw == BANKS_MAGIC ? BANKP_FN_OFF : BANK_FN_OFF), 0, 4u + NPART * FM6_NFN);
         bank_checksum(raw);
         project_load(3);
         bad += check("  a project of before: Dexed's", fm6_fn_of(tr)[FN_ENGINE] == FM6_MARK1 && !fm6_fn_of(tr)[FN_PTIME]);
@@ -4005,7 +3994,7 @@ static int test_fm6_pages(void)
     fm6_unpack(FM6_INIT, v);
     fm6_name(b, v);
     bad += check("  INIT: the init voice", msg_is("INIT VOICE") && str_eq(a, b));
-    set_engine_of(TSEL, 3);
+    set_engine_of(TSEL, ENGI_SID);
     frame();
     bad += check("an FM6 page of a track no longer FM6 falls back to EDIT 1", str_eq(cur_page()->title, "EDIT 1"));
     return bad;
@@ -4116,7 +4105,7 @@ static int test_slices(void)
     ok &= ui.home;
     bad += check("SLICES: OCT- drops the pick, then goes HOME", ok);
     go_page(GR_SLICES); frame();
-    set_engine_of(TSEL, 3); frame();
+    set_engine_of(TSEL, ENGI_SID); frame();
     bad += check("SLICES: on another engine the page is not there (EDIT 1)", str_eq(cur_page()->title, "EDIT 1"));
     {   /* the engine changed (the editor's SET between two ui_input passes) while the page is still the current one:
          * its knobs and actions do nothing to the track or the slot */
@@ -4127,7 +4116,7 @@ static int test_slices(void)
         TSEL->p[P_E1] = SLC_DIV_MAN;
         go_page(GR_SLICES); frame();
         keep = *slc_man_of(slc_get(1));
-        set_engine(3u);                              /* SID, as ed_service's SET G_ENGSEL */
+        set_engine(ENGI_SID);                              /* SID, as ed_service's SET G_ENGSEL */
         TSEL->p[P_E0] = 1;
         before = *TSEL;
         slc_man_save = 0;
@@ -4162,7 +4151,7 @@ static int test_slices(void)
         for (k = 0; k < SP_COLS; k++)
             ok &= sp.lo[k] >= -1 && sp.hi[k] <= 1;   /* (near silence) */
         bad += check("SLICES: a re-upload of the same length redraws the waveform", ok);
-        set_engine_of(TSEL, 3); frame();
+        set_engine_of(TSEL, ENGI_SID); frame();
     }
     memset(host_slots, 0, sizeof host_slots);        /* (the other tests: empty slots) */
     smp_user_scan(0);
@@ -4252,7 +4241,7 @@ static int test_quick_layers(void)
     btn_up(B_GLO); frame(); song.g[G_CLOCK] = 0;
     bad += check("GLO + F4 x3 at 0.5 s: TAP 120 BPM; with CLK EXT: dimmed, it says why", ok);
     {
-        set_engine_of(TSEL, 3);                   /* (the generic ENV page) */
+        set_engine_of(TSEL, ENGI_SID);                   /* (the generic ENV page) */
         int16_t l2 = trk[2].p[P_LEVEL], atk = TSEL->p[P_ATK];
         go_title("ENV");
         btn_down(B_GLO); frame();
@@ -4955,7 +4944,7 @@ static int test_stage(void)
     int16_t *vp;
     uint32_t k, before;
     ui_power_on();
-    set_engine_of(TSEL, 3);
+    set_engine_of(TSEL, ENGI_SID);
     go_home();
     frame();
     bad += check("Stage: SID's knobs are its EDIT values (WAVE PW CUT RES)", stage_page()->scope == SC_ENGINE &&
@@ -6519,7 +6508,7 @@ int main(void)
 #if SMP_USER_SLOTS
     bad += test_slices();
 #else
-    bad += check("SAMPLE and SLICE unavailable; user sample storage retired", SMP_USER_SLOTS == 0 && !eng_ok(4) && !eng_ok(13) && !eng_ok(14));
+    bad += check("user sample storage retired; none not offered", SMP_USER_SLOTS == 0 && !eng_ok(ENG_H_NONE));
 #endif
 #endif
     bad += test_quick_layers();

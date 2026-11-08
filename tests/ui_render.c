@@ -777,7 +777,7 @@ static void ref_scene(int s)
     }
     case S_REF_ENV: case S_REF_LFO: case S_REF_EDIT_OSC: case S_REF_NOTES:
         /* (R5) track 2: SID SAW BASS (ANALOG ACID until 2.0); ENV: SUSTAIN just turned, LFO: RATE, DLY: FEEDBACK */
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF; trk[1].p[P_LD_FLT] = 30;
         if (s == S_REF_EDIT_OSC) { ui.home = 0; ui.page = (uint8_t)page_first(FAM_EDIT); page_entered(); }
         else if (s != S_REF_NOTES) go_title(s == S_REF_ENV ? "ENV" : s == S_REF_LFO ? "LFO" : "ENV");
@@ -840,7 +840,7 @@ static void ref_scene(int s)
         static const uint8_t RES[16] = {7, 7, 7, 10, 10, 12, 12, 10, 10, 10, 7, 7, 10, 10, 7, 7};   /* (SID's RES: 0..15) */
         static const uint8_t DRV[16] = {10, 10, 20, 20, 30, 40, 40, 30, 40, 50, 50, 40, 30, 30, 20, 20};
         uint32_t i;
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF; trk[1].p[P_SLEN] = 16;
         motion_clear(&trk[1]);
         for (i = 0; i < 16u; i++) {
@@ -854,7 +854,7 @@ static void ref_scene(int s)
         break;
     }
     case S_REF_MOD: case S_REF_PICKER_MOD:           /* (R6) MOD: LFO > Cutoff, Mod wheel > PW (picked), Velocity > Level */
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF;
         trk[1].p[P_M1SRC] = MS_LFO; trk[1].p[P_M1DST] = MD_CUT; trk[1].p[P_M1AMT] = 40;
         trk[1].p[P_M2SRC] = MS_MODW; trk[1].p[P_M2DST] = MD_E1 + 3; trk[1].p[P_M2AMT] = -64;
@@ -865,7 +865,7 @@ static void ref_scene(int s)
         break;
     case S_REF_ARP: case S_REF_PATTERN: {   /* (R6) ARP Up 2 oct; PATTERN 32 steps; SLICER Gate */
         uint32_t i;
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF;
         if (s == S_REF_ARP) {
             trk[1].p[P_AMODE] = 1; trk[1].p[P_AOCT] = 2; go_title("ARP"); ui.hot_col = 0;
@@ -896,7 +896,7 @@ static void ref_scene(int s)
         break;
     case S_REF_PICKER_WAVE: case S_REF_PICKER_MODE:  /* (R6) a list knob turning: its picker, over its column and the
                                                       * next (SID's WAVE on KNOB 2; its filter MODE on KNOB 3) */
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF;
         if (s == S_REF_PICKER_WAVE) { ui.home = 0; ui.page = (uint8_t)page_first(FAM_EDIT); page_entered(); pick_touch(1); }
         else { go_title("EDIT 2"); pick_touch(2); }

@@ -25,16 +25,12 @@ static const uint8_t CAT_ORDER[] = {CAT_BASS, CAT_LEAD, CAT_PAD, CAT_KEYS, CAT_O
 #pragma clang diagnostic ignored "-Winitializer-overrides"
 static const char *const PRESET_CAT[NENGINES] = {
     [ENGI_MIDI] = "O",                                  /* non-audio destination: OTHER */
-#if MELODEE_LEGACY_EXTRAS                                /* (retired: VOICE NOISE) */
-    [5] = "PLBF",                                       /* VOICE: CHOIR AAH, VOX LEAD, WOW BASS, WHISPER */
-    [11] = "FFFF",                                      /* NOISE */
-#endif
 #if MELODEE_HOST_ENGINES
     HOST_CATS                                           /* (host builds: the built-in engines' makers' categories) */
 #endif
 };
 #pragma clang diagnostic pop
-static uint32_t cat_of_engine(uint32_t e) { return pads_eng(e) ? CAT_DRUM : e == 11u ? CAT_FX : CAT_OTHER; }   /* (a synth with
+static uint32_t cat_of_engine(uint32_t e) { return pads_eng(e) ? CAT_DRUM : CAT_OTHER; }   /* (a synth with
                                                   * pads: its kits) */
 static uint32_t preset_cat(uint32_t e, uint32_t k)           /* factory preset k of engine e */
 {
@@ -112,7 +108,7 @@ static uint32_t cat_guess(uint32_t e, const char *nm)
 {
     uint32_t k, np = eng_npresets(e % NENGINES);
     char pn[MOD_PST_NAME + 1u];
-    if (pads_eng(e % NENGINES) || e == 11u)
+    if (pads_eng(e % NENGINES))
         return cat_of_engine(e);
     for (k = 0; k < np; k++) {                               /* (a synth module's names: its file's, read in order) */
         eng_preset_name(e, k, pn, sizeof pn);

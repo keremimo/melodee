@@ -15,7 +15,7 @@ import mido
 from prophet_device import Device,param_ids,verify,inventory,u32,pack,patch_get,patch_put,param_set
 from usb_audio_stats import snapshot
 NAMES=('PROPHET','FM6','CZ1','SID','808','909')
-ENGINES=(19,12,15,3,10,10)
+ENGINES=(2,3,4,5,6,6)   # 2.0 handles: PROPHET FM6 CZ-1 SID DRUM DRUM (firmware/modules/shipped.h ENGI_*)
 PRESETS=(3,4,0,8,0,1)
 SPANS=('half','timer5','input','midi_rx','usb','events','allocation','attack','envelope','modulation',
        'track_control','prophet','fm6_control','fm6','cz','sid','808','909','mix','fx','output')

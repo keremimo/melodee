@@ -355,7 +355,7 @@ MOD3_PRESETS = {
 };
 MOD3_EXPORT(mod_trio) = {
     MOD3_SDK_HEAD,
-    .engine = 6,                                 /* TRIO's number before it was retired: old sounds play again */
+    .engine = 0,                                 /* (unused since Melodee 2.0) */
     .name = "TRIO",
     .npresets = 5,                               /* (FAT BASS, ARP LEAD, SYNC LEAD, RING BELL, CHIP CHOIR) */
     .eng = &TRIO,

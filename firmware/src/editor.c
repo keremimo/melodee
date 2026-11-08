@@ -802,7 +802,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
     }
     case ED_INFO: {
         static const uint8_t info[] = {
-            NENGINES, P_COUNT, G_COUNT, NSTEP, P_E0,                /* [0..4], then the engines' names */
+            NENGINES, P_COUNT, G_COUNT, NSTEP, P_E0,                /* [0..4], then the engines' names by handle */
             ED_TRK,                                                 /* [5] v3 */
             0,                                                      /* project-based SONG retired: tagged bank SONG below */
             0x55, 1,                                                /* [7] tagged preferences v1: commands 34..38 (caps) */
@@ -811,7 +811,10 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             0x50, 4, NPAT, CHAIN_ROWS,                              /* bank controls: 73/74 */
             0x55, 1, UP_SLOTS & 127u, UP_SLOTS >> 7,                /* shared library, command 80 */
             0x53, 1, ED_CAPS,                                       /* Studio: CAPS (39) says what else */
-            0x59, 1, ED_SCHEMA };                                   /* the synths: SCHEMA, PATCH, SYSEX, PARAM (85..88) */
+            0x59, 1, ED_SCHEMA,                                     /* the synths: SCHEMA, PATCH, SYSEX, PARAM (85..88) */
+            0x49, 1, ENGI_MIDI, USER_GENERAL, USER_NATIVE_FM, USER_NATIVE_CZ, USER_NATIVE_P5 };   /* 2.0: handles mean
+                                                                     * nothing past this session (84 op 6 names their IDs):
+                                                                     * the MIDI Track's, the user kinds of FAV_GET/SET */
         ed_str("MELODEE " MELODEE_VERSION, 24);
         ed_bytes(info, 5u);
         for (i = 0; i < NENGINES; i++)

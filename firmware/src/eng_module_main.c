@@ -10,7 +10,7 @@ static const char *eng_name(uint32_t e)
     const char *m;
     if (k < NMOD)
         return mods[k].name;
-    if (ENGINES[e % NENGINES] == &ENG_RETIRED && (m = eng_map_name(e % NENGINES)) != 0)
+    if (ENGINES[e % NENGINES] == &ENG_NONE && (m = eng_map_name(e % NENGINES)) != 0)
         return m;                                   /* (a module the device has not got: the map's name for it) */
     return ENGINES[e % NENGINES]->name;
 }
@@ -175,7 +175,7 @@ static int mod_have(uint32_t e)
 static int mod_shipped_ok(void)
 {
     for (uint32_t k = 0; k < NSHIP; k++)
-        if ((SHIP[k].flags & SHIP_F_MODS) && !mod_have(SHIP[k].num) && !HOST_BUILTIN(SHIP[k].num))
+        if ((SHIP[k].flags & SHIP_F_MODS) && !mod_have(ENG_H_SHIP0 + k) && !HOST_BUILTIN(ENG_H_SHIP0 + k))
             return 0;
     return 1;
 }
@@ -209,12 +209,6 @@ static void mod_unguard(uint32_t f)
 #else
     (void)f;
 #endif
-}
-static int mod_engine_ok(uint32_t e)               /* a number a module may play as */
-{
-    const ship_t *r = ship_of(e);
-    return (e >= ENGI_MOD0 && e < NENGINES) || e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u ||
-           (r && (r->flags & SHIP_F_MODS));     /* (a shipped synth's: a module on the device; built in, a clash) */
 }
 /* e into the engines shown, at its place (engines.c eng_order_rank: the manifest's order) */
 static void mod_order_add(uint32_t e)
@@ -269,7 +263,7 @@ static void mod_unregister(uint32_t k, int idle)
     if (n < NENGINES && (mod_at[n] == k + 1u || (ENGINES[n] == &ENG_MOD_IDLE && mod_listed(k)))) {
         if (!idle)
             mod_order_remove(n);
-        ENGINES[n] = idle ? &ENG_MOD_IDLE : &ENG_RETIRED;
+        ENGINES[n] = idle ? &ENG_MOD_IDLE : &ENG_NONE;
         __asm__ volatile("" ::: "memory");
         mod_at[n] = 0;
         for (uint32_t p = 0; p < NPART; p++)        /* its parts: voices ended, state gone (another module may come) */

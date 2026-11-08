@@ -295,7 +295,7 @@ static void mix_solo(track_t *t,int32_t *b,uint32_t n)
     }
     solo_gain[ti]=from;
 }
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
 static int32_t batch_pcm[NPART][CTL],batch_spread[NPART][CTL];
 static uint32_t batch_rendered[NPART];static uint8_t batch_spread_on[NPART],batch_ready;
 static __typeof__(mod) batch_mod[NPART];
@@ -349,7 +349,7 @@ static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
 #if MELODEE_MODULES
     mix_st_part=t;mix_st_on=0;
 #endif
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
     if(batch_ready){
         uint32_t p=(uint32_t)(t-trk);mod=batch_mod[p];
         part_buf=batch_pcm[p];
@@ -444,11 +444,11 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
     fx_bus_select();fx_send_on=(uint8_t)fx_bus_active();if(fx_send_on){memset(fx_send_l,0,n*sizeof *fx_send_l);memset(fx_send_r,0,n*sizeof *fx_send_r);
         if(fx_bus_separate){memset(fx_send_extra_l,0,sizeof fx_send_extra_l);memset(fx_send_extra_r,0,sizeof fx_send_extra_r);}}
     uint32_t nt=trk_parts();                            /* (the tracks not in use, the MIDI-only ones: none of their CPU) */
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
     mix_prepare_batch(n,nt);
 #endif
     for(uint32_t i=0;i<nt;i++)mix_part(&trk[i],n);
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
     batch_ready=0;part_buf=part_storage;spread_buf=spread_storage;
 #endif
     fx_bus_start(n);

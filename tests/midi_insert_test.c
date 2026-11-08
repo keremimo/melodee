@@ -102,7 +102,7 @@ static uint64_t verb_tail(uint32_t engine, uint32_t release)
 }
 static void verb(void)
 {
-    const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, 3u};
+    const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_SID};
     for (uint32_t k = 0; k < NELEM(engines); k++) {
         uint64_t short_tail = verb_tail(engines[k], 10), long_tail = verb_tail(engines[k], 100);
         printf("MIDIVerb %s tail: %llu -> %llu\n", ENGINES[engines[k]]->name, (unsigned long long)short_tail, (unsigned long long)long_tail);
@@ -185,7 +185,7 @@ static void ui_storage(void)
     assert(str_eq(page_desc(slot, 2, &vp)->label, "DECAY") && !page_desc(slot, 3, &vp));
     assert(GP[G_MFXTYPE].max == FX_PEDAL_CHORUS && GP[G_MFX2TYPE].max == FX_PEDAL_CHORUS && GP[G_MFX3TYPE].max == FX_PEDAL_CHORUS);
     delay(TSEL, 1, 4, 31); TSEL->p[P_FX3TYPE] = FX_MIDIVERB; TSEL->p[P_FX3MIX] = 90;
-    project_t q; project_store_t p; project_capture(&q); assert(proj_pack(&p, &q) && proj_import(&proj_scratch, &p, sizeof p));
+    project_t q; project_store_t p; project_capture(&q); assert(proj_pack(&p, &q) && proj_import_same(&proj_scratch, &p, sizeof p));
     for (uint32_t k = P_FXTYPE; k <= P_FX3CHAR; k++) assert(proj_scratch.t[0].p[k] == TSEL->p[k]);
     template_save(); memset(TSEL->p + P_FXTYPE, 0, FX_SLOTS * FX_PARAMS * sizeof(int16_t)); template_load();
     assert(TSEL->p[P_FXTYPE] == FX_MIDIDELAY && TSEL->p[P_FX2TYPE] == FX_MIDIDELAY && TSEL->p[P_FX3TYPE] == FX_MIDIVERB);

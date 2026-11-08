@@ -471,10 +471,6 @@ static void ui_leds(void)
     c = song_fx ? song_punch_leds() : pat_keys_silent() ? pattern_leds(&pdim, &pbr) : name_on() && !ui.menu ? name_leds() :
         ui.layer ? layer_leds() : grid_on() ? grid_leds() : fm1_in.notes & ~kb_layer;   /* the patterns (SEQ held, its
                                                          * dialog), NAME's keys, the map, the grid, the keys held */
-#if MELODEE_SLICE
-    if (!ui.layer && !ui.menu && !name_on() && slice_page_on())
-        c |= slice_leds();                              /* SLICES: and the keys of the selected slice */
-#endif
     for (k = 0; k < 27u; k++) {
         uint32_t lv = play ? play_key_led(TSEL, k) : KL_OFF;   /* playing: the layout, MIDI's notes too (LIGHTS) */
         led_put(nl, LED_KEY(k), (int)(((c >> k) & 1u) || lv == KL_ON));
@@ -1425,13 +1421,6 @@ static void edit_param(uint32_t slot, int32_t steps)
         }
         return;
     }
-#if MELODEE_SLICE
-    if (pg->graph == GR_SLICES && slot < 2u) {           /* SLICES: KNOB 1 the marker, 2 moves it (ui_slice.c) */
-        if (slice_page_ok())                              /* (the engine changed before ui_draw left the page) */
-            slice_knob(slot, steps);
-        return;
-    }
-#endif
     if ((act_cols() >> slot) & 1u) {                      /* an action's knob picks it (right) or drops it (left); */
         ui.act = steps > 0 ? (uint8_t)(slot + 1u) : ui.act == slot + 1u ? 0u : ui.act;   /* (OCT+ does it: act_do) */
         return;
@@ -1579,13 +1568,6 @@ static void act_do(void)
         ui.force = 1;
         return;
     }
-#if MELODEE_SLICE
-    if (cur_page()->graph == GR_SLICES) {                 /* SPLIT / JOIN: stays picked (split again, join again) */
-        if (slice_page_ok())
-            slice_act(c);
-        return;
-    }
-#endif
     if (cur_page()->graph == GR_USER) {                   /* 1 LOAD, 2 ERASE, 3 SAVE (the NAME screen first) */
         if (c > 1u)
             ui.act = 0;
@@ -2896,10 +2878,6 @@ static void ui_input(void)
         }
     }
     song.grid = (uint8_t)keys_mode();                 /* (seq.c: the keys are the grid's) */
-#if MELODEE_SLICE
-    if (notes && slice_page_on())                       /* SLICES: a key picks the slice it plays */
-        slice_keys_pick(notes);
-#endif
     pattern_keys(PK_EDGES);
     song.grid = (uint8_t)keys_mode();                 /* a pattern key can arm REC: play from this frame */
     if (pat_keys_taken()) {

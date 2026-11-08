@@ -17,11 +17,17 @@ KEY = 0x13572468
 
 
 def module(engine, name, n, key=KEY, seed=1):
-    b = bytearray((i * 29 + seed) & 255 for i in range(60 + n))
-    struct.pack_into("<IHBBI", b, 0, M.FILE_MAGIC, 3, engine, 0, len(b))
+    """a file: its head, n bytes of image, then its IDNT chunk (who it is: from its name; Melodee 2.0 knows a synth by its
+    ID alone, the engine byte means nothing)"""
+    b = bytearray((i * 29 + seed) & 255 for i in range(60 + n)) + bytearray(104)
+    struct.pack_into("<IHBBI", b, 0, M.FILE_MAGIC, 3, engine, 1, len(b))
+    struct.pack_into("<II", b, 12, n, 0)
+    struct.pack_into("<I", b, 20, 0)                                                # (no address words)
     struct.pack_into("<I", b, 28, 0x1000 * seed + engine)
     b[32:48] = name.encode().ljust(16, b"\0")
     struct.pack_into("<I", b, 52, key)
+    struct.pack_into("<IIQ", b, 60 + n, 0x544E4449, 96, 0x5000 + sum(name.encode()))
+    b[76 + n] = 2
     return bytes(b)
 
 
@@ -45,8 +51,10 @@ class Device:
         if a[0] == 5:
             b = s["b"]
             abi = struct.unpack_from("<H", b, 4)[0] if b and len(b) >= 6 else 0
+            uid = int(M.file_id(b) or "0", 16) if b and len(b) > 60 else 0
             return [0, s["state"], b[6] if b else 0, abi] + u(struct.unpack_from("<I", b, 28)[0] if b else 0) + \
-                u(struct.unpack_from("<I", b, 52)[0] if abi >= 2 else 0) + u(KEY)
+                u(struct.unpack_from("<I", b, 52)[0] if abi >= 2 else 0) + u(KEY) + \
+                [(uid >> 7 * j) & 127 for j in range(10)] + [0]       # (its ID u70, the signer: 30 bytes, 2.0)
         if a[0] == 1:
             s["up"] = bytearray()
             s["want"] = sum(x << 7 * i for i, x in enumerate(a[2:7]))

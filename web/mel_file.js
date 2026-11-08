@@ -207,33 +207,28 @@ export function cmDecode(src, n, kit = false) { const c = new Decoder(src), d = 
 export const REC_BYTES = 27904, KIT_MAX = 28392;
 export const KIT_FIRST = 9, KIT_COUNT = 8;       // KIT 1..8 are the drum engine's E0 values 9..16 (eng_drum.c DK_USER0)
 const FUN_AT = 8, FUN_BYTES = 13212, TAIL_AT = FUN_AT + FUN_BYTES;
-const FUN_MAGIC = 0x46554E49, FBKP = 0x504B4246, FBKQ = 0x514B4246, FBKR = 0x524B4246, KIT_MAGIC = 0x3154494B, PJ_MAGIC = 0x314A5048, PZ_MAGIC = 0x324A5048, PZ_RAW = 0x80000000;
+const FUN_MAGIC = 0x46554E49, FBKS = 0x534B4246, KIT_MAGIC = 0x3154494B, PJ_MAGIC = 0x314A5048, PZ_MAGIC = 0x324A5048, PZ_RAW = 0x80000000;
 const NPART = 4, NTRK = 8, NPAT = 16, NSTEP = 64, MOTION_MAX = 64, CHAIN_ROWS = 64, CHAIN_OLD_ROWS = 16, CHAIN_OLD_BYTES = 36, FM6_NFN = 16;
-const ENGI_DRUM = 10, NAME_LEN = 12;
-// the kits' synth by its ID (firmware/modules/shipped.h: DRUM's, Melodee's key and "drum"; the engine map's default
-// number 10). A synth's ID: its 8 bytes little endian as 16 hex digits, the high first (as firmware's uint64_t prints)
+const NAME_LEN = 12;
+// the kits' synth by its ID (firmware/modules/shipped.h: DRUM's, Melodee's key and "drum"). A synth's ID: its 8 bytes
+// little endian as 16 hex digits, the high first (as firmware's uint64_t prints)
 const KIT_OWNER_UID = "241aacc57d998ffe", EMX_TAG = 0x32584D45, EMX_TRAIL = 12, EMAP_ENTRY = 28;
 export const synthId = (b, at) => Array.from(b.subarray(at, at + 8)).reverse().map((x) => x.toString(16).padStart(2, "0")).join("");
-// FBKR (pattern_store.c): FBKP / FBKQ plus an end block before the sum ("EMX2"), the engine map's entries for the
-// numbers the project names that are not Melodee's defaults (eng_map.c: number, 0 x 3, ID, name), the patches of parts
-// whose synth has no 1.x format
+// FBKS (pattern_store.c, Melodee 2.0's only project record): an end block before the sum ("EMX2"), an entry for every
+// synth the project names (eng_map.c: its handle there, 0 x 3, ID, name; a handle no entry names: none), the patches of
+// parts whose synth has no 1.x format
 export function recMap(rec) {
   const t = REC_BYTES - 4 - EMX_TRAIL, plen = rec[t] | rec[t + 1] << 8, n = rec[t + 2];
-  if (u32(rec, 0) !== FBKR || u32(rec, t + 8) !== EMX_TAG || n * EMAP_ENTRY > plen || rec[t + 4] > 1)
-    return { entries: [], patterns: u32(rec, 0) === FBKQ, end: REC_BYTES - 4 };
+  if (u32(rec, 0) !== FBKS || u32(rec, t + 8) !== EMX_TAG || n * EMAP_ENTRY > plen || rec[t + 4] > 1)
+    return { entries: [], patterns: false, end: REC_BYTES - 4 };
   const entries = [];
   for (let k = 0, at = t - plen; k < n; k++, at += EMAP_ENTRY)
     entries.push({ number: rec[at], uid: synthId(rec, at + 4), name: String.fromCharCode(...rec.subarray(at + 12, at + 28)).replace(/\0+$/, "") });
   return { entries, patterns: rec[t + 4] === 1, end: t - plen };
 }
-// the engine numbers a record's kits are played by: DRUM's number there (its entries'; none: the default 10)
+// the handles a record's kits are played by: DRUM's there (its entry)
 function kitEngines(map) {
-  const out = new Set([ENGI_DRUM]);
-  for (const e of map.entries) {
-    if (e.uid === KIT_OWNER_UID) out.add(e.number);
-    else out.delete(e.number);
-  }
-  return out;
+  return new Set(map.entries.filter((e) => e.uid === KIT_OWNER_UID).map((e) => e.number));
 }
 // where things are in a record whose FUN record keeps np parameters a track (its byte 66; E0 is np - 8: common
 // parameters are only ever added before it). tests/mel_fixture.c prints the firmware's own for test_mel.mjs
@@ -359,16 +354,16 @@ export function pjExpand(stored) {               // a stored project object -> i
 // A record's parts as this page knows them, its sums checked. kits: the KIT values (9..16) it names, ascending
 export function recInfo(rec) {
   const magic = rec.length === REC_BYTES ? u32(rec, 0) : 0, np = rec[FUN_AT + 66], L = recLayout(np);
-  if ((magic & 0xFFFFFF) !== 0x4B4246 || magic >>> 24 < 0x4B || magic >>> 24 > 0x52 || u32(rec, 4) !== REC_BYTES ||   /* FBKK..FBKR */
+  if ((magic & 0xFFFFFF) !== 0x4B4246 || magic >>> 24 < 0x4B || magic >>> 24 > 0x53 || u32(rec, 4) !== REC_BYTES ||   /* FBKK..FBKS */
       u32(rec, REC_BYTES - 4) !== fnv(rec, 0, REC_BYTES - 4))
     throw new Error("Not a Melodee project record");
+  if (magic !== FBKS) throw new Error("This project is from Melodee 1.x: the web installer converts it for 2.0.");
   if (u32(rec, FUN_AT) !== FUN_MAGIC || u32(rec, FUN_AT + 4) !== FUN_BYTES || np < 8 || L.motion + 4 + MOTION_MAX * 4 > L.name ||
       u32(rec, L.funSum) !== fnv(rec, FUN_AT, L.funSum))
     throw new Error("This project is in an older format. Load it on the device and save it again first.");
   const refs = [];                               // [byte offset, 1: a parameter byte (value + 64) | 2: an int16]
-  // (FBKK and FBKP / FBKQ are what firmware with user kits writes; the forms between: the FUN record's places only)
   const map = recMap(rec), kitEng = kitEngines(map), patterns = map.patterns;
-  const wide = magic === FBKP || magic === FBKQ || magic === FBKR, sounds = [], patternSound = new Uint8Array(NTRK * NPAT);
+  const wide = true, sounds = [], patternSound = new Uint8Array(NTRK * NPAT);
   if (wide && rec[L.song + 2]) {
     const count = rec[L.sounds], size = rec[L.sounds + 2] | rec[L.sounds + 3] << 8;
     if (!count || count > 64 || rec[L.sounds + 1] !== np || size !== L.soundBytes || L.sounds + L.soundHead + count * size + (patterns ? NTRK * NPAT : 0) > map.end)
@@ -418,7 +413,7 @@ export function kitCheck(bytes) {                // what any reader can tell of 
 
 // ------------------------------------------------------------------------------------------- the file ---
 const MEL_HEAD = 32, SEC_HEAD = 16, T_PROJECT = 1, T_KIT = 2;
-export const MEL_CONST = { REC_BYTES, KIT_MAX, KIT_FIRST, KIT_COUNT, KIT_HEAD, ENGI_DRUM, FUN_BYTES, TAIL_AT, FUN_MAGIC, FBKP, FBKQ, FBKR, KIT_MAGIC, PJ_MAGIC, PZ_MAGIC, KIT_OWNER_UID };   // (test_mel.mjs: the firmware's)
+export const MEL_CONST = { REC_BYTES, KIT_MAX, KIT_FIRST, KIT_COUNT, KIT_HEAD, FUN_BYTES, TAIL_AT, FUN_MAGIC, FBKS, KIT_MAGIC, PJ_MAGIC, PZ_MAGIC, KIT_OWNER_UID };   // (test_mel.mjs: the firmware's)
 export const MEL_MAX = MEL_HEAD + (1 + KIT_COUNT) * SEC_HEAD + REC_BYTES + KIT_COUNT * KIT_MAX;
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 // { project: a record, kits: [{ kit: 9..16, bytes: a KIT1 record or none }] } -> the file

@@ -249,7 +249,7 @@ int main(void)
     {   /* boot before DRUM is listed (a module written after power-on; nightly dc2209de scanned before mod_boot) */
         const engine_t *drum = ENGINES[ENGI_DRUM];
         memset(drk_user, 0, sizeof drk_user); memset(rec_len, 0, sizeof rec_len);
-        ENGINES[ENGI_DRUM] = &ENG_RETIRED; sch_gen++;
+        ENGINES[ENGI_DRUM] = &ENG_NONE; sch_gen++;
         rec_scan();
         int waited = !drk_user[2].n && (rec_pend >> 2 & 1u);
         int hidden = rec_hidden(2) && !rec_hidden(3);     /* (Record kit's sheet never takes slot 2 for an empty one) */

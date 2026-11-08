@@ -6,7 +6,7 @@
  * category, the part after a pick (engine_load_of on part 2 from zeroed parameters: its parameters, preset, engine, its
  * engine's patch, FM6's operator switches, the CZ-1 pick: its BANK * 17 + PTCH) */
 #define MPR_NE 5u
-static const uint8_t MPR_E[MPR_NE] = {3, 10, 12, 15, 19};
+static const uint8_t MPR_E[MPR_NE] = {ENGI_SID, ENGI_DRUM, ENGI_FM6, ENGI_CZ, ENGI_PROPHET};   /* (SID 3, DRUM 10, FM6 12, CZ-1 15, the Prophet 19 in 1.x) */
 static const uint8_t MPR_N[MPR_NE] = {32, 6, 25, 65, 201};
 static const uint8_t MPR_INIT[MPR_NE] = {0, 0, 24, 0, 0};
 #define MPR_COUNT 329u

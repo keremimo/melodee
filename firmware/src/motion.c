@@ -21,9 +21,9 @@ static int16_t motion_base[NPART][P_COUNT];             /* (the parts': only the
 static uint32_t motion_active[NPART][(P_COUNT + 31u) / 32u];
 static uint8_t motion_base_valid, motion_full;
 /* The synths' own patches move too (what their pages and Stage's knobs edit): an event's param MO_NATIVE + i names slot i
- * of the track's synth's patch, its value the synth's tag << 8 | the value: a synth module's MO_TAG_MOD + its engine number - ENGI_MOD0
- * (a store's number, made this device's when the store is read like its sounds': eng_map.c eng_in; another synth on
- * the part leaves it), one of Melodee's synths (its number fixed) its schema's Motion tag (P5 1, CZ-1 2, FM6 3). A tag
+ * of the track's synth's patch, its value the synth's tag << 8 | the value: a synth's MO_TAG_MOD + its handle - ENG_H_SHIP0
+ * (a store's handle, made this device's when the store is read like its sounds': eng_map.c eng_in; another synth on
+ * the part leaves it). A tag
  * stays below 32: tag << 8 | 255 is the editor's signed 14-bit value (MOTION). A slot is byte i of the patch, or (a schema without MOD_SCH_F_MBYTES) its parameter i through the module
  * (pget / pput); the schema's motion map says which slots are recorded and their ranges. While motion moves a slot, the
  * patch's own value is in motion_nbase (its bit in motion_nactive) */
@@ -55,31 +55,24 @@ static void motion_unguard(uint32_t f)
     (void)f;
 #endif
 }
-#define MO_TAG_MOD 4u                                   /* (Melodee's schemas' tags below it) */
-_Static_assert(MO_TAG_MOD + NENGINES - ENGI_MOD0 <= 32u, "motion: a native tag << 8 | 255 fits a signed 14-bit value");
+#define MO_TAG_MOD 4u                                   /* a synth's tag: MO_TAG_MOD + its handle - ENG_H_SHIP0 */
+_Static_assert(MO_TAG_MOD + NENGINES - ENG_H_SHIP0 <= 32u, "motion: a native tag << 8 | 255 fits a signed 14-bit value");
 static int patch_motion(uint32_t e) { SCH_INFO(); return sch_info[e % NENGINES].mmap != MOD_SCH_NONE; }
 static uint32_t motion_tag_of(uint32_t e)               /* engine e's tag, 0: e has no Motion */
 {
-    return !patch_motion(e) ? 0u : e >= ENGI_MOD0 ? MO_TAG_MOD + e - ENGI_MOD0 : patch_mtag(e) < MO_TAG_MOD ? patch_mtag(e) : 0u;
+    return e >= ENG_H_SHIP0 && e < NENGINES && patch_motion(e) ? MO_TAG_MOD + e - ENG_H_SHIP0 : 0u;
 }
 static uint32_t motion_tag_engine(uint32_t tag)         /* the engine of a tag, NENGINES: none */
 {
-    uint32_t e;
-    if (tag >= MO_TAG_MOD)
-        return tag - MO_TAG_MOD < NENGINES - ENGI_MOD0 ? ENGI_MOD0 + tag - MO_TAG_MOD : NENGINES;
-    for (e = 0; e < ENGI_MOD0 && (!tag || motion_tag_of(e) != tag); e++)
-        ;
-    return e < ENGI_MOD0 ? e : NENGINES;
+    return tag >= MO_TAG_MOD && tag - MO_TAG_MOD < NENGINES - ENG_H_SHIP0 ? ENG_H_SHIP0 + tag - MO_TAG_MOD : NENGINES;
 }
 static uint32_t motion_native_tag(const track_t *t) { return motion_tag_of(eng_idx(t->eng_req)); }
-/* a stored event's tag as this device has it (the store's entries read: eng_in; Melodee's own: as they are), 0 none */
+/* a stored event's tag as this device has it (the store's entries read: eng_in), 0 none */
 static uint32_t motion_tag_in(uint32_t tag)
 {
-    uint32_t e;
-    if (tag < MO_TAG_MOD)
-        return tag;
-    e = eng_in(ENGI_MOD0 + tag - MO_TAG_MOD);
-    return e >= ENGI_MOD0 && e < NENGINES ? MO_TAG_MOD + e - ENGI_MOD0 : 0u;
+    uint32_t e = motion_tag_engine(tag);
+    e = e < NENGINES ? eng_in(e) : ENG_H_NONE;
+    return e >= ENG_H_SHIP0 && e < NENGINES ? MO_TAG_MOD + e - ENG_H_SHIP0 : 0u;
 }
 /* a store's events just read (its entries' remap on: eng_in): their synths' tags as this device numbers them (a synth
  * it cannot place: the event kept as it was, played by no part) */
@@ -128,8 +121,8 @@ static int motion_native_ok(uint32_t id, int32_t value, int stored)
     uint32_t i = id - MO_NATIVE, tag = (uint32_t)value >> 8, v = (uint32_t)value & 255u, e;
     uint8_t mx[MO_NATIVE_N], mz[MO_NATIVE_N];
     if (id < MO_NATIVE || id >= MO_NATIVE + MO_NATIVE_N || value < 0 || !tag) return 0;
-    if (tag >= MO_TAG_MOD + NENGINES - ENGI_MOD0) return 0;
-    if (tag >= MO_TAG_MOD && stored) return 1;
+    if (tag < MO_TAG_MOD || tag >= MO_TAG_MOD + NENGINES - ENG_H_SHIP0) return 0;
+    if (stored) return 1;
     e = motion_tag_engine(tag);
     if (e == NENGINES || patch_motion_map(e, mx, mz, MO_NATIVE_N))
         return 1;                                /* (a synth this device has no schema of: kept as it is) */

@@ -261,7 +261,7 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
     song.g[G_BPM] = 120;
     host_power_on_sound(t1, 0);
     host_power_on_sound(t2, 1);
-    host_preset(t3, 3, 0);
+    host_preset(t3, ENGI_SID, 0);
     host_808_kit(td);                   /* saved 808 DRUM sound */
     for (i = 0; i < 16u; i++) {
         uint8_t n = ACID[i];
@@ -519,7 +519,7 @@ static int xfade_test(const char *dir)
     /* switches: (a) in a release tail, (b) twice with a chord held, (c) with a note right after it */
     const uint32_t sw[4] = {11u * B, 23u * B, 29u * B + 7u * CTL, 33u * B};
     const uint32_t on[3] = {B, 15u * B, 25u * B}, sine[3] = {14u * B, 24u * B, 32u * B};
-    const uint8_t to[4] = {ENGI_FM6, 2, 3, 4};
+    const uint8_t to[4] = {ENGI_FM6, ENG_H_NONE, ENGI_SID, ENG_H_NONE};   /* (1.x: retired PHASE, SID, reserved 4) */
     char path[512];
     FILE *w;
     int32_t *L = calloc(frames, sizeof *L);

@@ -23,6 +23,10 @@
                                                  * the song and punch blocks, song byte 2 = sounds follow. Before it, every
                                                  * format kept NPAT_V1 a track: those layouts read below */
 #define BANKQ_MAGIC 0x514B4246u                 /* FBKQ: FBKP plus per-pattern sound IDs after the sound pool */
+#define BANKS_MAGIC 0x534B4246u                 /* FBKS: Melodee 2.0, the only project record it reads or writes: FBKR's
+                                                 * layout, its end block always there with an entry (ID, name) for every
+                                                 * synth the record names (a handle no entry names: none). Every record
+                                                 * before it is a Melodee 1.x one: the web installer converts those */
 #define BANKR_MAGIC 0x524B4246u                 /* FBKR: FBKP or FBKQ (the end block's flags say which) plus an end block before
                                                  * the sum: the device's engine map entries for the numbers it names that are
                                                  * not Melodee's defaults (eng_map.c), and the patches of its parts whose synth
@@ -92,7 +96,7 @@ _Static_assert(BANKP_STEPS_OFF + BANKM_SONG_BYTES + BANKN_FX_BYTES + 2u * NTRK <
 #define BT(off) ((off) - BANK_ACTIVE_OFF)               /* an offset into the tail */
 static uint8_t bank_too_full;                           /* the music did not fit an FBKL record */
 static int bank_full(uint32_t n) { return n == BANK_STORE_SIZE; }
-static uint32_t bank_magic(void) { return bank_ext ? BANKR_MAGIC : bank_patterns ? BANKQ_MAGIC : bank_p16 ? BANKP_MAGIC : bank_sounds ? BANKO_MAGIC : bank_songfx ? BANKN_MAGIC : bank_song64 ? BANKM_MAGIC : bank_wide ? BANKL_MAGIC : BANK_MAGIC; }
+static uint32_t bank_magic(void) { return BANKS_MAGIC; }
 static void bank_capture_kind(int runtime)
 {
     bank_patterns = 0;
@@ -199,8 +203,8 @@ static void bank_ext_plan(const project_t *q, int runtime)
     for (uint32_t k = 0, len; k < PROJ_TRK; k++)
         if (bank_ext_patch(q, k, runtime, &len))
             n += 4u + len;
-    bank_ext = n != 0;
-    bank_ext_len = n ? n + BANKR_TRAIL : 0u;
+    bank_ext = 1;                                   /* (2.0: always, the synths' entries) */
+    bank_ext_len = n + BANKR_TRAIL;
 }
 static void bank_ext_write(uint8_t *raw, const project_t *q, int runtime)
 {
@@ -241,7 +245,7 @@ static int bank_ext_body(const uint8_t *t)
 {
     uint32_t plen = t[0] | (uint32_t)t[1] << 8, ne = t[2], np = t[3], pos;
     const uint8_t *b = t - plen;
-    if (eng_remap_read(b, ne))
+    if (ne && eng_remap_read(b, ne))            /* (none: the remap as it is, the template's: project.c tmpl_remap) */
         return 0;
     pos = ne * EMAP_ENTRY;
     for (uint32_t i = 0; i < np; i++) {
@@ -529,7 +533,7 @@ static int bankl_tail_valid(const uint8_t *raw)
             if (id > count || (r >= raw[BT(BL.steps)] && id)) return 0;
             if (id) {
                 const song_sound_t *sound = (const song_sound_t *)(in + BANKO_HEAD_BYTES + (id - 1u) * size);
-                if (k >= NPART && sound->engine != ENGI_MIDI) return 0;
+                if (k >= NPART && eng_in(sound->engine) != ENGI_MIDI) return 0;   /* (its handle as the record names it) */
                 used[id-1u] = 1;
             }
         }
@@ -541,7 +545,7 @@ static int bankl_tail_valid(const uint8_t *raw)
                 if (id > count || (b >= trk_npat(k) && id)) return 0;
                 if (!id) continue;
                 const song_sound_t *sound = (const song_sound_t *)(in + BANKO_HEAD_BYTES + (id - 1u) * size);
-                if (k >= NPART && sound->engine != ENGI_MIDI) return 0;
+                if (k >= NPART && eng_in(sound->engine) != ENGI_MIDI) return 0;   /* (its handle as the record names it) */
                 used[id - 1u] = 1; any = 1;
             }
             if (!any) return 0;
@@ -650,14 +654,10 @@ static int bank_valid(const uint8_t *raw,uint32_t len)
     uint32_t magic,size,sum;
     if(!bank_full(len))return 0;
     memcpy(&magic,raw,4);memcpy(&size,raw+4,4);memcpy(&sum,raw+len-4u,4);
-    if((magic!=BANK_MAGIC && magic!=BANKL_MAGIC && magic!=BANKM_MAGIC && magic!=BANKN_MAGIC && magic!=BANKO_MAGIC && magic!=BANKP_MAGIC && magic!=BANKQ_MAGIC && magic!=BANKR_MAGIC)||size!=len||sum!=proj_hash(raw,len-4u))return 0;
-    bank_patterns=(uint8_t)(magic==BANKQ_MAGIC);
-    if(!bank_ext_read(raw+BANK_ACTIVE_OFF,magic==BANKR_MAGIC))return 0;   /* (FBKR: its end block; its engine numbers) */
-    bank_p16=(uint8_t)(magic==BANKP_MAGIC || magic==BANKR_MAGIC || bank_patterns);
-    bank_sounds=(uint8_t)(magic==BANKO_MAGIC); bank_sound_bytes=0;
-    bank_songfx=(uint8_t)(magic==BANKN_MAGIC || bank_sounds || bank_p16);
-    bank_song64=(uint8_t)(magic==BANKM_MAGIC || bank_songfx);
-    bank_wide=(uint8_t)(magic!=BANK_MAGIC);bank_rec_ext(raw+BANK_ACTIVE_OFF);
+    if(magic!=BANKS_MAGIC||size!=len||sum!=proj_hash(raw,len-4u))return 0;   /* (a 1.x record: the web installer's) */
+    if(!bank_ext_read(raw+BANK_ACTIVE_OFF,1))return 0;   /* (its end block: the synths it names, its patches) */
+    bank_p16=1;bank_sounds=0;bank_sound_bytes=0;bank_songfx=1;bank_song64=1;
+    bank_wide=1;bank_rec_ext(raw+BANK_ACTIVE_OFF);
     if(!proj_import(&proj_scratch,raw+8u,BANK_PROJ_SIZE))return 0;
     return bank_tail_valid(raw+BANK_ACTIVE_OFF);
 }

@@ -49,7 +49,7 @@ static uint32_t fm6_sx_bank(uint8_t *f, uint32_t ch, const uint8_t *slots, uint3
     for (uint32_t k = 0; k < 32u; k++) {
         uint8_t *pk = f + 6u + k * FM6_PACKED;
         uint32_t s = slots ? (k < n ? slots[2u * k] | (uint32_t)slots[2u * k + 1u] << 8 : 0xFFFFu) : first + k;
-        if (s == 0xFFFFu || MOD_HOST3_CALL(slot_get)(ENGI_FM6, s, pk) != FM6_PACKED)
+        if (s == 0xFFFFu || MOD_HOST3_CALL(slot_get)(MOD_HANDLE(ENGI_FM6), s, pk) != FM6_PACKED)
             memcpy(pk, FM6_INIT, FM6_PACKED);
         else if (repack) {
             uint8_t v[FP_SIZE + 1u];
@@ -70,7 +70,7 @@ static uint32_t fm6_sysex_dump(const uint8_t *patch, uint32_t what, uint32_t ch,
 /* part tr's whole patch into b (FM6_BLOB bytes): 1, or 0 (not FM6's) */
 static int fm6_sx_patch(uint32_t tr, uint8_t *b)
 {
-    const uint8_t *p = MOD_HOST3_CALL(part_patch)(tr, ENGI_FM6);
+    const uint8_t *p = MOD_HOST3_CALL(part_patch)(tr, MOD_HANDLE(ENGI_FM6));
     if (!p)
         return 0;
     memcpy(b, p, FM6_BLOB);
@@ -81,7 +81,7 @@ static void fm6_sx_fn(uint32_t tr, uint32_t k, int32_t v)   /* a function settin
     uint8_t b[FM6_BLOB];
     if (tr < NTRK && k < FM6_NFN && fm6_sx_patch(tr, b)) {
         b[FM6_B_FN + k] = (uint8_t)clamp(v, 0, FM6_FNMAX[k]);
-        (void)MOD_HOST3_CALL(patch_put)(tr, ENGI_FM6, b, FM6_BLOB, MOD3_PATCH_EDIT);
+        (void)MOD_HOST3_CALL(patch_put)(tr, MOD_HANDLE(ENGI_FM6), b, FM6_BLOB, MOD3_PATCH_EDIT);
     }
 }
 static uint32_t fm6_sysex(const uint8_t *b, uint32_t n, uint32_t ev)
@@ -97,11 +97,11 @@ static uint32_t fm6_sysex(const uint8_t *b, uint32_t n, uint32_t ev)
             return MOD3_SXR_DONE;
     st = b[2] & 0xF0u;
     ch = b[2] & 15u;
-    tr = MOD_HOST3_CALL(sx_part)(ENGI_FM6, ch);
+    tr = MOD_HOST3_CALL(sx_part)(MOD_HANDLE(ENGI_FM6), ch);
     if (n == 163u && st == 0x00u && b[3] == 0x00 && b[4] == 0x01 && b[5] == 0x1B && fm6_sx_chk(b + 6, 155) == b[161]) {
         uint8_t pk[FM6_PACKED];                  /* one voice */
         fm6_pack(b + 6, pk);
-        (void)MOD_HOST3_CALL(sx_stage)(ENGI_FM6, pk, 1, FM6_PACKED);
+        (void)MOD_HOST3_CALL(sx_stage)(MOD_HANDLE(ENGI_FM6), pk, 1, FM6_PACKED);
     } else if (n == 231u && st == 0x00u && b[3] == 0x7D && b[4] == 4 && b[5] == 8) {
         uint8_t pk[FM6_PACKED];                  /* (the wrapper has no checksum: an intact, in-range VCED; its opaque
                                                   * tail is not taken for Yamaha's function parameters) */
@@ -109,10 +109,10 @@ static uint32_t fm6_sysex(const uint8_t *b, uint32_t n, uint32_t ev)
             if (b[6 + k] > fm6_max(k) || (k >= FP_NAME && b[6 + k] < 32u))
                 return MOD3_SXR_DONE;
         fm6_pack(b + 6, pk);
-        (void)MOD_HOST3_CALL(sx_stage)(ENGI_FM6, pk, 1, FM6_PACKED);
+        (void)MOD_HOST3_CALL(sx_stage)(MOD_HANDLE(ENGI_FM6), pk, 1, FM6_PACKED);
     } else if (n == MOD3_SX_MAX && st == 0x00u && b[3] == 0x09 && b[4] == 0x20 && b[5] == 0x00 &&
                fm6_sx_chk(b + 6, 4096) == b[4102]) {
-        (void)MOD_HOST3_CALL(sx_stage)(ENGI_FM6, b + 6, 32, FM6_PACKED);   /* (32 voices: chosen from the frame) */
+        (void)MOD_HOST3_CALL(sx_stage)(MOD_HANDLE(ENGI_FM6), b + 6, 32, FM6_PACKED);   /* (32 voices: chosen from the frame) */
     } else if (n == 7u && st == 0x10u && !(b[3] >> 2) && tr >= 0) {   /* a voice parameter */
         uint32_t k = (uint32_t)(b[3] & 3u) << 7 | b[4];
         uint8_t pb[FM6_BLOB];
@@ -123,11 +123,11 @@ static uint32_t fm6_sysex(const uint8_t *b, uint32_t n, uint32_t ev)
                 v[k] = b[5];
                 fm6_sanitize(v);
                 fm6_pack(v, pb);
-                (void)MOD_HOST3_CALL(patch_put)((uint32_t)tr, ENGI_FM6, pb, FM6_PACKED, MOD3_PATCH_EDIT);
+                (void)MOD_HOST3_CALL(patch_put)((uint32_t)tr, MOD_HANDLE(ENGI_FM6), pb, FM6_PACKED, MOD3_PATCH_EDIT);
             }
         } else if (k == 155u && fm6_sx_patch((uint32_t)tr, pb)) {
             pb[FM6_B_ON] = (uint8_t)(b[5] & FM6_ON_ALL);   /* bit 0 OP6 .. bit 5 OP1, as the switches */
-            (void)MOD_HOST3_CALL(patch_put)((uint32_t)tr, ENGI_FM6, pb, FM6_BLOB, MOD3_PATCH_EDIT);
+            (void)MOD_HOST3_CALL(patch_put)((uint32_t)tr, MOD_HANDLE(ENGI_FM6), pb, FM6_BLOB, MOD3_PATCH_EDIT);
         }
         MOD_HOST3_CALL(message)(0);
     } else if (n == 7u && st == 0x10u && b[3] == 0x08u && tr >= 0) {   /* a function parameter: the part's */
@@ -156,14 +156,14 @@ static uint32_t fm6_sysex(const uint8_t *b, uint32_t n, uint32_t ev)
         int rc = 0;
         if (b[3] == 0x00 && tr >= 0) {
             uint8_t f[163], pb[FM6_BLOB];
-            const uint8_t *p = MOD_HOST3_CALL(part_patch)((uint32_t)tr, ENGI_FM6);
+            const uint8_t *p = MOD_HOST3_CALL(part_patch)((uint32_t)tr, MOD_HANDLE(ENGI_FM6));
             if (p) { memcpy(pb, p, FM6_BLOB); rc = MOD_HOST3_CALL(sx_send)(f, fm6_sx_voice(pb, ch, f)); }
         } else if (b[3] == 0x09) {               /* the STORE page's bank: its 32 slots, the init voice where empty */
             if (MOD_HOST3_CALL(sx_send)(0, 0))
                 rc = -1;
             else {                               /* (a slot's stored voice: its packed 128 bytes) */
                 uint8_t *f = MOD_HOST3_CALL(sx_scratch)();
-                rc = MOD_HOST3_CALL(sx_send)(f, fm6_sx_bank(f, ch, 0, 0, MOD_HOST3_CALL(store_slot)(ENGI_FM6) / 32u * 32u, 0));
+                rc = MOD_HOST3_CALL(sx_send)(f, fm6_sx_bank(f, ch, 0, 0, MOD_HOST3_CALL(store_slot)(MOD_HANDLE(ENGI_FM6)) / 32u * 32u, 0));
             }
         }
         if (rc)

@@ -121,7 +121,7 @@ static void designer_render(int32_t *pcm)
 }
 static void feature_tests(void)
 {
-    static const uint8_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,3};
+    static const uint8_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID};
     int first=1,states=1,audible=1,steady=1,drums=1;
     for(uint32_t ei=0;ei<NENG_SHOWN;ei++){
         eng_state_reset();ui_power_on();sound_init_of(TSEL,eng_vis(ei));designer_open();press(B_OCTUP);
@@ -287,7 +287,7 @@ static void role_recipe_tests(void)
     designer_close(1);
     if(fl)*fl&=(uint8_t)~MOD3_RF_INVERT;
     memcpy(h+10,nrec,2);
-    ui_power_on();sound_init_of(TSEL,3);
+    ui_power_on();sound_init_of(TSEL,ENGI_SID);
     designer_open();ds.current=0;ds.goal=DG_PAD;press(B_OCTUP);
     failures+=check("no block, no roles: the part's ADSR",TSEL->p[P_ATK]==75 && TSEL->p[P_DEC]==45 && TSEL->p[P_SUS]==110 &&
                     TSEL->p[P_REL]==85);

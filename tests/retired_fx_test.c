@@ -39,7 +39,7 @@ static void storage(void)
     }
     for (uint32_t s = 0; s < FX_SLOTS; s++) song.g[G_MFXTYPE+s*FX_PARAMS] = FX_ECHO;
     project_t q; project_store_t p; project_capture(&q);
-    assert(proj_pack(&p,&q) && proj_import(&proj_scratch,&p,sizeof p));
+    assert(proj_pack(&p,&q) && proj_import_same(&proj_scratch,&p,sizeof p));
     for (uint32_t tr = 0; tr < NPART; tr++) for (uint32_t s = 0; s < FX_SLOTS; s++) assert(!proj_scratch.t[tr].p[P_FXTYPE+s*FX_PARAMS]);
     for (uint32_t s = 0; s < FX_SLOTS; s++) assert(!proj_scratch.g[G_MFXTYPE+s*FX_PARAMS]);
     template_save(); template_load();
@@ -48,7 +48,7 @@ static void storage(void)
     const uint32_t kept[] = {FX_MIDIVERB,FX_MIDIDELAY};
     for (uint32_t k = 0; k < NELEM(kept); k++) {
         TSEL->p[P_FXTYPE] = (int16_t)kept[k]; project_capture(&q);
-        assert(proj_pack(&p,&q) && proj_import(&proj_scratch,&p,sizeof p));
+        assert(proj_pack(&p,&q) && proj_import_same(&proj_scratch,&p,sizeof p));
         assert(proj_scratch.t[0].p[P_FXTYPE] == kept[k]);
     }
     puts("Retired FX: old project/template IDs load OFF; ROOM/CHORUS/MIDI insert IDs stay unchanged");

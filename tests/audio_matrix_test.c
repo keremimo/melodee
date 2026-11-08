@@ -5,7 +5,7 @@
  * spread and shared Chorus. Host elapsed time is not a device deadline. */
 #define AUDIO_MATRIX_INCLUDE 1
 #include "dual_core_test.c"
-static const uint8_t matrix_engines[6]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,3,ENGI_DRUM,ENGI_DRUM};
+static const uint8_t matrix_engines[6]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_DRUM,ENGI_DRUM};
 static uint64_t matrix_hash;
 static void matrix_setup(const uint32_t cat[4],uint32_t variant)
 {

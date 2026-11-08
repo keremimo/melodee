@@ -20,6 +20,8 @@ PATTERNS = {
     "built-in switch": re.compile(r"\bMELODEE_(?:SID|DRUM|CZ|FM6|P5)_BUILTIN\b"),
     "symbol": re.compile(r"\b(?:drum|drk|dsk|dlk|dr8|d9|sid|cz|fm6|p5|prophet|trio|wheel)_\w+|\b(?:DK|D9|DV|DVT|DRK|FM6|CZ|P5)_[A-Z0-9_]+"),
     "name": re.compile(r'"(?:[^"\\]|\\.)*\b(?:SID|DRUM|CZ-1|CZ|FM6|PROPHET|P5|808|909|CR78|TRIO|WHEEL)\b(?:[^"\\]|\\.)*"'),
+    # Melodee 2.0: an engine is a handle, never a number with a meaning (the microtonal.h `eng_req != 10u` of 1.x)
+    "engine literal": re.compile(r"\b(?:eng_req|engine|eng)\s*[!=]=\s*\(?[1-9][0-9]*u?\b|\b[1-9][0-9]*u?\s*[!=]=\s*(?:\w+(?:->|\.))?(?:eng_req|engine)\b"),
 }
 # What has to stay, each with its reason: (file, kind, the hit's text: regular expressions) -> why. No synth stays: the
 # synths' sources, engines, numbers, names, tags, cost classes and licences are firmware/modules' (shipped.h, the host
@@ -29,8 +31,8 @@ ALLOW = [
     (r"params\.c|ui_smk\.c|browse\.c|icons\.c", r"name", r'"DRUM"|"808"|"909"|"STEEL DRUM"',
      "drum vocabulary, not the synth: GLO > SYSTEM DRUM (General MIDI's drum channel) and its icon, the SMK-37's DRUM "
      "pad mode, the DRUM category and its name words"),
-    (r"eng_phys\.c|ui\.c|ui_input\.c", r"name", r'"HAND DRUM"|"MOD WHEEL ?"',
-     "a word, not a synth: a PHYS preset's name, the mod wheel"),
+    (r"ui\.c|ui_input\.c", r"name", r'"HAND DRUM"|"MOD WHEEL ?"',
+     "a word, not a synth: a preset's name, the mod wheel"),
 ]
 def strip_comments(text):
     out, i, n = [], 0, len(text)

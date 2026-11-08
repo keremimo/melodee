@@ -43,7 +43,7 @@ static void measure(uint32_t engine,uint32_t variant,uint32_t feature,uint32_t n
         fm6_put_patch(0,p,1);fm6_fn[0][FN_ENGINE]=0;
     }else if(engine==ENGI_CZ){
         id=AP_CZ;cz_patch_of(0)->raw[0]=(uint8_t)variant;
-    }else if(engine==3){id=AP_SID;t->p[P_E0]=(int16_t)variant;t->p[P_E2]=(int16_t)(feature?6:1);}
+    }else if(engine==ENGI_SID){id=AP_SID;t->p[P_E0]=(int16_t)variant;t->p[P_E2]=(int16_t)(feature?6:1);}
     else {t->p[P_E0]=(int16_t)(variant?DK_909:DK_808);id=variant?AP_909:AP_808;}
     trk_note_on(t,note,110);audio_batch_active=1;
     uint64_t totals[2]={0},maximum[2]={0};uint32_t calls[2]={0};
