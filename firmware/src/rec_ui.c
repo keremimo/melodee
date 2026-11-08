@@ -17,7 +17,9 @@
  * (kit_rec_poll gives them back when the sheet goes), and the main loop feeds the synth from the ring while the take is
  * recorded. The card alone redraws as its values change (sheet_draw's sig): no page under it. */
 #define KT_HOLD_MS 500u
-#define KT_FEED 4096u                                   /* samples fed to the synth a poll, at most */
+#define KT_FEED 2048u                                   /* samples a call to the synth, at most */
+#define KT_FEED_MS 30u                                  /* a poll feeds until caught up or this long (a frame that draws
+                                                         * the card takes ~100 ms: 4096 samples a poll fell behind) */
 #define KT_RING 16384u                                  /* the take's ring (bytes): 186 ms the main loop may fall behind */
 #define KT_SPARE 4096u                                  /* arena bytes left free beside the take's stage */
 static struct { uint8_t on, slot, pad, saving, msg, trk, held, stop, prep; int16_t prev; uint32_t t, f; } ks;
@@ -183,18 +185,17 @@ static int kt_drawn(void)
     ks.saving = 0;
     return 1;
 }
-/* the ring into the synth, KT_FEED samples at most: its word (MOD3_TK_NONE while it goes on) */
+/* the ring into the synth until it has caught up, KT_FEED_MS at most: its word (MOD3_TK_NONE while it goes on) */
 static uint32_t kt_feed_ring(void)
 {
-    uint32_t budget = KT_FEED, st = MOD3_TK_NONE;
-    while (budget && kt.r != kt.n) {
+    uint32_t t0 = fm1_ms, st = MOD3_TK_NONE;
+    while (kt.r != kt.n && fm1_ms - t0 < KT_FEED_MS) {
         uint32_t k = kt.n - kt.r;
         if (k > kt.cap - kt.ri) k = kt.cap - kt.ri;
-        if (k > budget) k = budget;
+        if (k > KT_FEED) k = KT_FEED;
         st = kt_stream(kt.buf + kt.ri, k, MOD3_TS_FEED);
         kt.ri = kt.ri + k == kt.cap ? 0u : kt.ri + k;
         kt.r += k;
-        budget -= k;
         if (st != MOD3_TK_NONE) break;
     }
     return st;

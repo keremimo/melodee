@@ -37,13 +37,19 @@ static inline uint32_t dke_level(uint32_t m, uint32_t a, uint32_t sc)
     case 0: return 0;
     case 1: return 2u * a > 13u * sc;                            /* 3 | 10 */
     case 2: j = 2u * a > 13u * sc; j += a > 14u * sc; j += 2u * a > 46u * sc; return j;   /* 3 | 10 | 18 | 28 */
-    default: j = a / (4u * sc); return j > 7u ? 7u : j;          /* 2, 6 .. 30 */
+    default:                                                     /* 2, 6 .. 30: a / (4 sc), 7 at most, */
+        sc *= 4u;                                                /* by halves (no divide on the device) */
+        if (a >= 8u * sc) return 7u;
+        j = 0;
+        if (a >= 4u * sc) { j = 4u; a -= 4u * sc; }
+        if (a >= 2u * sc) { j += 2u; a -= 2u * sc; }
+        return j + (a >= sc);
     }
 }
 /* one slice at depth m, scale sf: its error (with the tool's penalty for a predictor running away), the pure one;
- * code 0: not wanted */
-static float dke_slice(const dke_lms_t *st, const int16_t *x, uint32_t m, uint32_t sf, dke_lms_t *out, float *pure,
-                       uint64_t *code)
+ * code 0: not wanted. Past limit it stops (the error so far: already worse than the best) */
+static float dke_slice_lim(const dke_lms_t *st, const int16_t *x, uint32_t m, uint32_t sf, dke_lms_t *out, float *pure,
+                           uint64_t *code, float limit)
 {
     dke_lms_t l = *st;
     float e = 0.0f, ep = 0.0f;
@@ -54,8 +60,14 @@ static float dke_slice(const dke_lms_t *st, const int16_t *x, uint32_t m, uint32
         int32_t r = (DRK_LV[m][bk] * (int32_t)sc) >> 2, s = dke_clip(p + r);
         float er = (float)(x[i] - s), wp = 0.0f;
         ep += er * er;
-        for (uint32_t k = 0; k < 4u; k++) wp += (float)l.w[k] * (float)l.w[k];
-        e += er * er + (wp > 805306367.0f ? wp * (1.0f / 262144.0f) - 3071.0f : 0.0f);
+        /* the penalty needs w.w past 805,306,367: four weights within +-14186 never reach it (4 x 14186^2 is below) */
+        if ((uint32_t)(l.w[0] + 14186) > 28372u || (uint32_t)(l.w[1] + 14186) > 28372u ||
+            (uint32_t)(l.w[2] + 14186) > 28372u || (uint32_t)(l.w[3] + 14186) > 28372u) {
+            for (uint32_t k = 0; k < 4u; k++) wp += (float)l.w[k] * (float)l.w[k];
+            e += wp > 805306367.0f ? wp * (1.0f / 262144.0f) - 3071.0f : 0.0f;
+        }
+        e += er * er;
+        if (e > limit) return e;
         if (code) *code = (*code << b) | bk;
         int32_t d = r >> 4;
         for (uint32_t k = 0; k < 4u; k++) l.w[k] += l.h[k] < 0 ? -d : d;
@@ -63,6 +75,11 @@ static float dke_slice(const dke_lms_t *st, const int16_t *x, uint32_t m, uint32
     }
     *out = l; *pure = ep;
     return e;
+}
+static float dke_slice(const dke_lms_t *st, const int16_t *x, uint32_t m, uint32_t sf, dke_lms_t *out, float *pure,
+                       uint64_t *code)
+{
+    return dke_slice_lim(st, x, m, sf, out, pure, code, 3.4e38f);
 }
 /* depth m's best scale: five around the one the slice's open-loop residual suggests (its mean magnitude, against
  * DRK_SF's geometric midpoints, a bias per depth). Every one of the 16 cost 4.3 times the trials for +0.1 dB on the
@@ -85,9 +102,13 @@ static uint32_t dke_scale(const dke_lms_t *st, const int16_t *x, uint32_t m, flo
     }
     sa = sa / (float)n * DKE_BIAS[m];
     while (e < 15u && DKE_MID[e] < sa) e++;
-    for (uint32_t s = e > 2u ? e - 2u : 0u; s <= e + 2u && s < 16u; s++) {
-        float er = dke_slice(st, x, m, s, &t, &pe, 0);
-        if (er < best) { best = er; *pure = pe; b = s; }
+    /* the estimate first, then its neighbours, each stopped once it is worse than the best so far: the scale of least
+     * error, the lowest on a tie, as trying all five whole */
+    for (uint32_t i = 0; i < 5u; i++) {
+        uint32_t s = i ? (i & 1u ? e - (i + 1u) / 2u : e + i / 2u) : e;
+        if (s >= 16u) continue;                      /* (below 0 wraps: past 15 too) */
+        float er = dke_slice_lim(st, x, m, s, &t, &pe, 0, best);
+        if (er < best || (er == best && s < b)) { best = er; *pure = pe; b = s; }
     }
     return b;
 }
