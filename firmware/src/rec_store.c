@@ -109,6 +109,13 @@ static void rec_recheck(void)
         if (rec_pend >> u & 1u)
             (void)rec_scan_slot(u);
 }
+/* slot u holds a record the audio does not list (its synth refused it, or has not checked it yet): Record kit's sheet
+ * writes a kit whole from the listed one, so a take or a cleared pad there would write over it with an empty kit */
+static int rec_hidden(uint32_t u)
+{
+    st_hdr_t h;
+    return u < ST_NREC && !rec_tab[u].n && st_current(rec_obj(u), &h) >= 0;
+}
 /* slot u emptied: the audio leaves it first, then every copy's header goes (storage.c) */
 static int rec_delete(uint32_t u)
 {

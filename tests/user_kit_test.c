@@ -252,10 +252,13 @@ int main(void)
         ENGINES[ENGI_DRUM] = &ENG_RETIRED; sch_gen++;
         rec_scan();
         int waited = !drk_user[2].n && (rec_pend >> 2 & 1u);
+        int hidden = rec_hidden(2) && !rec_hidden(3);     /* (Record kit's sheet never takes slot 2 for an empty one) */
         ENGINES[ENGI_DRUM] = drum; sch_gen++;
         rec_recheck();                                    /* (eng_module_main.c mod_register: DRUM in SRAM) */
         check("kits found before their synth is listed wait for it, then play (not dropped until a save)",
               waited && drk_user[2].n && rec_len[2] && !drk_user[3].n && !rec_pend);
+        check("... and while it waits its slot is a kit, not an empty slot a take may write over",
+              hidden && !rec_hidden(2));
     }
 
     {   /* delete while it rings */

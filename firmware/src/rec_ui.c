@@ -67,7 +67,7 @@ static void kit_rec_open(void)
     if (transport_busy()) { ui_message("STOP FIRST"); return; }
     if (!c || !(c->flags & MOD3_PD_RECORD) || !n) return;
     if (r >= 0) u = (uint32_t)r;
-    else while (u < n && rec_tab[u].n) u++;
+    else while (u < n && (rec_tab[u].n || rec_hidden(u))) u++;   /* (a kit the audio does not list is still a kit) */
     if (u >= n) { ui_message("8 KITS IN USE"); return; }
     ks.trk = (uint8_t)song.sel; ks.prev = 0;
     if (r != (int32_t)u) {                              /* the keys play the kit recorded into (the kit before: ks.prev) */
@@ -105,7 +105,7 @@ static void kt_pad_turn(int32_t s)
 static void kt_pad_act(void) { kt_pad_turn(1); kt_sheet(0); }
 static void kt_rec_v(char *b)
 {
-    static const char *const MSG[] = {0, "Kept", "Too quiet", "No room", "Not saved"};
+    static const char *const MSG[] = {0, "Kept", "Too quiet", "No room", "Not saved", "In use"};
     const engine_t *g = ENGINES[eng_idx(trk[ks.trk].eng_req)];
     uint32_t e = eng_idx(trk[ks.trk].eng_req);
     if (kt.state == KT_ARMED) str_cpy(b, "Waiting", 10);
@@ -114,9 +114,11 @@ static void kt_rec_v(char *b)
     else if (ks.msg) str_cpy(b, MSG[ks.msg], 10);
     else str_cpy(b, !mod_idle(e) && g->rec_pad && MOD_MAIN(e, g->rec_pad(ks.slot, ks.pad)) ? "Taken" : "Empty", 10);
 }
+#define KT_HIDDEN (MOD3_TK_FLASH + 1u)                  /* ks.msg: the slot holds a kit the audio does not list */
 static int kt_go(void)                                  /* Record: waiting for the first hit */
 {
     if (transport_busy()) { ui_message("STOP FIRST"); return 0; }
+    if (rec_hidden(ks.slot)) { ks.msg = KT_HIDDEN; return 0; }   /* (Delete kit still empties it) */
     kt.pw = kt.n = 0;
     ks.msg = MOD3_TK_NONE;
     kt.state = KT_ARMED;
@@ -132,7 +134,8 @@ static uint32_t kt_take(int16_t *x, uint32_t n, uint32_t cap)   /* the synth's r
 static void kt_clear(void)
 {
     kt.state = KT_OFF;
-    ks.msg = (uint8_t)(kt_take(0, 0, 0) == MOD3_TK_FLASH ? MOD3_TK_FLASH : MOD3_TK_NONE);
+    if (rec_hidden(ks.slot)) ks.msg = KT_HIDDEN;
+    else ks.msg = (uint8_t)(kt_take(0, 0, 0) == MOD3_TK_FLASH ? MOD3_TK_FLASH : MOD3_TK_NONE);
     kt_sheet(2);
 }
 static void kt_del(void) { kt.state = KT_OFF; confirm_open(CF_DEL_KIT, ks.slot); }
