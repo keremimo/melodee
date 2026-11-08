@@ -31,8 +31,9 @@ r_offset + 2); every other relocation must be PC-relative inside the image. The 
 words, by the base difference: a word the list misses (an absolute address in some other form) fails the build instead
 of crashing the device.
 
-The chunks after the address words: PRST (the presets, mod_presets.py), SCHM (the schema), IDNT (who it is), SIGN
-(the signature, last).
+The image is packed in the file when that is smaller (mod_abi3.h MOD3_FILE_PACKED: LZMA, Python's lzma module; the
+loader unpacks it into SRAM). The chunks after the address words: PRST (the presets, mod_presets.py), SCHM (the schema),
+IDNT (who it is), SIGN (the signature, last).
 
 --wasm: the same file with a WASM chunk last, the module's source built as a WebAssembly side module (emcc -fPIC
 -sSIDE_MODULE, MOD_IN_CORE). Melodee Studio's virtual FM-1 (web/core: CORE_MODULES) links it into its own memory and
@@ -40,6 +41,7 @@ table and installs the file without the chunk: the device's file, byte for byte.
 Docker image web/core/build.sh uses (EMSDK_IMAGE). Written to build/modules/wasm/<name>.mmod."""
 import argparse
 import hashlib
+import lzma
 import os
 import re
 import platform
@@ -157,6 +159,49 @@ HEAD = struct.Struct("<IHBBIIIIII16sHBBIHH")        # mod_file3_t, 60 bytes (its
 assert HEAD.size == abi_num("MOD3_HEAD")
 DESC = struct.Struct("<IHHHHBBBBIIII")              # mod_desc_v3 on pi32v2, 32 bytes (eng_module.c asserts it)
 ENG_NOTE_ON, ENG_RENDER = 188, 192                  # mod_engine_v3's note_on and render on pi32v2 (eng_module.c)
+FILE_CHUNKS, FILE_PACKED = abi_num("MOD3_FILE_CHUNKS"), abi_num("MOD3_FILE_PACKED")
+PACK_LCLP, PACK_PB = abi_num("MOD3_PACK_LCLP"), abi_num("MOD3_PACK_PB")
+# a packed image's encoder settings (the loader never sees them): the smallest file wins
+PACK_EFFORT = [{"mode": lzma.MODE_NORMAL, "mf": mf, "nice_len": nice, "depth": 0}
+               for mf in (lzma.MF_BT2, lzma.MF_BT4) for nice in (64, 273)]
+
+
+def pack_filter(lc, lp, pb, **effort):
+    return [{"id": lzma.FILTER_LZMA1, "lc": lc, "lp": lp, "pb": pb, "dict_size": 1 << 16, **effort}]
+
+
+def pack_image(img):
+    """the image packed as module_store.c unpacks it (mod_abi3.h MOD3_FILE_PACKED: the props byte, raw LZMA1 with its
+    end marker, zero bytes to a word) with the props and the settings that make it smallest; None when that is no
+    smaller than the image"""
+    best = None
+    for lc in range(PACK_LCLP + 1):
+        for lp in range(PACK_LCLP + 1 - lc):
+            for pb in range(PACK_PB + 1):
+                for effort in PACK_EFFORT:
+                    data = lzma.compress(img, format=lzma.FORMAT_RAW, filters=pack_filter(lc, lp, pb, **effort))
+                    if best is None or 1 + len(data) < len(best):
+                        best = bytes([lc + 9 * lp + 45 * pb]) + data
+    best += bytes(-len(best) % 4)
+    if unpack_image(best, len(img)) != img:
+        raise SystemExit("mod_build: the packed image does not unpack to the image")
+    return best if len(best) < len(img) else None
+
+
+def unpack_image(b, size):
+    """a packed image back, as strictly as the loader takes it (mod_unpack.h)"""
+    pr = b[0] if b else 255
+    lc, lp, pb = pr % 9, pr // 9 % 5, pr // 45
+    if pr >= 225 or lc + lp > PACK_LCLP or pb > PACK_PB:
+        raise SystemExit("mod_build: a packed image's props are not ones the loader takes")
+    d = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=pack_filter(lc, lp, pb))
+    try:
+        out = d.decompress(b[1:])
+    except lzma.LZMAError as e:
+        raise SystemExit(f"mod_build: a packed image does not unpack ({e})")
+    if not d.eof or len(out) != size or len(d.unused_data) > 3 or any(d.unused_data):
+        raise SystemExit("mod_build: a packed image is not its image's size, or not to its end marker")
+    return out
 
 
 def toolchain():
@@ -386,7 +431,8 @@ def build(src, out, version, defs):
         raise SystemExit(f"mod_build: engine {engine} is {SHIPPED[engine]:016x}'s (firmware/modules/shipped.h), this "
                          f"module is {vendor}/{slug} {mid.hex()}" + ("" if ikey else " (unsigned)") +
                          f": ask for {ENGI_MOD0}..{NENGINES - 1}")
-    body = img + b"".join(struct.pack("<I", w) for w in words)
+    packed = pack_image(img)                         # (the file holds it packed when that is smaller)
+    body = (packed or img) + b"".join(struct.pack("<I", w) for w in words)
     if engine_src:                                   # (the host firmware's makers and descriptions)
         prst = presets_chunk(stem, engine, npre) if npre else b""
         schm = schema_chunk(stem, engine)
@@ -399,16 +445,18 @@ def build(src, out, version, defs):
         (mod_presets.chunk(SCHM_TAG, schm) if schm else b"") + mod_presets.chunk(IDNT_TAG, idnt)
     if ikey:
         chunks += mod_presets.chunk(SIGN_TAG, mod_sign.sign(seed, body + chunks))
-    head = HEAD.pack(FILE_MAGIC, ABI, engine, 1, HEAD.size + len(body) + len(chunks), len(img), nbss,
-                     len(words), uid, zlib.crc32(body + chunks), name.encode()[:16].ljust(16, b"\0"), version, npre, 0,
-                     key, host, 0)
+    head = HEAD.pack(FILE_MAGIC, ABI, engine, FILE_CHUNKS | (FILE_PACKED if packed else 0),
+                     HEAD.size + len(body) + len(chunks), len(packed or img), nbss, len(words), uid,
+                     zlib.crc32(body + chunks), name.encode()[:16].ljust(16, b"\0"), version, npre, 0, key, host,
+                     len(img) if packed else 0)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(head + body + chunks)
     signer = ("Melodee's key" + (" (test)" if seed == TEST_SEED else "")) if melodee and ikey else \
         f"key {ikey.hex()[:16]}" if ikey else "unsigned"
     print(f"module {name}: {vendor}/{slug} ID {mid[::-1].hex()} ({signer}) tag {tag!r}, ABI {ABI} host {host}, engine {engine}, " +
           (f"key {key:08x}, " if key else "") +
-          f"image {len(img)} B, bss {nbss} B, {len(words)} address words, stack {need} B, {npre} presets {len(prst)} B, "
+          f"image {len(img)} B" + (f" (packed {len(packed)} B)" if packed else "") +
+          f", bss {nbss} B, {len(words)} address words, stack {need} B, {npre} presets {len(prst)} B, "
           f"schema {len(schm)} B, " + ("signed, " if ikey else "unsigned, ") +
           f"file {len(head) + len(body) + len(chunks)} B -> {out}")
 
@@ -541,19 +589,22 @@ def presets_chunk(stem, engine, npre):
 
 def check(path):
     b = path.read_bytes()
-    magic, abi, engine, flags, total, image, bss, nrel, huid, crc, name, version, npre, _, key, host, _ = HEAD.unpack_from(b)
+    magic, abi, engine, flags, total, image, bss, nrel, huid, crc, name, version, npre, _, key, host, unpacked = \
+        HEAD.unpack_from(b)
     end = HEAD.size + image + 4 * nrel
-    if magic != FILE_MAGIC or abi != ABI or total != len(b) or \
-            (total != end if not flags else flags != 1 or total < end + 8):
+    if magic != FILE_MAGIC or abi != ABI or total != len(b) or flags & ~(FILE_CHUNKS | FILE_PACKED) or \
+            (total < end + 8 if flags & FILE_CHUNKS else total != end) or bool(flags & FILE_PACKED) != bool(unpacked):
         raise SystemExit(f"{path}: not an ABI {ABI} module file")
     if zlib.crc32(b[HEAD.size:]) != crc:
         raise SystemExit(f"{path}: CRC mismatch")
     img = b[HEAD.size: HEAD.size + image]
+    if flags & FILE_PACKED:
+        img = unpack_image(img, unpacked)
     words = [u32(b, HEAD.size + image + 4 * k) for k in range(nrel)]
     e, n, k, kk, hh = describe(img, words, bss)
     if e != engine or n.encode()[:16] != name.rstrip(b"\0") or k != npre or kk != key or hh != host:
         raise SystemExit(f"{path}: head and descriptor differ")
-    chunks = mod_presets.chunks(b, end) if flags else {}
+    chunks = mod_presets.chunks(b, end) if flags & FILE_CHUNKS else {}
     if npre or mod_presets.TAG in chunks:
         if mod_presets.TAG not in chunks:
             raise SystemExit(f"{path}: {npre} presets, no PRST chunk")
@@ -584,7 +635,8 @@ def check(path):
         raise SystemExit(f"{path}: its SCHM chunk does not check")
     signer = ("Melodee's key" if key == MELODEE_KEY else f"key {key.hex()}") if signed else "unsigned"
     print(f"{path}: {vendor}/{slug} ({n}) ID {mid[::-1].hex()}, {signer}, engine {engine}, ABI {abi} host {host}" +
-          f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
+          f", image {len(img)} B" + (f" (packed {image} B)" if flags & FILE_PACKED else "") +
+          f", bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
 
 
 WASM_TAG = 0x4D534157                          # "WASM": the module as a WebAssembly side module (Studio's core)
@@ -611,7 +663,7 @@ def wasm(path, out, src=None):
     if magic != FILE_MAGIC or abi != ABI or total != len(b) or zlib.crc32(b[HEAD.size:]) != crc:
         raise SystemExit(f"{path}: not an ABI {ABI} module file")
     end = HEAD.size + image + 4 * nrel
-    if flags and WASM_TAG in mod_presets.chunks(bytes(b), end):
+    if flags & FILE_CHUNKS and WASM_TAG in mod_presets.chunks(bytes(b), end):
         raise SystemExit(f"{path}: has a WASM chunk already")
     stem = path.stem
     src = src or (SRC / "firmware" / "modules" / stem / (stem + ".c") if SRC else None)
@@ -629,8 +681,8 @@ def wasm(path, out, src=None):
     emcc([*flags_c, rel(src), "-o", rel(w_out)], root)
     w = w_out.read_bytes()
     body = bytes(b[HEAD.size:]) + mod_presets.chunk(WASM_TAG, w)
-    head = HEAD.pack(magic, abi, engine, 1, HEAD.size + len(body), image, bss, nrel, desc, zlib.crc32(body), name, version,
-                     npre, r0, key, host, r1)
+    head = HEAD.pack(magic, abi, engine, flags | FILE_CHUNKS, HEAD.size + len(body), image, bss, nrel, desc,
+                     zlib.crc32(body), name, version, npre, r0, key, host, r1)
     out.write_bytes(head + body)
     print(f"module {name.rstrip(bytes(1)).decode()}: WebAssembly {len(w)} B, file {len(head) + len(body)} B -> {out}")
 
