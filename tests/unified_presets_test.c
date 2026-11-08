@@ -77,7 +77,7 @@ static void reset(void)
     memset(&chain, 0, sizeof chain);
     chain_defaults(&chain_config);
     memset(proj_slot, 0, sizeof proj_slot);
-    up_cache_reset(); native_cache_reset();
+    up_cache_reset();
     memset(&persist_saved, 0, sizeof persist_saved);
     memset(&settings, 0, sizeof settings);
     memset(&ui, 0, sizeof ui);
@@ -139,14 +139,14 @@ static int compact_save_parity(void)
     int safe=1;
     for(int cut=-3;cut<=17;cut++){              /* a list record: its staged address map, 15 payload pages, its commit record */
         memcpy(nor,flash_before,sizeof nor);*cache=original;
-        up_fav_dirty=up_migrate=1u;
+        up_fav_dirty=1u;
         erase_error=cut==-3;inject_readback=cut==-2;readback_error=0;
         fail_after=cut>=0?cut:-1;
         int rc=up_save_bank(0);readback_error=inject_readback=erase_error=0;fail_after=-1;
         int expected_failure=cut==-3 || cut==-2 || (cut>=0 && cut<17);
         safe &= !!rc==expected_failure;
         safe &= !memcmp(cache,rc?&original:&success,sizeof original);
-        safe &= (up_fav_dirty==!!rc && up_migrate==!!rc);
+        safe &= up_fav_dirty==!!rc;
         if(!rc){
             up_disk_bank_t actual;
             safe &= st_load(up_obj(0),&actual,sizeof actual)==sizeof actual && !memcmp(&actual,&disk,sizeof disk);

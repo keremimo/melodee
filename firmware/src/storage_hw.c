@@ -5,8 +5,8 @@
  * audio keeps up, erases and writes only inside the storage areas, the audio buffer silenced
  * first. The host tests (storage_test.c) provide their own st_* on a simulated NOR. */
 static uint8_t flash_ok;                 /* JEDEC id matched at boot (persist_boot) */
-#define ST_IDLE() fm1_wdt_feed()                /* (storage.c: st_owner_check clears ~80 sectors at an SMK's first boot;
-                                                 * st_convert re-saves the old forms once) */
+#define ST_IDLE() fm1_wdt_feed()                /* (storage.c: st_owner_check clears ~80 sectors at an SMK's first
+                                                 * boot) */
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {
     uint8_t *d = dst;

@@ -40,20 +40,13 @@ int main(void)
                  P_RESERVED45 == P_DETUNE + 1 && P_RESERVED48 + 1 == P_M1SRC && P_M4AMT + 1 == P_FM1_ATK && P_FM4_LEVEL + 1 == P_CHRD && P_VOIC + 1 == P_MPCDEG && P_MPCDEG + 1 == P_LN0 && P_LN7 + 1 == P_LSYNC && P_SPRD + 1 == P_FXTYPE && P_FX3CHAR + 1 == P_FXSEND && P_FXSEND + 1 == P_FXSEND2 && P_FXSEND2 + 1 == P_FXSEND3 && P_FXSEND3 + 1 == P_FXTONE && P_FX3TONE + 1 == P_STRUM && P_STRUM + 1 == P_STROKE && P_STROKE + 1 == P_E0 && P_E0 == 116);
     bad += check("FUN16 fits its record", sizeof(project_store_t) == PROJ_STORE_SIZE);
 
-    {   /* Reconstruct the prior raw layout independently of RAM bitfields. */
+    {   /* the prior raw layout with ten-byte notes (Melodee 1.x's snapshots): refused (the web installer converts it) */
         static uint8_t old[sizeof(project_t)+RECORD_MAX];blank(&q);
-        q.recording[0]=(recorded_note_t){.on=65535, .duration=49321, .note7=127, .vel=91, .owner=255, .step=255, .pitch=-24, .length=1};
         uint32_t at=__builtin_offsetof(project_t,recording),tail=__builtin_offsetof(project_t,pattern);
-        memcpy(old,&q,at);
-        for(uint32_t i=0;i<RECORD_MAX;i++){
-            const recorded_note_t *r=&q.recording[i];uint8_t v[10]={r->on,r->on>>8,r->duration,r->duration>>8,recorded_note(r),r->vel,r->owner,r->step,(uint8_t)r->pitch,recorded_legacy_length(r)};
-            memcpy(old+at+i*10u,v,10);
-        }
+        memcpy(old,&q,at);memset(old+at,0,RECORD_MAX*10u);
         memcpy(old+at+RECORD_MAX*10u,(uint8_t *)&q+tail,sizeof q-tail);
         uint32_t size=sizeof old,sum;memcpy(old+4,&size,4);sum=proj_hash(old,sizeof old-4u);memcpy(old+sizeof old-4u,&sum,4);
-        bad+=check("ten-byte raw snapshots import before RAM packing",sizeof old==16456u&&proj_import_same(&q2,old,sizeof old)&&q2.recording[0].on==65535u&&q2.recording[0].duration==49321u&&q2.recording[0].pitch==-24&&q2.recording[0].vel==91);
-        old[at+4u]=255;sum=proj_hash(old,sizeof old-4u);memcpy(old+sizeof old-4u,&sum,4);
-        bad+=check("legacy raw notes reject invalid fields before bitfield truncation",!proj_import_same(&q2,old,sizeof old));
+        bad+=check("ten-byte raw snapshots (1.x): refused",sizeof old==16456u&&!proj_import_same(&q2,old,sizeof old));
     }
 
     /* a project_t round trip (the host's RAM slots): as stored (a matrix slot, a retired engine's byte, a DRUM step

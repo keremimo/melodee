@@ -45,9 +45,9 @@ int main(void)
     /* pattern_store.c bank_magic / bank_valid: the whole record, its magic at 0: FBKS only (2.0) */
     static const uint32_t rec_w[] = {BANKS_MAGIC};
     static const uint32_t rec_r[] = {BANKS_MAGIC};
-    /* project_stream.c: a saved project as stored (and as BACKUP_GET / PUT carry it): packed; compact still read */
+    /* project_stream.c: a saved project as stored (and as BACKUP_GET / PUT carry it): packed, or a raw record */
     static const uint32_t pj_w[] = {PZ_MAGIC};
-    static const uint32_t pj_r[] = {PZ_MAGIC, PJ_MAGIC, BANKS_MAGIC};
+    static const uint32_t pj_r[] = {PZ_MAGIC, BANKS_MAGIC};
     static const uint32_t kit_w[] = {DRK_KIT_MAGIC};
     static const uint32_t set_w[] = {PERSIST_MAGIC};
     /* project.c template: TPLM (2.0) only */

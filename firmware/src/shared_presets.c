@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Shared-slot adapters and conversion of the immediately preceding formats.
- * Only the main loop accesses banks. Audio keeps independent track patches. */
+/* Shared-slot adapters, the banks' wipe and repair. Only the main loop accesses banks. Audio keeps independent track
+ * patches. */
 static int up_favorite(uint32_t k)
 {
     if(!up_used(k))return 0;
@@ -15,7 +15,7 @@ static void up_favorite_poll(void)
 {
 #if MELODEE_FLASH
     if(!flash_ok || transport_busy() || up_migration_error || !up_fav_dirty)return;
-    for(uint32_t b=0;b<UP_BANKS;b++)if(up_fav_dirty>>b&1u){(void)up_cache_bank(b);if((up_bank_old>>b&1u) || ((up_migrate>>b&1u)&&!up_converting))return;if(up_save_bank(b))return;up_cache_index(b);}
+    for(uint32_t b=0;b<UP_BANKS;b++)if(up_fav_dirty>>b&1u){(void)up_cache_bank(b);if(up_bank_old>>b&1u)return;if(up_save_bank(b))return;up_cache_index(b);}
 #endif
 }
 static int up_favorite_set(uint32_t k,int on)
@@ -82,9 +82,6 @@ static int shared_import(uint32_t e,uint32_t first,uint32_t count,const uint8_t 
     if(transport_busy())return 2;
     for(uint32_t i=0;i<count;i++){
         if(up_old(first+i) && !preset_old_write)return 2;
-#if MELODEE_FLASH
-        if((up_migrate>>((first+i)/UP_PER_BANK)&1u) && !up_converting)return 2;
-#endif
     }
     while(*saved<count){
         uint32_t slot=first+*saved,b=slot/UP_PER_BANK,n=UP_PER_BANK-slot%UP_PER_BANK;if(n>count-*saved)n=count-*saved;
@@ -148,7 +145,7 @@ static int shared_wipe(void)
         if(shared_wipe_bank(UP_BANKS-1u,0))goto failed;
         BOOT_WORK_PROGRESS(++done);
     }
-    up_cache_reset();native_cache_reset();
+    up_cache_reset();
     for(uint32_t b=0;b<UP_BANKS;b++)(void)up_cache_bank(b);
     for(uint32_t tr=0;tr<NTRK;tr++)trk[tr].user=trk[tr].user_native=0;
     recent_n=0;up_gen++;sync_reload=1;
@@ -157,7 +154,7 @@ static int shared_wipe(void)
 failed:
     /* Drop uncommitted cache edits, retain the last committed source/marker,
      * and keep writes locked until recovery is complete. */
-    up_cache_reset();native_cache_reset();
+    up_cache_reset();
     for(uint32_t b=0;b<UP_BANKS;b++)(void)up_cache_bank(b);
     up_migration_error=1;
     BOOT_WORK_END(1);

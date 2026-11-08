@@ -24,7 +24,7 @@ static int ed_bk_kit(uint32_t id) { return id >= ED_BK_KIT0 && id < ED_BK_KIT0 +
 static int ed_bk_kit(uint32_t id) { (void)id; return 0; }
 #endif
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
-#define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a compact one (project_stream.c PJ_HEAD) */
+#define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a packed one (project_stream.c PJ_HEAD) */
 #ifdef REC_STORE                            /* a data record streams into its record (no staging): its own bound */
 #define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? rec_max() : ED_BK_MAX)
 #else
@@ -188,7 +188,7 @@ static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
     if(len>=sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && h->rsize==sizeof(up_disk_rec_t) && h->nslot==UP_PER_BANK){
         const up_disk_bank_t *d=(const up_disk_bank_t *)raw;
         for(uint32_t j=0;j<UP_PER_BANK;j++){up_rec_t r;memset(&r,0,sizeof r);memcpy(&r,d->r[j].head,160u);memcpy(r.tone_extra,d->r[j].extra,46u);
-            if(r.used && (r.ver==UP_VER || r.ver==UP_VER_GRID || r.ver==UP_VER_CZ || r.ver==UP_VER_KIT || r.ver==UP_VER_KIT_GRID || r.ver==UP_VER_FM || r.ver==UP_VER_P5 || r.ver==UP_VER_NATIVE_CZ) && !up_valid(&r))return 0;
+            if(r.used && (r.ver==UP_VER || r.ver==UP_VER_GRID || r.ver==UP_VER_KIT || r.ver==UP_VER_KIT_GRID || r.ver==UP_VER_FM || r.ver==UP_VER_P5 || r.ver==UP_VER_NATIVE_CZ) && !up_valid(&r))return 0;
         }
         return 1;
     }
@@ -222,11 +222,6 @@ static uint32_t ed_bk_commit_inner(void)
             if(full)bank_restore_tail(proj_image_tail());
             return 0;
         }
-        if(!full){
-            proj_bound(&proj_scratch);chain_legacy_defaults(&proj_scratch.chain);
-            if(!bank_pack_tail(proj_image_tail(),&proj_scratch,0))return 2;
-            if(proj_stream_generate(&ed_bk_stage,ed_bk_stage.obj))return 4;
-        }
         if(proj_publish_slot(ed_bk_slot(ed_bk_id),&ed_bk_stage))return 4;
         if(proj_cur==ed_bk_slot(ed_bk_id))proj_cur=PROJ_NO_SLOT;
         sync_reload=1;ui.force=1;return 0;
@@ -236,7 +231,6 @@ static uint32_t ed_bk_commit_inner(void)
     if (ed_bk_project(ed_bk_id)) {
 #if !MELODEE_FLASH || MELODEE_AUDIO_PROFILE
         int full = bank_full(ed_bk_len);
-        bank_wide = bank_p16 = 0;
         if (ed_bk_len && !(full && bank_valid(raw, ed_bk_len))) return 2;
         if (ed_bk_id == 0u) {
             if (!ed_bk_len) return 2;
@@ -248,11 +242,6 @@ static uint32_t ed_bk_commit_inner(void)
             ed_bk_clock();
             if (full) bank_restore(raw);
             return 0;
-        }
-        if (ed_bk_len && !full) {
-            proj_bound(&proj_scratch); chain_legacy_defaults(&proj_scratch.chain);
-            if (!bank_pack(raw, &proj_scratch, 0)) return 2;
-            ed_bk_len = BANK_STORE_SIZE;
         }
 #endif
         if (proj_write_slot(ed_bk_slot(ed_bk_id), raw, ed_bk_len)) return 4;
@@ -288,10 +277,8 @@ static uint32_t ed_bk_commit_inner(void)
         uint32_t bank=ed_bk_preset_bank(ed_bk_id);
 #if MELODEE_FLASH
         if(ed_bk_len && !ed_bk_preset_valid(bank,raw,ed_bk_len))return 2;
-        /* Legacy extension archives had a synthetic UPB1 header. */
-        int compact=bank>=2u && bank<4u && ed_bk_len==3816u && ((const up_bank_t *)raw)->magic==UP_BANK_MAGIC;
-        if(!flash_ok || st_save(up_obj(bank),compact?raw+8u:raw,compact?ed_bk_len-8u:ed_bk_len))return 4;
-        up_cache_reset();native_cache_reset();up_gen++;sync_reload=1;ui.force=1;
+        if(!flash_ok || st_save(up_obj(bank),raw,ed_bk_len))return 4;
+        up_cache_reset();up_gen++;sync_reload=1;ui.force=1;
 #else
         if(ed_bk_len && (ed_bk_len!=sizeof(up_bank_t) || !up_bank_shape(ed_bk_len,((const up_bank_t *)raw)->rsize)))return 2;
         memset(up_cache_bank(bank),0,sizeof(up_bank_t));if(ed_bk_len)memcpy(up_cache_bank(bank),raw,ed_bk_len);
@@ -339,7 +326,7 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
         if (n != 12u || a[6] > 15u || a[11] > 15u) return 1;
         uint32_t len = ed_bk_r32(a + 2);
         if (len > ED_BK_LEN_MAX(a[1]) || (a[1] == 0u && !len) ||
-            (a[1] == 1u && len != sizeof(persist_t) && !tmpl_param_count(len - sizeof(persist_t))) ||
+            (a[1] == 1u && len != sizeof(persist_t) && len != sizeof(persist_t) + sizeof(tmpl_t)) ||
             (!ed_bk_project(a[1]) && !ed_bk_kit(a[1]) && len > BANK_STORE_SIZE) ||   /* (a record: rec_max, above) */
             (ed_bk_preset_bank(a[1])<UP_BANKS && len>3840u) ||
             (a[1]==8u && len)) return 1;

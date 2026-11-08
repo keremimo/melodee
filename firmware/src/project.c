@@ -18,9 +18,6 @@
 #define PROJ_TRK NPART                         /* the tracks a FUN record (and a template) holds: the parts; an FBKL
                                                 * record's tail holds the MIDI-only ones (pattern_store.c) */
 #define PROJ_MAGIC 0x46554E49u                 /* FUN22: one TONE per FX slot; FUN21 and earlier convert */
-#define PROJ_CUT_MAGIC 0x46554E48u             /* FUN21: a low and a high cut per FX slot, read as TONE */
-#define PROJ_PRE_HP_MAGIC 0x46554E47u
-#define PROJ_CUT_NP 125u                       /* FUN21 / TPLK's P_COUNT: three low cuts at P_FXTONE, three high cuts */
 #define PROJ_TONE_WIRE (PROJ_FM6_OFF - 2u*FX_SLOTS) /* reserved tail before the fixed native patches: the shared
                                                     * slots' TONE + 64 (FUN21: their low cuts) */
 #define PROJ_LP_WIRE (PROJ_TONE_WIRE + FX_SLOTS)   /* FUN21: their high cuts; 0 since */
@@ -69,16 +66,6 @@ typedef struct {
     uint16_t user[PROJ_TRK];                    /* shared slot + 1; sound remains embedded independently */
     uint32_t sum;
 } __attribute__((may_alias)) project_t;
-/* The four formerly reserved runtime bytes keep Prophet user-slot origins.
- * Zero means factory/unknown; otherwise the value is slot + 1. */
-static uint8_t *proj_p5_origin(project_t *p,uint32_t track)
-{
-    return track ? &p->rsv2[track-1u] : &p->rsv;
-}
-static uint8_t proj_p5_origin_value(const project_t *p,uint32_t track)
-{
-    return track ? p->rsv2[track-1u] : p->rsv;
-}
 /* The serialized record (its layout grew from FUN7, hence the sizes below). Params are biased
  * bytes, steps pack n/time/flags. Reserved tail is zero and covered by hash.
  * The tail's last 12 bytes (PROJ_NAME_OFF, just before the hash) are the project's name since 1.0:
@@ -105,9 +92,6 @@ static uint8_t proj_p5_origin_value(const project_t *p,uint32_t track)
 #define PROJ_CZ_OFF (PROJ_REC_OFF - PROJ_CZ_BYTES)
 #define PROJ_P5_OFF (PROJ_REC_OFF + RECORD_MAX * 8u)
 #define PROJ_FM6_OFF (PROJ_CZ_OFF - PROJ_TRK * PROJ_VOICE_BYTES)
-#define PROJ_P5_ORIGIN_TAG0 0x50u
-#define PROJ_P5_ORIGIN_TAG1 0x35u
-#define PROJ_P5_ORIGIN_MAX 128u /* native Prophet user collection */
 #define PROJ_MPC_OCT_WIRE (PROJ_TONE_WIRE - 2u) /* tagged bank octaves in the unused project tail */
 #define TMPL_MPC_OCT_G G_RESERVED25             /* template metadata only; remains an inert runtime global */
 
@@ -136,24 +120,9 @@ static int mpc_octaves_unpack(int8_t oct[PROJ_TRK], uint32_t word)
 }
 typedef union { uint32_t align; uint8_t raw[PROJ_STORE_SIZE]; } project_store_t;
 _Static_assert(G_MFXTYPE == PROJ_GLOBALS && G_FXMODE==40u && G_BUDGET==41u && G_MFXTONE==42u && G_COUNT==45u, "old global IDs and wire header stay fixed");
-/* FUN21 / TPLK's two cuts (LO CUT 10 + 10 v Hz, HI CUT 100 + 20 v Hz, 0 OFF) -> the TONE nearest them, the low cut
- * first (TONE holds one); a low cut at or under 150 Hz is what the effects' own floor does now (fx_floor_hz) */
-static int16_t proj_tone_of_cuts(int32_t lo, int32_t hi)
-{
-    int32_t hz, best = 0, err = 1 << 30, v, e;
-    if (lo > 0 && 10 + 10 * lo <= fx_tone_hz(1))
-        lo = 0;
-    hz = lo > 0 ? 10 + 10 * lo : hi > 0 ? 100 + 20 * hi : 0;
-    for (v = 1; hz && v <= FX_TONE_MAX; v++) {
-        e = fx_tone_hz(lo > 0 ? v : -v) - hz;
-        if ((e < 0 ? -e : e) < err) { err = e < 0 ? -e : e; best = lo > 0 ? v : -v; }
-    }
-    return (int16_t)best;
-}
 _Static_assert(sizeof(project_store_t) == 13212u, "FUN17 keeps the FUN16 extent");
 #define PROJ_DEF_SOUND 0xFFu                   /* preset byte: the track's power-on sound, no steps (kept from an
                                                 * import of before 1.0) */
-#define PROJ_DEF_KEEP 0xFEu                    /* .. the 808 DRUM sound, steps and the rest kept (old drums) */
 #if !defined(FM1_IRQ_TARGET)
 project_store_t proj_slot[4];                 /* host-only cache; hardware reads complete projects from NOR */
 static uint8_t proj_bank_slot[4][PROJ_BANK_BYTES];
@@ -181,39 +150,15 @@ static int proj_ok(const project_t *q)
 
 static int proj_unpack(project_t *q, const uint8_t *b);
 static int proj_fn_none(project_t *q);
-/* Prior host/runtime snapshots used ten-byte notes. External FUN/FBKK files
- * have their own fixed codec, but retain this older raw import as well. */
-static int proj_import_note10(project_t *q,const uint8_t *b,uint32_t n)
-{
-    uint32_t magic,size,sum;memcpy(&magic,b,4);memcpy(&size,b+4,4);memcpy(&sum,b+n-4u,4);
-    if(magic!=PROJ_MAGIC||size!=n||sum!=proj_hash(b,n-4u))return 0;
-    uint32_t at=__builtin_offsetof(project_t,recording);
-    for(uint32_t i=0;i<RECORD_MAX;i++){
-        const uint8_t *r=b+at+i*10u;
-        if(r[5]&&(r[4]>127u||r[5]>127u||(int8_t)r[8]<-24||(int8_t)r[8]>24||r[9]>=8u))return 0;
-    }
-    if((const void *)q!=(const void *)b)memcpy(q,b,at);
-    for(uint32_t i=0;i<RECORD_MAX;i++){
-        const uint8_t *r=b+at+i*10u;
-        recorded_note_t v={0};
-        if(r[5])v=(recorded_note_t){.on=(uint16_t)(r[0]|r[1]<<8), .duration=(uint16_t)(r[2]|r[3]<<8), .note7=r[4], .vel=r[5], .owner=r[6], .step=r[7], .pitch=(int8_t)r[8], .length=(r[9]&1u), .extended=(r[9]>>1)};
-        q->recording[i]=v;
-    }
-    uint32_t tail=__builtin_offsetof(project_t,pattern),old=at+RECORD_MAX*10u;
-    /* Forward byte copy also supports an in-place shrinking import. */
-    for(uint32_t i=0;i<sizeof *q-tail;i++)((uint8_t *)q)[tail+i]=b[old+i];
-    q->size=sizeof *q;q->sum=proj_sum(q);return proj_ok(q);
-}
-/* FUN18 / FUN17 / FUN16 or a project_t (host RAM slots) -> q; 0 = not a project. */
+/* a FUN22 record (inside a project record) or a project_t (host RAM slots) -> q; 0 = not a project */
 static int proj_import(project_t *q, const void *b, int n)
 {
-    if (n == (int)PROJ_STORE_SIZE && (((const uint32_t *)b)[0] == PROJ_MAGIC || ((const uint32_t *)b)[0] == PROJ_CUT_MAGIC || ((const uint32_t *)b)[0] == PROJ_PRE_HP_MAGIC || ((const uint32_t *)b)[0] == 0x46554E46u || ((const uint32_t *)b)[0] == 0x46554E45u || ((const uint32_t *)b)[0] == 0x46554E44u || ((const uint32_t *)b)[0] == 0x46554E43u))
+    if (n == (int)PROJ_STORE_SIZE && ((const uint32_t *)b)[0] == PROJ_MAGIC)
         return proj_unpack(q, b) && proj_fn_none(q);
     if (n == (int)sizeof *q && proj_ok((const project_t *)b)) {
         memcpy(q, b, sizeof *q);
         return 1;
     }
-    if(n==(int)(sizeof *q+RECORD_MAX))return proj_import_note10(q,b,(uint32_t)n);
     return 0;
 }
 #ifndef FM1_IRQ_TARGET
@@ -244,24 +189,16 @@ static uint32_t proj_name_get(char *d, const uint8_t *s)   /* its length */
  * np, format flags, then four byte-param tracks and nine-byte steps; FUN8: the patches at PROJ_FM6_OFF. */
 /* Grouping by bank preserves full onset/duration precision and all 1024 hits.
  * The bank directory restores owners; event indices are runtime selection only.
- * An FBKL record (bank_wide, pattern_store.c) keeps the MIDI-only tracks' too: after the parts', their counts in its
- * tail (proj_rec_ext, read before the FUN record); an FBKK record has none (a track there not in use: dropped) */
+ * The FUN record's timed notes go owner by owner (track * NPAT + bank, every one); their counts are in the project
+ * record's tail (proj_rec_ext, read before the FUN record) */
 static uint8_t proj_rec_ext[(NTRK * NPAT * 11u + 7u) / 8u] __attribute__((section(".pool")));
-static uint8_t bank_wide;                              /* the bank record captured or read last is FBKL */
-static uint8_t bank_p16;                               /* .. FBKP (pattern_store.c): its tail counts every owner's notes */
-/* the FUN record's timed notes go owner by owner: FBKP track * NPAT + bank, every one; before it track * NPAT_V1 +
- * bank, the parts' (FBKK) or every track's (FBKL); proj_owner_id: that order's owner as the runtime numbers it */
-static uint32_t proj_owners(void) { return bank_p16 ? NTRK * NPAT : (bank_wide ? NTRK : PROJ_TRK) * NPAT_V1; }
-static uint32_t proj_owner_id(uint32_t o) { return bank_p16 ? o : o / NPAT_V1 * NPAT + o % NPAT_V1; }
-static int proj_owner_ok(uint32_t owner)
-{
-    return owner < NTRK * NPAT && (bank_p16 || (owner % NPAT < NPAT_V1 && owner / NPAT < (bank_wide ? NTRK : PROJ_TRK)));
-}
+static uint32_t proj_owners(void) { return NTRK * NPAT; }
+static int proj_owner_ok(uint32_t owner) { return owner < NTRK * NPAT; }
 static int proj_record_pack(uint8_t *b,const project_t *q)
 {
     uint32_t at=0;
     for(uint32_t o=0;o<proj_owners();o++){
-        uint16_t count=0;uint32_t owner=proj_owner_id(o);
+        uint16_t count=0;uint32_t owner=o;
         for(uint32_t i=0;i<RECORD_MAX;i++){
             const recorded_note_t *r=&q->recording[i];
             if(!r->vel || recorded_owner(r)!=owner)continue;
@@ -272,8 +209,7 @@ static int proj_record_pack(uint8_t *b,const project_t *q)
             wire_bits_put(v,&pos,r->step,8);wire_bits_put(v,&pos,recorded_exponent(r),3);
             wire_bits_put(v,&pos,(uint32_t)(r->pitch+24),6);wire_bits_put(v,&pos,recorded_gate(r),1);count++;
         }
-        uint32_t dir=o*11u;
-        if(!bank_p16 && o<PROJ_TRK*NPAT_V1)wire_bits_put(b+PROJ_REC_DIR,&dir,count,11);   /* (FBKP: in its tail) */
+        (void)count;                                  /* (the counts: the tail's, pattern_store.c) */
     }
     return 1;
 }
@@ -281,8 +217,8 @@ static int proj_record_unpack(project_t *q,const uint8_t *b)
 {
     uint32_t at=0;
     for(uint32_t o=0;o<proj_owners();o++){
-        uint32_t fun=!bank_p16 && o<PROJ_TRK*NPAT_V1,owner=proj_owner_id(o),dir=(fun||bank_p16?o:o-PROJ_TRK*NPAT_V1)*11u;
-        uint16_t count=(uint16_t)wire_bits_get(fun?b+PROJ_REC_DIR:proj_rec_ext,&dir,11);
+        uint32_t owner=o,dir=o*11u;
+        uint16_t count=(uint16_t)wire_bits_get(proj_rec_ext,&dir,11);
         if(count>RECORD_MAX-at)return 0;
         for(uint32_t i=0;i<count;i++){
             recorded_note_t *r=&q->recording[at];const uint8_t *v=b+PROJ_REC_OFF+at++*8u;uint32_t pos=0;
@@ -376,96 +312,59 @@ static int proj_pack(project_store_t *out, const project_t *q)
     sum = proj_hash(b, PROJ_STORE_SIZE - 4u); memcpy(b + PROJ_STORE_SIZE - 4u, &sum, 4);
     return 1;
 }
-/* the motion of a FUN7 written with np parameters (np < P_COUNT: before the chord keys, 89) -> today's ids:
- * an event names a parameter id, and the ids from that store's P_E0 (np - 8) on moved up with P_E0, as its
- * values did (params_by_count); the ones below kept theirs */
-static void proj_motion_ids(motion_store_t *m, uint32_t np)
-{
-    uint32_t i;
-    for (i = 0; i < m->count && i < MOTION_MAX; i++)
-        if (!motion_native_event(m->event[i].param,m->event[i].value) && np != P_COUNT && m->event[i].param >= np - 8u && m->event[i].param < np)
-            m->event[i].param = (uint8_t)(m->event[i].param + P_COUNT - np);
-}
-/* FUN18 / FUN17 / FUN16 share fixed patches/timing offsets. FUN18 packs eight-byte steps.
- * FUN17 stores its original FX in
- * global wire padding and omits them from the sequential parameter bytes;
- * np still names the runtime layout, so engine motion IDs remain unambiguous. */
+/* the FUN record inside a project record (2.0: FUN22 with today's P_COUNT parameters; 1.x's forms are the web
+ * installer's to convert) */
 static int proj_unpack(project_t *q, const uint8_t *b)
 {
     uint32_t pos = 68u, t, i, magic, size, sum, np = b[66];
     const uint32_t end = PROJ_NAME_OFF - PROJ_DRUM_BYTES - PROJ_REC_DIR_BYTES - PROJ_P5_BYTES - RECORD_MAX * 8u -
                          PROJ_TRK * PROJ_VOICE_BYTES - PROJ_CZ_BYTES;
     memcpy(&magic, b, 4); memcpy(&size, b + 4, 4); memcpy(&sum, b + PROJ_STORE_SIZE - 4u, 4);
-    if ((magic != PROJ_MAGIC && magic != PROJ_CUT_MAGIC && magic != PROJ_PRE_HP_MAGIC && magic != 0x46554E46u && magic != 0x46554E45u && magic != 0x46554E44u && magic != 0x46554E43u) || size != PROJ_STORE_SIZE || sum != proj_hash(b, PROJ_STORE_SIZE - 4u) ||
-        np < 8u || np > (magic==PROJ_CUT_MAGIC?PROJ_CUT_NP:P_COUNT) || (magic==PROJ_MAGIC && np!=122u && np!=P_COUNT) || (magic==PROJ_CUT_MAGIC && np!=PROJ_CUT_NP) || (magic==PROJ_PRE_HP_MAGIC && np!=119u) || (magic==0x46554E46u && np!=117u) || (magic==0x46554E45u && np!=116u) || (magic==0x46554E44u && np!=108u) || (magic==0x46554E43u && np!=104u) ||
+    if (magic != PROJ_MAGIC || size != PROJ_STORE_SIZE || sum != proj_hash(b, PROJ_STORE_SIZE - 4u) || np != P_COUNT ||
         b[62] >= NTRK || b[63] > NTRK || b[64] > PROJ_PHYS ||
-        68u + PROJ_TRK * (np - (magic==0x46554E44u?PROJ_FX_FIELDS:0u) + 2u + NSTEP * ((magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC || magic==PROJ_PRE_HP_MAGIC || magic==0x46554E46u || magic==0x46554E45u)?8u:9u)) + sizeof q->chain + sizeof q->motion > end)
+        68u + PROJ_TRK * (np + 2u + NSTEP * 8u) + sizeof q->chain + sizeof q->motion > end)
         return 0;
     memset(q, 0, sizeof *q); q->magic = PROJ_MAGIC; q->size = sizeof *q;
     memcpy(q->g,b+8,2u*PROJ_GLOBALS);q->g[G_ENGSEL]=0;   /* (a handle: never stored) */
     for(i=G_MFXTYPE;i<G_COUNT;i++)q->g[i]=GP[i].def;
-    if(magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC || magic==PROJ_PRE_HP_MAGIC || magic==0x46554E46u){
-        if(b[PROJ_FX_WIRE_OFF]!='M' || b[PROJ_FX_WIRE_OFF+1u]!='F' || b[PROJ_FX_WIRE_OFF+2u]!='X' || b[PROJ_FX_WIRE_OFF+3u]>127u)return 0;
-        q->g[G_FXRETURN]=b[PROJ_FX_WIRE_OFF+3u];
-        for(i=0;i<FX_SLOTS*FX_PARAMS;i++){uint32_t id=G_MFXTYPE+i;uint8_t v=b[PROJ_MASTER_WIRE+i];if(v>GP[id].max)return 0;q->g[id]=(i%FX_PARAMS==0u && fx_retired(v))?FX_OFF:v;}
-        for(i=G_RESERVED4;i<=G_RESERVED11;i++)q->g[i]=0;
-    }
-    if(magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC || magic==PROJ_PRE_HP_MAGIC){if(b[PROJ_FX_MODE_OFF]>1u || b[PROJ_FX_MODE_OFF+1u])return 0;q->g[G_FXMODE]=b[PROJ_FX_MODE_OFF];}
-    for(i=0;i<FX_SLOTS && (magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC);i++){
-        uint32_t lo=b[PROJ_TONE_WIRE+i],hi=b[PROJ_LP_WIRE+i];
-        if(magic==PROJ_MAGIC ? lo<64u-FX_TONE_MAX || lo>64u+FX_TONE_MAX || hi : lo>127u || hi>127u)return 0;
-        q->g[G_MFXTONE+i]=magic==PROJ_MAGIC?(int16_t)((int32_t)lo-64):proj_tone_of_cuts((int32_t)lo,(int32_t)hi);
+    if(b[PROJ_FX_WIRE_OFF]!='M' || b[PROJ_FX_WIRE_OFF+1u]!='F' || b[PROJ_FX_WIRE_OFF+2u]!='X' || b[PROJ_FX_WIRE_OFF+3u]>127u)return 0;
+    q->g[G_FXRETURN]=b[PROJ_FX_WIRE_OFF+3u];
+    for(i=0;i<FX_SLOTS*FX_PARAMS;i++){uint32_t id=G_MFXTYPE+i;uint8_t v=b[PROJ_MASTER_WIRE+i];if(v>GP[id].max)return 0;q->g[id]=(i%FX_PARAMS==0u && fx_retired(v))?FX_OFF:v;}
+    for(i=G_RESERVED4;i<=G_RESERVED11;i++)q->g[i]=0;
+    if(b[PROJ_FX_MODE_OFF]>1u || b[PROJ_FX_MODE_OFF+1u])return 0;
+    q->g[G_FXMODE]=b[PROJ_FX_MODE_OFF];
+    for(i=0;i<FX_SLOTS;i++){
+        uint32_t tone=b[PROJ_TONE_WIRE+i];
+        if(tone<64u-FX_TONE_MAX || tone>64u+FX_TONE_MAX || b[PROJ_LP_WIRE+i])return 0;
+        q->g[G_MFXTONE+i]=(int16_t)((int32_t)tone-64);
     }
     q->g[G_RESERVED24]=0;
-    if(magic==0x46554E44u)for(i=G_RESERVED4;i<=G_RESERVED11;i++)q->g[i]=0;
     q->sel = b[62]; q->parts = b[63]; q->phys = b[64];
     {
         uint32_t banks = b[65] | (uint32_t)b[67] << 8;
         for (t = 0; t < PROJ_TRK; t++) q->pattern[t] = (uint8_t)((banks >> (3u * t) & 7u) | (banks >> (12u + t) & 1u) << 3);
     }
     for (t = 0; t < PROJ_TRK; t++) {
-        int16_t values[PROJ_CUT_NP], def[P_COUNT];
+        int16_t values[P_COUNT], def[P_COUNT];
         for (i = 0; i < np; i++) {
-            if(magic==0x46554E44u && i>=P_FXTYPE && i<=P_FXCHAR){
-                uint32_t value=b[PROJ_FX_WIRE_OFF+t*PROJ_FX_FIELDS+i-P_FXTYPE];
-                if(value>(uint32_t)TP[i].max)return 0;values[i]=(int16_t)value;
-            }else {if(b[pos]>191u)return 0;values[i]=(int16_t)b[pos++]-64;}
+            if (b[pos] > 191u) return 0;
+            values[i] = (int16_t)b[pos++] - 64;
         }
         if (b[pos] >= NENGINES) return 0;          /* (a handle past ours: damaged, a fork's) */
         q->t[t].engine = (uint8_t)eng_in(b[pos++]); q->t[t].preset = b[pos++];   /* (its handle here: the record's entries, eng_map.c) */
         for (i = 0; i < P_COUNT; i++) def[i] = param_desc_of(q->t[t].engine % NENGINES, i)->def;
         params_by_count(q->t[t].p, values, np, def);
-        if (magic != PROJ_MAGIC)
-            q->t[t].p[P_TUNING] = 0;                   /* (before FUN22 the slot may hold a retired effect's value) */
-        if (magic == PROJ_CUT_MAGIC) {
-            q->t[t].p[P_STRUM] = q->t[t].p[P_STROKE] = 0; /* old high cuts occupied these new IDs */
-        }
-        if (magic == PROJ_CUT_MAGIC)                   /* (FUN21: P_FXTONE.. held the low cuts, the high cuts after) */
-            for (i = 0; i < FX_SLOTS; i++)
-                q->t[t].p[P_FXTONE + i] = proj_tone_of_cuts(values[P_FXTONE + i], values[P_FXTONE + FX_SLOTS + i]);
-        for (i = 0; i < NSTEP; i++) {
-            step_t *s = &q->t[t].step[i]; uint32_t meta;
-            if(magic==PROJ_MAGIC || magic==PROJ_CUT_MAGIC || magic==PROJ_PRE_HP_MAGIC || magic==0x46554E46u || magic==0x46554E45u){if(!step_wire_unpack(s,b+pos))return 0;pos+=8u;continue;}
-            memcpy(s->note, b + pos, 4); pos += 4; meta = b[pos++];
-            s->n = meta & 7u; s->time = (meta >> 3) & 3u; s->flags = (meta >> 5) & 3u;
-            if (meta & 128u) s->flags |= SF_RECORDED;
-            s->vel = b[pos++]; s->hit = b[pos++]; s->acc = b[pos++]; s->probability = b[pos++];
-            if (s->n > 4u || s->time > ST_REST || s->probability > 101u) return 0;
-            for (uint32_t j = 0; j < 4u; j++) if (s->note[j] > 127u) return 0;
-            if (s->vel > 127u || !step_acc_valid(s)) return 0;
-        }
+        for (i = 0; i < NSTEP; i++, pos += 8u)
+            if (!step_wire_unpack(&q->t[t].step[i], b + pos)) return 0;
     }
     memcpy(&q->chain, b + pos, sizeof q->chain); pos += sizeof q->chain;
     memcpy(&q->motion, b + pos, sizeof q->motion);
     pos += sizeof q->motion;
     if(pos+2u+2u*PROJ_TRK<=PROJ_FM6_OFF && b[pos]=='U' && b[pos+1u]==3u){
         for(t=0;t<PROJ_TRK;t++){uint32_t user=b[pos+2u+2u*t]|(uint32_t)b[pos+3u+2u*t]<<8;q->user[t]=(uint16_t)(user<=384u?user:0);}
-    }else if(pos+2u+PROJ_TRK<=PROJ_FM6_OFF && b[pos]==PROJ_P5_ORIGIN_TAG0 && b[pos+1u]==PROJ_P5_ORIGIN_TAG1){
-        for(t=0;t<PROJ_TRK;t++){uint32_t origin=b[pos+2u+t];if(origin && origin<=128u){uint32_t slot=origin-1u,bank=slot/26u,k=slot%26u,spill=bank*8u+k-18u;q->user[t]=(uint16_t)(1u+(k<18u?(16u+bank)*18u+k:spill<32u?spill/2u*18u+16u+spill%2u:378u+spill-32u));}}
     }
-    proj_motion_ids(&q->motion, np);
-    motion_tags_in(&q->motion);                        /* (its synths' tags as this device numbers them: eng_map.c) */
-    if (magic == PROJ_MAGIC && np == P_COUNT) {
+    motion_tags_in(&q->motion);                        /* (its synths' tags as this device has them: eng_map.c) */
+    {
         int8_t oct[PROJ_TRK];
         if (!mpc_octaves_unpack(oct, b[PROJ_MPC_OCT_WIRE] | (uint32_t)b[PROJ_MPC_OCT_WIRE+1u] << 8)) return 0;
         for (t = 0; t < PROJ_TRK; t++) q->t[t].mpc_octave = oct[t];
@@ -493,27 +392,6 @@ static int proj_unpack(project_t *q, const uint8_t *b)
 }
 
 #ifndef PROJ_HOST
-/* Old GM projects used this kit before DRUM existed: the kit synth's first preset (its 808 KIT, from its file), applied
- * without passing its index through factory preset browsing. pr: fetched before the audio is held (proj_perc_fetch) */
-static void proj_perc_fetch(preset_entry_t *x) { preset_fetch_into(ship_flag(SHIP_F_GM), 0, x, 0); }
-static void proj_legacy_perc(track_t *t, const preset_t *pr)
-{
-    t->eng_req = (uint8_t)ship_flag(SHIP_F_GM);  /* (the manifest's General MIDI kit synth) */
-    uint32_t i;
-    t->preset = 0;                              /* display metadata; SET remains the legacy kit */
-    for (i = 0; i < P_E0; i++)
-        if (!param_kept(i))
-            t->p[i] = TP[i].def;
-    for (i = 0; i < 8u; i++)
-        t->p[P_E0 + i] = pr->e[i];
-    t->p[P_ATK] = pr->env[0];
-    t->p[P_DEC] = pr->env[1];
-    t->p[P_SUS] = pr->env[2];
-    t->p[P_REL] = pr->env[3];
-    t->p[P_ED_FLT] = pr->fenv;
-    t->p[P_VOICE] = pr->mono ? V_LEGATO : V_POLY;
-}
-
 #ifdef CV_WORK_BYTES
 /* Used synchronously by the main loop, outside drawing. Slot names are
  * cached in proj_meta; drawing never decodes a project into its own canvas.
@@ -564,27 +442,6 @@ static void proj_steps(step_t *s)            /* a loaded sequence stays inside i
         if (s[i].hit) s[i].acc &= s[i].hit;
         else if (s[i].time == ST_REST) s[i].acc = 0;
     }
-}
-
-/* an imported older format may hold values FUN7 cannot pack: keep them inside the fields and ranges */
-static void proj_bound(project_t *q)
-{
-    uint32_t t, i;
-    for (t = 0; t < PROJ_TRK; t++) {
-        proj_steps(q->t[t].step);
-        q->t[t].mpc_octave = (int8_t)clamp(q->t[t].mpc_octave, -3, 3);
-        for (i = 0; i < NSTEP; i++) {
-            step_t *s = &q->t[t].step[i];
-            s->flags &= 7u;
-            s->vel &= 127u;
-            if (s->probability > 101u) s->probability = 0;
-        }
-        for (i = 0; i < P_COUNT; i++) {
-            const param_desc_t *d = param_desc_of(q->t[t].engine % NENGINES, i);
-            q->t[t].p[i] = (int16_t)clamp(q->t[t].p[i], d->min, d->max);
-        }
-    }
-    q->sum = proj_sum(q);
 }
 
 /* Capture (project_capture, the bank tail): place j takes runtime track cap_map(j) = j + cap_track_offset[j] (TRK_GONE: none,
@@ -647,13 +504,11 @@ static int proj_read_slot(uint32_t slot)
     } else { n = sizeof proj_slot[slot]; memcpy(proj_wire_u.raw, &proj_slot[slot], sizeof proj_slot[slot]); }
 #endif
 #if !MELODEE_FLASH
-    bank_wide = bank_p16 = 0;
     int valid = bank_full((uint32_t)n) && bank_valid(proj_wire_u.raw, n);   /* (2.0: FBKS records only) */
 #endif
 #if MELODEE_FLASH && !defined(FM1_IRQ_TARGET)
     if (valid && slot < 4u) {                    /* (the host mirrors hold slots 1..4) */
         if (n == BANK_STORE_SIZE) { pj_image(st_proj_obj(slot), (uint32_t)copy, proj_bank_slot[slot]); memcpy(&proj_slot[slot], proj_bank_slot[slot] + 8u, sizeof proj_slot[slot]); }
-        else { memset(proj_bank_slot[slot], 0, sizeof proj_bank_slot[slot]); proj_bound(&proj_scratch); proj_pack(&proj_slot[slot], &proj_scratch); }
     }
 #endif
     proj_meta[slot].used = (uint8_t)valid;
@@ -965,22 +820,15 @@ static int project_copy(uint32_t from, uint32_t to, const char *name)
     }
     p->sum = proj_sum(p);
 #if MELODEE_FLASH
-    if(n==BANK_STORE_SIZE)memcpy(proj_image_tail()+bank_motion_off()-BANK_ACTIVE_OFF,bank_import_tags,sizeof bank_import_tags);
-    else {
-        proj_bound(p);chain_legacy_defaults(&p->chain);
-        if(!bank_pack_tail(proj_image_tail(),p,0))return 2;
-    }
+    if(n!=BANK_STORE_SIZE)return 2;                    /* (2.0: project records only) */
+    memcpy(proj_image_tail()+bank_motion_off()-BANK_ACTIVE_OFF,bank_import_tags,sizeof bank_import_tags);
     if(proj_save_image(slot))return 2;
 #else
     wire_take();
-    if (n == BANK_STORE_SIZE) {
-        memcpy(proj_wire_u.raw + bank_motion_off(), bank_import_tags, sizeof bank_import_tags);
-        if (!proj_pack((project_store_t *)(proj_wire_u.raw + 8u), p)) return 2;
-        bank_checksum(proj_wire_u.raw);
-    } else {
-        proj_bound(p); chain_legacy_defaults(&p->chain);
-        if (!bank_pack(proj_wire_u.raw, p, 0)) return 2;
-    }
+    if (n != BANK_STORE_SIZE) return 2;               /* (2.0: project records only) */
+    memcpy(proj_wire_u.raw + bank_motion_off(), bank_import_tags, sizeof bank_import_tags);
+    if (!proj_pack((project_store_t *)(proj_wire_u.raw + 8u), p)) return 2;
+    bank_checksum(proj_wire_u.raw);
     if (proj_write_slot(slot, proj_wire_u.raw, BANK_STORE_SIZE)) { ui_message("SAVE ERROR"); return 2; }
 #endif
     if (proj_cur == slot % PROJ_SLOTS) {
@@ -1064,7 +912,7 @@ static int project_restore_runtime(const project_t *input)
             t->p[i] = param_reserved(i) ? 0 : eng_silent(e) && i >= P_E0 ? s->p[i] : (int16_t)clamp(s->p[i], d->min, d->max);
         }
         track_fx_normalize(t->p);
-        t->preset = eng_silent(e) ? s->preset : (uint8_t)(ENGINES[e]->npresets ? (s->preset >= PROJ_DEF_KEEP ? 0u : s->preset) % ENGINES[e]->npresets : 0u);
+        t->preset = eng_silent(e) ? s->preset : (uint8_t)(ENGINES[e]->npresets ? (s->preset == PROJ_DEF_SOUND ? 0u : s->preset) % ENGINES[e]->npresets : 0u);
         t->pattern = p->pattern[k];
         memcpy(t->step, s->step, sizeof t->step);
         proj_steps(t->step);
@@ -1090,20 +938,11 @@ static int project_restore_runtime(const project_t *input)
     undo_clear();                                       /* (ui.c) the undo levels belong to the old project */
     list_forget();                                      /* (browse.c) the tracks' LISTs too */
     undo_depth++;                                       /* and these loads take none */
-    for (k = 0; k < PROJ_TRK; k++) {                        /* the power-on sounds: format 1 (tracks 2..4), old drums */
+    for (k = 0; k < PROJ_TRK; k++) {                        /* the power-on sounds */
         track_t *t = &trk[k];
-        int16_t keep[P_COUNT];
         if (p->t[k].preset == PROJ_DEF_SOUND) {
             apply_preset_to(t, TRK_DEF[k][1]);
             track_defaults_steps(t);
-        } else if (p->t[k].preset == PROJ_DEF_KEEP) {   /* the steps, LEVEL PAN MUTE, LEN DIV SWING GATE kept */
-            memcpy(keep, t->p, sizeof keep);
-            proj_perc_fetch(&pe_tmp);                  /* (the kit synth's file: before the audio is held) */
-            fm1_irq_off();                           /* publish the legacy sound as one bounded parameter batch */
-            proj_legacy_perc(t, &pe_tmp.pr);          /* track-owned parameters stay */
-            for (i = P_AMODE; i <= P_TRANS; i++)        /* the drum part had no arp or scale */
-                t->p[i] = TP[i].def;
-            fm1_irq_on();
         }
         pat_sig[k] = ~steps_sig(t);                     /* a project's steps are the user's */
     }
@@ -1159,28 +998,6 @@ typedef struct {
     uint8_t id[PROJ_TRK][EMAP_ENTRY];
     uint32_t size, magic;                         /* last: the record's end */
 } tmpl_t;
-typedef struct {
-    int16_t g[PROJ_GLOBALS];
-    uint8_t sel, rsv;                             /* (G_COUNT odd: the tracks start on a word) */
-    struct { uint8_t engine, preset; int16_t p[108]; } t[PROJ_TRK];
-    uint8_t fm6[PROJ_TRK][PROJ_VOICE_BYTES];
-    uint8_t voice_fn[PROJ_TRK][PROJ_FN_BYTES];                /* (TPL6) */
-    uint8_t cz[PROJ_TRK][PROJ_TONE_BYTES];
-    uint8_t p5[PROJ_TRK][PROJ_PROGRAM_BYTES];
-    uint8_t drum[PROJ_TRK][PROJ_KIT_BYTES];
-    uint32_t size, magic;                         /* last: the record's end */
-} tmpl_fx_single_t;
-typedef struct {
-    int16_t g[PROJ_GLOBALS];
-    uint8_t sel, rsv;                             /* (G_COUNT odd: the tracks start on a word) */
-    struct { uint8_t engine, preset; int16_t p[104]; } t[PROJ_TRK];
-    uint8_t fm6[PROJ_TRK][PROJ_VOICE_BYTES];
-    uint8_t voice_fn[PROJ_TRK][PROJ_FN_BYTES];                /* (TPL6) */
-    uint8_t cz[PROJ_TRK][PROJ_TONE_BYTES];
-    uint8_t p5[PROJ_TRK][PROJ_PROGRAM_BYTES];
-    uint8_t drum[PROJ_TRK][PROJ_KIT_BYTES];
-    uint32_t size, magic;                         /* last: the record's end */
-} tmpl_fx_legacy_t;
 _Static_assert(sizeof(tmpl_t) == 2u * PROJ_GLOBALS + 2u + PROJ_TRK * (2u + 2u * P_COUNT) + PROJ_TRK * (PROJ_VOICE_BYTES + PROJ_FN_BYTES) + PROJ_CZ_BYTES + PROJ_P5_BYTES + PROJ_TRK*PROJ_KIT_BYTES + 20u + 4u + PROJ_TRK * EMAP_ENTRY + 8u,
                "template layout (P_COUNT, G_COUNT, PROJ_VOICE_BYTES: a conversion)");
 static struct { persist_t p; tmpl_t t; } set_rec;   /* the settings record (data SRAM: the engines' arena keeps the pool) */
@@ -1193,63 +1010,54 @@ static void settings_old_accept(void) { persist_old = tmpl_old = 0; }
 
 static int template_used(void) { return tmpl.magic == TMPL_MAGIC && tmpl.size == sizeof tmpl; }
 
-/* a stored template (len bytes, as tmpl_t is laid out) is today's: its size and magic, valid tones */
-static uint32_t tmpl_param_count(uint32_t len) { return len == sizeof(tmpl_t) ? P_COUNT : 0u; }   /* (2.0's only) */
-static uint32_t tmpl_blob_schema(const uint8_t *b,uint32_t len)
+/* a stored template (len bytes, as tmpl_t is laid out) is today's (TPLM): its size and magic, valid areas */
+static int tmpl_blob_schema(const uint8_t *b, uint32_t len)
 {
-    uint32_t np=tmpl_param_count(len),size,magic;if(!np)return 0;
-    memcpy(&size,b+len-8u,4);memcpy(&magic,b+len-4u,4);
-    return size==len && magic==TMPL_MAGIC ? np : 0u;
+    uint32_t size, magic;
+    if (len != sizeof(tmpl_t))
+        return 0;
+    memcpy(&size, b + len - 8u, 4); memcpy(&magic, b + len - 4u, 4);
+    return size == len && magic == TMPL_MAGIC;
 }
-static int tmpl_blob_valid(const uint8_t *b,uint32_t len)
+static int tmpl_blob_valid(const uint8_t *b, uint32_t len)
 {
-    uint32_t np=tmpl_blob_schema(b,len);
-    if(!np || b[2u*PROJ_GLOBALS]>=NTRK)return 0;
-    if(np==P_COUNT || np==122u){
-        int8_t oct[PROJ_TRK];uint32_t off=2u*TMPL_MPC_OCT_G;
-        if(!mpc_octaves_unpack(oct,b[off]|(uint32_t)b[off+1u]<<8))return 0;
-    }
-    int32_t delta=(int32_t)(PROJ_TRK*2u)*((int32_t)P_COUNT-(int32_t)np);   /* (TPLK: more parameters, below 0) */
-    for(uint32_t k=0;k<PROJ_TRK;k++){
-        if(b[2u*PROJ_GLOBALS+2u+k*(2u+2u*np)]>=NENGINES)return 0;
-        if(!patch_stored_ok(MOD_SCH_STORE_TONE,b+((int32_t)__builtin_offsetof(tmpl_t,cz)-delta)+k*PROJ_TONE_BYTES) ||
-           !patch_stored_ok(MOD_SCH_STORE_PROGRAM,b+((int32_t)__builtin_offsetof(tmpl_t,p5)-delta)+k*PROJ_PROGRAM_BYTES) ||
-           !patch_stored_ok(MOD_SCH_STORE_KIT,b+((int32_t)__builtin_offsetof(tmpl_t,drum)-delta)+k*PROJ_KIT_BYTES))return 0;
-    }
-    if(np>=117u){uint32_t off=(uint32_t)((int32_t)__builtin_offsetof(tmpl_t,master)-delta);
-        for(uint32_t i=0;i<13u;i++)if(b[off+i]>GP[G_MFXTYPE+i].max)return 0;
-        if(b[off+13u]>(np>=119u?1u:0u))return 0;
-        if(np==P_COUNT || np==122u){
-            for(uint32_t i=0;i<FX_SLOTS;i++)if(b[off+14u+i]<64u-FX_TONE_MAX || b[off+14u+i]>64u+FX_TONE_MAX || b[off+17u+i])return 0;
-        }else if(np==PROJ_CUT_NP){
-            for(uint32_t i=14u;i<20u;i++)if(b[off+i]>127u)return 0;
-        }else for(uint32_t i=14u;i<16u;i++)if(b[off+i])return 0;
-    }
+    const tmpl_t *x = (const tmpl_t *)(const void *)b;
+    int8_t oct[PROJ_TRK];
+    if (!tmpl_blob_schema(b, len) || x->sel >= NTRK || x->nid > PROJ_TRK ||
+        !mpc_octaves_unpack(oct, (uint16_t)x->g[TMPL_MPC_OCT_G]))
+        return 0;
+    for (uint32_t k = 0; k < PROJ_TRK; k++)
+        if (x->t[k].engine >= NENGINES || !patch_stored_ok(MOD_SCH_STORE_TONE, x->cz[k]) ||
+            !patch_stored_ok(MOD_SCH_STORE_PROGRAM, x->p5[k]) || !patch_stored_ok(MOD_SCH_STORE_KIT, x->drum[k]))
+            return 0;
+    for (uint32_t i = 0; i < 13u; i++)
+        if (x->master[i] > GP[G_MFXTYPE + i].max)
+            return 0;
+    if (x->master[13] > 1u)
+        return 0;
+    for (uint32_t i = 0; i < FX_SLOTS; i++)
+        if (x->master[14u + i] < 64u - FX_TONE_MAX || x->master[14u + i] > 64u + FX_TONE_MAX || x->master[17u + i])
+            return 0;
     return 1;
 }
-static int tmpl_take(const uint8_t *b,uint32_t len)
+static int tmpl_take(const uint8_t *b, uint32_t len)
 {
-    memset(&tmpl,0,sizeof tmpl);if(!tmpl_blob_valid(b,len))return 0;
-    uint32_t np=tmpl_param_count(len),off=2u*PROJ_GLOBALS+2u;
-    memcpy(tmpl.g,b,sizeof tmpl.g);tmpl.sel=b[2u*PROJ_GLOBALS];tmpl.ntrk=b[2u*PROJ_GLOBALS+1u]<=NTRK?b[2u*PROJ_GLOBALS+1u]:0u;
-    if(np!=P_COUNT && np!=122u)tmpl.g[TMPL_MPC_OCT_G]=0;
-    for(uint32_t k=0;k<PROJ_TRK;k++){
-        int16_t def[P_COUNT],values[PROJ_CUT_NP];tmpl.t[k].engine=b[off++];tmpl.t[k].preset=b[off++];
-        for(uint32_t i=0;i<P_COUNT;i++)def[i]=param_desc_of(tmpl.t[k].engine%NENGINES,i)->def;
-        memcpy(values,b+off,np*2u);off+=np*2u;params_by_count(tmpl.t[k].p,values,np,def);
-        if(np!=P_COUNT && np!=122u)tmpl.t[k].p[P_TUNING]=0;   /* (before TPLL the slot may hold a retired effect's value) */
-        if(np==PROJ_CUT_NP)tmpl.t[k].p[P_STRUM]=tmpl.t[k].p[P_STROKE]=0;
-        if(np==PROJ_CUT_NP)for(uint32_t i=0;i<FX_SLOTS;i++)tmpl.t[k].p[P_FXTONE+i]=proj_tone_of_cuts(values[P_FXTONE+i],values[P_FXTONE+FX_SLOTS+i]);
+    memset(&tmpl, 0, sizeof tmpl);
+    if (!tmpl_blob_valid(b, len))
+        return 0;
+    memcpy(&tmpl, b, sizeof tmpl);
+    if (tmpl.ntrk > NTRK)
+        tmpl.ntrk = 0;
+    for (uint32_t k = 0; k < PROJ_TRK; k++) {          /* (each track's values in their ranges: params_by_count) */
+        int16_t def[P_COUNT], values[P_COUNT];
+        for (uint32_t i = 0; i < P_COUNT; i++)
+            def[i] = param_desc_of(tmpl.t[k].engine % NENGINES, i)->def;
+        memcpy(values, tmpl.t[k].p, sizeof values);
+        params_by_count(tmpl.t[k].p, values, P_COUNT, def);
     }
-    uint32_t native=__builtin_offsetof(tmpl_t,master)-__builtin_offsetof(tmpl_t,fm6);memcpy(tmpl.fm6,b+off,native);
-    for(uint32_t i=0;i<FX_SLOTS*FX_PARAMS;i++){uint32_t id=G_MFXTYPE+i;uint32_t v=np>=117u?b[off+native+i]:(uint32_t)GP[id].def;if(v>GP[id].max)return 0;tmpl.master[i]=(uint8_t)((i%FX_PARAMS==0u && fx_retired((int32_t)v))?FX_OFF:v);}
-    tmpl.master[12]=np>=117u?b[off+native+12u]:(uint8_t)GP[G_FXRETURN].def;if(tmpl.master[12]>127u)return 0;
-    tmpl.master[13]=np>=119u?b[off+native+13u]:0;
-    tmpl.nid=b[__builtin_offsetof(tmpl_t,nid)];memcpy(tmpl.id,b+__builtin_offsetof(tmpl_t,id),sizeof tmpl.id);
-    if(tmpl.nid>PROJ_TRK)return 0;
-    for(uint32_t i=0;i<FX_SLOTS;i++)
-        tmpl.master[14u+i]=(np==P_COUNT || np==122u)?b[off+native+14u+i]:(uint8_t)(64+(np==PROJ_CUT_NP?proj_tone_of_cuts(b[off+native+14u+i],b[off+native+17u+i]):0));
-    tmpl.magic=TMPL_MAGIC;tmpl.size=sizeof tmpl;
+    for (uint32_t i = 0; i < FX_SLOTS * FX_PARAMS; i += FX_PARAMS)
+        if (fx_retired((int32_t)tmpl.master[i]))
+            tmpl.master[i] = FX_OFF;
     return 1;
 }
 
@@ -1580,33 +1388,16 @@ _Static_assert(sizeof set_rec + sizeof mb_saved <= ST_SECTOR - sizeof(st_hdr_t),
 #define FL_JEDEC_OK(id) ((id) == 0x856014u || (id) == 0xB36014u)   /* (host tests without hal/fm1_flash_map.h: the FM-1's parts) */
 #endif
 #if MELODEE_FLASH
-static uint8_t persist_conv_open;                 /* the converter's screen is up */
-static void persist_conv_step(uint32_t done, uint32_t total)
-{
-    if (!done) { BOOT_WORK_BEGIN("UPDATING STORAGE", total); persist_conv_open = 1; }
-    else BOOT_WORK_PROGRESS(done);
-}
 #endif
 #if MELODEE_FLASH
-/* Projects: fill empty RAM slots from flash, so the slot list is right after power-on. A whole record still stored
- * compact or raw (saved by firmware before the packed form) is stored again packed, once: the record itself is not
- * touched, the old copy stays current until the new one is whole (a cut, a write that fails or a pool without room
- * leaves it, for the next boot) */
+/* Projects: fill empty RAM slots from flash, so the slot list is right after power-on (a 1.x record: OLD FORMAT) */
 static void proj_boot_scan(void)
 {
-    persist_conv_open = 0;
     for (uint32_t i = 0; i < PROJ_SLOTS; i++) {
-        st_stream_t w;
-        st_hdr_t h;
-        int copy;
-        if (project_used(i) || proj_read_slot(i) != (int)BANK_STORE_SIZE || pj.on == 2u) continue;
-        if (!persist_conv_open) persist_conv_step(0, PROJ_SLOTS);
-        if ((copy = st_current(st_proj_obj(i), &h)) >= 0 && !proj_stream_repack(&w, st_proj_obj(i), (uint32_t)copy))
-            (void)st_stream_publish(&w);
-        persist_conv_step(i + 1u, PROJ_SLOTS);
+        if (!project_used(i))
+            (void)proj_read_slot(i);
         ST_IDLE();
     }
-    if (persist_conv_open) BOOT_WORK_END(0);
     proj_space();
 }
 #endif
@@ -1656,14 +1447,8 @@ static void persist_boot(void)                    /* before settings_init / pane
 #ifdef RES_BASE
     (void)res_window();                            /* the resource region's installed window: the pool stays out */
 #endif
-    st_old_scan();                                 /* records in an old form? re-saved as list records, once (storage.c) */
-    if (st_old) {
-        persist_conv_open = 0;
-        (void)st_convert(wire_take(), persist_conv_step);
-        if (persist_conv_open) BOOT_WORK_END(0);
-    }
 #ifdef RES_BASE
-    res_boot(st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR) == 0);   /* the resource region (res.c) installed? */
+    res_check();                                   /* the resource region (res.c) installed? */
 #endif
     eng_map_spare = proj_engine_spare;             /* (a lent engine number given back when another is needed) */
 #ifdef MODULE_STORE
@@ -1682,8 +1467,6 @@ static void persist_boot(void)                    /* before settings_init / pane
             if (saved.magic == MEL_BLE_MAGIC) { mb_saved = saved; n -= sizeof saved; }
         }
 #endif
-        int tail_ok = n == (int)sizeof p || (n > (int)sizeof p &&
-            tmpl_blob_schema((const uint8_t *)&proj_wire_u + sizeof p, (uint32_t)n - sizeof p));
         int owned = 0, foreign, future_owner;
         persist_t original;
         memset(&p, 0, sizeof p);
@@ -1695,7 +1478,7 @@ static void persist_boot(void)                    /* before settings_init / pane
         /* Never truncate a foreign extension into our ext block. Legacy PER5
          * is shared with forks, so both settings and the whole tail must match. */
         int old1x = n >= (int)sizeof p && p.magic == PERSIST_MAGIC_1X;   /* (Melodee 1.x's: the web installer converts it) */
-        foreign = future_owner || old1x || (!owned && !(settings_legacy_valid(&p) && tail_ok));
+        foreign = future_owner || old1x || !owned;
         persist_old = tmpl_old = 0;
         persist_pending = persist_repair = 0;
         memset(&tmpl, 0, sizeof tmpl);

@@ -63,45 +63,7 @@ static uint32_t res_window(void)
     st_res_end = RES_BASE + n * ST_SECTOR;
     return n;
 }
-/* This build's region under a header from before the bridge (no reserve): the reserve written into the header, its
- * sector rewritten as it was otherwise (through buf, a sector), so the pool may take the region's tail whatever host
- * installed the update. A cut leaves no valid header: res_ok 0, and the next install writes the region */
-static void res_reserve_mark(uint8_t *buf)
-{
-    res_hdr_t h;
-    if (!res_ok || RES_HEAD + res_want[1] > RES_RESERVE * ST_SECTOR || st_read(RES_BASE, buf, ST_SECTOR)) return;
-    memcpy(&h, buf, sizeof h);
-    if (h.rsv[0]) return;                              /* (a window already: the bridge's, or a later build's) */
-    res_ok = 0;
-    h.rsv[0] = RES_RESERVE;
-    h.hcrc = st_crc32(&h, sizeof h - 4u);
-    if (st_erase(RES_BASE)) return;
-    for (uint32_t off = RES_HEAD; off < ST_SECTOR;) {          /* the payload, then the commit record last */
-        uint32_t k = off < 256u ? 256u - off : 256u;
-        if (st_prog(RES_BASE + off, buf + off, k)) return;
-        off += k;
-    }
-    if (!st_prog(RES_BASE, &h, sizeof h)) res_check();
-    res_window();
-}
-/* boot, after st_convert (moved: no current record left in the reserve). Not installed: the old copies of banks
- * still here go, as begin erases them, since the update loader leaves a region that holds storage records alone
- * (ldr_res); the next install, from any host, writes it */
-static void res_boot(int moved)
-{
-    res_check();
-    if (res_ok) res_reserve_mark(wire_take());
-    if (res_ok || !moved) return;
-    for (uint32_t s = 0; s < RES_RESERVE; s++) {
-        st_hdr_t h;
-        uint32_t at = RES_BASE + s * ST_SECTOR;
-        if (!st_read(at, &h, sizeof h) && h.magic == ST_MAGIC && h.hcrc == st_crc32(&h, sizeof h - 4u))
-            (void)st_erase(at);
-    }
-}
-
-/* begin: refuse while anything could read the region or the flash is in use, invalidate it, move preset banks still
- * in their old pairs here into the preset pool, erase it */
+/* begin: refuse while anything could read the region or the flash is in use, invalidate it, erase it */
 static int res_begin(void)
 {
     if (!flash_ok) return 2;
@@ -110,7 +72,6 @@ static int res_begin(void)
     if (mb.on || MB_ANY(closing)) return 4;
 #endif
     res_ok = 0;
-    (void)st_convert(wire_take(), 0);                  /* (banks of an older layout still here move into the pool) */
     if (st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR)) return 3;
     for (uint32_t s = 0; s < RES_RESERVE; s++)
         if (st_erase(RES_BASE + s * ST_SECTOR)) return 3;

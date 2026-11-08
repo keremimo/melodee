@@ -53,7 +53,7 @@ int main(void)
     up_put(1, &rec); up_cache_reset();
     bad += check("saving another slot retains unknown record bytes", !memcmp(up_rec(0), &bank.r[0], sizeof(up_rec_t)) && up_old(0));
 
-    reset(); st_save(OBJ_NATIVEFM0, old, sizeof old); st_save(OBJ_CZBANK0, old, sizeof old); native_cache_reset();
+    reset(); st_save(OBJ_NATIVEFM0, old, sizeof old); st_save(OBJ_CZBANK0, old, sizeof old); up_cache_reset();
     bad += check("live access protects unreadable FM or CZ banks", native_old(ENGI_FM6, 72) && native_old(ENGI_CZ, 144) && same_object(OBJ_NATIVEFM0, old, sizeof old) && same_object(OBJ_CZBANK0, old, sizeof old));
     before = erases;
     bad += check("native direct saves cannot erase old banks", native_put(ENGI_FM6, 72, FM6_INIT) == 2 && native_put(ENGI_CZ, 144, cz_patch_of(0)->raw) == 2 && erases == before);

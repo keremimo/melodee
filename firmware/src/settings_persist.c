@@ -62,14 +62,6 @@ static int settings_owned(const persist_t *p)
 {
     return !memcmp(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
 }
-/* Legacy Melodee has no owner tag. Require its tagged palette and complete
- * schema, then check the optional template in project.c before accepting it. */
-static int settings_legacy_valid(const persist_t *p)
-{
-    (void)p;
-    return 0;
-}
-
 /* Normalize in place; 1 = read, 0 = invalid. */
 static int settings_import(persist_t *p, int n)
 {

@@ -490,8 +490,6 @@ if core; then
     job outside_ppg
     t "identity: the engine map (UIDs, numbers given, kept), stores carrying their entries and patches, record owners, crash blame, signatures" \
         identity_test -O1 $FW
-    t "the resource region's freed sectors to the pool: a c53538c9 install (53,884-B region) updated, cut at every step, nothing lost, the pool 6 sectors bigger" \
-        res_pool_test -O1 $FW -- "$OUT/res_pool_test" tests/fixtures/pre-phase1-c53538c9-fm1.bin build/melodee-res.bin
     t "capture gating, derived caches and silent-track clocks" performance_test -O2 $FW
     t "canvas drawing overlaps DMA without changing pending pixels" lcd_overlap_test -O1 -w -Ibuild/gen
     t "user presets (UP_PUT parser, bank round trip, versions, PHYS DRUM -> DRUM, grid records)" upreset_test

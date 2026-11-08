@@ -291,32 +291,20 @@ int main(void)
     for (i = 0; i < 8u; i++)
         ok &= v[P_E0 + i] == (int16_t)(50 + 49 + i);
     bad += check("old record (np 57): SLICER kept, matrix defaults, E0..E7 kept", ok);
-    /* records of versions 4 (packed bytes) and 5 (a drum grid) saved before the chord keys (P_COUNT 89, P_E0
-     * 81) and before the FM operator ENVs (69, P_E0 61): their engine values land on today's E0..E7 (83..90),
-     * the chord keys take their defaults (OFF, CLOSE), the operator parameters too for 69 */
+    /* records of versions 4 and 5 saved by Melodee 1.x with fewer parameters (89, 69): refused (2.0 reads today's
+     * P_COUNT only; the web installer converts them) */
     {
         static const uint8_t VERS[2] = {UP_VER, UP_VER_GRID}, NPS[2] = {89, 69};
-        uint32_t a, b;
         ok = 1;
-        for (a = 0; a < 2u; a++)
-            for (b = 0; b < 2u; b++) {
-                uint32_t np = NPS[b];
+        for (uint32_t a = 0; a < 2u; a++)
+            for (uint32_t b = 0; b < 2u; b++) {
                 up_rec_t o;
                 memset(&o, 0, sizeof o);
-                o.used = UP_USED; o.ver = VERS[a]; o.engine = 1; o.np = (uint8_t)np;
+                o.used = UP_USED; o.ver = VERS[a]; o.engine = 1; o.np = NPS[b];
                 memcpy(o.name, "OLD", 3);
-                for (i = 0; i < np; i++)
-                    up_set_value(&o, i, (int16_t)(i % 100u - 30));
-                ok &= up_valid(&o);
-                up_params(&o, v, def);
-                for (i = 0; i < np - 8u; i++)
-                    ok &= v[i] == (int16_t)(i % 100u - 30);
-                for (i = np - 8u; i < P_E0; i++)
-                    ok &= v[i] == mapped_value(i, def[i]);
-                for (i = 0; i < 8u; i++)
-                    ok &= v[P_E0 + i] == (int16_t)((np - 8u + i) % 100u - 30);
+                ok &= !up_valid(&o);
             }
-        bad += check("v4 / v5 records of 89 and 69 parameters: E0..E7 at 83..90, the chord keys their defaults", ok);
+        bad += check("1.x records of 89 and 69 parameters: refused", ok);
     }
     r.ver = UP_VER;
     r.np = P_COUNT;

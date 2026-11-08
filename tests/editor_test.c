@@ -93,7 +93,7 @@ static void reset(void)
     memset(&sx_import,0,sizeof sx_import);memset(&bulk,0,sizeof bulk);resource_release(RES_NOTE_HISTORY);note_transaction_ptr=0;msx_reset();
     memset(&ed_w, 0, sizeof ed_w); memset(&ui, 0, sizeof ui);
     memset(&favorites, 0, sizeof favorites); memset(&settings, 0, sizeof settings); settings_init();
-    memset(proj_slot, 0, sizeof proj_slot); up_cache_reset(); native_cache_reset();
+    memset(proj_slot, 0, sizeof proj_slot); up_cache_reset();
     memset(&um, 0, sizeof um);
     host_progress = 1; host_erases = host_writes = host_wire_n = 0;
     transport_req = panic_req = 0; sx_ready = sx_collect = sx_busy = 0;

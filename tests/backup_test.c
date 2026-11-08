@@ -81,7 +81,7 @@ static void reset(void)
     chain_defaults(&chain_config);
     pattern_init();
     memset(proj_slot, 0, sizeof proj_slot);
-    up_cache_reset(); native_cache_reset();
+    up_cache_reset();
     memset(&persist_saved, 0, sizeof persist_saved);
     memset(&settings, 0, sizeof settings);
     memset(&ui, 0, sizeof ui);
@@ -504,7 +504,7 @@ int main(void)
         const uint32_t ids[] = {1u, 6u, 21u, 9u};
         int intact = 1;
         for (uint32_t k = 0; k < NELEM(objects); k++) intact &= st_save(objects[k], old, sizeof old) == 0;
-        up_cache_reset(); native_cache_reset(); persist_old = 1;
+        up_cache_reset(); persist_old = 1;
         for (uint32_t k = 0; k < NELEM(ids); k++) {
             intact &= list(ids[k], &len, &crc) == 0 && len == sizeof old && crc == st_crc32(old, sizeof old);
             const uint8_t *raw = ed_bk_object(ids[k], &len);

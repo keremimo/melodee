@@ -393,12 +393,9 @@ static void stored(void)
     for (uint32_t k = 0; k < NTRK; k++) assert(trk[k].p[P_TUNING] == werck);
     /* the format stays the one older firmware reads: the same magic, the slot a byte of it */
     assert(!memcmp(wire.raw, "IUNF", 0) && *(const uint32_t *)wire.raw == PROJ_MAGIC);
-    /* a project of before: what the slot held then (a slicer's rate) is no tuning */
-    before.t[0].p[P_TUNING] = before.t[1].p[P_TUNING] = 2;
-    before.t[2].p[P_TUNING] = before.t[3].p[P_TUNING] = 127;
+    /* a project of before (FUN16, Melodee 1.x): refused (the web installer converts it) */
     pack_np(&old, &before, 104u);
-    assert(proj_import_same(&after, old.raw, PROJ_STORE_SIZE));
-    for (uint32_t k = 0; k < PROJ_TRK; k++) assert(after.t[k].p[P_TUNING] == 0);
+    assert(!proj_import_same(&after, old.raw, PROJ_STORE_SIZE));
     /* a retired entry, its take in degrees, saved and back: the stored value, the same notes, the same pitches */
     t = fresh();
     t->p[P_SCALE] = (int16_t)scale_id("KIRN3"); t->p[P_QUANT] = Q_ALL; t->p[P_ROOT] = 2; scale_share(t);
@@ -427,7 +424,7 @@ static void stored(void)
     t->p[P_TUNING] = 0; scale_share(t);
     template_load();
     for (uint32_t k = 0; k < NTRK; k++) assert(trk[k].p[P_TUNING] == werck);
-    puts("scales and tunings: stored in a retired slot, no layout moved, older records read as Equal, old motion inert");
+    puts("scales and tunings: stored in a retired slot, no layout moved, 1.x records refused, old motion inert");
 }
 
 int main(void)

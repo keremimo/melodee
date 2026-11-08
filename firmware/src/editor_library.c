@@ -60,7 +60,7 @@ static int ed_library_handle(uint32_t cmd,const uint8_t *a,uint32_t n)
         for(uint32_t j=0;j<P_COUNT;j++)ed_v(used?values[j]:0);
         /* Phrases no longer load; expose an empty legacy pattern. */
         for(uint32_t j=0;j<32u;j++)ed_b(0);
-        uint32_t kind=used && (up_native(&r)||up_native_cz(&r))?1u:0u;
+        uint32_t kind=used && up_native(&r)?1u:0u;
         if(used && (r.ver==UP_VER_KIT || r.ver==UP_VER_KIT_GRID))kind=4u;
         ed_b(kind);
         if(kind==4u){uint8_t p[MOD3_PATCH_MAX],raw[MOD_SCH_KIT_PACKED],b[MOD_SCH_KIT_PACKED];memset(p,0,sizeof p);if(up_kit_wire(&r,b))patch_unpack(MOD_SCH_STORE_KIT,p,b,MOD_SCH_KIT_PACKED);patch_pack(MOD_SCH_STORE_KIT,raw,p,MOD_SCH_KIT_PACKED);ed_b(MOD_SCH_KIT_PACKED);ed_b(0);ed_bk_pack(raw,sizeof raw);}

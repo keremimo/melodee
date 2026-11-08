@@ -17,6 +17,9 @@ static unsigned char nor[0x100000];
 #define BACKUP_TEST_NO_MAIN 1
 #define BACKUP_TEST_KITS 1
 #include "backup_test.c"
+#ifndef PJ_MAGIC
+#define PJ_MAGIC 0x314A5048u                     /* HPJ1: Melodee 1.x's compact image (web/mel_file.js still knows it) */
+#endif
 /* (DRUM's Record kit take, encoder and record check: built in, modules/drum/kit_take.c) */
 #include <assert.h>
 #include <sys/stat.h>
@@ -335,9 +338,12 @@ static int do_verify(void)
     /* the same bytes with one changed: refused, the slot as it was */
     big[n / 2u] ^= 1u;
     bad += check("mel: a damaged project is refused by the device", put_object(5, big, n) != 0 && st_current(st_proj_obj(3), 0) < 0);
-    /* what the page sends firmware of before the packed form: every firmware reads it */
+    /* the compact form (HPJ1: what the page sends firmware of before the packed form, Melodee 1.x's): 2.0 refuses it */
     n = load("out-project-compact.bin", big, sizeof big);
-    bad += check("mel: the same project in the compact form is accepted too", *(uint32_t *)(void *)big == PJ_MAGIC && put_object(5, big, n) == 0 &&
+    bad += check("mel: the compact form (1.x firmware's) is refused, the slot as it was",
+                 *(uint32_t *)(void *)big == PJ_MAGIC && put_object(5, big, n) != 0 && st_current(st_proj_obj(3), 0) < 0);
+    n = load("out-project.bin", big, sizeof big);
+    bad += check("mel: the packed form into that slot: the same record", put_object(5, big, n) == 0 &&
                  !ps_stored(st_proj_obj(3), rec) && !memcmp(rec, rec2, sizeof rec));
     project_new_blank();
     song.g[G_SLOT] = 4; project_load(3);

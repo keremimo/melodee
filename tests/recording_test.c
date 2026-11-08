@@ -132,11 +132,12 @@ static int standalone_and_template(void)
 {
     raw_begin();track_t *t=&trk[0];seq_stop();pattern_switch(t,7);seq_start();seq_advance(0);
     seq_advance(600);input_on(t,60,90);seq_advance(300);input_off(t,60);seq_stop();
-    project_capture(&proj_scratch);project_store_t bytes;project_t decoded;
-    bank_p16=bank_wide=0;                     /* (a FUN16 on its own: its note directory, four parts of eight banks) */
-    int ok=proj_pack(&bytes,&proj_scratch) && proj_import_same(&decoded,bytes.raw,sizeof bytes) && !project_restore_runtime(&decoded);
+    project_capture(&proj_scratch);static uint8_t rec[BANK_STORE_SIZE];   /* (a whole project record, FBKS: its tail holds
+                                                                            * the timed notes' counts) */
+    int ok=bank_pack(rec,&proj_scratch,1) && bank_valid(rec,sizeof rec) && !project_restore_runtime(&proj_scratch);
+    if(ok)bank_restore(rec);
     raw_replay();seq_advance(599);ok &= t->pattern==7 && !gate_note(t,60);seq_advance(1);ok &= gate_note(t,60);
-    int bad=check("standalone FUN16 restores the active bank and original recorded timing",ok);
+    int bad=check("a project record restores the active bank and original recorded timing",ok);
     seq_stop();t->p[P_RECQ]=6;template_save();tmpl_t saved=tmpl;
     tmpl_take((const uint8_t *)&saved,sizeof saved);
     bad+=check("new templates preserve project timing quantization",tmpl.t[0].p[P_RECQ]==6);

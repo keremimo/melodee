@@ -151,7 +151,7 @@ static int project_pool_test(void)
     return bad;
 }
 
-/* ---- the bridge (2026-11): list records, the converter, the resource window ---- */
+/* ---- the bridge (2026-11): list records, the resource window; 1.x's forms never read ---- */
 /* an old-form preset bank: a copy in the former pool (ST_SMALL_U0 + pool index), payload at 32 (CMP2) */
 static void old_bank(uint32_t obj, uint32_t idx, const uint8_t *d, uint32_t len, uint32_t seq)
 {
@@ -176,13 +176,6 @@ static int bridge_same(uint32_t obj, const uint8_t *d, uint32_t len)
     static uint8_t back[ST_PROJECT_MAX];
     return st_load(obj, back, sizeof back) == (int)len && !memcmp(back, d, len);
 }
-static int bridge_guards(void)                      /* every current list record's guards erased */
-{
-    uint32_t used[ST_LW], seq; int ok = !st_pool_used(used, 0xFFFFu, &seq);
-    for (uint32_t i = 0; i < ST_LN; i++) if ((used[i / 32u] >> (i % 32u)) & 1u)
-        for (uint32_t j = ST_GUARD_OFF; j < ST_GUARD_OFF + ST_GUARD_LEN; j++) ok &= nor[st_lin_at(i) + j] == 0xFFu;
-    return ok;
-}
 #define B_KIT (ST_RFILE0 + 0u)
 #define B_P6 (ST_PFILE0 + 6u)
 static void bridge_fixture(void)                   /* one of every old form */
@@ -194,13 +187,6 @@ static void bridge_fixture(void)                   /* one of every old form */
     old_bank(OBJ_CZBANK0, 60u, bd[3], 2332u, 5u);                                       /* (0x97000) */
     st_pair_save(OBJ_CZBANK0 + 1u, bd[4], 2332u);                                       /* a fixed pair */
     old_list(B_KIT, LK, 7, bd[5], 26656u, 1u);
-    st_old_scan();                                  /* (as every boot does before anything is saved) */
-}
-static int bridge_all(void)
-{
-    return bridge_same(OBJ_BANK0, bd[1], 27904u) && bridge_same(B_P6, bd[2], 10000u) &&
-           bridge_same(OBJ_CZBANK0, bd[3], 2332u) && bridge_same(OBJ_CZBANK0 + 1u, bd[4], 2332u) &&
-           bridge_same(B_KIT, bd[5], 26656u);
 }
 static int bridge_test(void)
 {
@@ -208,7 +194,7 @@ static int bridge_test(void)
     uint8_t buf[256], idx[ST_PROJECT_SECTORS];
     st_hdr_t h;
     for (uint32_t k = 0; k < 6u; k++) for (uint32_t i = 0; i < sizeof bd[k]; i++) bd[k][i] = (uint8_t)(i * 31u + k * 7u + 1u);
-    memset(nor, 0xFF, sizeof nor); st_res_end = FL_RES_HI; st_old = 0;
+    memset(nor, 0xFF, sizeof nor); st_res_end = FL_RES_HI;
     ok = !st_save(ST_PFILE0 + 5u, bd[0], 3u * ST_LIN_PAYLOAD_MAX);
     int c = st_current(ST_PFILE0 + 5u, &h);
     ok &= c >= (int)ST_LIN_C0 && st_rec_sectors(&h, idx) == 3u && bridge_same(ST_PFILE0 + 5u, bd[0], 3u * ST_LIN_PAYLOAD_MAX);
@@ -234,8 +220,12 @@ static int bridge_test(void)
     bad += check("resource window: the pool takes the region's tail only", ok);
     st_res_end = FL_RES_HI;
 
-    /* (the converter of Melodee 1.x's store forms: the web installer's since 2.0) */
-    st_old = 1;
+    /* Melodee 1.x's store forms (fixed pairs with extensions, 0xA8 lists, bank copies in the former pool): never read
+     * since 2.0 (the web installer converts them before the update) */
+    bridge_fixture();
+    bad += check("1.x store forms: not read (a project's A/B pair, an 0xA8 list, a former-pool bank copy, a kit)",
+                 !st_exists(OBJ_BANK0) && !st_exists(B_P6) && !st_exists(OBJ_CZBANK0) && !st_exists(B_KIT) &&
+                 st_current(OBJ_BANK0, &h) < 0 && st_current(B_KIT, &h) < 0);
     return bad;
 }
 

@@ -46,8 +46,8 @@ _Static_assert(ST_PROJECT_SECTORS * 5u <= ST_U_N && ST_U_N < 0x7Fu && ST_SMALL_U
  * (0x93000 + 4 KB * index), on the SMK-37 the pool's own windows. A predicate keeps the fixed places out (OTA
  * staging, the settings pair, the resource region's installed window). Payload in each sector: 32..0xEFF and
  * 0xF08..0xFFF; the 8 bytes at 0xF00 stay erased, so the update loader's record scan (ldr_core.c: +6 reads 0x5441)
- * never takes musical data for an update record. Old forms (fixed pairs, extensions, the 0xA7/0xA8 lists, the bank
- * copies) are still read; the boot converter (st_convert) re-saves them in this form. */
+ * never takes musical data for an update record. The older forms (fixed pairs, extensions, the 0xA7/0xA8 lists, the bank
+ * copies) are Melodee 1.x's: never read (the web installer converts them). */
 #define ST_GUARD_OFF 0xF00u
 #define ST_GUARD_LEN 8u
 #define ST_RUN0 (ST_GUARD_OFF - ST_POOL_PAYLOAD_OFF)   /* 3,808: a sector's payload before the guard */
@@ -582,21 +582,12 @@ static int st_legacy_current(uint32_t obj, st_hdr_t *h)
     return -1;
 }
 
-/* Old forms (fixed pairs, extensions, the 0xA7/0xA8 lists, the bank copies) may still be in the store: st_old_scan
- * at boot says so. While they are, st_current looks at them too; afterwards only at list records */
-static uint8_t st_old = 1;
-/* the copy numbers a pooled object's records can have: the old forms' while st_old (a project's 2..80, the pool
- * index + 2; a preset bank's 2..24, the former preset pool's, then ST_SMALL_U0 + the pool index), then a list
- * record's ST_LIN_C0 + its first sector's linear index */
-static uint32_t st_old_cands(uint32_t obj) { return !st_old ? 0u : st_small(obj) ? ST_SP_N + ST_U_N : ST_U_N; }
-static uint32_t st_cands(uint32_t obj) { return st_old_cands(obj) + ST_LN; }
-static uint32_t st_cand(uint32_t obj, uint32_t i)
-{
-    uint32_t o = st_old_cands(obj);
-    if (i >= o) return ST_LIN_C0 + i - o;
-    return !st_small(obj) || i < ST_SP_N ? i + 2u : ST_SMALL_U0 + i - ST_SP_N;
-}
-#define ST_CANDS_MAX (ST_SP_N + ST_U_N + ST_LN)
+/* the copy numbers a pooled object's records can have: a list record's ST_LIN_C0 + its first sector's linear index
+ * (Melodee 1.x's older forms, the fixed pairs, the 0xA7/0xA8 lists and the bank copies, are never read: the web
+ * installer converts them) */
+static uint32_t st_cands(uint32_t obj) { (void)obj; return ST_LN; }
+static uint32_t st_cand(uint32_t obj, uint32_t i) { (void)obj; return ST_LIN_C0 + i; }
+#define ST_CANDS_MAX ST_LN
 static int st_current(uint32_t obj, st_hdr_t *h)
 {
     if (!st_listed(obj)) return st_legacy_current(obj, h);
@@ -642,7 +633,7 @@ static void st_project_used(uint32_t used[ST_LW], uint32_t obj, uint32_t copy, c
 static int st_pool_used(uint32_t used[ST_LW], uint32_t obj, uint32_t *seq)
 {
     uint8_t seen[(ST_OBJ_END + 7u) / 8u];
-    uint32_t skip = !st_old;                        /* (list records only: a pool object no sector's header names has none) */
+    uint32_t skip = 1;                              /* (a pool object no sector's header names has none) */
     st_read_failed = 0;
     *seq = 1u;
     for (uint32_t w = 0; w < ST_LW; w++) used[w] = 0;
@@ -698,13 +689,13 @@ static int st_project_free(void)
  * leaves it as it was or nothing (an older copy never comes back). 0, or the first error */
 static int st_project_delete(uint32_t obj)
 {
-    uint32_t n = st_cands(obj) + 2u;
+    uint32_t n = st_cands(obj);
     st_pool_gen++;
     for (uint32_t pass = 0; pass < n; pass++) {
         st_hdr_t h, best; uint32_t at = 0; int found = 0;
         for (uint32_t i = 0; i < n; i++) {
-            uint32_t c = i < 2u ? i : st_cand(obj, i - 2u);
-            if ((i < 2u && (st_pfile(obj) || !st_old)) || st_head(obj, c, &h)) continue;
+            uint32_t c = st_cand(obj, i);
+            if (st_head(obj, c, &h)) continue;
             if (!found || (best.seq != h.seq && best.seq - h.seq < 0x80000000u)) { best = h; at = c; found = 1; }
         }
         if (!found) return 0;
@@ -817,82 +808,6 @@ static int st_pair_save(uint32_t obj, const void *src, uint32_t len)
 
 #include "storage_stream.c"
 
-/* ---- the bridge converter ---- */
-/* sector a holds a header the old readers find (a record of an old form, current or not): 1, its object and copy */
-static int st_old_head_at(uint32_t a, uint32_t *obj, uint32_t *copy)
-{
-    st_hdr_t h, c;
-    if (st_fetch(a, &h, sizeof h) || h.magic != ST_MAGIC || h.slot >= ST_LIN_C0 || h.type == OBJ_SETTINGS ||
-        !st_obj_ok(h.type) || !st_copy_ok(h.type, h.slot) || st_sector(h.type, h.slot) != a || st_head(h.type, h.slot, &c))
-        return 0;
-    *obj = h.type; *copy = h.slot;
-    return 1;
-}
-/* st_old from the flash: every old form's first sector lies in the linear space (the FM-1's data flash; the
- * SMK-37's pool windows), so one header per sector tells. A failed read counts as old */
-static void st_old_scan(void)
-{
-    uint32_t o, c;
-    st_old = 1;                                       /* (st_head while scanning sees every form) */
-    st_read_failed = 0;
-    int found = 0;
-    for (uint32_t i = 0; i < ST_LN && !found; i++) found = st_old_head_at(st_lin_at(i), &o, &c);
-    st_old = (uint8_t)(found || st_read_failed);
-}
-/* obj's current record, if it is in an old form, re-saved as a list record through buf (256 bytes a piece); the old
- * one stays current until the new one commits */
-static int st_convert_one(uint32_t obj, void *buf)
-{
-    st_hdr_t h;
-    int copy = st_current(obj, &h);
-    if (copy < 0 || (uint32_t)copy >= ST_LIN_C0) return 0;
-    st_stream_t w;
-    int rc = st_stream_begin(&w, obj, h.len);
-    for (uint32_t off = 0; !rc && off < h.len; off += 256u) {
-        uint32_t n = h.len - off < 256u ? h.len - off : 256u;
-        rc = st_read_range(obj, (uint32_t)copy, off, buf, n) ? -7 : st_stream_write(&w, buf, n);
-    }
-    return rc ? rc : st_stream_publish(&w);
-}
-/* The bridge converter (boot, before anything reads a record; res.c begin): every record still in an old form
- * re-saved as a list record, the smallest first (the denser form never takes more sectors than it frees, so later,
- * bigger ones find room), each committed on its own (a cut resumes at the next boot); then every header the old
- * readers would find erased, unless it is still its object's current one (a record that did not fit stays as it
- * was). step(done, total), if any, shows the work. Returns the records left in an old form */
-#define ST_CONV_MAX 64u
-static int st_convert(void *buf, void (*step)(uint32_t, uint32_t))
-{
-    uint16_t co[ST_CONV_MAX], cl[ST_CONV_MAX];
-    uint32_t n = 0, left = 0;
-    st_old = 1;
-    for (uint32_t o = 0; o < ST_OBJ_END; o++) {
-        uint32_t live = o < OBJ_COUNT ? (uint32_t)st_listed(o) : (uint32_t)st_pfile(o);
-        if (!live) continue;
-        st_hdr_t h;
-        int c = st_current(o, &h);
-        if (c >= 0 && (uint32_t)c < ST_LIN_C0 && n < ST_CONV_MAX) { co[n] = (uint16_t)o; cl[n] = (uint16_t)h.len; n++; }
-    }
-    if (n && step) step(0, n);
-    for (uint32_t d = 0; d < n; d++) {
-        uint32_t m = d;
-        for (uint32_t k = d + 1u; k < n; k++) if (cl[k] < cl[m]) m = k;
-        uint16_t t = co[d]; co[d] = co[m]; co[m] = t; t = cl[d]; cl[d] = cl[m]; cl[m] = t;
-        if (st_convert_one(co[d], buf)) left++;
-        if (step) step(d + 1u, n);
-        ST_IDLE();
-    }
-    for (uint32_t i = 0; i < ST_LN; i++) {
-        uint32_t a = st_lin_at(i), o, c;
-        if (!st_old_head_at(a, &o, &c)) continue;
-        st_hdr_t h;
-        int cur = st_current(o, &h);
-        if (cur >= 0 && (uint32_t)cur == c) continue;      /* still the current one: it did not fit */
-        (void)st_erase(a);
-        ST_IDLE();
-    }
-    st_old_scan();
-    return (int)left;
-}
 /* a current record has a sector in [lo, hi): 1 (-1: a read failed) */
 static int st_held(uint32_t lo, uint32_t hi)
 {
