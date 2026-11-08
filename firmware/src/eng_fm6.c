@@ -1238,4 +1238,5 @@ static const engine_t ENG_FM6 = {
     .legato = fm6_legato,
     .mono_key = fm6_key,
     .post = fm6_post,
+    .wclass = 3,
 };

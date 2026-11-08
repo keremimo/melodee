@@ -25,6 +25,13 @@ def arr(name, ctype, vals, per=12, ram=False):
     return out
 
 
+def shared(name, ctype, lines):
+    """a table the firmware keeps and a native synth module reads in place (firmware/src/module_native.h: the module's
+    compile sees a pointer the loader sets, not a copy)"""
+    return ["#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE   /* (a native module: the firmware's) */",
+            f"static const {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", *lines, "#endif"]
+
+
 def nibbles(steps, first):
     """steps (each 0..15) two per byte, low nibble first (dsp_tables_init adds them up from first)"""
     assert first == 0 and all(0 <= d < 16 for d in steps)
@@ -47,7 +54,7 @@ def main(path):
          "#define TABLE_RAM __attribute__((section(\".data.tables\")))   /* RAM, not XIP flash: per-sample lookups */",
          "#endif", ""]
     # (1025 points: SINE[i + 1] needs no wrap; the users mask)
-    L += arr("SINE", "int16_t", [int(round(32767 * math.sin(2 * math.pi * i / 1024))) for i in range(1025)])
+    L += shared("SINE", "int16_t", arr("SINE", "int16_t", [int(round(32767 * math.sin(2 * math.pi * i / 1024))) for i in range(1025)]))
     # phase increment for pitch in 1/16 semitone, MIDI 0..127
     inc = []
     for p in range(128 * 16):
@@ -58,9 +65,9 @@ def main(path):
     oct_ = inc[1856:2048]
     assert all(inc[q] == oct_[(q + 64) % 192] >> (10 - (q + 64) // 192) for q in range(2048))
     assert all((q + 64) * 21846 >> 22 == (q + 64) // 192 for q in range(2048))
-    L += arr("PITCH_OCT", "uint32_t", oct_, 8)
+    L += shared("PITCH_OCT", "uint32_t", arr("PITCH_OCT", "uint32_t", oct_, 8))
     # Device concert pitch: exact frequency ratios and FM6's Q24 octave offsets.
-    L += arr("A4_RATIO", "uint32_t", [round((1 << 24) * hz / 440) for hz in range(400, 481)], 8)
+    L += shared("A4_RATIO", "uint32_t", arr("A4_RATIO", "uint32_t", [round((1 << 24) * hz / 440) for hz in range(400, 481)], 8))
     L += arr("A4_LOG", "int32_t", [round((1 << 24) * math.log2(hz / 440)) for hz in range(400, 481)], 8)
     L += ["/* phase increment of pitch p in 1/16 semitone, 0..2047 (MIDI 0..127): 440 Hz * 2^((p / 16 - 69) / 12) */",
           "static inline uint32_t pitch_inc(uint32_t p)",
@@ -117,7 +124,7 @@ def main(path):
     L += ["#endif"]  # oversampling
     tanh = arr("P5_TANH", "float", [f"{math.tanh(i / 128):.9e}f" for i in range(1025)])
     tanh[0] = tanh[0].replace(" =", ' __attribute__((section(".dsp_tables"))) =')
-    L += tanh
+    L += shared("P5_TANH", "float", tanh)
     exp2 = arr("P5_EXP2", "float", [f"{2 ** (i / 512):.9e}f" for i in range(514)])
     exp2[0] = exp2[0].replace(" =", ' __attribute__((section(".dsp_tables"))) =')
     L += exp2
@@ -132,7 +139,7 @@ def main(path):
     # soft clip curve for |x| in 0..2 (Q12 in, Q15 out): tanh
     tanh_q15 = arr("TANH_Q15", "int16_t", [int(32767 * math.tanh(i / 256 * 2)) for i in range(257)])
     tanh_q15[0] = tanh_q15[0].replace(" =", ' __attribute__((section(".dsp_tables"))) =')
-    L += tanh_q15
+    L += shared("TANH_Q15", "int16_t", tanh_q15)
     L += fm6_tables()
     L += sid_tables()
     L += sid_kit_tables()

@@ -12,6 +12,7 @@ so it is exact run to run, and it catches a render loop that grew (more work per
 something not inlined any more). Compared with tests/target_budget.txt at +10 %. The host
 CPU check (regress.c) is the primary one; this one sees the target compiler's code.
   tests/target_budget.py [DIS [BUDGET]]      BUDGET_UPDATE=1 rewrites BUDGET"""
+import glob
 import os
 import re
 import sys
@@ -187,6 +188,11 @@ def main():
         print(f"target: skip ({dis} missing: run ./build.sh)")
         return 0
     fns = functions(dis)
+    # the native synth modules built beside the image (tools/mod_build.py: build/modules/<name>.dis): engines that
+    # left the image (SID, DRUM) keep their budgets there; a function the image has stays the image's
+    for mod in sorted(glob.glob(os.path.join(os.path.dirname(dis) or ".", "modules", "*.dis"))):
+        for name, insns in functions(mod).items():
+            fns.setdefault(name, insns)
     res = {n: cost(fns[n]) for n in FUNCS if fns.get(n)}
     # A wrapper may inline away; keep its old budget identity and include
     # all extracted work rather than reporting a missing or zero-cost render.

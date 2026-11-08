@@ -185,7 +185,7 @@ static void head_chip_text(char *b)
         pat_num(b + str_len(b), ui.ptc_dst);
     } else if (ui.home) {                               /* Stage: the engine (a kit: its name, "909 KIT") */
         if (browse_pending()) { uint32_t kk, s = browse_shown(&kk); e = src_engine(s, kk); }
-        if (ENGINES[eng_idx(e)] == &ENG_DRUM && !browse_pending()) sound_name(TSEL, b);
+        if (eng_idx(e) == ENGI_DRUM && !browse_pending()) sound_name(TSEL, b);
         else str_cpy(b, eng_name(eng_idx(e)), 16);
     } else if (sec_map_on()) {                          /* the map: the engine */
         str_cpy(b, eng_name(e), 16);
@@ -985,7 +985,7 @@ static void draw_cards(void)
             /* Rows have room for enum names that the compact parameter formatter abbreviates. */
             if (d->fmt == F_ENUM && col_style == CS_CAPTURE
 #if MELODEE_USER_KITS
-                && !(d->names == N_DRUM_KIT && *vp >= DK_USER0)   /* (a user kit: its own name, as formatted) */
+                && !(drum_kit_names(d) && *vp >= DK_USER0)   /* (a user kit: its own name, as formatted) */
 #endif
                 )
                 str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);

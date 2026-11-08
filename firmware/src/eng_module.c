@@ -13,6 +13,7 @@
  * nothing has used for MOD_IDLE_MS goes back to the flash. Unloading points its engine at ENG_MOD_IDLE first, so no
  * audio block can be inside the module when its block is released. */
 #include "module_abi.h"
+#include "module_native.h"   /* native modules: an engine's own source, its own engine_t (SID, DRUM) */
 
 enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED };   /* mod_slot_t.state */
 typedef struct {
@@ -21,7 +22,9 @@ typedef struct {
     uint32_t len;                                   /* the file's length (0: empty) */
     char name[MOD_NAME_MAX + 1u];
     uint8_t npresets;                               /* (its head: the browser's list without loading it) */
-    const mod_desc_t *d;                            /* MS_LOADED: the descriptor in the block */
+    uint8_t abi;                                    /* MOD_ABI or MOD_ABI_NATIVE */
+    const mod_desc_t *d;                            /* MS_LOADED, ABI 1: the descriptor in the block */
+    const mod_native_t *nd;                         /* MS_LOADED, native: its descriptor */
 } mod_slot_t;
 static mod_slot_t mods[NMOD];
 static uint8_t mod_skipped;                         /* this boot did not load modules (mod_guard: last boot crashed) */
@@ -47,6 +50,18 @@ static const mod_host_t MOD_HOST = {
     mod_pitch_inc, mod_mem_set, mod_mem_copy,
 };
 _Static_assert(CTL == 32 && VOICE_FS == 24000, "ABI 1 freezes the block length and the voice level");
+
+/* ---- the firmware's side of a native module (module_native.h): its data and calls, handed over at load */
+static void *mod_part_mem(uint32_t part, uint32_t bytes) { return resource_get(RES_ENGINE0 + part % NPART, bytes); }
+static void voice_scale_pitch(const track_t *t, voice_t *v, uint32_t note);   /* voice.c */
+static const mod_imports_t MOD_IMPORTS = {
+    trk, &song, &voice_was, &tuning_a4, dith, dith_f, midi_verb, drum_patch, &drum_patch_none,
+    &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen, mod_part_mem, voice_scale_pitch,
+    SINE, TANH_Q15, PITCH_OCT, A4_RATIO, P5_TANH,
+};
+#ifdef FM1_IRQ_TARGET
+_Static_assert(sizeof(mod_native_t) == 28u && MOD_NHEAD == sizeof(mod_file_t) + 4u, "tools/mod_build.py ABI_NATIVE");
+#endif
 _Static_assert(F_INT == MF_INT && F_PCT == MF_PCT && F_CUTOFF == MF_CUTOFF && F_SEMI == MF_SEMI && F_ENUM == MF_ENUM &&
                F_ONOFF == MF_ONOFF, "ABI 1 freezes the parameter formats");
 _Static_assert(sizeof(mod_param_t) == sizeof(param_desc_t) &&

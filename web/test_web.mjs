@@ -1313,8 +1313,13 @@ async function editorModules() {
     const t = E.MODS.head(new Uint8Array(readFileSync(built)));
     ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5, "modules: the built TRIO file's head reads as the firmware's");
   }
+  const sid = join(HERE, "..", "build", "modules", "sid.mmod");     /* a native module (src/module_native.h) */
+  if (existsSync(sid)) {
+    const t = E.MODS.head(new Uint8Array(readFileSync(sid)));
+    ok(t.name === "SID" && t.engine === 3 && t.native && t.key !== null && t.npresets === 32, "modules: the built native SID file's head reads as the firmware's");
+  }
   let list = await E.MODS.list(rq);
-  ok(!list.rc && !list.skipped && list.slots.length === 4 && list.slots.every((x) => !x.len), "modules: four empty slots listed");
+  ok(!list.rc && !list.skipped && list.slots.length === 8 && list.slots.every((x) => !x.len), "modules: eight empty slots listed");
   const r = await E.MODS.upload(rq, f, null);
   list = await E.MODS.list(rq);
   ok(!r.rc && r.slot === 0 && r.engine === 6 && list.slots[0].len === 1052 && list.slots[0].name === "TRIO" && list.slots[0].state === 1,

@@ -62,7 +62,7 @@ static int midi_track_accept(const track_t *t)
            midi_event_source == (uint32_t)song.g[G_MIDI] + 1u || (midi_event_source == 2u && t->p[P_E1]);
 }
 
-static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
+static int drum_track(const track_t *t) { return eng_idx(t->eng_req) == ENGI_DRUM; }   /* (DRUM, built in or a module) */
 
 static void live_note_on(const track_t *t, uint32_t note, uint32_t vel)
 {
@@ -968,7 +968,7 @@ static uint32_t smk_ext_map(const track_t *t, int32_t ks)     /* ks: -5..-1 belo
 {
     const engine_t *e = ENGINES[eng_idx(t->eng_req)];
     int32_t n, b;
-    if (e->keys == drum_keys && drum_isuser(t))         /* a user kit: its first sixteen white keys from C3 */
+    if (eng_idx(t->eng_req) == ENGI_DRUM && drum_isuser(t))   /* a user kit: its first sixteen white keys from C3 */
         return drum_user_key(t, ks);
     if (e->keys && (b = e->keys(t, 0)) >= 0)
         return (uint32_t)clamp(b + ks, 0, 127);

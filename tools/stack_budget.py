@@ -70,6 +70,13 @@ def analyze(ir, dis, src):
     MODULE = '(synth module)'
     if module_budget:
         asm[MODULE], frames[MODULE], direct[MODULE] = [], int(module_budget[1]), set()
+    # A native module (module_native.h) is an engine_t of its own: any engine callback may be one of its functions,
+    # with the stack MOD_NSTACK_MAX allows (tools/mod_build.py --native refuses a module whose paths need more)
+    native = src / 'module_native.h'
+    native_budget = re.search(r'#define MOD_NSTACK_MAX (\d+)u', native.read_text()) if native.exists() else None
+    NATIVE = '(native synth module)'
+    if native_budget:
+        asm[NATIVE], frames[NATIVE], direct[NATIVE] = [], int(native_budget[1]), set()
     # Possible function-pointer values: globals and local function-address uses.
     taken = set(REFERENCE.findall(FUNCTION.sub('', ir))) & fns.keys()
     for name, m in fns.items():
@@ -122,7 +129,7 @@ def analyze(ir, dis, src):
                 engine_callbacks.setdefault(
                     callback_names.index(field), set()).add(fn)
     field_targets = {field: engine_callbacks.get(
-        i, set())for i, field in enumerate(callback_fields)}
+        i, set()) | ({NATIVE} if native_budget else set()) for i, field in enumerate(callback_fields)}
     indirect = {}
     missing = []
     for name, m in fns.items():
@@ -177,6 +184,8 @@ def analyze(ir, dis, src):
                 targets = {n for n in batch_entries if n in asm}
             if not targets and module_budget and '%struct.mod_ctx_t*' in typ:
                 targets = {MODULE}
+            if not targets and native_budget and '%struct.mod_imports_t*' in typ:
+                targets = {NATIVE}                     # (module_store.c: a native module's bind)
             indirect.setdefault(name, set()).update(targets)
             if not targets:
                 missing.append((name, typ, line.strip()))

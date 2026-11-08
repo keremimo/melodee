@@ -10,14 +10,21 @@
 #endif
 #include "eng_phase.c"
 #include "eng_cz.c"
-#include "eng_sid.c"
+#if MELODEE_SID_BUILTIN || MELODEE_DRUM_BUILTIN
+#include "eng_sid.c"                /* SID (a synth module on the device: firmware/modules/sid); KIT SID's chip */
+#endif
 #if MELODEE_LEGACY_EXTRAS
 #include "eng_formant.c"
 #endif
 #include "eng_trio.c"
 #include "eng_wheel.c"
 #include "eng_phys.c"           /* PHYS: DaisySP physical models (phys_dsp.c, MIT) */
-#include "eng_drum.c"           /* DRUM: synthesized 808 circuits (drum_808.c), the 909, a C64's SID (drum_sid.c), CR78, FM */
+#include "drum_map.c"           /* what the firmware knows of DRUM: its lanes, the GM map, the kits' numbers, the pads */
+#include "drum_kit.h"           /* the user kits' records (kit_store.c) */
+#if MELODEE_DRUM_BUILTIN
+#include "eng_drum.c"           /* DRUM: synthesized 808 circuits (drum_808.c), the 909, a C64's SID (drum_sid.c), CR78, FM
+                                 * (a synth module on the device: firmware/modules/drum) */
+#endif
 #if MELODEE_LEGACY_EXTRAS
 #include "eng_noise.c"
 #endif
@@ -51,8 +58,12 @@ static uint8_t mod_at[NENGINES];                    /* engine -> its module's sl
 static uint32_t mod_part_bytes(uint32_t e);
 static int mod_idle(uint32_t e);                    /* e: a stored module not in SRAM (eng_module.c) */
 #endif
+static const engine_t *eng_of(uint32_t e);
 static uint32_t eng_state_size(uint32_t e)
 {
+    const engine_t *g = eng_of(e);
+    if (g->state)                                   /* (the engine's own: SID, DRUM, a native module) */
+        return g->state(0);
 #if MELODEE_MODULES
     if (e < NENGINES && mod_at[e])
         return mod_part_bytes(e);
@@ -72,8 +83,6 @@ static uint32_t eng_state_size(uint32_t e)
     case 2:                                         /* (PHASE: CZ-1's core) */
 #endif
     case ENGI_CZ: return sizeof(cz_part_t);
-    case 3: return sizeof(sid_part_t);              /* SID (eng_sid.c) */
-    case ENGI_DRUM: return sizeof(drum909_part_t);
     case ENGI_FM6: return sizeof(fm6_part_t);
 #if MELODEE_SLICE
     case ENGI_SLICE: return sizeof(slc_rb_t);
@@ -88,10 +97,12 @@ static void eng_state_clear(uint32_t part)
 static void eng_state_reset(void) { for (uint32_t k = 0; k < NPART; k++) eng_state_clear(k); }
 static int eng_state_prepare(const track_t *t)
 {
-    uint32_t size = t->engine==ENGI_DRUM?drum_bytes(t):eng_state_size(t->engine);
+    const engine_t *g = eng_of(t->engine);
+    uint32_t size = g->state ? g->state(t) : eng_state_size(t->engine);
     return !size || resource_get(RES_ENGINE0 + (uint32_t)(t - trk), size) != 0;
 }
 static phys_slot_t *phys_slots(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(phys_slot_t) * PHYS_POLY); }
+#if MELODEE_DRUM_BUILTIN
 static drum909_part_t *drum909_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drum909_part_t)); }
 static drum_lane_t *drum_kit_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drum_lane_t) * DV_NLANE); }
 static dsk_part_t *dsk_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(dsk_part_t)); }
@@ -99,10 +110,13 @@ static dlk_part_t *dlk_part(uint32_t part) { return resource_get(RES_ENGINE0 + p
 #if MELODEE_USER_KITS
 static drk_part_t *drk_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drk_part_t)); }
 #endif
+#endif
 static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + (uint32_t)(t - trk), sizeof(drw_part_t)); }
 static fm6_part_t *fm6_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(fm6_part_t)); }
 static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(cz_part_t)); }
+#if MELODEE_SID_BUILTIN || MELODEE_DRUM_BUILTIN
 static sid_part_t *sid_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(sid_part_t)); }
+#endif
 #if MELODEE_PROPHET
 static p5_part_t *p5_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(p5_part_t)); }
 #endif
@@ -128,7 +142,11 @@ static const engine_t *const ENGINES[NENGINES] = {
 #else
     &ENG_RETIRED,                /* 2: retired PHASE; stored ID reserved (its core: CZ-1's) */
 #endif
+#if MELODEE_SID_BUILTIN
     &ENG_SID,                    /* 3: SID replaces LOFI without reusing a stored ID */
+#else
+    &ENG_RETIRED,                /* 3: SID, a synth module (firmware/modules/sid) */
+#endif
     &ENG_RETIRED,                /* 4: retired SAMPLE; reserved to preserve stored indices */
 #if MELODEE_LEGACY_EXTRAS
     &ENG_FORMANT,                /* 5 VOICE (eng_formant.c: "voice" is a sounding note in voice.c) */
@@ -151,7 +169,11 @@ static const engine_t *const ENGINES[NENGINES] = {
 #else
     &ENG_RETIRED,                /* 9: retired PHYS; stored ID reserved */
 #endif
+#if MELODEE_DRUM_BUILTIN
     &ENG_DRUM,                   /* 10 (ENGI_DRUM) */
+#else
+    &ENG_RETIRED,                /* 10 (ENGI_DRUM): DRUM, a synth module (firmware/modules/drum) */
+#endif
 #if MELODEE_LEGACY_EXTRAS
     &ENG_NOISE,                  /* 11 */
 #else
@@ -175,6 +197,9 @@ static const engine_t *const ENGINES[NENGINES] = {
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
 static inline uint32_t eng_idx(uint32_t e) { return e < NENGINES ? e : 0u; }
+static const engine_t *eng_of(uint32_t e) { return ENGINES[eng_idx(e)]; }
+/* the KIT parameter's value names (DRUM's E1): a user kit's value shows the kit's own name (params.c, ui_draw.c) */
+static int drum_kit_names(const param_desc_t *d) { return d->names && d->names == ENGINES[ENGI_DRUM]->edit[0].names; }
 
 /* preset k (< npresets) of e: its row, or one made on demand (Prophet, CZ-1: their names live in the native data).
  * Made presets take turns in two slots: two can be held at once (main loop only) */
@@ -211,14 +236,29 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     6, 7, 9,
     11,                          /* NOISE */
 #else
-    ENGI_CZ, 3,                   /* CZ-1 SID */
+    ENGI_CZ,                     /* CZ-1 */
+#if MELODEE_SID_BUILTIN
+    3,                           /* SID (else a module: listed when there, at its place below) */
+#endif
 #endif
 #if MELODEE_SLICE
     13,                          /* SLICE */
 #endif
+#if MELODEE_DRUM_BUILTIN
     10,                          /* DRUM */
+#endif
     ENGI_MIDI,
 };
+/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): SID after CZ-1, DRUM
+ * before the MIDI Track as built in; any other after them all */
+static uint32_t eng_order_rank(uint32_t e)
+{
+    static const uint8_t R[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, 3, ENGI_DRUM, ENGI_MIDI};
+    for (uint32_t k = 0; k < sizeof R; k++)
+        if (R[k] == e)
+            return k;
+    return 255u;
+}
 
 /* Retired synth records (ANALOG and DIGITAL since 2.0 too) retain their stored identity and render silence.
  * Never relabel retired records FM6. */
@@ -233,7 +273,8 @@ static int eng_extra_retired(uint32_t e)
 #if !MELODEE_PROPHET_PROTOTYPE
     if (e == ENGI_ANALOG) return 1;
 #endif
-    return e == ENGI_DIGITAL || (!MELODEE_LEGACY_EXTRAS && (e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u));
+    return e == ENGI_DIGITAL || (!MELODEE_LEGACY_EXTRAS && (e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u)) ||
+           (!MELODEE_SID_BUILTIN && e == 3u) || (!MELODEE_DRUM_BUILTIN && e == ENGI_DRUM);   /* (no module for them) */
 }
 /* the engines one can pick, in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */

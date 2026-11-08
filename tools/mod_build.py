@@ -4,6 +4,8 @@
 """Build a synth module (firmware/src/module_abi.h) from one C file: build/modules/<name>.mmod.
 
     tools/mod_build.py firmware/modules/trio/trio.c [-o out.mmod] [--version N]
+    tools/mod_build.py firmware/modules/sid/sid.c [-DNAME=V ...]   (a native module: firmware/src/module_native.h,
+                                              built with the image's -D flags; tools/build.py passes them)
     tools/mod_build.py --check file.mmod      (the file's head, CRC, address list and descriptor)
 
 The module compiles with the firmware's flags, links at address 0 (firmware/modules/sdk/module.ld, mod_rt.c) with
@@ -36,6 +38,18 @@ STACK_MAX = int(re.search(r"#define MOD_STACK_MAX (\d+)u", (SRC / "firmware/src/
 HOST_CALL = 160                                       # a call through the host table (mod_pitch_inc and below)
 NENGINES = 30
 ENGINE_OK = {2, 5, 6, 7, 9, 11} | set(range(22, NENGINES))   # eng_module.c mod_engine_ok
+# native modules (firmware/src/module_native.h): the engine's own source against the firmware's headers, its flags
+# (the audio's optimization: the firmware compiles its audio code at -O2), the 56-byte head with the layout key
+ABI_NATIVE, NDESC_MAGIC, NDESC_SIZE = 2, 0x54414E4D, 28
+HEADN = struct.Struct("<IHBBIIIIII16sHBBI")         # mod_file_t, then the key
+NATIVE_H = (SRC / "firmware/src/module_native.h").read_text()
+NSTACK_MAX = int(re.search(r"#define MOD_NSTACK_MAX (\d+)u", NATIVE_H)[1])
+NIMAGE_MAX = int(re.search(r"#define MOD_NIMAGE_MAX (\d+)u", NATIVE_H)[1])
+NBSS_MAX = int(re.search(r"#define MOD_NBSS_MAX (\d+)u", NATIVE_H)[1])
+NCFLAGS = ["-mcpu=r3", "-mfprev1", "-ffp-contract=off", "-Werror=double-promotion", "-Os", "-ffunction-sections",
+           "-fdata-sections", "-fno-builtin", "-Wall", "-Wno-unused-function", "-Wno-unused-variable",
+           "-Wno-unused-const-variable", "-DFM1_IRQ_TARGET=1"]
+ENGINE_OK_NATIVE = ENGINE_OK | {3, 10}                # (+ SID and DRUM: eng_module.c mod_engine_ok)
 
 
 def toolchain():
@@ -83,6 +97,9 @@ def image_of(elf, base):
         raise SystemExit(f"mod_build: .image at {im['addr']:#x}, not {base:#x}")
     img = d[im["off"]: im["off"] + im["size"]]
     nbss = bss["size"] if bss else 0
+    if bss and nbss and 0 < bss["addr"] - (base + len(img)) < 64:
+        img += bytes(bss["addr"] - (base + len(img)))   # (.bss aligned past the image's end: zeros up to it; the
+                                                        # arena places the block at a word, the module needs no more)
     if bss and nbss and bss["addr"] != base + len(img):
         raise SystemExit("mod_build: .bss does not follow the image")
     words = set()
@@ -207,6 +224,67 @@ def stack_need(dis):
     return max((depth(f) for f in frames), default=0)
 
 
+def is_native(src):
+    return '#include "mod_native.h"' in Path(src).read_text()
+
+
+def describe_native(img, words, bss=0):
+    """the native descriptor (module_native.h mod_native_t, first in the image) as module_store.c checks it"""
+    if u32(img, 0) != NDESC_MAGIC:
+        raise SystemExit("mod_build: no native descriptor first in the image (MOD_NATIVE_EXPORT)")
+    abi, size = struct.unpack_from("<HH", img, 4)
+    if abi != ABI_NATIVE or size != NDESC_SIZE:
+        raise SystemExit(f"mod_build: native descriptor ABI {abi} size {size}, want {ABI_NATIVE} / {NDESC_SIZE}")
+    key, engine, npre = u32(img, 8), img[12], img[13]
+    ws = set(words)
+    for at in (16, 20, 24):                               # name, engine, bind
+        if at not in ws or u32(img, at) >= len(img) + bss:
+            raise SystemExit(f"mod_build: native descriptor word at {at} must be an address in the module")
+    if engine not in ENGINE_OK_NATIVE:
+        raise SystemExit(f"mod_build: engine {engine}: a native module plays as {sorted(ENGINE_OK_NATIVE)}")
+    return engine, cstr(img, u32(img, 16)), npre, key
+
+
+def build_native(src, out, version, defs):
+    stem = src.stem
+    obj, rt = SRC / "build" / "modules" / (stem + ".o"), SRC / "build" / "modules" / "mod_rt.o"
+    e0, e1 = SRC / "build" / "modules" / (stem + ".elf"), SRC / "build" / "modules" / (stem + ".b2.elf")
+    obj.parent.mkdir(parents=True, exist_ok=True)
+    flags = ["-target", "pi32v2", *NCFLAGS, *defs, "-Ifirmware/src", "-Ifirmware/hal", "-Ibuild/gen",
+             "-Ifirmware/modules/sdk"]
+    ld = ["--gc-sections", "--emit-relocs", "-T", SDK / "module.ld"]
+    # as tools/build.py compiles the image's audio code: IR without the optimizer, the once-per-note functions marked
+    # minsize (tools/size_fns.py), then the IR at -O2: the module's code is the code the engine had built in
+    ll, lls = obj.with_suffix(".ll"), obj.with_name(stem + "_size.ll")
+    run_all([("pi32v2/bin/clang", *flags, "-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns", "-c", src, "-o", ll)])
+    subprocess.run([sys.executable, SRC / "tools" / "size_fns.py", ll, lls], check=True, stdout=subprocess.DEVNULL)
+    irflags = [("-O2" if f == "-Os" else f) for f in flags if not f.startswith(("-I", "-D", "-W"))]
+    run_all([("pi32v2/bin/clang", *irflags, "-c", lls, "-o", obj),
+             ("pi32v2/bin/clang", "-target", "pi32v2", *CFLAGS, "-c", SDK / "mod_rt.c", "-o", rt),
+             ("pi32v2/bin/ld", *ld, "--defsym=MOD_BASE=0", obj, rt, "-o", e0),
+             ("pi32v2/bin/ld", *ld, f"--defsym=MOD_BASE={BASE2:#x}", obj, rt, "-o", e1)])
+    dis = run_all([("pi32v2/bin/objdump", "-d", "-mcpu=r3", "-mattr=+fprev1", e0)])
+    e0.with_suffix(".dis").write_text(dis)           # (tests/target_budget.py: the engine's render loops, as built)
+    need = stack_need(dis)
+    if need > NSTACK_MAX:
+        raise SystemExit(f"mod_build: the module needs {need} B of stack, more than MOD_NSTACK_MAX {NSTACK_MAX} B")
+    img, nbss, words = image_of(e0, 0)
+    img1, _, words1 = image_of(e1, BASE2)
+    if words != words1:
+        raise SystemExit("mod_build: the two links list different address words")
+    check_pair(img, img1, words)
+    if len(img) > NIMAGE_MAX or nbss > NBSS_MAX:
+        raise SystemExit(f"mod_build: image {len(img)} B / bss {nbss} B, at most {NIMAGE_MAX} / {NBSS_MAX}")
+    engine, name, npre, key = describe_native(img, words, nbss)
+    body = img + b"".join(struct.pack("<I", w) for w in words)
+    head = HEADN.pack(FILE_MAGIC, ABI_NATIVE, engine, 0, HEADN.size + len(body), len(img), nbss, len(words), 0,
+                      zlib.crc32(body), name.encode()[:16].ljust(16, b"\0"), version, npre, 0, key)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(head + body)
+    print(f"module {name}: native, engine {engine}, key {key:08x}, image {len(img)} B, bss {nbss} B, {len(words)} "
+          f"address words, stack {need} B, file {len(head) + len(body)} B -> {out}")
+
+
 def build(src, out, version):
     obj = SRC / "build" / "modules" / (src.stem + ".o")
     rt = SRC / "build" / "modules" / "mod_rt.o"
@@ -239,6 +317,20 @@ def build(src, out, version):
 
 def check(path):
     b = path.read_bytes()
+    if struct.unpack_from("<H", b, 4)[0] == ABI_NATIVE:
+        magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, _, key = HEADN.unpack_from(b)
+        if magic != FILE_MAGIC or total != len(b) or total != HEADN.size + image + 4 * nrel or desc:
+            raise SystemExit(f"{path}: not a native module file")
+        if zlib.crc32(b[HEADN.size:]) != crc:
+            raise SystemExit(f"{path}: CRC mismatch")
+        img = b[HEADN.size: HEADN.size + image]
+        words = [u32(b, HEADN.size + image + 4 * k) for k in range(nrel)]
+        e, n, k, kk = describe_native(img, words, bss)
+        if e != engine or n.encode()[:16] != name.rstrip(b"\0") or k != npre or kk != key:
+            raise SystemExit(f"{path}: head and native descriptor differ")
+        print(f"{path}: {n} native engine {engine}, key {key:08x}, image {image} B, bss {bss} B, {nrel} address "
+              f"words, version {version}: ok")
+        return
     magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, _ = HEAD.unpack_from(b)
     if magic != FILE_MAGIC or abi != ABI or total != len(b) or total != HEAD.size + image + 4 * nrel:
         raise SystemExit(f"{path}: not an ABI {ABI} module file")
@@ -258,11 +350,18 @@ def main():
     ap.add_argument("-o", "--out", type=Path)
     ap.add_argument("--version", type=int, default=1)
     ap.add_argument("--check", action="store_true", help="check a built .mmod file instead")
-    a = ap.parse_args()
+    a, rest = ap.parse_known_args()
     if a.check:
         return check(a.src)
     src = a.src.resolve()
-    build(src, (a.out or SRC / "build" / "modules" / (src.stem + ".mmod")).resolve(), a.version)
+    out = (a.out or SRC / "build" / "modules" / (src.stem + ".mmod")).resolve()
+    if is_native(src):
+        if any(not d.startswith("-D") for d in rest):
+            raise SystemExit(f"mod_build: unknown arguments {rest}")
+        return build_native(src, out, a.version, rest)
+    if any(not d.startswith("-D") for d in rest):
+        raise SystemExit(f"mod_build: unknown arguments {rest}")
+    build(src, out, a.version)              # (ABI 1: the frozen contract, no firmware options)
 
 
 if __name__ == "__main__":

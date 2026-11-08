@@ -483,7 +483,8 @@ static int proj_unpack(project_t *q, const uint8_t *b)
 static void proj_legacy_perc(track_t *t)
 {
 
-    const preset_t *pr = &DRUM_PRESETS[0];
+    static const preset_t PERC = DRUM_PRESET_808;   /* (DRUM's first preset, without the engine) */
+    const preset_t *pr = &PERC;
     t->eng_req = ENGI_DRUM;
     uint32_t i;
     t->preset = 0;                              /* display metadata; SET remains the legacy kit */

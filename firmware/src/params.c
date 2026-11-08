@@ -533,7 +533,7 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
             str_cpy(val, d->names[v] + (v == 1 ? 0 : 2), 6);
         }
 #if MELODEE_USER_KITS
-        else if (d->names == N_DRUM_KIT && v >= DK_USER0 && v <= DK_KIT_MAX)
+        else if (drum_kit_names(d) && v >= DK_USER0 && v <= DK_KIT_MAX)
             drk_user_name((uint32_t)(v - DK_USER0), val);   /* a user kit: its own name */
 #endif
         else

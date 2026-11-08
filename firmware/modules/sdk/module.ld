@@ -9,11 +9,11 @@ SECTIONS
     . = MOD_BASE;
     .image : {
         KEEP(*(.mod_desc))
-        *(.text*)
-        *(.rodata*)
+        *(.text*) *(.audio_text*) *(.dsp_text*) *(.ram_text*)   /* (a native module: the firmware's placements, */
+        *(.rodata*) *(.dsp_tables*)                              /* all of them SRAM here) */
         *(.data*) *(.sdata*)
         . = ALIGN(4);
     }
-    .bss (NOLOAD) : { *(.bss*) *(.sbss*) *(COMMON) . = ALIGN(4); }
+    .bss (NOLOAD) : { *(.bss*) *(.sbss*) *(COMMON) *(.pool*) . = ALIGN(4); }
     /DISCARD/ : { *(.comment) *(.note*) }
 }

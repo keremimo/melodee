@@ -101,13 +101,14 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #ifndef MELODEE_MODULES
 #define MELODEE_MODULES 1        /* synth modules: engines loaded from the pool into SRAM (eng_module.c) */
 #endif
-#define NMOD 4u                  /* module slots (pool records ST_MFILE0 + k, storage.c) */
+#define NMOD 8u                  /* module slots (pool records ST_MFILE0 + k, past a record's size ST_MXFILE0 + k too:
+                                  * storage.c) */
 #define USER_NATIVE_FM 17u
 #define USER_NATIVE_CZ 18u
 #define USER_NONE 65535u
 #define ENGI_ANALOG 0u           /* retired in 1.2: never selectable (eng_ok), its stored sounds play silent */
 #define ENGI_DIGITAL 1u          /* retired: never selectable (eng_ok), its stored sounds play silent */
-#define NENG_SHOWN (6u + MELODEE_SLICE + 6u * MELODEE_LEGACY_EXTRAS)   /* the engines one can pick: PRESETS, the EDIT
+#define NENG_SHOWN (4u + MELODEE_SID_BUILTIN + MELODEE_DRUM_BUILTIN + MELODEE_SLICE + 6u * MELODEE_LEGACY_EXTRAS)   /* the engines one can pick: PRESETS, the EDIT
                                                 * layer, the editor, in the display order of engines.c ENGINE_ORDER */
 #define NENG_SHOWN_MAX (NENG_SHOWN + NMOD * MELODEE_MODULES)   /* and the loaded modules after them (eng_nshown) */
 #define ENGI_SLICE 13u           /* reserved without MELODEE_SLICE: never selectable (eng_ok) */
@@ -396,10 +397,47 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     uint32_t (*units)(const struct track *t);
     /* with presets 0: preset k (< npresets) made on demand, its name into name (21 bytes); engines.c eng_preset */
     void (*preset_make)(uint32_t k, preset_t *p, char *name);
+    /* What voice.c once asked of an engine by its address (built in or a synth module alike):
+     * optional: the part's working memory now (RES_ENGINE0 + part; t 0: the engine's usual one), 0 = none */
+    uint32_t (*state)(const struct track *t);
+    /* optional: the voice's ENV (ENV DEST, the matrix's ENV) instead of the ADSR's, after amp (SID: ENV3) */
+    int32_t (*env_q15)(struct track *t, voice_t *v);
+    /* optional: 1 = the keys held are a chord the engine's one voice plays itself (voice.c keeps them in the mono
+     * stack; SID's C64 in POLY) */
+    int (*chord)(const struct track *t);
+    /* optional: the voice a new note retriggers (DRUM: its lane's), 0 = voice.c's choice */
+    voice_t *(*reuse)(struct track *t, uint32_t note);
+    /* optional: render the part's voices on the audio worker (CPU1): their cost class (AP_*), < 0 = not now;
+     * render_p, when set, renders there from p, the E1..E8 and lane levels as the block began (else render) */
+    int32_t (*batch)(const struct track *t);
+    void (*render_p)(struct track *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m, const int16_t *p);
+    uint8_t wclass;              /* GLO > WEIGHTS: its voices weigh settings_vpoints[wclass - 1]; 0 = none */
 } engine_t;
+/* Built-in engines that are synth modules on the device (firmware/modules/<name>): host builds compile them in, the
+ * reference the module tests hold the modules to; the device's image leaves them out (eng_module.c plays them) */
+#ifndef MELODEE_SID_BUILTIN
+#ifdef FM1_IRQ_TARGET
+#define MELODEE_SID_BUILTIN 0
+#else
+#define MELODEE_SID_BUILTIN 1
+#endif
+#endif
+#ifndef MELODEE_DRUM_BUILTIN
+#define MELODEE_DRUM_BUILTIN MELODEE_SID_BUILTIN
+#endif
+/* MOD_NATIVE_SIDE 1: a native synth module's own compile (firmware/modules/sdk/mod_native.h): the firmware's data
+ * below is not its own but the firmware's, reached through pointers the loader hands over (module_native.h) */
+#ifndef MOD_NATIVE_SIDE
+#define MOD_NATIVE_SIDE 0
+#endif
 /* voice_start: what the voice it starts did just before (0 free, 1 released, 2 its key down: a steal or a move);
  * engine_t.note_on may read it  */
+#if MOD_NATIVE_SIDE
+static uint8_t *mod_imp_voice_was;
+#define voice_was (*mod_imp_voice_was)
+#else
 static uint8_t voice_was;
+#endif
 
 /* ------------------------------------------------- tracks, the song --- */
 enum { ST_NOTE, ST_TIE, ST_REST };
@@ -411,7 +449,13 @@ enum { ST_NOTE, ST_TIE, ST_REST };
 #include "recorded_note.h"
 /* Sound offsets: semitones, decay and voice character; zero preserves the factory kit. */
 typedef struct { int8_t c[16][4]; } drum_patch_t;
+#if MOD_NATIVE_SIDE
+static drum_patch_t *mod_imp_drum_patch, *mod_imp_drum_patch_none;
+#define drum_patch mod_imp_drum_patch
+#define drum_patch_none (*mod_imp_drum_patch_none)
+#else
 static drum_patch_t drum_patch[NPART], drum_patch_none;   /* the parts'; a MIDI-only track's: none (never heard) */
+#endif
 static drum_patch_t *drum_patch_of(uint32_t k) { return k < NPART ? &drum_patch[k] : &drum_patch_none; }
 static int drum_patch_valid(const drum_patch_t *p)
 {
@@ -576,6 +620,14 @@ typedef struct {
     int32_t batt_raw;            /* smoothed ADC ch3 (battery divider), 0 = not read yet */
 } song_t;
 
+#if MOD_NATIVE_SIDE                /* (a native module: the firmware's tracks, its song, its MIDI insert releases) */
+static track_t *mod_imp_trk;
+static song_t *mod_imp_song;
+static uint8_t *mod_imp_midi_verb;
+#define trk mod_imp_trk
+#define song (*mod_imp_song)
+#define midi_verb mod_imp_midi_verb
+#else
 static track_t trk[NTRK];        /* the instrument: four parts, then the MIDI-only tracks */
 static voice_t part_voice[NPART][NVOICE];
 static voice_t midi_voice[NVOICE];   /* shared by the MIDI-only tracks: never started (their notes go out as MIDI) */
@@ -594,6 +646,7 @@ static inline uint32_t voice_part(const voice_t *v)
 static song_t song;
 /* Audio-owner snapshot of the insert release override; zero keeps the sound's envelope. */
 static uint8_t midi_verb[NTRK];
+#endif
 #define TSEL (&trk[song.sel])    /* the selected track */
 
 static int32_t input_octave(const track_t *t)
@@ -626,6 +679,7 @@ static inline uint32_t swing_step_len(const track_t *t, uint32_t base, uint32_t 
 
 /* ----------------------------------------------------------- system --- */
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")   /* slot store before the index update */
+#if !MOD_NATIVE_SIDE
 static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIMER5 ISR in main.c) */
 /* boot-loop guard (main.c): two boots in a row that die in the first 30 s -> UBOOT */
 #define BOOTGUARD_MAGIC 0x42475244u
@@ -637,3 +691,4 @@ static inline void reset_intended(void)         /* a reset on purpose (UBOOT, an
 
 /* GLO solo belongs to the mixer, independently of quick-layer effects. */
 static volatile uint8_t track_solo;
+#endif

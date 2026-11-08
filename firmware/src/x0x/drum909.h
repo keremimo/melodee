@@ -19,7 +19,7 @@
 #include "x0x_param.h"
 #include "drum909_dsp.h"
 
-enum { D9_BD, D9_SD, D9_LT, D9_MT, D9_HT, D9_RS, D9_CP, D9_CH, D9_OH, D9_CR, D9_RD, D9_NUM, D9_KIT = D9_NUM };
+#include "drum909_ids.h"                /* D9_BD .. D9_RD, D9_NUM, D9_KIT */
 
 #define D9_MAX_PARAMS 9          /* most params any voice (or the kit) has (X0X: + PAN) */
 #define D9_NZ_HIST 256           /* noise history kept across blocks (filter warm-up) */

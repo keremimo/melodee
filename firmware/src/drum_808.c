@@ -29,20 +29,6 @@
  * and the cymbal's decay, SNAP the snappy, ACC how far velocity moves the level too (drum_amp; the circuits alone
  * make a hit at 127 only ~2 dB louder than at 64), KICK ROUND the BD without its attack, DRV as on every kit. Ported from Melodee's drum part of before 1.0 (drums.c). */
 
-enum { DR_BD, DR_SD, DR_LT, DR_MT, DR_HT, DR_LC, DR_MC, DR_HC, DR_RS, DR_CL, DR_CP, DR_MA, DR_CB, DR_CY,
-       DR_OH, DR_CH, DR_N };
-#define DR_X 0xFFu
-static const uint8_t DR_GM[47] = {               /* GM percussion keys 35..81 -> instrument */
-    DR_BD, DR_BD, DR_RS, DR_SD, DR_CP, DR_SD, DR_LT, DR_CH,       /* 35 kick 2, kick, side stick .. */
-    DR_LT, DR_CH, DR_MT, DR_OH, DR_MT, DR_HT, DR_CY, DR_HT,       /* 43 */
-    DR_CY, DR_CY, DR_CY, DR_MA, DR_CY, DR_CB, DR_CY, DR_X,        /* 51 ride, china, bell, tamb. .. */
-    DR_CY, DR_HC, DR_MC, DR_HC, DR_MC, DR_LC, DR_X, DR_X,         /* 59 ride 2, bongos, congas */
-    DR_X, DR_X, DR_MA, DR_MA, DR_X, DR_X, DR_X, DR_X,             /* 67 cabasa, maracas */
-    DR_CL, DR_CL, DR_CL, DR_X, DR_X, DR_X, DR_X,                  /* 75 claves, wood blocks */
-};
-static const uint8_t DR_OF_DVT[DVT_COUNT] = {    /* fallback GM role (DVT_*) -> the 808 instrument */
-    DR_BD, DR_BD, DR_SD, DR_CP, DR_CH, DR_OH, DR_MT, DR_MC, DR_RS, DR_CL, DR_CB, DR_CY,
-};
 
 #define DR8_OUT 6800                             /* the kit's output into DRUM's (Q12): the 808 BD as loud as PUNCH */
 #define DR_V1 16384                              /* 1 V of the trigger and the pulse shaper */
@@ -554,12 +540,6 @@ static __attribute__((noinline, section(".dsp_text"))) void dr_hat(dr8_t *restri
 
 /* ---------------------------------------------------------- the hits --- */
 /* the 808's instrument for a note (the other kits' drum role where its map has none) */
-static uint32_t dr8_ins(uint32_t note, uint32_t role)
-{
-    uint32_t n = note >= 35u && note <= 81u ? note : 36u + (note + 120u - 36u) % 12u, k = DR_GM[n - 35u];
-    return k == DR_X ? DR_OF_DVT[role % DVT_COUNT] : k;
-}
-
 /* lane d struck: instrument ins at velocity vel (its trigger level), TUNE for the voices tuned at the hit. Another
  * instrument than the one ringing starts from rest */
 static void dr8_hit(dr8_t *d, uint32_t ins, uint32_t vel, const int16_t *p)

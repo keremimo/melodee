@@ -38,6 +38,12 @@ static inline int32_t mulq16(int32_t a, uint32_t k)
  * One table a block (mix_block), each cut reading it at its own offset; a zero sample stays exact 0 */
 #define DITH_N 32u
 #define DITH_SEED 0x2545F491u
+#if MOD_NATIVE_SIDE                              /* (a native synth module: the firmware's table of the block, core.h) */
+static int16_t *mod_imp_dith;
+static float *mod_imp_dith_f;
+#define dith mod_imp_dith
+#define dith_f mod_imp_dith_f
+#else
 static int16_t dith[DITH_N];                     /* -32767..32767 in 1/32768 of the cut's LSB */
 static float dith_f[2u * DITH_N];                /* the same in LSBs, twice: a voice's row (dith_row) never wraps */
 static uint32_t dith_r = DITH_SEED;
@@ -51,6 +57,7 @@ static __attribute__((noinline)) void dither_block(void)
     }
     dith_r = r;
 }
+#endif
 /* (p + 1/2 LSB + dither) >> sh, 1 <= sh <= 15; p = 0 stays 0 */
 static inline __attribute__((always_inline)) int32_t dith_cut(int32_t p, uint32_t sh, uint32_t k)
 {

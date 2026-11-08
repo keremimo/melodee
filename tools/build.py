@@ -295,6 +295,8 @@ def build_app(stub):
     flags.append(f'-DMELODEE_ID="{PRODUCT}"')
     if VERSION:
         flags.append(f'-DMELODEE_VERSION="{VERSION}"')
+    global APP_DEFS                 # (the native synth modules build with the image's options: tools/mod_build.py)
+    APP_DEFS = [f for f in flags if f.startswith("-D") and not f.startswith(("-DMELODEE_ID=", "-DMELODEE_VERSION="))]
     # melodee.c goes to LLVM IR without the optimizer, the main-loop functions (UI, stores, editor) are
     # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. MELODEE_SIZE=0: -Os everywhere
     size = os.environ.get("MELODEE_SIZE") != "0"
@@ -723,10 +725,11 @@ def main():
     print(f"app      {OUT / 'melodee.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
-    # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py)
+    # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py);
+    # the native ones (SID, DRUM) with the image's options: tied to this build by their layout key
     for src in sorted((FW / "modules").glob("*/*.c")):
         if src.parent.name != "sdk" and src.stem == src.parent.name:
-            subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src], check=True)
+            subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src, *APP_DEFS], check=True)
     if a.cpu_manifest:
         if any(hashlib.sha256((SRC / p).read_bytes()).hexdigest() != digest for p, digest in cpu_sources.items()):
             raise SystemExit("Firmware source changed during CPU experiment build; rebuild before measuring")

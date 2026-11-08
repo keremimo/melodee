@@ -395,8 +395,10 @@
     </div>
     <div class="group" id="device-modules" hidden style="margin-top:12px">
       <h2>Synth modules</h2>
-      <p class="dim">Engines kept on the device outside the firmware, loaded at power-on: a module plays as its own engine
-        number (TRIO as engine 6 again). Build one with <code>tools/mod_build.py</code>, upload the <code>.mmod</code> file here.</p>
+      <p class="dim">Engines kept on the device outside the firmware, loaded when a track uses them: a module plays as its
+        own engine number (TRIO as engine 6 again, SID as 3, DRUM as 10). Build one with <code>tools/mod_build.py</code>
+        (SID and DRUM: <code>build.sh</code> builds them beside the firmware, for that firmware only), upload the
+        <code>.mmod</code> file here.</p>
       <table id="module-slots"></table>
       <p><input type="file" id="module-file" accept=".mmod"> <button id="module-upload">Upload module</button></p>
       <p class="dim" id="module-status"></p>
@@ -1546,11 +1548,12 @@ const MODS = {
   head(bytes) {
     const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), v = new DataView(b.buffer, b.byteOffset, b.byteLength);
     if (b.length < 52 || v.getUint32(0, true) !== 0x31444D4D) throw new Error("not a module file (.mmod)");
-    if (v.getUint16(4, true) !== 1) throw new Error("module ABI " + v.getUint16(4, true) + ": this editor knows ABI 1");
-    const total = v.getUint32(8, true);
+    const abi = v.getUint16(4, true);                /* 1; 2: native (src/module_native.h), its head 56 bytes with the */
+    if (abi !== 1 && abi !== 2) throw new Error("module ABI " + abi + ": this editor knows ABI 1 and native");
+    const total = v.getUint32(8, true);              /* firmware's layout key: the device checks it */
     if (total !== b.length) throw new Error("module file length " + b.length + ", its head says " + total);
     return { engine: b[6], total, image: v.getUint32(12, true), name: String.fromCharCode(...b.slice(32, 48)).replace(/\0.*$/, ""),
-      version: v.getUint16(48, true), npresets: b[50] };
+      version: v.getUint16(48, true), npresets: b[50], native: abi === 2, key: abi === 2 && b.length >= 56 ? v.getUint32(52, true) : null };
   },
   async list(rq, opt) { return MODS.parseList(await rq(req.moduleList(), opt)); },
   /* into slot k (or the slot holding its engine, else the first empty one); progress(done, total) */
@@ -2789,10 +2792,10 @@ function makeMockDevice(opt = {}) {
         break;
       }
       case CMD.MODULE: {                         /* synth modules: four slots, a file kept as sent (never played) */
-        st.mods ??= Array.from({ length: 4 }, () => ({ len: 0, engine: 0, name: "", buf: null }));
+        st.mods ??= Array.from({ length: 8 }, () => ({ len: 0, engine: 0, name: "", buf: null }));   /* (NMOD) */
         const m = st.mods[a[1]];
         if (a[0] === 0 && a.length === 1) {
-          b(0); b(0); b(4);
+          b(0); b(0); b(8);
           for (const x of st.mods) { b(x.len ? 1 : 0); b(x.engine); b(1); b(0); for (let j = 0; j < 5; j++) b(Math.floor(x.len / 2 ** (7 * j)) & 0x7F); s(x.name); }
         } else if (!m || a[0] < 1 || a[0] > 4) b(1);
         else if (a[0] === 1) { const len = a.slice(2, 7).reduce((n, x, j) => n + x * 2 ** (7 * j), 0); m.up = { len, buf: new Uint8Array(len), pos: 0 }; b(0); }

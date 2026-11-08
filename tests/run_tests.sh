@@ -383,8 +383,11 @@ if core; then
     run "CPU live takes: native replay comparison, timed input, failure cleanup and guarded restoration" "$PY" tests/audio_cpu_take_test.py
     run "target budget: natural loops and FPU decoding" "$PY" tests/target_budget_test.py
     t "retired synth identities, project/user patch preservation and favorites" engine_retirement_test -O2 $FW
-    t "synth modules: TRIO as a module bit-exact, files into slots, relocation, boot, refusals (tools/mod_build.py)" \
-        module_test -O2 -Ifirmware/modules/sdk $FW
+    t "synth modules: TRIO, SID and DRUM as modules bit-exact, files into slots, relocation, boot, refusals (tools/mod_build.py)" \
+        module_test -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/sid/sid.c firmware/modules/drum/drum.c
+    t "synth modules as the device builds them: SID and DRUM out of the firmware, the modules against the old renders" \
+        module_test_device:module_test -O2 -DMELODEE_SID_BUILTIN=0 -DMELODEE_DRUM_BUILTIN=0 -Ifirmware/modules/sdk \
+        -Ifirmware/hal $FW firmware/modules/sid/sid.c firmware/modules/drum/drum.c
     t "capture gating, derived caches and silent-track clocks" performance_test -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
     t "canvas drawing overlaps DMA without changing pending pixels" lcd_overlap_test -O1 -w -Ibuild/gen
     t "user presets (UP_PUT parser, bank round trip, versions, PHYS DRUM -> DRUM, grid records)" upreset_test

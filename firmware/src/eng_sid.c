@@ -524,6 +524,10 @@ static void sid_render_into(track_t *t,voice_t *v,int32_t *out,uint32_t n,const 
 
 static void sid_render(track_t *t,voice_t *v,int32_t *out,uint32_t n,const vmod_t *m)
 { sid_render_into(t,v,out,n,m,t->p); }
+static void sid_render_p(track_t *t,voice_t *v,int32_t *out,uint32_t n,const vmod_t *m,const int16_t *p)
+{ sid_render_into(t,v,out,n,m,p); }               /* (CPU1: voice.c engine_batch_kernel) */
+static int32_t sid_batch(const track_t *t) { (void)t; return AP_SID; }
+static uint32_t sid_state(const track_t *t) { (void)t; return sizeof(sid_part_t); }
 static void sid_block(track_t *t)
 { (void)sid_table(t,sid_model(t->p),SID_WAVE_BITS[t->p[P_E1]&7u]); }
 /* a C64 has one voice for the track's notes (POLY: a new note takes it, the keys still held arpeggiate with it) */
@@ -592,4 +596,9 @@ static const engine_t ENG_SID = {
     .cap = sid_cap,
     .ownenv = 1,                /* the chip's envelope generator: it ends the voice (sid_done) */
     .done = sid_done,
+    .state = sid_state,
+    .env_q15 = sid_env_q15,     /* ENV3: ENV DEST and the matrix read the chip's envelope counter */
+    .chord = sid_chord,
+    .batch = sid_batch, .render_p = sid_render_p,
+    .wclass = 4,
 };

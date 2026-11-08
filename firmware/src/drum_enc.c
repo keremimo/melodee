@@ -8,6 +8,8 @@
  * 1 dB of the tool's quality at the same size.
  * x needs 64 zero samples after its n. out 0: count only. In place is safe: slice k's 8 bytes land at byte 8 k,
  * behind the 28 k bytes it has read. */
+#include "x0x/fastmath.h"
+static __attribute__((noinline)) float dke_exp2(float x) { return fm_exp2f(x); }   /* (drum_lanes.c dlk_exp2's) */
 typedef struct { int32_t h[4], w[4]; } dke_lms_t;
 typedef struct {
     uint32_t bytes, loop_at, loop_slice;              /* written; the sample the loop starts at, its slice */
@@ -75,7 +77,7 @@ static uint32_t dke_encode(const int16_t *x, uint32_t n, int32_t snr, uint32_t l
     memset(&st, 0, sizeof st);
     memset(o, 0, sizeof *o);
     st.w[2] = -(1 << 13); st.w[3] = 1 << 14;
-    float g = dlk_exp2(-0.33219281f * (float)snr), g4 = dlk_exp2(-0.33219281f * (float)(snr + 10));
+    float g = dke_exp2(-0.33219281f * (float)snr), g4 = dke_exp2(-0.33219281f * (float)(snr + 10));
     uint32_t pm = 3u;                                 /* the last slice's depth: where the search starts */
     for (uint32_t at = 0, k = 0; at < n; k++) {
         if (loop_at && !o->loop_at && at >= loop_at) {

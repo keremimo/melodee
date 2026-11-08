@@ -90,13 +90,15 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
 #endif
 #define ST_NKIT 8u
 #define ST_KFILE0 (ST_PFILE0 + ST_NPROJ)
-/* Synth modules (module_store.c): NMOD slots, pool records of type ST_MFILE0 + slot, the module file as built */
+/* Synth modules (module_store.c): NMOD slots, pool records of type ST_MFILE0 + slot, the module file as built; a file
+ * longer than a record goes on in the record ST_MXFILE0 + slot */
 #ifndef NMOD
-#define NMOD 4u                                /* (core.h; storage tests alone) */
+#define NMOD 8u                                /* (core.h; storage tests alone) */
 #endif
 #define ST_NMOD NMOD
 #define ST_MFILE0 (ST_KFILE0 + ST_NKIT)
-#define ST_OBJ_END (ST_MFILE0 + ST_NMOD)       /* every object number below this */
+#define ST_MXFILE0 (ST_MFILE0 + ST_NMOD)
+#define ST_OBJ_END (ST_MXFILE0 + ST_NMOD)      /* every object number below this */
 static uint32_t st_proj_obj(uint32_t slot) { return slot < 4u ? OBJ_BANK0 + slot : ST_PFILE0 + slot; }
 /* a record that lives only in the pool, never in a fixed pair: projects 5..32, the user kits, the synth modules */
 static int st_pfile(uint32_t obj) { return (obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ) || (obj >= ST_KFILE0 && obj < ST_OBJ_END); }

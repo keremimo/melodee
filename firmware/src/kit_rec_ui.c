@@ -66,7 +66,7 @@ static void kit_rec_open(void)
     void *p = 0;
     uint32_t b = 0;
     UA_MEMORY_GUARD_OFF();
-    (void)drk_of(TSEL);                                 /* its part in the arena before the take's buffer */
+    (void)eng_state_prepare(TSEL);                      /* its part in the arena before the take's buffer */
     UA_MEMORY_GUARD_ON();
     for (uint32_t i = 0; !p && i < NELEM(TRY); i++) {
         b = TRY[i];

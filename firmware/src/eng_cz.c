@@ -69,6 +69,7 @@ static void cz_preset_make(uint32_t k, preset_t *pr, char *name)
     for (i = 0; a < z; ) name[i++] = (char)raw[a++];
     name[i] = 0;
 }
+static int32_t cz_batch(const track_t *t) { (void)t; return AP_CZ; }   /* (its voices on CPU1: voice.c engine_render) */
 static const engine_t ENG_CZ = {
     .name = "CZ-1", .page_title = {"CZ-1", "TONE"},
     .edit = {
@@ -81,6 +82,7 @@ static const engine_t ENG_CZ = {
     .ownenv = 1, .done = cz_native_done, .keep = 0x0fu,
     .note_on = cz_native_note_on, .render = cz_native_render, .block = cz_native_block,
     .knob = {P_E0, P_E1, P_E7, P_E7},
+    .batch = cz_batch, .wclass = 2,
 };
 
 /* USB interrupt only collects bytes; the main loop validates and publishes. */

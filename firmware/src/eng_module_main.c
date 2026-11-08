@@ -47,15 +47,25 @@ static void mod_unguard(uint32_t f)
 }
 static int mod_engine_ok(uint32_t e)               /* a number a module may play as */
 {
-    return (e >= ENGI_MOD0 && e < NENGINES) || e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u;
+    return (e >= ENGI_MOD0 && e < NENGINES) || e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u ||
+           e == 3u || e == ENGI_DRUM;               /* (SID, DRUM: modules on the device; built in, a clash) */
 }
+/* e into the engines shown, at its place (engines.c eng_order_rank: SID and DRUM where they were built in) */
 static void mod_order_add(uint32_t e)
 {
-    for (uint32_t n = 0; n < eng_nshown; n++)
+    uint32_t r = eng_order_rank(e), at = eng_nshown;
+    for (uint32_t n = 0; n < eng_nshown; n++) {
         if (ENGINE_ORDER[n] == e)
             return;
-    if (eng_nshown < NENG_SHOWN_MAX)
-        ENGINE_ORDER[eng_nshown++] = (uint8_t)e;
+        if (at == eng_nshown && eng_order_rank(ENGINE_ORDER[n]) > r)
+            at = n;
+    }
+    if (eng_nshown >= NENG_SHOWN_MAX)
+        return;
+    for (uint32_t n = eng_nshown; n > at; n--)
+        ENGINE_ORDER[n] = ENGINE_ORDER[n - 1u];
+    ENGINE_ORDER[at] = (uint8_t)e;
+    eng_nshown++;
 }
 static void mod_order_remove(uint32_t e)
 {
@@ -98,6 +108,18 @@ static void mod_register(uint32_t k, const mod_desc_t *d, engine_t *e)
     mod_order_add(n);
     mod_unguard(g);
 }
+/* a native module: its own engine_t (module_native.h), as the registration above */
+static void mod_register_native(uint32_t k, const mod_native_t *d)
+{
+    uint32_t n = mods[k].engine, g = mod_guard();
+    mods[k].nd = d;
+    mod_at[n] = (uint8_t)(k + 1u);
+    __asm__ volatile("" ::: "memory");
+    ENGINES[n] = d->eng;
+    mods[k].state = MS_LOADED;
+    mod_order_add(n);
+    mod_unguard(g);
+}
 /* slot k's module out of SRAM; its engine stays listed (ENG_MOD_IDLE) when idle, else retired (the slot is going) */
 static void mod_unregister(uint32_t k, int idle)
 {
@@ -116,6 +138,7 @@ static void mod_unregister(uint32_t k, int idle)
             }
     }
     mods[k].d = 0;
+    mods[k].nd = 0;
     resource_release(RES_MODULE0 + k);
     mod_unguard(g);
 }
