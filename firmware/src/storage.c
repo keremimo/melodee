@@ -54,8 +54,19 @@ _Static_assert(ST_PROJECT_SECTORS * 5u <= ST_U_N && ST_U_N < 0x7Fu && ST_SMALL_U
 #define ST_LIN_PAYLOAD_MAX (ST_SECTOR - ST_POOL_PAYLOAD_OFF - ST_GUARD_LEN)   /* 4,056 */
 #define ST_LIN_TAG 0xA9000000u                 /* a list record: eight 7-bit linear indices, the 4,056-byte geometry */
 #define ST_LIN_C0 256u                         /* a list record's copy number: ST_LIN_C0 + its first sector's index */
+#ifndef FL_RES_LO                                      /* (hal/fm1_flash_map.h; host tests: the FM-1's) */
+#define FL_RES_LO 0xCB000u
+#define FL_RES_HI 0xE0000u
+#endif
+#ifndef FL_RES_RESERVE
+#define FL_RES_RESERVE 9u
+#define FL_RES_RESERVE_OLD 15u
+#endif
+/* the resource region's sectors the reserve gave the pool when the factory sounds went into the synth modules (2026-11:
+ * FL_RES_RESERVE_OLD -> FL_RES_RESERVE): taken last (st_order), so a firmware from before keeps reading what it can */
+#define ST_RES_GIVEN (FL_RES_RESERVE_OLD - FL_RES_RESERVE)
 #if BOARD_SMK37
-#define ST_LN ST_U_N
+#define ST_LN (ST_U_N + ST_RES_GIVEN)                  /* the pool's windows, then the given sectors */
 #else
 #define ST_LIN_BASE 0x93000u
 #define ST_LN 108u                             /* 0x93000..0xFEFFF */
@@ -199,7 +210,10 @@ static uint32_t st_pool_at(uint32_t i)                 /* a pool index's sector 
 #endif
 /* the linear index space of list records (ST_LIN_TAG): a sector's address, and back (ST_LN: none) */
 #if BOARD_SMK37
-static uint32_t st_lin_at(uint32_t i) { return st_pool_at(i); }
+static uint32_t st_lin_at(uint32_t i)
+{
+    return i < ST_U_N ? st_pool_at(i) : i < ST_LN ? FL_RES_LO + (FL_RES_RESERVE + i - ST_U_N) * ST_SECTOR : 0u;
+}
 static uint32_t st_lin_of(uint32_t addr)
 {
     uint32_t i = 0;
@@ -213,18 +227,12 @@ static uint32_t st_lin_of(uint32_t addr) { return addr >= ST_LIN_BASE && addr < 
 /* The resource region's installed window ends here (res.c res_window, from the header in flash): the pool takes
  * sectors of the region only above it, so no update loader ever blanks a record (ldr_core.c ldr_res). Until boot
  * has read the header: the whole region, as every firmware before the bridge left it. */
-#if !BOARD_SMK37
-#ifndef FL_RES_LO                                      /* (hal/fm1_flash_map.h; host tests: the FM-1's) */
-#define FL_RES_LO 0xCB000u
-#define FL_RES_HI 0xE0000u
-#endif
 static uint32_t st_res_end = FL_RES_HI;
-#endif
 /* a linear sector a list record may take: never OTA staging, the settings pair or the installed resource window */
 static int st_lin_ok(uint32_t i)
 {
 #if BOARD_SMK37
-    return i < ST_LN;                                   /* (the pool's windows hold nothing else) */
+    return i < ST_U_N || (i < ST_LN && st_lin_at(i) >= st_res_end);   /* (the pool's windows hold nothing else) */
 #else
     uint32_t a = st_lin_at(i);
     return a && !(a >= 0xE0000u && a < 0xE5000u) && !(a >= 0xFC000u && a < 0xFE000u) &&
@@ -359,6 +367,10 @@ static int st_owner_check(void)                    /* 1: another firmware's (or 
         }
         for (s = FL_GAP_LO; s < FL_GAP_HI; s += ST_SECTOR) {
             bad |= st_erase(s) != 0;
+            ST_IDLE();
+        }
+        for (s = FL_RES_LO + FL_RES_RESERVE * ST_SECTOR; s < FL_RES_HI; s += ST_SECTOR) {
+            bad |= st_erase(s) != 0;                /* (the resource sectors the pool may take: never another's data) */
             ST_IDLE();
         }
         cleared = 1;
@@ -662,11 +674,17 @@ static int st_pool_used(uint32_t used[ST_LW], uint32_t obj, uint32_t *seq)
 static uint32_t st_order(uint32_t obj, uint32_t m)
 {
 #if BOARD_SMK37
+    if (m >= ST_U_N) return m;                          /* (the resource sectors given to the pool: last) */
     if (!st_small(obj)) return m;
+    return ST_U_N - 1u - m;
 #else
+    /* top down, the resource sectors given to the pool last: indices hi .. ST_LN-1, then 0 .. lo-1, then lo .. hi-1 */
+    const uint32_t lo = (FL_RES_LO + FL_RES_RESERVE * ST_SECTOR - ST_LIN_BASE) / ST_SECTOR, hi = lo + ST_RES_GIVEN;
     (void)obj;
+    if (m < ST_LN - hi) return ST_LN - 1u - m;
+    m -= ST_LN - hi;
+    return m < lo ? lo - 1u - m : hi - 1u - (m - lo);
 #endif
-    return ST_LN - 1u - m;
 }
 /* a linear sector a new record may take: allowed and held by no current record */
 static int st_pool_free_at(const uint32_t used[ST_LW], uint32_t i) { return st_lin_ok(i) && !((used[i / 32u] >> (i % 32u)) & 1u); }

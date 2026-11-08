@@ -691,6 +691,11 @@ static void patch_set(uint32_t k, uint32_t e, const uint8_t *src, uint32_t n, ui
 {
     uint8_t *p = patch_of(k);
     uint32_t len = patch_len(e), i = k < NPART ? k : NPART;
+    patch_keep[i] = 0;
+    if (src && n > len && !len && e < NENGINES && ENGINES[e] == &ENG_RETIRED && eng_map_own(e)) {
+        len = n < MOD3_PATCH_MAX ? n : MOD3_PATCH_MAX;   /* (a module not here: its bytes kept whole, patch_keep) */
+        patch_keep[i] = (uint16_t)len;
+    }
     if (n > len)
         n = len;
     if (patch_eng[i] != e || !src) {             /* (a whole patch: no starting bytes read, the audio's song sections) */

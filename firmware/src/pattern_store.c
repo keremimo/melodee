@@ -181,6 +181,8 @@ static int bank_names(const project_t *q, uint32_t e)
 static const uint8_t *bank_ext_patch(const project_t *q, uint32_t k, int runtime, uint32_t *len)
 {
     uint32_t e = q->t[k].engine, src = runtime ? cap_map(k) : k, n = patch_len(e);
+    if (!n && runtime && src < NPART && patch_eng_of(src) == e)
+        n = patch_kept(src);                        /* (a synth this device has not got: the bytes it came with) */
     if (!n || patch_store_tag(e) != MOD_SCH_STORE_NONE)
         return 0;
     if (runtime)

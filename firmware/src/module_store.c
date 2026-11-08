@@ -11,6 +11,7 @@
  * engine. A file's factory presets (its PRST chunk, module_presets.h) are read where the file is: checked when it is
  * listed, their names and categories for the lists, one preset unpacked when it is picked, the module loaded or not */
 #define MODULE_STORE 1
+#include "mod_sign.c"                               /* (a module's signature: Ed25519, Melodee's keys) */
 
 /* ---- loading: a file's bytes through rd (off, dst, n -> 0 ok) into slot k. Returns MS_LOADED or why not */
 typedef int (*mod_read_t)(uint32_t off, void *dst, uint32_t n);
@@ -130,16 +131,13 @@ static uint32_t mod_obj(uint32_t k, uint32_t j) { return st_mod_obj(k, j); }
 /* n bytes of slot k's file at off, from the records mod_open found */
 static int mod_rd(uint32_t k, uint32_t off, void *dst, uint32_t n)
 {
-    const mod_slot_t *s = &mods[k];
     uint8_t *d = dst;
-    while (n) {
-        uint32_t j = off / ST_PROJECT_MAX, at = off % ST_PROJECT_MAX, m = ST_PROJECT_MAX - at;
-        if (j >= s->parts)
-            return 1;
+    for (uint32_t j, m; n; d += m, off += m, n -= m) {   /* (record j holds the file's bytes from j x ST_PROJECT_MAX) */
+        j = off / ST_PROJECT_MAX;
+        m = (j + 1u) * ST_PROJECT_MAX - off;
         m = n < m ? n : m;
-        if (st_read_range(mod_obj(k, j), s->copy[j], at, d, m))
+        if (j >= mods[k].parts || st_read_range(mod_obj(k, j), mods[k].copy[j], off - j * ST_PROJECT_MAX, d, m))
             return 1;
-        d += m; off += m; n -= m;
     }
     return 0;
 }
@@ -248,6 +246,21 @@ static int mod_sch_find(uint32_t k, const mod_file3_t *f)
     s->sch = at;
     s->sch_len = c[1];
     return 1;
+}
+/* slot k's signature (its SIGN chunk, the file's last: mod_abi3.h MOD3_SIGN_TAG) by one of Melodee's keys: 1, else 0 */
+static uint32_t mod_sig_slot;
+static int mod_sig_read(uint32_t off, void *dst, uint32_t n) { return mod_rd(mod_sig_slot, MOD3_HEAD + off, dst, n); }
+static uint32_t mod_chunk(uint32_t k, const mod_file3_t *f, uint32_t tag, uint32_t *len);
+static int mod_sig_check(uint32_t k)
+{
+    mod_file3_t f;
+    uint8_t sig[64];
+    uint32_t len = 0, at;
+    if (mod_rd(k, 0, &f, sizeof f) || !(at = mod_chunk(k, &f, MOD3_SIGN_TAG, &len)) || len != sizeof sig ||
+        at + len != f.total || mod_rd(k, at, sig, sizeof sig))
+        return 0;
+    mod_sig_slot = k;
+    return mod_signed(sig, at - 8u - MOD3_HEAD, mod_sig_read);
 }
 /* who a file's head says it is: its UID, or (a file from before the map) "melodee/<name>"'s, the synths Melodee made */
 static uint32_t mod_head_uid(const mod_file3_t *f)
@@ -575,6 +588,9 @@ static int mod_put_commit(uint32_t k)
     rc = mod_catalog(k);
     if (rc != MS_STORED)
         return rc;
+    mods[k].sig = (uint8_t)(mod_sig_check(k) ? 1u : 2u);
+    if (mods[k].sig != 1u)
+        ui_say("UNSIGNED: ", mods[k].name);         /* (it installs all the same: one line says so) */
     mod_fetch = mod_bring;
     mod_last[k] = fm1_ms;                           /* loaded once (its check); out again when nothing uses it */
     return mod_bring(k);

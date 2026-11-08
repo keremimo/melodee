@@ -346,6 +346,13 @@ static const mod_engine_v3 TRIO = {
 };
 
 MOD3_IDENT("melodee", "TRIO");
+MOD3_PRESETS = {
+    {"FAT BASS", 8, {0, 0, -12, 9, 0, 62, 45, 64}, {0, 62, 60, 25}, 40, 1},
+    {"ARP LEAD", 8, {2, 12, 0, 4, 0, 88, 25, 32}, {0, 60, 90, 30}, 8, 0},
+    {"SYNC LEAD", 8, {9, 9, 0, 0, 0, 82, 30, 64}, {2, 70, 100, 40}, 18, 1},
+    {"RING BELL", 8, {13, 0, 18, 6, 1, 96, 30, 64}, {0, 92, 0, 80}, 0, 0},
+    {"CHIP CHOIR", 8, {1, 0, 12, 7, 1, 62, 95, 40}, {70, 90, 110, 85}, 30, 0},
+};
 MOD3_EXPORT(mod_trio) = {
     MOD3_SDK_HEAD,
     .engine = 6,                                 /* TRIO's number before it was retired: old sounds play again */

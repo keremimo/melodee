@@ -16,6 +16,10 @@ static const uint8_t patch_zero[MOD3_PATCH_MAX];
 /* track k's patch (main loop: what the stores, the pages and the editor read and write) */
 static uint8_t *patch_of(uint32_t k) { return part_patch[k < NPART ? k : NPART]; }
 static uint32_t patch_eng_of(uint32_t k) { return patch_eng[k < NPART ? k : NPART]; }
+/* a patch whose synth this device has not got (a module a store named: eng_map.c): its bytes kept as they came, this
+ * many (its schema's length unknown here), so it goes back into the stores whole; 0 otherwise */
+static uint16_t patch_keep[NPART + 1u];
+static uint32_t patch_kept(uint32_t k) { return patch_keep[k < NPART ? k : NPART]; }
 /* the patch part t's engine plays (the audio, a module's host patch()): zeros while it belongs to another engine */
 static uint8_t *patch_play(const track_t *t)
 {

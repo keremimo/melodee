@@ -80,6 +80,13 @@ static int res_is(uint8_t v)
     for (i = FL_RES_LO; i < FL_RES_HI; i++) if (nor[i] != v) return 0;
     return 1;
 }
+/* the reserve the installer writes kept as v, the sectors past it the pool may take (storage.c ST_RES_GIVEN) erased */
+static int res_kept(uint8_t v)
+{
+    uint32_t i, end = FL_RES_LO + FL_RES_RESERVE * 0x1000u;
+    for (i = FL_RES_LO; i < FL_RES_HI; i++) if (nor[i] != (i < end ? v : 0xFFu)) return 0;
+    return 1;
+}
 
 static uint8_t payload[ST_PROJECT_MAX];
 
@@ -184,13 +191,15 @@ int main(void)
                 outside_ok &= nor[s] == 0x5A;
         check("owner: another port's store (SLOOP) is cleared, A, B and C, and tagged MELODEE",
               k == 1u && store_clear && !memcmp(nor + ST_SMK_TAG, "SMK37DATAMELODEE", 16) && bad_writes == 0);
-        check("owner: the resource region (the installer's) and nothing outside the store windows touched", outside_ok && res_is(0x33));
+        check("owner: the resource region's reserve (the installer's) and nothing outside the store windows touched; the "
+              "region's sectors the pool may take cleared too", outside_ok && res_kept(0x33));
+        res_fill(0x33);
         nor[0x9D000u] = 0x12;                               /* our data */
         erases = 0;
         check("owner: our own tag: nothing erased", st_owner_check() == 0 && erases == 0 && nor[0x9D000u] == 0x12);
         memset(nor + ST_SMK_TAG, 0xFF, 0x1000u);            /* untagged (FELUCCA_DATA_UNTAGGED_OK=0): cleared */
         check("owner: an untagged store is cleared too (FELUCCA_DATA_UNTAGGED_OK=0)",
-              st_owner_check() == 1 && nor[0x9D000u] == 0xFF && !memcmp(nor + ST_SMK_TAG, "SMK37DATAMELODEE", 16) && res_is(0x33));
+              st_owner_check() == 1 && nor[0x9D000u] == 0xFF && !memcmp(nor + ST_SMK_TAG, "SMK37DATAMELODEE", 16) && res_kept(0x33));
         memset(nor + ST_SMK_TAG, 0xFF, 0x1000u);
         memcpy(nor + ST_SMK_TAG, SLOOP_TAG, 16);
         fail_erase = 0xB3000u;                              /* one sector of another port's store will not erase */

@@ -34,6 +34,8 @@ typedef struct {
     uint16_t copy[MOD_RECS];                        /* where its file is: each record's current copy (mod_open; every
                                                      * record but the last ST_PROJECT_MAX bytes) */
     uint8_t parts;                                  /* .. its records */
+    uint8_t sig;                                    /* its signature, as checked when it was installed (mod_sign.c): 0 not
+                                                     * checked this run, 1 Melodee's, 2 none or not Melodee's */
     uint32_t pst, pst_len, pst_dat;                 /* its factory presets (module_presets.h): the PRST payload's place
                                                      * in the file, its length (0: none), its dictionary's place in it */
     uint16_t pst_init, pst_dict, pst_ulen;          /* .. its INIT, dictionary and entry bytes */
@@ -42,7 +44,7 @@ typedef struct {
                                                      * (0: none) */
     const mod_desc_v3 *d;                           /* MS_LOADED: its descriptor in the block */
 } mod_slot_t;
-static mod_slot_t mods[NMOD];
+static mod_slot_t mods[NMOD] __attribute__((section(".pool")));
 static uint8_t mod_skipped;                         /* this boot did not load modules (mod_guard: last boot crashed) */
 static uint8_t mod_blamed;                          /* the slot + 1 this boot left out: the last run crashed in its code
                                                      * (module_store.c mod_blame), 0 none */

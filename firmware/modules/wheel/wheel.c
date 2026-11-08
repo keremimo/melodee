@@ -276,6 +276,13 @@ static const mod_engine_v3 WHEEL = {
 };
 
 MOD3_IDENT("melodee", "WHEL");
+MOD3_PRESETS = {
+    {"FULL ORGAN", 8, {15, 0, 0, 0, 0, 30, 20, 1}, {0, 64, 127, 45}, 0, 0},
+    {"JAZZ PERC", 8, {4, 0, 0, 0, 2, 50, 8, 1}, {0, 64, 127, 40}, 0, 0},
+    {"GOSPEL", 8, {6, 0, 0, 0, 1, 60, 40, 2}, {0, 64, 127, 45}, 0, 0},
+    {"SOFT FLUTE", 8, {1, 0, -2, 0, 0, 10, 0, 1}, {0, 64, 127, 55}, 0, 0},
+    {"ROCK DRIVE", 8, {7, 0, 0, 0, 0, 70, 100, 2}, {0, 64, 127, 40}, 0, 0},
+};
 MOD3_EXPORT(mod_wheel) = {
     MOD3_SDK_HEAD,
     .engine = 7,                                 /* WHEEL's number before it was retired */

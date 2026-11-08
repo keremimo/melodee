@@ -4,7 +4,7 @@
  * the 909 (x0x/), KIT SID (drum_sid.c on its own copy of eng_sid.c's chip), CR78 and FM (drum_lanes.c) and the user
  * kits (drum_real.c, its data records; kit_take.c: Record kit's takes), its pads in its schema (drum_schema.h).
  * tools/mod_build.py */
-#include "mod_engine.h"
+#include "../mod_engine.h"
 #ifndef FM1_IRQ_TARGET
 /* (x0x/drum909.h's functions are external: on the host the module's own under names of their own, so a test links it
  * beside a firmware that has DRUM built in; the device's build keeps them, tools/size_fns.py knows them by name) */

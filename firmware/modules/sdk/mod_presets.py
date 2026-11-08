@@ -19,7 +19,6 @@ import zlib
 from collections import deque
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent
 TAG = 0x54535250                                # "PRST"
 VERSION = 1
 HEAD = struct.Struct("<HHHHHHI")                # version, count, init, dict, ulen, rsv, crc (16 bytes)
@@ -215,47 +214,12 @@ def chunk(tag, payload):
     return struct.pack("<II", tag, len(payload)) + payload + bytes(-len(payload) % 4)
 
 
-def host_tool(out):
-    """tools/mod_presets.c, built for the host against the host firmware (the engines and their makers built in)"""
-    cc = os.environ.get("HOST_CC", os.environ.get("CC", "cc")).split()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run([*cc, "-O0", "-w", "-ffp-contract=off", "-Ibuild/gen", "-Ifirmware/src", "-Itests",
-                        str(SRC / "tools" / "mod_presets.c"), "-o", str(out), "-lm"], cwd=SRC, capture_output=True,
-                       text=True)
-    if r.returncode:
-        sys.stderr.write(r.stdout + r.stderr)
-        raise SystemExit("mod_presets: the host C compiler failed on tools/mod_presets.c (HOST_CC)")
-    return out
-
-
-def dump(tool, engine):
-    """engine's presets as the host firmware makes them: (init, [(name, category, common16, patch)])"""
-    r = subprocess.run([str(tool), str(engine)], cwd=SRC, capture_output=True, text=True)
-    if r.returncode:
-        sys.stderr.write(r.stdout + r.stderr)
-        raise SystemExit(f"mod_presets: tools/mod_presets.c failed for engine {engine}")
-    init, presets = NONE, []
-    for line in r.stdout.splitlines():
-        f = line.split()
-        if f[0] == "N":
-            init = int(f[2])
-        elif f[0] == "P":
-            h = lambda s: b"" if s == "-" else bytes.fromhex(s)
-            presets.append((h(f[3]), int(f[2]), h(f[4]), h(f[5])))
-    return init, presets
-
-
 def main():
     a = sys.argv[1:]
-    if len(a) == 2 and a[0] == "--dump":
-        init, presets = dump(host_tool(SRC / "build" / "modules" / "mod_presets"), int(a[1]))
-        for k, (n, c, com, p) in enumerate(presets):
-            print(k, c, n.decode(), com.hex(), p.hex())
-        print("init", init)
-    elif len(a) == 2 and a[0] == "--check":
+    if len(a) == 2 and a[0] == "--check":
         b = Path(a[1]).read_bytes()
-        image, nrel = struct.unpack_from("<II", b, 12)[0], struct.unpack_from("<I", b, 20)[0]
-        head = 56 if struct.unpack_from("<H", b, 4)[0] == 2 else 52
+        image, nrel = struct.unpack_from("<I", b, 12)[0], struct.unpack_from("<I", b, 20)[0]
+        head = 60
         c = chunks(b, head + image + 4 * nrel)
         if TAG not in c:
             raise SystemExit(f"{a[1]}: no PRST chunk")

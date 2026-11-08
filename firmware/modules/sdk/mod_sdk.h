@@ -44,6 +44,26 @@ static int md_bind(const mod_host_v3 *h, uint32_t self)
 #endif
 #define MOD3_SDK_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
     .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = md_bind
+/* its factory presets, the first one its INIT: rows the builder packs into the file's PRST chunk (never in the image)
+ *     MOD3_PRESETS = {{"FAT BASS", 8, {e1..e8}, {atk, dec, sus, rel}, fenv, mono}, ...};
+ * category: the browser's (0 none, 1 BASS .. 8 OTHER as the firmware lists them); e: E1..E8; mono: P_VOICE's value */
+typedef struct mod3_prow_t {
+    char name[21];
+    uint8_t category;
+    int8_t e[8];
+    uint8_t env[4];
+    int8_t fenv;
+    uint8_t mono;
+} mod3_prow_t;
+#define MOD3_PRESETS MOD3_PRESETS_PLACE static const mod3_prow_t mod_presets_[]
+#ifdef __ELF__
+#define MOD3_PRESETS_PLACE __attribute__((used, section(".mod_presets")))
+#else
+#define MOD3_PRESETS_PLACE __attribute__((used))
+#endif
+/* its parameters and pages (mod_schema.h): MOD3_SCHEMA(the mod_sch_src); the builder writes its SCHM chunk from the
+ * source built for the host (mod_dump.c) */
+#define MOD3_SCHEMA(src) __attribute__((used)) static const mod_sch_src *const mod_schema_ = &(src)
 /* the part's working memory (bytes: the engine's .state), 0: none yet */
 static inline void *md_part(const mod_part_v3 *t, uint32_t bytes) { return mh->part_mem(t->index, bytes); }
 

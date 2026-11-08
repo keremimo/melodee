@@ -16,12 +16,13 @@
 #define FL_RES_HI 0xE0000u
 #endif
 #ifndef FL_RES_RESERVE
-#define FL_RES_RESERVE 15u
+#define FL_RES_RESERVE 9u
+#define FL_RES_RESERVE_OLD 15u
 #endif
 #define RES_BASE FL_RES_LO                            /* FM-1 0xCB000, 21 sectors to 0xDFFFF; SMK-37 0x9F000, 16 sectors */
 #define RES_SECTORS ((FL_RES_HI - FL_RES_LO) / ST_SECTOR)
 /* the window this build keeps (header rsv[0], read by the update loader: it never writes or blanks past the installed
- * header's window). FM-1: 15 of the 21 sectors, the pool takes the rest (storage.c st_res_end); SMK-37: all 16 */
+ * header's window). FM-1: 9 of the 21 sectors, SMK-37: 9 of 16; the pool takes the rest (storage.c st_res_end) */
 #define RES_RESERVE FL_RES_RESERVE
 _Static_assert(RES_RESERVE >= 1u && RES_RESERVE <= RES_SECTORS, "the resource reserve lies in the region");
 #define RES_HEAD 32u
@@ -59,9 +60,7 @@ static uint32_t res_window(void)
     if (st_read(RES_BASE, &h, sizeof h)) n = RES_SECTORS;
     else if (h.magic == RES_MAGIC && h.hcrc == st_crc32(&h, sizeof h - 4u))
         n = !h.rsv[0] || h.rsv[0] > RES_SECTORS ? RES_SECTORS : h.rsv[0] < RES_RESERVE ? RES_RESERVE : h.rsv[0];
-#if !BOARD_SMK37
     st_res_end = RES_BASE + n * ST_SECTOR;
-#endif
     return n;
 }
 /* This build's region under a header from before the bridge (no reserve): the reserve written into the header, its

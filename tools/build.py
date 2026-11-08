@@ -380,8 +380,8 @@ def build_app(stub):
 
 # the resource region per board (hal/fm1_flash_map.h FL_RES, FL_RES_RESERVE): base, sectors, the window every build
 # keeps (written into the header: the update loader writes and blanks only inside it, the store takes the rest)
-BOARD_RES = {"fm1": (0xCB000, 21, 15), "smk37": (0x9F000, 16, 16)}
-RES_BASE, RES_SECTORS, RES_RESERVE, RES_HEAD = 0xCB000, 21, 15, 32   # firmware/src/res.c (set per board in main)
+BOARD_RES = {"fm1": (0xCB000, 21, 9), "smk37": (0x9F000, 16, 9)}   # (hal/fm1_flash_map.h FL_RES_RESERVE)
+RES_BASE, RES_SECTORS, RES_RESERVE, RES_HEAD = 0xCB000, 21, 9, 32    # firmware/src/res.c (set per board in main)
 
 
 # the SMK-37's app area tail (firmware/src/smkx.c): flash 0x93000 (the FM-1's PRCT end) up to the SMK's (0x9D000)
@@ -731,7 +731,7 @@ def main():
     for src in sorted((FW / "modules").glob("*/*.c")):
         if src.parent.name != "sdk" and src.stem == src.parent.name:
             subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src, *APP_DEFS], check=True)
-            if '#include "mod_engine.h"' in src.read_text():   # (the engines the image left to modules)
+            if 'mod_engine.h"' in src.read_text():   # (the engines the image left to modules)
                 shipped.append(OUT / "modules" / (src.stem + ".mmod"))
     # the engines the image left to modules, as the installers write them after it (web/fm1mods.js): one file, the
     # .mmod files one after another (build/melodee-mods.bin; web/make_site.py publishes it as <package>-mods.bin)

@@ -225,6 +225,17 @@ module_tests() {                                  # synth modules (ABI 3): built
     wait
     cat "$_m/1.log" "$_m/2.log" "$_m/3.log"
 }
+outside_author() {                                # the SDK alone: firmware/modules/sdk copied away with one module's source
+    _d="$OUT/outside"
+    rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp firmware/modules/trio/trio.c "$_d/trio.c" ||
+        { fail "outside author: the folder"; return; }
+    step "outside author: the SDK folder alone (no Melodee tree, no key) builds a module from its source" \
+        sh -c "cd '$_d' && MELODEE_SIGN_KEY= '$PY' sdk/mod_build.py trio.c -o out/trio.mmod >/dev/null" || return
+    $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/trio.c" -o "$_d/trio.o" || { fail "outside author: the host object"; return; }
+    build outside_author_test outside_author_test -O1 $FW "$_d/trio.o" &&
+        step "outside author: installed, listed, loaded and played in the host firmware as the reference plays it, unsigned (the warning); the in-tree file signed and the same module" \
+            "$OUT/outside_author_test" "$_d/out/trio.mmod" build/modules/trio.mmod
+}
 desc_json() { "$OUT/descdump" > "$OUT/desc.json"; }
 mel_tests() {                                     # the .mel project file: the page's coding against the firmware's records
     build mel_fixture mel_fixture -DMELODEE_USB_AUDIO=1 $FW || return
@@ -442,6 +453,11 @@ if core; then
     run "target budget: natural loops and FPU decoding" "$PY" tests/target_budget_test.py
     t "retired synth identities, project/user patch preservation and favorites" engine_retirement_test -O2 $FW
     job module_tests
+    job outside_author
+    t "identity: the engine map (UIDs, numbers given, kept), stores carrying their entries and patches, record owners, crash blame, signatures" \
+        identity_test -O1 $FW
+    t "the resource region's freed sectors to the pool: a c53538c9 install (53,884-B region) updated, cut at every step, nothing lost, the pool 6 sectors bigger" \
+        res_pool_test -O1 $FW -- "$OUT/res_pool_test" tests/fixtures/pre-phase1-c53538c9-fm1.bin build/melodee-res.bin
     t "capture gating, derived caches and silent-track clocks" performance_test -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
     t "canvas drawing overlaps DMA without changing pending pixels" lcd_overlap_test -O1 -w -Ibuild/gen
     t "user presets (UP_PUT parser, bank round trip, versions, PHYS DRUM -> DRUM, grid records)" upreset_test

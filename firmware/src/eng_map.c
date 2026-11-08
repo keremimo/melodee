@@ -14,7 +14,7 @@
  * when the transport is stopped (eng_map_service). Built for size (tools/size_fns.py). */
 typedef struct { uint32_t uid; char name[MOD3_NAME_MAX]; } eng_id_t;
 #define SHIP_MAPROW(n, u, nm, tg, wc, st, ns, f) [n] = {u, nm},
-static eng_id_t eng_map[NENGINES] = {SHIP_ROWS(SHIP_MAPROW)};
+static eng_id_t eng_map[NENGINES] = {SHIP_ROWS(SHIP_MAPROW)};   /* (RAM: the defaults until mod_boot reads the record) */
 #undef SHIP_MAPROW
 static uint32_t rec_uid[MOD3_NREC];                   /* the data records' owners (0: the default) */
 static uint8_t eng_map_dirty;                       /* the map changed: saved when the transport stops */

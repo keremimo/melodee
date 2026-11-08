@@ -5,7 +5,7 @@
  * chunk: tools/mod_build.py writes them as the firmware made them, module_presets.h). The pitch wheel's target is
  * voice.c's (p5_update_bend, imported); its queue for CPU1 and CPU1's pairing are the firmware's (imported).
  * tools/mod_build.py */
-#include "mod_engine.h"
+#include "../mod_engine.h"
 #include "eng_prophet_test.c"
 
 static p5_part_t *p5_part(uint32_t part) { return mod_part_mem(part, sizeof(p5_part_t)); }   /* (engines.c's) */

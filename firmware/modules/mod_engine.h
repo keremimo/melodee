@@ -6,7 +6,7 @@
  * reaches of the firmware it reaches through the host table, taken once in bind() below (the data and tables as
  * pointers the headers declare under MOD_SIDE: `voice_was`, `dith`, `SINE`...; the firmware's calls as pointers an
  * engine's own declaration of one, `static void voice_scale_pitch(...);`, redeclares).
- *     #include "mod_engine.h"
+ *     #include "../mod_engine.h"
  *     #include "eng_x.c"
  *     static x_part_t *x_part(uint32_t part) { return mod_part_mem(part, sizeof(x_part_t)); }
  *     MOD3_ENGINE_EXPORT(mod_x) = {MOD3_ENGINE_HEAD, .engine = N, .name = "X", .npresets = .., .eng = &ENG_X};
@@ -38,10 +38,10 @@ int memcmp(const void *a, const void *b, size_t n);
 #include <string.h>
 #define __attribute__(x)                         /* (as tests/hostsim.c builds the firmware: the same code) */
 #endif
-#include "mod_abi3.h"
+#include "sdk/mod_abi3.h"
 #include "melodee_tables.h"
 #include "core.h"
-#include "../shipped.h"                       /* (the shipped synths' engine numbers) */
+#include "shipped.h"                          /* (the shipped synths' engine numbers) */
 #include "dsp.c"
 #include "audio_batch.h"                         /* (the firmware's queue for CPU1: the host's) */
 #include "audio_worker.h"                        /* (CPU1's pairing: the host's) */
