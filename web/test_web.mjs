@@ -1125,9 +1125,9 @@ async function editorModules() {
   const kitFiles = kits.map(([stem]) => join(HERE, "..", "build", "modules", stem + ".mmod"));
   if (kitFiles.every((f) => existsSync(f))) {
     const heads = kitFiles.map((f) => E.MODS.head(new Uint8Array(readFileSync(f))));
-    ok(heads.every((t, i) => t.name === kits[i][1] && t.key === 0 && t.host === 4 && t.npresets === kits[i][2]) &&
+    ok(heads.every((t, i) => t.name === kits[i][1] && t.key === 0 && t.host === (kits[i][0] === "sampler" ? 6 : 4) && t.npresets === kits[i][2]) &&
        !existsSync(join(HERE, "..", "build", "modules", "drum.mmod")),
-       "modules: the built kit synths' files (808, 909, SID KIT, CR78, FM KIT, SAMPLER) read as the firmware's (no key: their pads in their schemas, SAMPLER's kits the host's data records); no DRUM file");
+       "modules: the built kit synths' files (808, 909, SID KIT, CR78, FM KIT, SAMPLER) read as the firmware's (no key: their pads in their schemas, SAMPLER's kits the host's pad records, host table 6); no DRUM file");
   }
   let list = await E.MODS.list(rq);
   ok(!list.rc && !list.skipped && list.slots.length === 8 && list.slots.every((x) => !x.len), "modules: eight empty slots listed");

@@ -35,9 +35,10 @@
 #include <stdint.h>
 
 #define MOD3_ABI 3u
-#define MOD3_HOST 5u                             /* the host table version this contract describes (2: the patch, its
+#define MOD3_HOST 6u                             /* the host table version this contract describes (2: the patch, its
                                                   * schema's callbacks, the host's drawing; 3: SysEx; 4: pads, data
-                                                  * records; 5: a part's stereo output) */
+                                                  * records; 5: a part's stereo output; 6: the records as pad records
+                                                  * of any length, a take streamed into one) */
 #define MOD3_HOST_MIN 4u                         /* the version a module built from this file needs unless it says more
                                                   * (mod_sdk.h MOD3_SDK_HOST): host 5's member is optional */
 #define MOD3_FILE_MAGIC 0x31444D4Du              /* "MMD1": every module file's (ABI 1 and 2: older firmware's) */
@@ -75,8 +76,11 @@
 #define MOD3_PATCH_MAX 512u                      /* a part's patch (host 2): the module's own bytes, at most */
 #define MOD3_SX_MAX 4104u                        /* a SysEx frame the host collects for a module (host 3), at most: F0 to
                                                   * F7 (a DX7 32-voice bank); also its scratch's bytes (host sx_scratch) */
-#define MOD3_NREC 8u                             /* data records (host 4): the slots a module's records take */
-#define MOD3_REC_SEC 15u                         /* a record's 4 KB sectors, at most */
+#define MOD3_NREC 8u                             /* data records (host 4): a pads synth's kits, the KIT values from rec0 */
+#define MOD3_RPAD 16u                            /* host 6: a kit's pad records (one take each), record kit * MOD3_RPAD +
+                                                  * pad; a kit's name in a record of the host's (mod_schema.h rname) */
+#define MOD3_NSMP (MOD3_NREC * MOD3_RPAD)
+#define MOD3_REC_LIST 128u                       /* host 6: the pad records' sectors in all, at most (rec_list) */
 #define MOD3_REC_OFF 32u                         /* where a sector's payload starts (its first MOD3_REC_RUN0 bytes, the
                                                   * 8-byte guard, then the rest: MOD3_REC_PAYLOAD in all) */
 #define MOD3_REC_RUN0 3808u
@@ -148,15 +152,19 @@ enum {
                                                   * one). Never asked of a module for an older host */
 };
 
-/* mod_engine_v3.rec_take: what became of a take (host 4). The host's take begins MOD3_TAKE_PRE samples before the
- * first above MOD3_TAKE_ON (-40 dBFS) and ends at 150 ms below -60 dBFS, or a full buffer */
+/* mod_engine_v3.rec_stream: a take streamed into a pad record as it is recorded (host 6). The host's take begins
+ * MOD3_TAKE_PRE samples before the first above MOD3_TAKE_ON (-40 dBFS) and ends at 150 ms below -60 dBFS, a full
+ * store, or a take the synth no longer keeps up with. ops: BEGIN (pcm 0, n the record's room in bytes: the host made
+ * the free sectors ready), FEED (n samples at pcm, 16-bit mono, 44.1 kHz), END (the take ends: n samples of it were
+ * fed), ABORT. What becomes of it: MOD3_TK_* (FEED: NONE while it goes on, ROOM once the store is full) */
 #define MOD3_TAKE_ON 328
 #define MOD3_TAKE_PRE 128u
 enum { MOD3_TK_NONE, MOD3_TK_KEPT, MOD3_TK_QUIET, MOD3_TK_ROOM, MOD3_TK_FLASH };
-typedef struct mod_rec_v3 {                      /* a data record's place (host 4): n sectors (0: an empty slot), their
-                                                  * 4 KB numbers in the flash; the payload's bytes run on from sector to
-                                                  * sector (MOD3_REC_PAYLOAD each) */
-    uint8_t n, sec[MOD3_REC_SEC];
+enum { MOD3_TS_BEGIN, MOD3_TS_FEED, MOD3_TS_END, MOD3_TS_ABORT };
+typedef struct mod_rec_v3 {                      /* a pad record's place (host 6): n sectors (0: none), their 4 KB numbers
+                                                  * in the flash at host rec_list[at..at + n); the payload's bytes run on
+                                                  * from sector to sector (MOD3_REC_PAYLOAD each) */
+    uint8_t at, n;
 } mod_rec_v3;
 
 /* ---- the views */
@@ -283,13 +291,12 @@ typedef struct mod_engine_v3 {
      * count above its low byte; ch: the channel, 0..15) */
     uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
     /* host 4: its data records (a pads synth's recorded kits; mod_schema.h MOD3_R_PADS nrec), main loop. rec_check: a
-     * record of len payload bytes in nsec sectors (secs: each one's payload, readable in place) is one it plays, 0;
-     * the host publishes only records it checked (a written one before it commits it, the stored ones once the module
-     * is in SRAM). rec_take: a take (MOD3_PD_RECORD: Record kit's, n samples at pcm, 16-bit mono, the buffer's cap
-     * samples, 64 zeros after them) made pad's in record slot, written through the host's rec_* calls: MOD3_TK_*.
-     * rec_pad: 1 when record slot holds a take for pad */
-    int (*rec_check)(const uint32_t *const *secs, uint32_t nsec, uint32_t len);
-    uint32_t (*rec_take)(uint32_t slot, uint32_t pad, int16_t *pcm, uint32_t n, uint32_t cap);
+     * pad record of len payload bytes in nsec sectors (secs: their 4 KB numbers, each one's payload readable in place
+     * at host rec_base + 4096 secs[k] + MOD3_REC_OFF) is one it plays, 0; the host publishes only records it checked (a written one before it commits it, the stored ones once the
+     * module is in SRAM). rec_stream (host 6): a take (MOD3_PD_RECORD: Record kit's) into kit slot's pad as it comes
+     * (op MOD3_TS_*), written through the host's take calls: MOD3_TK_*. rec_pad: 1 when kit slot holds a take for pad */
+    int (*rec_check)(const uint8_t *secs, uint32_t nsec, uint32_t len);
+    uint32_t (*rec_stream)(uint32_t slot, uint32_t pad, const int16_t *pcm, uint32_t n, uint32_t op);
     int (*rec_pad)(uint32_t slot, uint32_t pad);
 } mod_engine_v3;
 
@@ -360,10 +367,10 @@ typedef struct mod_host_v3 {
      * while the host changes the table, and a record it no longer lists stays readable for 10 ms) */
     const int32_t *note_pitch;
     const uint32_t *note_len;
-    const mod_rec_v3 *rec;                       /* MOD3_NREC slots */
+    const mod_rec_v3 *rec;                       /* MOD3_NSMP pad records (host 6; host 4, 5: another layout) */
     const volatile uint32_t *rec_gen;
     const uint8_t *rec_base;                     /* sector k's payload at rec_base + 4096 k + MOD3_REC_OFF */
-    int (*rec_begin)(uint32_t slot, uint32_t len);   /* (main loop) a record of len bytes: written in order, committed */
+    int (*rec_begin)(uint32_t slot, uint32_t len);   /* (main loop) pad record slot, len bytes: written in order, committed */
     int (*rec_write)(const void *src, uint32_t n);
     int (*rec_commit)(uint32_t slot);            /* checked (rec_check), published: 0; -2 not playable */
     int (*rec_delete)(uint32_t slot);
@@ -372,9 +379,19 @@ typedef struct mod_host_v3 {
      * module writes them all) and out then holds L + R: the mixer keeps the sides apart to the master (PAN a balance,
      * the FX sends post balance). 0: not now (a render outside the mixer's): out alone, mono */
     int32_t *(*stereo)(const mod_part_v3 *t);
+    /* host 6: the pad records' sectors (rec[].at, n index it), and a take streamed into pad record slot (main loop):
+     * take_begin makes the free store ready (its room in bytes, -n none), take_write puts n bytes at payload offset off
+     * (each byte once, in any order: the header last), take_end publishes len bytes once the synth checked them (0;
+     * -2 not playable, -5 no room, -n the store's error), take_abort drops it */
+    const uint8_t *rec_list;
+    int (*take_begin)(uint32_t slot);
+    int (*take_write)(uint32_t off, const void *src, uint32_t n);
+    int (*take_end)(uint32_t slot, uint32_t len);
+    void (*take_abort)(void);
 } mod_host_v3;
 /* a host table's size at version v (4 or later): what bind checks the table's size against */
-#define MOD3_HOST_SIZE(v) ((v) >= 5u ? sizeof(mod_host_v3) : __builtin_offsetof(mod_host_v3, stereo))
+#define MOD3_HOST_SIZE(v) ((v) >= 6u ? sizeof(mod_host_v3) : (v) >= 5u ? __builtin_offsetof(mod_host_v3, rec_list) \
+                           : __builtin_offsetof(mod_host_v3, stereo))
 #define MOD3_SX_SEL 0xFFu
 enum { MOD3_C_BG, MOD3_C_INK, MOD3_C_DIM, MOD3_C_ACCENT, MOD3_C_THEME, MOD3_C_SURF, MOD3_C_RAISE, MOD3_C_COUNT };
 enum { MOD3_FONT_SMALL, MOD3_FONT_LABEL, MOD3_FONT_VALUE };

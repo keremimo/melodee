@@ -74,6 +74,17 @@ _Static_assert(ST_PROJECT_SECTORS * 5u <= ST_U_N && ST_U_N < 0x7Fu && ST_SMALL_U
 #define ST_LW ((ST_LN + 31u) / 32u)            /* words of a linear bitmap */
 _Static_assert(ST_LN < 0x7Fu && ST_LIN_C0 > ST_SMALL_U0 + ST_U_N && ST_RUN0 == ST_POOL_PAYLOAD_MAX &&
                ST_LIN_PAYLOAD_MAX == 4056u, "list record numbering");
+/* A long list record (a pad record: st_long), more than the header's eight sectors: its entries 8.. in index blocks,
+ * one in each of its sectors 1..4 at bytes 0..31, which no list record's payload uses (it starts at 32): ST_LIX_TAG,
+ * then ST_LIX_N linear indices, 0xFF after the last. A record of eight sectors or fewer leaves them erased (each
+ * sector is erased when a record takes it), so a reader looks for the tag past the header's eighth entry. The tag is
+ * never ST_MAGIC: no scan takes a block for a commit header */
+#define ST_LIX_TAG 0x3158494Cu                 /* "LIX1" */
+#define ST_LIX_N 28u
+#define ST_LIX_BLOCKS 4u
+#define ST_REC_MAX (8u + ST_LIX_BLOCKS * ST_LIX_N)      /* a list record's sectors, at most */
+#define ST_LONG_SECTORS (ST_LN < ST_REC_MAX ? ST_LN : ST_REC_MAX)   /* a long record's, at most: the whole pool */
+_Static_assert(ST_LN <= ST_REC_MAX && ST_REC_MAX < 0xFFu, "a pad record can take every pool sector");
 
 /* The Prophet user banks: 0x93000..0x9CFFF. The old banks at 0x89000 are retired and never migrated.
  * The current banks occupy the legacy single-pattern projects' place: those objects are retired (2026-10-10, Kerem: not
@@ -95,8 +106,9 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
  * are pool records of type ST_PFILE0 + slot. Empty slots own no sector. */
 #define ST_NPROJ 32u
 #define ST_PFILE0 64u
-/* Data records (rec_store.c: a synth module's own, recorded kits): 8 slots, pool records of type ST_RFILE0 + slot, as
- * slots 5..32 are */
+/* Data records (rec_store.c: a pads synth's own, the SAMPLER's kits): 8 kits, each a name record (ST_RFILE0 + kit, made
+ * only when the kit is named) and a record per pad take (ST_SFILE0 + kit * ST_RPAD + pad, any length up to the pool:
+ * st_long), pool records as slots 5..32 are */
 #ifndef MELODEE_RECORDS                      /* (pads.h sets it first in the firmware; storage tests alone: on) */
 #define MELODEE_RECORDS 1
 #endif
@@ -117,7 +129,10 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
 #define ST_MAPOBJ (ST_MXFILE0 + 8u)            /* the device's engine map: number <-> UID, the data records' owners */
 #define ST_MNEW0 (ST_MAPOBJ + 1u)
 #define ST_TPLX (ST_MNEW0 + ST_NMOD * MOD_RECS)     /* the template's end block (project.c tmpl_ext): only when needed */
-#define ST_OBJ_END (ST_TPLX + 1u)                   /* every object number below this */
+#define ST_RPAD 16u                                 /* a kit's pad records */
+#define ST_NSMP (ST_NREC * ST_RPAD)
+#define ST_SFILE0 (ST_TPLX + 1u)                    /* the pad records */
+#define ST_OBJ_END (ST_SFILE0 + ST_NSMP)            /* every object number below this */
 static uint32_t st_mod_obj(uint32_t k, uint32_t j)
 {
     return k < 8u && j < 2u ? ST_MFILE0 + 8u * j + k : ST_MNEW0 + k * MOD_RECS + j;
@@ -392,7 +407,10 @@ static int st_banked(uint32_t obj) { return (obj >= OBJ_BANK0 && obj < OBJ_CZBAN
 /* New preset objects start directly after the commit header, leaving the last
  * 256 bytes erased so the SPL/update loader cannot interpret musical data as OTA. */
 static uint32_t st_payload_off(uint32_t obj) { return obj >= OBJ_UPRESET_EXT0 ? sizeof(st_hdr_t) : ST_PAYLOAD_OFF; }
-static uint32_t st_capacity(uint32_t obj) { return obj == OBJ_SETTINGS ? ST_SECTOR - sizeof(st_hdr_t) : st_banked(obj) ? ST_PROJECT_MAX : obj >= OBJ_UPRESET_EXT0 ? ST_SECTOR - 256u - sizeof(st_hdr_t) : ST_PAYLOAD_MAX; }
+/* a pad record (rec_store.c): a list record of any length up to the pool */
+static int st_long(uint32_t obj) { return obj >= ST_SFILE0 && obj < ST_SFILE0 + ST_NSMP; }
+static uint32_t st_max_sectors(uint32_t obj) { return st_long(obj) ? ST_LONG_SECTORS : ST_PROJECT_SECTORS; }
+static uint32_t st_capacity(uint32_t obj) { return obj == OBJ_SETTINGS ? ST_SECTOR - sizeof(st_hdr_t) : st_long(obj) ? ST_LONG_SECTORS * ST_LIN_PAYLOAD_MAX : st_banked(obj) ? ST_PROJECT_MAX : obj >= OBJ_UPRESET_EXT0 ? ST_SECTOR - 256u - sizeof(st_hdr_t) : ST_PAYLOAD_MAX; }
 static int st_preset_object(uint32_t obj)
 {
     return (obj>=OBJ_UPRESET0 && obj<OBJ_BANK0) || (obj>=OBJ_CZBANK0 && obj<OBJ_COUNT);
@@ -438,8 +456,8 @@ static int st_rec_lin(const st_hdr_t *h) { return (h->rsv[1] & 0xFF000000u) == S
 /* a record's payload bytes per sector: the list form's 4,056, the old pool forms' 3,808 */
 static uint32_t st_geom(const st_hdr_t *h) { return st_rec_lin(h) ? ST_LIN_PAYLOAD_MAX : ST_POOL_PAYLOAD_MAX; }
 /* a pool record's sectors in order (indices in its tag's space: linear, or the old pool's); their count, 0 when it
- * has no pool shape */
-static uint32_t st_rec_sectors(const st_hdr_t *h, uint8_t idx[ST_PROJECT_SECTORS])
+ * has no pool shape. A list record's entries past the header's eight: its index blocks */
+static uint32_t st_rec_sectors(const st_hdr_t *h, uint8_t idx[ST_REC_MAX])
 {
     uint32_t tag = h->rsv[1] & 0xFF000000u, n = 0;
     if (tag == ST_POOL_TAG) {
@@ -451,14 +469,43 @@ static uint32_t st_rec_sectors(const st_hdr_t *h, uint8_t idx[ST_PROJECT_SECTORS
             if (v >= (tag == ST_LIN_TAG ? ST_LN : ST_U_N)) return 0;
             idx[n++] = (uint8_t)v;
         }
+        for (uint32_t b = 0; tag == ST_LIN_TAG && n == 8u + b * ST_LIX_N && b < ST_LIX_BLOCKS; b++) {
+            uint32_t blk[8];
+            if (st_fetch(st_lin_at(idx[1u + b]), blk, sizeof blk))
+                return 0;
+            if (blk[0] != ST_LIX_TAG)
+                break;
+            for (uint32_t k = 0; k < ST_LIX_N; k++) {
+                uint32_t v = ((const uint8_t *)blk)[4u + k];
+                if (v == 0xFFu) break;
+                if (v >= ST_LN) return 0;
+                idx[n++] = (uint8_t)v;
+            }
+        }
     }
     return n;
+}
+/* a long record's index blocks (entries 8.. of its n sectors in list), into its sectors 1..4 (erased) */
+static int st_prog(uint32_t off, const void *src, uint32_t n);
+static int st_lix_write(const uint8_t *list, uint32_t n)
+{
+    for (uint32_t b = 0; n > 8u + b * ST_LIX_N && b < ST_LIX_BLOCKS; b++) {
+        uint8_t blk[32];
+        memset(blk, 0xFF, sizeof blk);
+        blk[0] = (uint8_t)ST_LIX_TAG; blk[1] = (uint8_t)(ST_LIX_TAG >> 8); blk[2] = (uint8_t)(ST_LIX_TAG >> 16);
+        blk[3] = (uint8_t)(ST_LIX_TAG >> 24);
+        for (uint32_t k = 0; k < ST_LIX_N && 8u + b * ST_LIX_N + k < n; k++)
+            blk[4u + k] = list[8u + b * ST_LIX_N + k];
+        int rc = st_prog(st_lin_at(list[1u + b]), blk, sizeof blk);
+        if (rc) return rc;
+    }
+    return 0;
 }
 /* the address of a record's sector by its index (st_rec_sectors) */
 static uint32_t st_rec_addr(const st_hdr_t *h, uint32_t v) { return st_rec_lin(h) ? st_lin_at(v) : st_pool_at(v); }
 static int st_pool_shape(const st_hdr_t *h, uint32_t copy)
 {
-    uint8_t idx[ST_PROJECT_SECTORS];
+    uint8_t idx[ST_REC_MAX];
     int lin = st_rec_lin(h);
     uint32_t n = lin ? (copy >= ST_LIN_C0 && copy < ST_LIN_C0 + ST_LN ? st_rec_sectors(h, idx) : 0u)
                      : (copy >= 2u && copy < ST_U_N + 2u ? st_rec_sectors(h, idx) : 0u), g = st_geom(h);
@@ -467,7 +514,7 @@ static int st_pool_shape(const st_hdr_t *h, uint32_t copy)
 /* payload byte off of a pool record: its flash address, *span the bytes from there up to the guard or the sector end */
 static uint32_t st_pool_address(const st_hdr_t *h, uint32_t off, uint32_t *span)
 {
-    uint8_t idx[ST_PROJECT_SECTORS];
+    uint8_t idx[ST_REC_MAX];
     uint32_t n = st_rec_sectors(h, idx), g = st_geom(h), k = off / g, b = off % g;
     if (k >= n) { *span = 0; return 0; }
     uint32_t at = st_rec_addr(h, idx[k]);
@@ -548,10 +595,7 @@ static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* streamin
     for (uint32_t off = 0; off < h->len; off += sizeof st_buf) {
         uint32_t n = h->len - off > sizeof st_buf ? sizeof st_buf : h->len - off;
         if (st_read_range(obj, copy, off, st_buf, n)) return -1;
-        for (uint32_t i = 0; i < n; i++) {
-            crc ^= st_buf[i];
-            for (uint32_t j = 0; j < 8u; j++) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-        }
+        crc = st_crc32_update(crc, st_buf, n);
     }
     return ~crc == h->crc ? 0 : -1;
 
@@ -616,7 +660,7 @@ static void st_mark(uint32_t used[ST_LW], uint32_t addr)   /* the linear sector 
 static void st_project_used(uint32_t used[ST_LW], uint32_t obj, uint32_t copy, const st_hdr_t *h)
 {
     if (copy >= ST_LIN_C0 || (st_banked(obj) && copy >= 2u)) {     /* a list record (or an old pool list) */
-        uint8_t idx[ST_PROJECT_SECTORS];
+        uint8_t idx[ST_REC_MAX];
         for (uint32_t k = 0, n = st_rec_sectors(h, idx); k < n; k++) st_mark(used, st_rec_addr(h, idx[k]));
         return;
     }
@@ -647,7 +691,7 @@ static int st_pool_used(uint32_t used[ST_LW], uint32_t obj, uint32_t *seq)
     for (uint32_t o = 0; o < ST_OBJ_END; o++) {
         uint32_t live = o < OBJ_COUNT ? st_listed(o) && !st_retired(o) : st_pfile(o);
 #if !MELODEE_RECORDS
-        live &= o < ST_RFILE0 || o >= ST_MFILE0;
+        live &= (o < ST_RFILE0 || o >= ST_MFILE0) && o < ST_SFILE0;
 #endif
         if (!live || (skip && o >= ST_PFILE0 && !(seen[o / 8u] >> (o % 8u) & 1u))) continue;
         st_hdr_t current; int copy = st_current(o, &current);
@@ -712,14 +756,23 @@ static int st_project_allocate(uint32_t obj, uint32_t len, st_hdr_t *h)
     h->type = (uint16_t)obj; h->len = len; h->seq = 1u;
     if (st_pool_used(used, obj, &h->seq)) return -7;
     st_list_init(h);
+    uint8_t list[ST_REC_MAX];
     uint32_t need = len ? (len + ST_LIN_PAYLOAD_MAX - 1u) / ST_LIN_PAYLOAD_MAX : 1u, k = 0;
-    if (need > ST_PROJECT_SECTORS) return -1;
-    for (uint32_t m = 0; m < ST_LN && k < need; m++) if (st_pool_free_at(used, st_order(obj, m))) st_list_put(h, k++, st_order(obj, m));
+    if (need > st_max_sectors(obj)) return -1;
+    for (uint32_t m = 0; m < ST_LN && k < need; m++)
+        if (st_pool_free_at(used, st_order(obj, m))) {
+            list[k] = (uint8_t)st_order(obj, m);
+            if (k < 8u) st_list_put(h, k, list[k]);
+            k++;
+        }
     if (k < need) return -5;
-    h->slot = (uint16_t)(ST_LIN_C0 + st_list_get(h, 0));
+    h->slot = (uint16_t)(ST_LIN_C0 + list[0]);
     for (uint32_t m = 0; m < need; m++) {
-        int rc = st_erase(st_lin_at(st_list_get(h, m))); if (rc) return rc;
+        int rc = st_erase(st_lin_at(list[m])); if (rc) return rc;
+        ST_IDLE();
     }
+    int rc = st_lix_write(list, need);
+    if (rc) return rc;
     /* Persist the address map for staged range reads. The erased magic and
      * header CRC keep it invisible until the final one-page commit. */
     return st_prog(st_sector(obj, h->slot), h, sizeof *h);

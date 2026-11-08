@@ -429,10 +429,10 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
      * patch as its SysEx (the sends) */
     uint32_t (*sysex)(const uint8_t *f, uint32_t n, uint32_t ev);
     uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
-    /* host 4 (mod_abi3.h): its data records (rec_store.c keeps them): one checked before it plays it, a take made a
-     * record's pad, whether a record has a pad's take */
-    int (*rec_check)(const uint32_t *const *secs, uint32_t nsec, uint32_t len);
-    uint32_t (*rec_take)(uint32_t slot, uint32_t pad, int16_t *pcm, uint32_t n, uint32_t cap);
+    /* host 4, 6 (mod_abi3.h): its data records (rec_store.c keeps them): a pad record checked before it plays it, a
+     * take streamed into a pad's record as it is recorded, whether a kit's pad has a take */
+    int (*rec_check)(const uint8_t *secs, uint32_t nsec, uint32_t len);
+    uint32_t (*rec_stream)(uint32_t slot, uint32_t pad, const int16_t *pcm, uint32_t n, uint32_t op);
     int (*rec_pad)(uint32_t slot, uint32_t pad);
 } engine_t;
 #endif

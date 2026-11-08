@@ -6171,7 +6171,7 @@ static int test_smk_sweep(void)
  * silent, at any octave; the 909 keeps its chromatic GM map */
 static int test_smk_user_kit_keys(void)
 {
-    static const uint8_t PAD[16] = {36, 38, 39, 37, 42, 46, 51, 49, 41, 45, 50, 51, 36, 38, 42, 46};
+    static const uint8_t PAD[16] = {36, 38, 39, 37, 42, 46, 56, 49, 41, 45, 50, 70, 64, 61, 60, 75};   /* (the 808's sixteen) */
     static const uint8_t WHITE[12] = {1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1};   /* C .. B */
     track_t *t = &trk[3];
     int ok = 1, gm = 1;

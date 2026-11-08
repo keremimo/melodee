@@ -2,7 +2,8 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* The firmware's sizes and record identities as JSON, for Melodee Studio (tools/studio_bundle.py: constants.json),
  * from the FM-1 build's own sources through tests/mel_fixture.c's harness (backup_test.c with the user kits and
- * kit_take.c): tracks, patterns, song rows and project slots; a user kit's bounds and Record kit's quality ladder;
+ * kit_take.c): tracks, patterns, song rows and project slots; a kit's bounds (its blob, its pad records) and Record
+ * kit's quality;
  * the store's sector geometry; the records Studio reads and writes, each with the magics the firmware writes now and
  * the ones it still reads.
  *   build/host/constdump > constants.json */
@@ -11,7 +12,7 @@ static unsigned char nor[0x100000];
 #define BACKUP_TEST_NO_MAIN 1
 #define BACKUP_TEST_KITS 1
 #include "backup_test.c"
-/* (DRUM's Record kit take, encoder and record check: built in, modules/kits/kit_take.c) */
+/* (SAMPLER's Record kit take, encoder and record check: built in, modules/kits/kit_take.c) */
 
 static void magic(uint32_t m, int first)
 {
@@ -48,7 +49,8 @@ int main(void)
     /* project_stream.c: a saved project as stored (and as BACKUP_GET / PUT carry it): packed, or a raw record */
     static const uint32_t pj_w[] = {PZ_MAGIC};
     static const uint32_t pj_r[] = {PZ_MAGIC, BANKS_MAGIC};
-    static const uint32_t kit_w[] = {DRK_KIT_MAGIC};
+    static const uint32_t kit_w[] = {DRK_BOX_MAGIC};
+    static const uint32_t pad_w[] = {DRK_PAD_MAGIC};
     static const uint32_t set_w[] = {PERSIST_MAGIC};
     /* project.c template: TPLM (2.0) only */
     static const uint32_t tpl_w[] = {TMPL_MAGIC};
@@ -58,12 +60,12 @@ int main(void)
     printf("\"music\":{\"parts\":%u,\"midi_tracks\":%u,\"tracks\":%u,\"patterns\":%u,\"patterns_midi\":%u,\"steps\":%u,"
            "\"chain_rows\":%u,\"project_slots\":%u,\"motion_max\":%u,\"p_count\":%u,\"g_count\":%u,\"p_e0\":%u},\n",
            NPART, NMIDI, NTRK, NPAT, NPAT_MIDI, NSTEP, CHAIN_ROWS, PROJ_SLOTS, MOTION_MAX, P_COUNT, G_COUNT, P_E0);
-    printf("\"kits\":{\"user_first\":%u,\"user_count\":%u,\"store_slots\":%u,\"drums\":%u,\"name_len\":%u,"
-           "\"kit_max\":%u,\"sectors\":%u,\"sector_bytes\":%u,\"head_bytes\":%u,\"pad_reserve\":%u,\"snr\":[",
-           DK_USER0, DK_NUSER, ST_NREC, DRK_NDRUM, DRK_NAMELEN, (unsigned)DRK_KIT_MAX, DRK_KSEC, DRK_SECBYTES,
-           (unsigned)DRK_KIT_BYTES, KT_PAD_RESERVE);
-    for (i = 0; i < sizeof KT_SNR; i++) printf("%s%d", i ? "," : "", KT_SNR[i]);
-    printf("]},\n");
+    printf("\"kits\":{\"user_first\":%u,\"user_count\":%u,\"store_slots\":%u,\"pads\":%u,\"name_len\":%u,"
+           "\"kit_max\":%u,\"pad_max\":%u,\"sectors\":%u,\"sector_bytes\":%u,\"head_bytes\":%u,\"pad_head_bytes\":%u,"
+           "\"snr\":[%d]},\n",
+           DK_USER0, DK_NUSER, ST_NREC, DRK_NPAD, DRK_NAMELEN, (unsigned)(DRK_BOX_BYTES + ST_LONG_SECTORS * DRK_SECBYTES),
+           (unsigned)(ST_LONG_SECTORS * DRK_SECBYTES), (unsigned)ST_LONG_SECTORS, DRK_SECBYTES, (unsigned)DRK_BOX_BYTES,
+           (unsigned)DRK_PAD_BYTES, TK_SNR);
     printf("\"storage\":{\"sector\":%u,\"lin_payload_max\":%u,\"payload_off\":%u,\"guard_off\":%u,\"guard_len\":%u,"
            "\"run0\":%u,\"lin_base\":%u,\"lin_sectors\":%u,\"pool_sectors\":%u,\"preset_pool_sectors\":%u,"
            "\"project_sectors_max\":%u,\"record_bytes\":%u,\"wire_bytes\":%u,\"tail_at\":%u},\n",
@@ -75,7 +77,8 @@ int main(void)
     record("project_wire", "the FUN project inside it (project.c)", 8, wire_w, N(wire_w), wire_r, N(wire_r), 0);
     record("project_stored", "a saved project as stored and as the backup carries it (project_stream.c)", 0, pj_w, N(pj_w),
            pj_r, N(pj_r), 0);
-    record("kit", "a user kit (drum_real.c)", 0, kit_w, N(kit_w), kit_w, N(kit_w), 0);
+    record("kit", "a kit as one blob, backup objects 92..99 (rec_store.c, drum_kit.h drk_box_t)", 0, kit_w, N(kit_w), kit_w, N(kit_w), 0);
+    record("kit_pad", "a kit's pad record inside it (drum_kit.h drk_pad_t)", 0, pad_w, N(pad_w), pad_w, N(pad_w), 0);
     record("settings", "the settings record, backup object 1 (settings_persist.c)", 0, set_w, N(set_w), set_w, N(set_w), 0);
     record("template", "the template after the settings (project.c)", 0, tpl_w, N(tpl_w), tpl_r, N(tpl_r), 1);
     printf("}}\n");

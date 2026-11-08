@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* KIT 1..8 (values 9..16): the user's recorded kits (Record kit, kit_take.c), pool records (kit_store.c) played from
- * their flash sectors in place. A whole kit on the drum track's one voice, as the lane kits are, but a channel is a
- * hit, not a lane: toms overlap, a crash rings under a ride, a drum struck again rings out for 15 ms under its next
- * hit. A closed hat chokes the open one (closed hats alternate between two takes where a record holds two).
+/* KIT 1..8 (values 9..16): SAMPLER's kits (Record kit, kit_take.c), sixteen pads each, every pad's take a pool record
+ * of its own (drum_kit.h, kit_store.c) played from its flash sectors in place, as long as the take. A whole kit on the
+ * drum track's one voice, as the lane kits are, but a channel is a hit, not a lane: toms overlap, a crash rings under
+ * a ride, a pad struck again rings out for 15 ms under its next hit. A closed hat chokes the open one.
  * A stream is a 4-tap sign-LMS predictor after QOA with a bit depth per slice: two 32-bit words, [2 mode][4 scale]
- * then residuals, top bits first; drum_enc.c (and tools/drum_codec.c, its reference) encodes. A looped tail (a
+ * then residuals, top bits first; drum_enc.c (and tools/drum_codec.c, its reference) encodes. A looped tail (a 1.x
  * cymbal recorded past its buffer) restarts its predictor from the record and dies on the hit's envelope, darkening.
- * TUNE every drum (Hermite at the output rate); TONE a one-pole cut below 64, a one-pole boost above, around each
- * drum's pivot; velocity darkens with level; DECY the envelope; SNAP the front of the hit. An empty slot: no sound. */
+ * TUNE every pad (Hermite at the output rate); TONE a one-pole cut below 64, a one-pole boost above, around each pad's
+ * pivot; velocity darkens with level; DECY the envelope (a take recorded on the device holds to its end until DECY
+ * goes below its middle); SNAP the front of the hit. An empty pad: no sound. */
 #define DRK_NCH 8u
 #define DRK_RING DR_MS(15)                       /* a drum struck again: the old hit's fade */
 #define DRK_CHOKE 128                            /* a choked open hat, a recorded hit's end */
@@ -18,9 +19,8 @@
 
 typedef struct {
     const uint32_t *src, *end;                   /* the next slice; its sector's end */
-    const uint32_t *const *secs;                 /* the kit's sectors (its part's) */
-    const drk_sample_t *s;                       /* the take */
-    const int32_t *loop;                         /* its predictor at the loop */
+    const uint8_t *list;                         /* the pad record's sectors (4 KB numbers: the host's list) */
+    const drk_pad_t *s;                          /* the take */
     uint32_t hi, lo;                             /* this slice's bits, top first */
     const int8_t *lv;                            /* its levels (Q2) */
     int32_t sc;                                  /* its scale */
@@ -28,22 +28,24 @@ typedef struct {
     int32_t z[4];                                /* the last four samples: the output is between z[1] and z[2] */
     uint32_t ph, inc;                            /* Q16 */
     uint32_t idx, n, t;                          /* samples decoded, in all; output samples since the hit */
-    int32_t gain, a;                             /* the hit's level (Q15); last block's amplitude, -1: none yet */
+    int32_t gain, a, tg;                         /* the hit's level (Q15); last block's amplitude, -1: none yet; the
+                                                  * take's gain (Q10) */
     int32_t left, fade, flen;                    /* a recorded hit's samples to its end; samples of fade left, of all */
     int32_t last, ease;                          /* the channel's last sample; a stolen hit's step, easing out */
     int32_t snap, att;                           /* SNAP (Q15, +- 1); its envelope (Q15) */
     int32_t lp, lk, hs, hk, hv;                  /* TONE: cut (state, Q14), boost (state, Q14, amount Q6) */
     dre_t e;
-    uint8_t bits, nleft, map, sec, sound, lane, level, on;
+    uint8_t bits, nleft, sound, lane, level, on;
+    uint16_t sec;
 } drk_ch_t;
 #ifndef DRK_CODEC_ONLY
 struct drk_part {                                /* (drk_part_t: eng_drum.c) */
     drk_ch_t ch[DRK_NCH];
-    const drk_kit_t *H;                          /* the kit's header (flash); 0: an empty slot */
-    const uint32_t *sec[DRK_KSEC];               /* its sectors' payloads (flash) */
+    const drk_pad_t *H[DRK_NPAD];                /* each pad's take (flash); 0: none */
+    const uint8_t *L[DRK_NPAD];                  /* its sectors (the host's list) */
     int32_t nst;
-    uint32_t gen;                                /* drk_user_gen when the part took its slot */
-    uint8_t ready, kit, take;
+    uint32_t gen;                                /* drk_user_gen when the part took its pads */
+    uint8_t ready, kit, any;
 };
 _Static_assert(((sizeof(drk_part_t) + 3u) & ~3u) != ((sizeof(dlk_part_t) + 3u) & ~3u) &&
                ((sizeof(drk_part_t) + 3u) & ~3u) != ((sizeof(drum909_part_t) + 3u) & ~3u) &&
@@ -53,21 +55,32 @@ _Static_assert(((sizeof(drk_part_t) + 3u) & ~3u) != ((sizeof(dlk_part_t) + 3u) &
 static drk_part_t *drk_part(uint32_t part);      /* engines.c: the part's runtime pool */
 static uint32_t drk_bytes(void) { return sizeof(drk_part_t); }
 
-/* a user slot's sectors into the part, if the table stands still meanwhile; else (or empty) the part stays silent */
+/* a kit's pads into the part, if the table stands still meanwhile; else (or none) the part stays silent */
 static void drk_user_take(drk_part_t *K, uint32_t u, uint32_t g)
 {
-    const uint32_t *sec[DRK_KSEC];
-    uint32_t n = u < DK_NUSER && !(g & 1u) ? drk_user[u].n : 0u;
-    if (n > DRK_KSEC)
-        n = 0;
-    for (uint32_t k = 0; k < n; k++)
-        sec[k] = (const uint32_t *)DRK_XIP(drk_user[u].sec[k] * 4096u + DRK_SECOFF);
-    __asm__ volatile("" ::: "memory");
-    if (!n || drk_user_gen != g)
+    const drk_pad_t *H[DRK_NPAD];
+    const uint8_t *L[DRK_NPAD];
+    uint32_t any = 0;
+    if (u >= DK_NUSER || (g & 1u))
         return;
-    for (uint32_t k = 0; k < n; k++)
-        K->sec[k] = sec[k];
-    K->H = (const drk_kit_t *)sec[0];
+    for (uint32_t p = 0; p < DRK_NPAD; p++) {
+        const mod_rec_v3 *r = &drk_user[u * DRK_NPAD + p];
+        uint32_t n = r->n, at = r->at;
+        H[p] = 0; L[p] = 0;
+        if (!n || at + n > MOD3_REC_LIST)
+            continue;
+        L[p] = &drk_list[at];
+        H[p] = (const drk_pad_t *)(const void *)DRK_SEC(L[p][0]);
+        any = 1;
+    }
+    __asm__ volatile("" ::: "memory");
+    if (!any || drk_user_gen != g)
+        return;
+    for (uint32_t p = 0; p < DRK_NPAD; p++) {
+        K->H[p] = H[p];
+        K->L[p] = L[p];
+    }
+    K->any = 1;
 }
 
 static drk_part_t *drk_of(const track_t *t)
@@ -105,19 +118,20 @@ static drk_ch_t *drk_channel(drk_part_t *K)
 static void drk_seek(drk_ch_t *c, uint32_t slice)
 {
     uint32_t k = slice / DRK_SECSLICES, j = slice % DRK_SECSLICES;
-    c->sec = (uint8_t)k;
-    c->src = c->secs[k] + DRK_SLOT(j);
-    c->end = c->secs[k] + 2u * (j < DRK_RUN0 ? DRK_RUN0 : DRK_SLOTS);
+    const uint32_t *b = DRK_SEC(c->list[k]);
+    c->sec = (uint16_t)k;
+    c->src = b + DRK_SLOT(j);
+    c->end = b + 2u * (j < DRK_RUN0 ? DRK_RUN0 : DRK_SLOTS);
 }
 
-static void drk_stream_start(drk_ch_t *c, const drk_sample_t *s)
+static void drk_stream_start(drk_ch_t *c, const drk_pad_t *s)
 {
     for (uint32_t k = 0; k < 4u; k++)
         c->h[k] = c->z[k] = 0;
     c->w[0] = c->w[1] = 0;
     c->w[2] = -(1 << 13);
     c->w[3] = 1 << 14;
-    drk_seek(c, s->at);
+    drk_seek(c, DRK_FIRST);
     c->nleft = 0;
     c->idx = 0;
     c->n = s->n;
@@ -129,18 +143,14 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
 {
     drk_part_t *K = drk_of(t);
     int16_t q[8];
-    if (!K || K->kit < DK_USER0 || K->kit > DK_KIT_MAX || !K->H)
+    if (!K || K->kit < DK_USER0 || K->kit > DK_KIT_MAX || !K->any)
         return;
-    uint32_t sound = drum909_ins(note) & 15u, lane = drum_lane(note);
+    uint32_t sound = drum_sound_of(t, note) & 15u, lane = drum_lane(note);
     const int8_t *pc = drum_offs(t)->c[sound];
-    const drk_map_t *m = &K->H->map[sound];
-    uint32_t take = m->sample;
-    if (take == 0xFFu)                           /* a pad with nothing recorded */
+    const drk_pad_t *s = K->H[sound];
+    if (!s)                                      /* a pad with nothing recorded */
         return;
     dlk_values(t->p, pc, sound, q);
-    if (m->alt != 0xFFu && (sound == D9_BD ? q[6] != 0 : sound == D9_CH && ((K->take ^= 1u) != 0u)))
-        take = m->alt;
-    const drk_sample_t *s = &K->H->smp[take];
     for (uint32_t k = 0; k < DRK_NCH; k++) {
         drk_ch_t *o = &K->ch[k];
         if (!o->on || o->fade)
@@ -152,26 +162,35 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
     }
     drk_ch_t *c = drk_channel(K);
     c->ease = c->on || c->ease ? c->last : 0;
-    int32_t tune = clamp((m->st + pc[0] + drum_event_pitch) * 16 + (q[1] - 64) * 3, -576, 576);
+    int32_t tune = clamp((s->st + pc[0] + drum_event_pitch) * 16 + (q[1] - 64) * 3, -576, 576);
     c->inc = (uint32_t)((float)s->inc * 2.0f * dlk_exp2((float)tune / 192.0f));
     c->ph = 0;
-    c->secs = K->sec;
+    c->list = K->L[sound];
     c->s = s;
-    c->loop = K->H->loops[s->st];
     drk_stream_start(c, s);
     /* a harder hit is brighter as well as louder (a recording of one velocity: the player's own touch) */
-    int32_t dark = vel < 80u ? (int32_t)(80u - vel) / 2 : 0, v = clamp(q[2] - 64 + m->tone - dark, -64, 63);
-    c->lk = v < 0 ? dr_lp1(dr_exp(m->pivot, v, 18)) : DRK_LPOFF;
-    c->hk = v > 0 ? dr_lp1(m->pivot) : 0;
+    int32_t dark = vel < 80u ? (int32_t)(80u - vel) / 2 : 0, v = clamp(q[2] - 64 + s->tone - dark, -64, 63);
+    c->lk = v < 0 ? dr_lp1(dr_exp(s->pivot, v, 18)) : DRK_LPOFF;
+    c->hk = v > 0 ? dr_lp1(s->pivot) : 0;
     c->hv = v > 0 ? v : 0;
     c->lp = c->hs = 0;
-    c->gain = (int32_t)(((int64_t)dr8_level(vel, q[5]) * m->out) >> 12);
+    c->gain = (int32_t)(((int64_t)dr8_level(vel, q[5]) * s->out) >> 12);
+    c->tg = s->gain;
     c->level = (uint8_t)(127 - pc[3]);
     c->lane = (uint8_t)lane;
     c->left = (int32_t)drum_event_length;
     c->snap = (q[4] - 64) * 512;
     c->att = 32767;
-    dlk_set(&c->e, m->ms, pc[1] + q[3] - 64);
+    int32_t dec = pc[1] + q[3] - 64;
+    if (s->ms)
+        dlk_set(&c->e, s->ms, dec);
+    else if (dec >= 0) {                         /* held to the take's end */
+        c->e.e = 1 << 24;
+        c->e.k = 65536;
+    } else {                                     /* -40 dB at the take's end, sooner as DECY goes lower */
+        uint32_t ms = (uint32_t)(((uint64_t)s->n * 32768u / s->inc) / 44u);
+        dlk_set(&c->e, ms < 20u ? 20u : ms > 30000u ? 30000u : ms, dec);
+    }
     c->fade = c->flen = 0;
     c->a = -1;
     c->t = 0;
@@ -182,7 +201,7 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
 /* the part may sound: its kit taken under the table's current number */
 static int drk_live(const drk_part_t *K, const int16_t *p)
 {
-    return K && K->ready && K->kit == p[P_E0] && K->H && K->gen == drk_user_gen;
+    return K && K->ready && K->kit == p[P_E0] && K->any && K->gen == drk_user_gen;
 }
 
 static int drk_tick(track_t *t)
@@ -202,13 +221,13 @@ static inline __attribute__((always_inline)) int32_t drk_next(drk_ch_t *restrict
 {
     uint32_t hi = c->hi, lo = c->lo, b = c->bits;
     if (!c->nleft) {
-        if (c->src == c->end) {                  /* a user kit's second run past the guard, or its next sector */
-            const uint32_t *b = c->secs[c->sec];
+        if (c->src == c->end) {                  /* a pad record's second run past the guard, or its next sector */
+            const uint32_t *b = DRK_SEC(c->list[c->sec]);
             if (c->end == b + 2u * DRK_RUN0) {
                 c->src = b + 2u * (DRK_RUN0 + 1u);
                 c->end = b + 2u * DRK_SLOTS;
             } else {
-                c->src = c->secs[++c->sec];
+                c->src = DRK_SEC(c->list[++c->sec]);
                 c->end = c->src + 2u * DRK_RUN0;
             }
         }
@@ -246,7 +265,7 @@ static inline __attribute__((always_inline)) int32_t drk_next(drk_ch_t *restrict
 /* the channel's stream at its pitch, one block into x; 0 once a one-shot has ended */
 static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, uint32_t n)
 {
-    const drk_sample_t *s = c->s;
+    const drk_pad_t *s = c->s;
     uint32_t ph = c->ph, inc = c->inc;
     int live = c->idx < c->n + 4u;
     for (uint32_t i = 0; i < n; i++) {
@@ -255,12 +274,12 @@ static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, u
             int32_t v = 0;
             ph -= 65536u;
             if (c->idx >= c->n && s->loop_at) {       /* the tail again: the predictor as it stood there */
-                const int32_t *st = c->loop;
+                const int32_t *st = s->loop;
                 for (uint32_t k = 0; k < 4u; k++) {
                     c->h[k] = st[k];
                     c->w[k] = st[4u + k];
                 }
-                drk_seek(c, (uint32_t)s->at + s->loop_slice);
+                drk_seek(c, DRK_FIRST + s->loop_slice);
                 c->nleft = 0;
                 c->idx = s->loop_at;
             }
@@ -283,7 +302,7 @@ static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, u
 #ifndef DRK_CODEC_ONLY
 static inline __attribute__((always_inline)) void drk_tone(drk_ch_t *restrict c, int32_t *x, uint32_t n)
 {
-    const drk_sample_t *s = c->s;
+    const drk_pad_t *s = c->s;
     if (s->dark && c->idx >= s->loop_at && c->lk > DRK_LPMIN)
         c->lk -= (c->lk * s->dark) >> 12;
     if (c->lk < DRK_LPOFF) {
@@ -330,7 +349,7 @@ static __attribute__((noinline)) void drk_render(track_t *t, int32_t *out, uint3
             a0 = c->a < 0 ? a1 : c->a;
             c->a = a1;
             for (uint32_t i = 0; i < n; i++) {
-                s = (int32_t)(((int64_t)x[i] * (a0 + (((a1 - a0) * (int32_t)i) >> CTL_LOG2))) >> 15);
+                s = (int32_t)(((int64_t)x[i] * (a0 + (((a1 - a0) * (int32_t)i) >> CTL_LOG2)) * c->tg) >> 25);
                 if (c->fade)
                     s = c->fade > (int32_t)i ? (int32_t)(((int64_t)s * (c->fade - (int32_t)i)) / c->flen) : 0;
                 y[i] += s;
@@ -340,7 +359,7 @@ static __attribute__((noinline)) void drk_render(track_t *t, int32_t *out, uint3
                 c->fade = c->flen = DRK_CHOKE;   /* a recorded hit's end */
             else if (c->fade && (c->fade -= (int32_t)n) <= 0)
                 c->fade = 0, c->on = 0;
-            if (c->e.e < DRE_LOW || c->t >= DR_LIFE)
+            if (c->e.e < DRE_LOW || (c->s->loop_at && c->t >= DR_LIFE))   /* (a one-shot: as long as its take) */
                 c->on = 0;
         }
         for (uint32_t i = 0; c->ease && i < n; i++) {

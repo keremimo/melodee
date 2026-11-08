@@ -57,6 +57,7 @@ static int32_t (*mod_imp_input_octave)(const track_t *t);
 static const int32_t *mod_imp_note_pitch;      /* (host 4) */
 static const uint32_t *mod_imp_note_len;
 static const mod_rec_v3 *mod_imp_rec;
+static const uint8_t *mod_imp_rec_list;        /* (host 6) */
 static const volatile uint32_t *mod_imp_rec_gen;
 static const uint8_t *mod_imp_rec_base;
 #define voice_scale_pitch (*mod_imp_voice_scale_pitch)
@@ -108,6 +109,7 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
     mod_imp_rec = h->rec;
     mod_imp_rec_gen = h->rec_gen;
     mod_imp_rec_base = h->rec_base;
+    mod_imp_rec_list = h->version >= 6u && h->size >= MOD3_HOST_SIZE(6u) ? h->rec_list : 0;
     return 0;
 }
 #ifdef FM1_IRQ_TARGET
@@ -115,6 +117,9 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 #else
 #define MOD3_ENGINE_EXPORT(sym) const mod_desc_v3 sym      /* (host tests: the descriptor by its name) */
 #endif
-#define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST_MIN, \
+#ifndef MOD3_ENGINE_HOST
+#define MOD3_ENGINE_HOST MOD3_HOST_MIN           /* (a module that needs a later host says so first: SAMPLER's 6) */
+#endif
+#define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_ENGINE_HOST, \
     .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = mod_engine_bind
 

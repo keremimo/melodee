@@ -22,6 +22,7 @@ const read = (name) => new Uint8Array(readFileSync(join(DIR, name)));
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const u32 = (b, at) => (b[at] | b[at + 1] << 8 | b[at + 2] << 16 | b[at + 3] << 24) >>> 0;
 const put32 = (b, at, v) => { b[at] = v; b[at + 1] = v >>> 8; b[at + 2] = v >>> 16; b[at + 3] = v >>> 24; };
+const PIN_KIT2 = 0x497A5D33;                              // (the KIT2 coding's pin: MEL_PIN=1 prints it)
 
 // ------------------------------------------------------------------------------ the firmware's layout ---
 const fw = JSON.parse(readFileSync(join(DIR, "layout.json"), "utf8"));
@@ -67,13 +68,14 @@ ok(same(pjExpand(rec.song), rec.song) && says(() => pjExpand(rec.song.subarray(0
   let good = true;
   for (const d of [new Uint8Array(0), Uint8Array.of(7), noise.subarray(0, 5), noise, text, new Uint8Array(4000), rec.song, rec.big])
     for (const k of [false, true]) { const e = cmEncode(d, k); good &&= same(cmDecode(e, d.length, k), d); }
-  for (const n of [615, 616, 617, 623, 624, 625, 1000]) { const d = kit["909"].subarray(0, n), e = cmEncode(d, true); good &&= same(cmDecode(e, n, true), d); }
+  for (const n of [87, 88, 89, 159, 160, 161, 167, 168, 1000]) { const d = kit["909"].subarray(0, n), e = cmEncode(d, true); good &&= same(cmDecode(e, n, true), d); }
   for (const n of kitNames) good &&= same(cmDecode(cmEncode(kit[n], true), kit[n].length, true), kit[n]);
   ok(good, "the coder gives back every byte: nothing, one byte, noise, zeros, records, kits cut anywhere");
   // the coder is the file's format: these bytes may never change (a file written today must open in every later page)
-  const slices = Uint8Array.from({ length: 2000 }, (_, i) => (i < 616 ? i & 31 : (r() & r()) | (i & 7 ? 0 : 192)));   // (a kit's shape: its head, 4-bit slices)
+  const slices = Uint8Array.from({ length: 2000 }, (_, i) => (i < 160 ? i & 31 : (r() & r()) | (i & 7 ? 0 : 192)));   // (a kit's shape: its head,
+  for (let p = 0; p < 16; p++) put32(slices, 20 + 4 * p, p ? 0 : 2000 - 88);                                       // one pad's header, 4-bit slices)
   const pins = [bkCrc(cmEncode(text)), bkCrc(cmEncode(slices, true)), bkCrc(cmEncode(noise.subarray(0, 600)))];
-  ok(same(pins, [0x36C2230, 0x35750584, 0x438E034C]), "the coder writes the same bytes as when the format was set");
+  ok(same(pins, [0x36C2230, PIN_KIT2, 0x438E034C]), "the coder writes the same bytes as when the format was set (kits: KIT2's, version 3)");
   if (process.env.MEL_PIN) console.log("  pins:", pins.map((v) => "0x" + v.toString(16).toUpperCase()).join(", "));
   const e = cmEncode(rec.song);
   ok(says(() => cmDecode(e.subarray(0, e.length - 1), rec.song.length), /Damaged/) && says(() => cmDecode(Uint8Array.of(...e, 0), rec.song.length), /Damaged/) &&
@@ -123,9 +125,9 @@ const mel = melPack({ project: rec.kits, kits: kitsOf(kit["909"], kit["808"]) })
   for (let i = 48; i < mel.length; i += 997) flips &&= refused(Uint8Array.from(mel, (v, j) => (j === i ? v ^ 4 : v)));
   ok(flips, "one bit changed anywhere is refused");
   const k1 = 32 + 16 + u32(mel, 32 + 4);   // the first kit's section
-  ok(refused(with_((f) => { f[4] = 3; }), /newer editor/) && refused(with_((f) => { f[8] = 1; })) && refused(with_((f) => { f[20] = 2; })) &&
+  ok(refused(with_((f) => { f[4] = 4; }), /newer editor/) && refused(with_((f) => { f[4] = 2; }), /Melodee 1\.x/) && refused(with_((f) => { f[8] = 1; })) && refused(with_((f) => { f[20] = 2; })) &&
      refused(with_((f) => { f[20] = 0; })) && refused(with_((f) => { f[20] = 10; })) && refused(with_((f) => { put32(f, 16, 5); })),
-    "a later version, unknown flags, a wrong section count or total: refused");
+    "a later version, 1.x's version 2, unknown flags, a wrong section count or total: refused");
   ok(refused(with_((f) => { f[32] = 2; })) && refused(with_((f) => { f[33] = 2; })) && refused(with_((f) => { f[34] = 1; })) &&
      refused(with_((f) => { put32(f, 32 + 8, 27903); })) && refused(with_((f) => { put32(f, 32 + 4, 0x7fffffff); })) && refused(with_((f) => { f[32 + 12] ^= 1; })) &&
      refused(with_((f) => { f[k1] = 1; })) && refused(with_((f) => { f[k1 + 1] = 1; })) && refused(with_((f) => { f[k1 + 1] = 3; })) && refused(with_((f) => { f[k1 + 2] = 8; })) &&
@@ -134,7 +136,7 @@ const mel = melPack({ project: rec.kits, kits: kitsOf(kit["909"], kit["808"]) })
   // sections written here, any way wanted
   const file = (sections) => {
     const n = sections.reduce((a, s) => a + 16 + s.bytes.length, 32), f = new Uint8Array(n);
-    f.set([0x4D, 0x45, 0x4C, 0, 2, 0, 32, 0]); put32(f, 12, n); put32(f, 16, sections.reduce((a, s) => a + s.bytes.length, 0)); f[20] = sections.length;
+    f.set([0x4D, 0x45, 0x4C, 0, 3, 0, 32, 0]); put32(f, 12, n); put32(f, 16, sections.reduce((a, s) => a + s.bytes.length, 0)); f[20] = sections.length;
     let at = 32;
     for (const s of sections) { f[at] = s.type; f[at + 2] = s.arg || 0; put32(f, at + 4, s.bytes.length); put32(f, at + 8, s.bytes.length); put32(f, at + 12, bkCrc(s.bytes)); f.set(s.bytes, at + 16); at += 16 + s.bytes.length; }
     return seal(f);

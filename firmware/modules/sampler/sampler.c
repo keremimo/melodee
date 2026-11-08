@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* SAMPLER as a synth module (ABI 3): the user's recorded kits, KIT 1..8 its data records, played on one voice (drum_real.c); Record kit's takes (kit_take.c, drum_enc.c). Its sources are the kits' (firmware/modules/kits, kit_module.h) */
+/* SAMPLER as a synth module (ABI 3, host 6): the user's recorded kits, KIT 1..8, sixteen pads each, every pad's take a
+ * data record of its own, played on one voice (drum_real.c); Record kit's takes streamed in as they come (kit_take.c,
+ * drum_enc.c). Its sources are the kits' (firmware/modules/kits, kit_module.h) */
+#define MOD3_ENGINE_HOST 6u
 #include "../mod_engine.h"
 #define DRUM_ONLY 9u
 #include "../kits/kit_module.h"

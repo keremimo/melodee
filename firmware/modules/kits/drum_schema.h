@@ -81,9 +81,8 @@ static const char *const DRUM_PD_LABEL_SID[64] = {DRUM_PD_S, DRUM_PD_S, DRUM_PD_
                          DRUM_PD_NOTE_PAD11, DRUM_PD_LANE_NAME11, DRUM_PD_LANE_ABBR11, DRUM_PD_LABEL909}
 #define DRUM_PD_MAP_CR {16, 0, DRUM_PD_NAME_CR, DRUM_PD_ABBR_CR, DRUM_PD_NOTES16, DRUM_PD_MPC16, DRUM_PD_ORDER16,      \
                         DRUM_PD_NOTE_PAD16, DRUM_PD_LANE_NAME_CR, DRUM_PD_LANE_ABBR_CR, DRUM_PD_LABEL16}
-#define DRUM_PD_MAP_USER {11, MOD3_PM_KEYMAP, DRUM_PD_NAME11, DRUM_PD_ABBR11, DRUM_PD_NOTES11, DRUM_PD_MPC11,          \
-                          DRUM_PD_ORDER11, DRUM_PD_NOTE_PAD11, DRUM_PD_LANE_NAME11, DRUM_PD_LANE_ABBR11,              \
-                          DRUM_PD_LABEL11}                     /* KIT 1..8, white keys */
+#define DRUM_PD_MAP_USER {16, MOD3_PM_KEYMAP, DRUM_PD_NAME16, DRUM_PD_ABBR16, DRUM_PD_NOTES16, DRUM_PD_MPC16,          \
+                          DRUM_PD_ORDER16, DRUM_PD_NOTE_PAD16, 0, 0, DRUM_PD_LABEL16}   /* KIT 1..8: the 808's sixteen, white keys */
 static const uint8_t DRUM_PD_SEL[17] = {0};    /* (a kit synth's KIT is its own: one map, whatever KIT 0..16 holds) */
 static const mod_sch_padpar_src DRUM_PD_PAR[] = {      /* a pad's four bytes (drum_patch.h): TUNE, DECAY, the third, LEVEL */
     {0, MOD3_PP_SIGNED, -24, 24, 0, "TUNE", "ST", "NOTE"},
@@ -93,7 +92,8 @@ static const mod_sch_padpar_src DRUM_PD_PAR[] = {      /* a pad's four bytes (dr
 };
 static const char *const DRUM_PD_WORDS[MOD3_PW_COUNT] = {"DRUM SOUND", "DRUM MIX", "DRUM HIT", "DRUM", "Drum"};
 /* a kit's pads (mod_schema.h MOD3_R_PADS): its one map; SAMPLER's records too (KIT 1..8 = values 9..16 = its data records
- * 0..7; a record's name: drk_kit_t.name, its sectors, its header: drum_kit.h DRK_KSEC, DRK_KIT_BYTES) */
+ * 0..7, sixteen pad records each of any length (rsec 0), at least a header and a slice; a kit's name: drk_name_t.name,
+ * drum_kit.h) */
 #define KIT_PADS(sym, mapsym, flags_, ...)                                                                          \
     static const mod_sch_padmap_src mapsym##_MAP[] = {mapsym};                                                    \
     static const mod_sch_pads_src sym = {                                                                         \
@@ -105,7 +105,8 @@ KIT_PADS(KIT808_PADS, DRUM_PD_MAP_808, 0, .rec0 = 0)
 KIT_PADS(KITSID_PADS, DRUM_PD_MAP_SID, 0, .rec0 = 0)
 KIT_PADS(KIT909_PADS, DRUM_PD_MAP_909, 0, .rec0 = 0)
 KIT_PADS(KITCR_PADS, DRUM_PD_MAP_CR, 0, .rec0 = 0)
-KIT_PADS(SAMPLER_PADS, DRUM_PD_MAP_USER, MOD3_PD_RECORD, .rec0 = 9, .nrec = 8, .rname = 8, .rnlen = 5, .rsec = 7, .rmin = 616)
+KIT_PADS(SAMPLER_PADS, DRUM_PD_MAP_USER, MOD3_PD_RECORD, .rec0 = 9, .nrec = 8, .rname = 8, .rnlen = 5, .rsec = 0,
+         .rmin = 80, .rpad = 16)
 #undef KIT_PADS
 /* Melodee 1.x's KIT store (projects, user presets): per pad TUNE in 6 bits (+ 24), DECAY, the third in 7 (+ 64), the
  * cut in 7 */

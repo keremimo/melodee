@@ -64,43 +64,71 @@ static float dke_slice(const dke_lms_t *st, const int16_t *x, uint32_t m, uint32
     *out = l; *pure = ep;
     return e;
 }
-/* depth m's best scale: all 16 (a narrower walk from the last slice's scale lost up to 12 dB on hats and snares) */
+/* depth m's best scale: five around the one the slice's open-loop residual suggests (its mean magnitude, against
+ * DRK_SF's geometric midpoints, a bias per depth). Every one of the 16 cost 4.3 times the trials for +0.1 dB on the
+ * tool's material and system sounds (a walk from the last slice's scale lost up to 12 dB on hats and snares) */
+static const float DKE_MID[15] = {1.414f, 2.449f, 4.243f, 8.124f, 14.83f, 26.83f, 48.74f, 88.99f, 161.7f, 294.5f,
+                                  536.8f, 977.2f, 1779.2f, 3238.5f, 5898.0f};
+static const float DKE_BIAS[4] = {2.2974f, 1.1487f, 0.4353f, 0.3536f};   /* 2^(1.2, 0.2, -1.2, -1.5) */
 static uint32_t dke_scale(const dke_lms_t *st, const int16_t *x, uint32_t m, float *pure)
 {
     dke_lms_t t;
-    float best = 3.4e38f, pe;
-    uint32_t b = 0;
-    for (uint32_t s = 0; s < 16u; s++) {
-        float e = dke_slice(st, x, m, s, &t, &pe, 0);
-        if (e < best) { best = e; *pure = pe; b = s; }
+    float best = 3.4e38f, pe, sa = 0.0f;
+    uint32_t b = 0, n = DRK_NS[m], e = 0;
+    int32_t h0 = st->h[0], h1 = st->h[1], h2 = st->h[2], h3 = st->h[3];
+    for (uint32_t i = 0; i < n; i++) {               /* the slice against its start's weights, the samples as they are */
+        uint32_t p = (uint32_t)h0 * (uint32_t)st->w[0] + (uint32_t)h1 * (uint32_t)st->w[1] +
+                     (uint32_t)h2 * (uint32_t)st->w[2] + (uint32_t)h3 * (uint32_t)st->w[3];
+        int32_t r = x[i] - ((int32_t)p >> 13);
+        sa += (float)(r < 0 ? -r : r);
+        h0 = h1; h1 = h2; h2 = h3; h3 = x[i];
+    }
+    sa = sa / (float)n * DKE_BIAS[m];
+    while (e < 15u && DKE_MID[e] < sa) e++;
+    for (uint32_t s = e > 2u ? e - 2u : 0u; s <= e + 2u && s < 16u; s++) {
+        float er = dke_slice(st, x, m, s, &t, &pe, 0);
+        if (er < best) { best = er; *pure = pe; b = s; }
     }
     return b;
 }
-/* n samples of x at snr dB into out (32-bit words, two a slice, the high one first; 0: count only); a loop from
- * the first slice starting at or after loop_at (0: none). The bytes written */
-static uint32_t dke_encode(const int16_t *x, uint32_t n, int32_t snr, uint32_t loop_at, uint32_t *out, dke_out_t *o)
-{
+/* A stream of slices (Record kit's take as it comes, kit_take_core.c): dke_begin, then dke_step with the samples so
+ * far; slices are taken while 58 samples (the longest slice) follow, at the end all of them (64 zeros after the last
+ * sample). snr dB, a loop from the first slice starting at or after loop_at (0: none) */
+typedef struct {
     dke_lms_t st;
-    memset(&st, 0, sizeof st);
-    memset(o, 0, sizeof *o);
-    st.w[2] = -(1 << 13); st.w[3] = 1 << 14;
-    float g = dke_exp2(-0.33219281f * (float)snr), g4 = dke_exp2(-0.33219281f * (float)(snr + 10));
-    uint32_t pm = 3u;                                 /* the last slice's depth: where the search starts */
-    for (uint32_t at = 0, k = 0; at < n; k++) {
-        if (loop_at && !o->loop_at && at >= loop_at) {
-            o->loop_at = at; o->loop_slice = k;
-            for (uint32_t i = 0; i < 4u; i++) { o->loop[i] = st.h[i]; o->loop[4u + i] = st.w[i]; }
+    float g, g4;
+    uint32_t pm, pos, loop_at;                        /* the last slice's depth (where the search starts); samples */
+    dke_out_t o;
+} dke_t;
+static void dke_begin(dke_t *e, int32_t snr, uint32_t loop_at)
+{
+    memset(e, 0, sizeof *e);
+    e->st.w[2] = -(1 << 13); e->st.w[3] = 1 << 14;
+    e->g = dke_exp2(-0.33219281f * (float)snr);
+    e->g4 = dke_exp2(-0.33219281f * (float)(snr + 10));
+    e->pm = 3u;
+    e->loop_at = loop_at;
+}
+/* slices from x (n samples, the stream's next; end: the last of them, 64 zeros after) into out (32-bit words, two a
+ * slice, the high one first; 0: count only), max slices at most: the samples it took (the caller keeps the rest) */
+static uint32_t dke_step(dke_t *e, const int16_t *x, uint32_t n, int end, uint32_t *out, uint32_t max)
+{
+    uint32_t at = 0, k = 0;
+    while (at < n && (end || at + 58u <= n) && k < max) {
+        if (e->loop_at && !e->o.loop_at && e->pos >= e->loop_at) {
+            e->o.loop_at = e->pos; e->o.loop_slice = e->o.bytes / 8u;
+            for (uint32_t i = 0; i < 4u; i++) { e->o.loop[i] = e->st.h[i]; e->o.loop[4u + i] = e->st.w[i]; }
         }
         float tg[4], pe;
-        uint32_t sf[4], ok[4] = {0, 0, 0, 0}, done[4] = {0, 0, 0, 0}, m = pm;
+        uint32_t sf[4], ok[4] = {0, 0, 0, 0}, done[4] = {0, 0, 0, 0}, m = e->pm;
         for (uint32_t mm = 0; mm < 4u; mm++) {        /* each depth's target: the slice's level less snr dB */
             float en = 0.0f;
             for (uint32_t i = 0; i < DRK_NS[mm]; i++) en += (float)x[at + i] * (float)x[at + i];
-            tg[mm] = en * (at < 176u ? g4 : g);
+            tg[mm] = en * (e->pos < 176u ? e->g4 : e->g);
             if (tg[mm] < (float)DRK_NS[mm] * 2.25f) tg[mm] = (float)DRK_NS[mm] * 2.25f;
         }
         for (;;) {                                    /* the fewest bits that meet it: down while met, up while not */
-            if (!done[m]) { sf[m] = dke_scale(&st, x + at, m, &pe); ok[m] = pe <= tg[m]; done[m] = 1; }
+            if (!done[m]) { sf[m] = dke_scale(&e->st, x + at, m, &pe); ok[m] = pe <= tg[m]; done[m] = 1; }
             if (ok[m] ? m == 0u || (done[m - 1u] && !ok[m - 1u]) : m == 3u || (done[m + 1u] && ok[m + 1u])) {
                 if (!ok[m] && m < 3u) m++;
                 break;
@@ -110,17 +138,29 @@ static uint32_t dke_encode(const int16_t *x, uint32_t n, int32_t snr, uint32_t l
         uint32_t ns = DRK_NS[m];
         uint64_t code = 0;
         dke_lms_t next;
-        dke_slice(&st, x + at, m, sf[m], &next, &pe, &code);
+        dke_slice(&e->st, x + at, m, sf[m], &next, &pe, &code);
         if (out) {
             uint64_t w = ((uint64_t)m << 62) | ((uint64_t)sf[m] << 58) | (code << (58u - ns * (m + 1u)));
             out[2u * k] = (uint32_t)(w >> 32);
             out[2u * k + 1u] = (uint32_t)w;
         }
-        st = next;
-        pm = m;
-        o->bytes += 8u;
+        e->st = next;
+        e->pm = m;
+        e->o.bytes += 8u;
+        e->pos += ns;
         at += ns;
-        if (!(k & 63u)) DKE_WDT();
+        if (!(++k & 63u)) DKE_WDT();
     }
-    return o->bytes;
+    return at < n ? at : n;
+}
+/* n samples of x at snr dB into out (0: count only), whole; a loop from the first slice starting at or after loop_at
+ * (0: none). The bytes written; o the loop. In place is safe: slice k's 8 bytes land at byte 8 k, behind the 28 k bytes
+ * it has read */
+static uint32_t dke_encode(const int16_t *x, uint32_t n, int32_t snr, uint32_t loop_at, uint32_t *out, dke_out_t *o)
+{
+    dke_t e;
+    dke_begin(&e, snr, loop_at);
+    dke_step(&e, x, n, 1, out, 0xFFFFFFFFu);
+    *o = e.o;
+    return e.o.bytes;
 }

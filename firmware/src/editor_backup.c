@@ -26,7 +26,7 @@ static int ed_bk_kit(uint32_t id) { (void)id; return 0; }
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
 #define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a packed one (project_stream.c PJ_HEAD) */
 #ifdef REC_STORE                            /* a data record streams into its record (no staging): its own bound */
-#define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? rec_max() : ED_BK_MAX)
+#define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? REC_BOX_HEAD + rec_max() : ED_BK_MAX)
 #else
 #define ED_BK_LEN_MAX(id) ED_BK_MAX
 #endif
@@ -35,6 +35,9 @@ static int ed_bk_kit(uint32_t id) { (void)id; return 0; }
                              * a save while a backup runs rewrites it, and the archive's CRC then fails */
 static uint32_t ed_bk_set_len;
 static uint8_t ed_bk_valid, ed_bk_put, ed_bk_id, ed_bk_gen;
+#ifdef REC_STORE
+static uint32_t ed_bk_box_crc;                  /* a kit's PUT: its bytes' CRC so far (its pads are published as they come) */
+#endif
 static uint32_t ed_bk_len, ed_bk_crc, ed_bk_pos, ed_bk_ms, ed_bk_usb;
 #if MELODEE_FLASH
 static uint32_t ed_bk_source_obj, ed_bk_source_copy, ed_bk_source_crc;
@@ -106,8 +109,8 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
     }
     if (id == 1u) { *len = ed_bk_set_len; return (const uint8_t *)&ed_bk_set; }
 #ifdef REC_STORE
-    if (ed_bk_kit(id)) {                    /* a data record: GET reads its record range by range */
-        (void)ed_bk_stored(rec_obj(id - ED_BK_KIT0), len);
+    if (ed_bk_kit(id)) {                    /* a kit: GET reads its blob range by range (rec_store.c rec_box_*) */
+        *len = rec_box_open(id - ED_BK_KIT0);
         return ED_BK_RAW;
     }
 #endif
@@ -202,11 +205,11 @@ static uint32_t ed_bk_commit_inner(void)
     uint8_t *raw = ED_BK_RAW;
     uint32_t obj;
 #ifdef REC_STORE
-    if(ed_bk_kit(ed_bk_id)){                         /* a data record: none in the archive empties the slot */
+    if(ed_bk_kit(ed_bk_id)){                         /* a kit: none in the archive empties it */
         uint32_t u=ed_bk_id-ED_BK_KIT0;
         if(!ed_bk_len)return rec_delete(u)?4u:0u;
-        if(ed_bk_pos!=ed_bk_len || ~ed_bk_stage.crc!=ed_bk_crc)return 2;
-        int rc=rec_put_commit(&ed_bk_stage,u);
+        if(ed_bk_pos!=ed_bk_len || ~ed_bk_box_crc!=ed_bk_crc)return 2;
+        int rc=rec_box_put_end();
         return rc==-2?2u:rc?4u:0u;
     }
 #endif
@@ -334,9 +337,10 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
         ed_bk_gen=++proj_wire_gen;
 #if MELODEE_FLASH
 #ifdef REC_STORE
-        if(ed_bk_kit(a[1])){                         /* a data record: streamed into its record, checked at commit */
+        if(ed_bk_kit(a[1])){                         /* a kit: each pad record streamed in as its bytes come */
             if(ed_bk_ram_only())return 4;
-            if(len && (!flash_ok || rec_put_begin(&ed_bk_stage,a[1]-ED_BK_KIT0,len)))return rec_len_ok(len)?4:1;
+            if(len && (!flash_ok || rec_box_put_begin(&ed_bk_stage,a[1]-ED_BK_KIT0,len)))return len<REC_BOX_HEAD?1:4;
+            ed_bk_box_crc=0xFFFFFFFFu;
         }else
 #endif
         if(ed_bk_project(a[1]) && len && !ed_bk_ram_only()){
@@ -363,7 +367,17 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
     uint32_t count = ed_unpack7(a + 7, n - 7u, ed_transfer_buf, 256u);
     if (!count || count > ed_bk_len - ed_bk_pos) return 1;
 #if MELODEE_FLASH
-    if((ed_bk_project(ed_bk_id) || ed_bk_kit(ed_bk_id)) && !ed_bk_ram_only()){
+#ifdef REC_STORE
+    if(ed_bk_kit(ed_bk_id) && !ed_bk_ram_only()){
+        uint8_t chunk[256];                          /* (a pad's commit reads the flash through st_buf: the transfer
+                                                      * buffer's own RAM, main_scratch) */
+        memcpy(chunk,ed_transfer_buf,count);
+        ed_bk_box_crc=st_crc32_update(ed_bk_box_crc,chunk,count);
+        int rc=rec_box_put_write(chunk,count);
+        if(rc){ed_bk_put=0;return rc==-2?2:rc==-1?1:4;}
+    }else
+#endif
+    if(ed_bk_project(ed_bk_id) && !ed_bk_ram_only()){
         if(st_stream_write(&ed_bk_stage,ed_transfer_buf,count)){ed_bk_put=0;return 4;}
     }else
 #endif
@@ -382,6 +396,10 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             uint32_t crc;
 #if MELODEE_FLASH
             if (st_obj_ok(ed_bk_source_obj)) crc = ed_bk_source_crc;
+            else
+#endif
+#ifdef REC_STORE
+            if (ed_bk_kit(ED_BK_IDS[i])) crc = len ? rec_box_crc() : st_crc32(p, 0);
             else
 #endif
                 crc = st_crc32(p, len);
@@ -403,6 +421,12 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             if (st_read_range(ed_bk_source_obj, ed_bk_source_copy, off, ed_transfer_buf, count)) rc = 4;
             p = ed_transfer_buf; data_off = 0;
         }
+#ifdef REC_STORE
+        else if (!rc && ed_bk_kit(a[0])) {
+            if (rec_box_read(off, ed_transfer_buf, count)) rc = 4;
+            p = ed_transfer_buf; data_off = 0;
+        }
+#endif
 #endif
         ed_echo(a, n, 1u); ed_b(rc); ed_u35(off); ed_u14(rc ? 0u : count);
         if (!rc) ed_bk_pack(p + data_off, count);

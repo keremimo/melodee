@@ -119,12 +119,13 @@ static uint32_t mmod_chunks(const char *stem, uint8_t *dst, uint32_t cap)
 /* a module file for the host loader (its image a pattern; the host plays hdesc_id()); key: its legacy key (0: an SDK
  * module), host: the host table it needs; stem: the device build's file whose chunks it carries (its presets), 0 none;
  * slug: who it is (0: its name's) */
+static uint32_t mf_host = MOD3_HOST_MIN;          /* the host table the next file needs (its descriptor's: SAMPLER 6) */
 static uint32_t make_file_as(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t nrel, uint32_t key,
                              uint32_t npresets, const char *stem, const char *slug)
 {
     mod_file3_t h;
     memset(&h, 0, sizeof h);
-    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)engine; h.host = MOD3_HOST_MIN;
+    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)engine; h.host = (uint16_t)mf_host;
     h.image = image; h.bss = 128; h.nrel = nrel; h.version = 3; h.npresets = (uint8_t)npresets; h.key = key;
     strncpy(h.name, name, sizeof h.name);
     for (uint32_t i = 0; i < image; i++) b[MOD3_HEAD + i] = (uint8_t)(i * 13u + 5u);
@@ -486,7 +487,9 @@ int main(int argc, char **argv)
         memcpy(&sid_head, nf[0], sizeof sid_head);
         uint32_t nk_[MK_N], nd = 0, kflags = 1;
         for (uint32_t i = 0; i < MK_N; i++) {
+            mf_host = MK[i].d->host;
             nk_[i] = make_file_as(kf[i], MK[i].e, MK[i].name, MK[i].image, 12, 0, MK[i].npre, MK[i].stem, MK[i].slug);
+            mf_host = MOD3_HOST_MIN;
             kflags &= ((const mod_file3_t *)(const void *)kf[i])->flags != 0;
             if (MK[i].slot == 5u) nd = nk_[i];
         }

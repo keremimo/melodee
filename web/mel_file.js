@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // .mel: one project and the user drum kits it plays, in one file. The device never reads this file: it keeps its
-// own records (a project: project_stream.c / pattern_store.c, stored packed; a kit: drum_real.c KIT1), which this page
+// own records (a project: project_stream.c / pattern_store.c, stored packed; a kit: SAMPLER's pad records, rec_store.c
+// joins them into a KIT2 blob, modules/kits/drum_kit.h drk_box_t), which this page
 // takes and gives back over the backup protocol (fm1backup.js: ids 2..5 and 64..91 the projects, 92..99 the kits).
 // The file's coding is here, so the firmware carries none of it.
 //
 // The file (little-endian, no padding):
 //    0  4  "MEL\0"
-//    4  2  version 2             6  2  header bytes 32          8  4  flags 0
+//    4  2  version 3             6  2  header bytes 32          8  4  flags 0
 //   12  4  the file's bytes     16  4  the sections' decoded bytes together
 //   20  2  sections             22  2  0
 //   24  4  CRC-32 of bytes 32..end                             28  4  CRC-32 of bytes 0..27
@@ -16,13 +17,15 @@
 //    2  2  a kit: the KIT value the project names it by (9..16); the project: 0
 //    4  4  stored bytes          8  4  decoded bytes           12  4  CRC-32 of the decoded bytes
 // The project first, once: its record whole (27,904 bytes, the device's stored form expanded). Then the kits the
-// project names, ascending: the KIT1 record, or no bytes for a kit that was empty.
+// project names, ascending: the kit's KIT2 blob, or no bytes for a kit that was empty. (Version 2, Melodee 1.x's, held
+// KIT1 records and 1.x projects: the web installer converts those.)
 //
 // Codings 1 and 2 are one binary arithmetic coder under a small context-mixing model (integer arithmetic only: every
 // JavaScript engine writes and reads the same bytes). Coding 1 predicts a byte from the bytes before it (none, 1, 2,
 // 3), the bytes one and two rows of 8 above with the place in the row, and the byte that followed the last four bytes
-// the time before. Coding 2 is coding 1 (rows of 4) for a kit's 616-byte header and any odd bytes at its end, and for
-// its slices (64 bits: 2 of mode, 4 of scale, then residuals of mode + 1 bits) the slice's own fields. A section is
+// the time before. Coding 2 is coding 1 (rows of 4) for a kit's 88-byte head, each pad record's 72-byte header and any
+// odd bytes, and for the slices (64 bits: 2 of mode, 4 of scale, then residuals of mode + 1 bits) the slice's own
+// fields. A section is
 // stored as it is when coding it does not make it smaller.
 import { BACKUP_CMD, bkU32, bkR32, bkPack, bkUnpack, bkCrc, bkManifest, bkCheck } from "./fm1backup.js";
 
@@ -172,8 +175,9 @@ class Decoder {
   }
   end() { if (this.at !== this.src.length) throw new Error("Damaged project file"); }
 }
-const KIT_HEAD = 616;                            // (drum_real.c drk_kit_t)
-// d (encoding: the bytes; decoding: its length, filled as it goes) through c
+const KIT_HEAD = 88, KIT_PADS = 16, PAD_HEAD = 72;   // (modules/kits/drum_kit.h drk_box_t, drk_pad_t)
+// d (encoding: the bytes; decoding: its length, filled as it goes) through c. A kit: its head, then each pad's record
+// (the lengths the head gives, cut at the end), its header as bytes and its slices by the slice model
 function cmRun(c, d, kit, encoding) {
   const bytes = new ByteModel(kit ? 4 : 8);
   const byteAt = (i) => {
@@ -182,12 +186,11 @@ function cmRun(c, d, kit, encoding) {
     for (let k = 7; k >= 0; k--) { const bit = c.code(encoding ? d[i] >> k & 1 : 0, bytes.predict(node)); bytes.mix.update(bit); node = node << 1 | bit; }
     d[i] = node & 255;
   };
-  const head = kit ? Math.min(d.length, KIT_HEAD) : d.length, slices = kit ? (d.length - head) >> 3 : 0;
-  for (let i = 0; i < head; i++) byteAt(i);
-  if (slices) {
-    const m = new SliceModel(), view = new DataView(d.buffer, d.byteOffset, d.byteLength);
-    for (let s = 0; s < slices; s++) {           // two little-endian words, the high one first
-      const at = head + s * 8, w = encoding ? [view.getUint32(at, true), view.getUint32(at + 4, true)] : [0, 0];
+  if (!kit) { for (let i = 0; i < d.length; i++) byteAt(i); return; }
+  const m = new SliceModel(), view = new DataView(d.buffer, d.byteOffset, d.byteLength);
+  const slices = (from, count) => {
+    for (let s = 0; s < count; s++) {            // two little-endian words, the high one first
+      const at = from + s * 8, w = encoding ? [view.getUint32(at, true), view.getUint32(at + 4, true)] : [0, 0];
       for (let k = 0, v = 0; k < 64; k++) {
         const bit = c.code(w[k >> 5] >>> (31 - (k & 31)) & 1, m.predict(k, v));
         v = m.update(k, v, bit);
@@ -195,8 +198,18 @@ function cmRun(c, d, kit, encoding) {
       }
       if (!encoding) { view.setUint32(at, w[0], true); view.setUint32(at + 4, w[1], true); }
     }
+  };
+  let at = 0;
+  for (const head = Math.min(d.length, KIT_HEAD); at < head; at++) byteAt(at);
+  for (let p = 0; p < KIT_PADS && at < d.length && at >= KIT_HEAD; p++) {
+    const end = Math.min(d.length, at + view.getUint32(20 + 4 * p, true)), hEnd = Math.min(end, at + PAD_HEAD);
+    for (; at < hEnd; at++) byteAt(at);
+    const count = (end - at) >> 3;
+    slices(at, count);
+    at += count * 8;
+    for (; at < end; at++) byteAt(at);
   }
-  for (let i = head + slices * 8; i < d.length; i++) byteAt(i);
+  for (; at < d.length; at++) byteAt(at);
 }
 export function cmEncode(d, kit = false) { const c = new Encoder(); cmRun(c, d, kit, true); return c.end(); }
 export function cmDecode(src, n, kit = false) { const c = new Decoder(src), d = new Uint8Array(n); cmRun(c, d, kit, false); c.end(); return d; }
@@ -204,10 +217,10 @@ export function cmDecode(src, n, kit = false) { const c = new Decoder(src), d = 
 // ---------------------------------------------------------------------------------- the device's records ---
 // A project record (pattern_store.c): 8 bytes (an FBK magic, its 27,904 bytes), the FUN record (project.c
 // proj_pack), the bank tail, FNV-1a of all before it last.
-export const REC_BYTES = 27904, KIT_MAX = 28392;
+export const REC_BYTES = 27904, KIT_MAX = 88 + 108 * 4056;   // (a kit's blob: its head and the FM-1's whole store)
 export const KIT_FIRST = 9, KIT_COUNT = 8;       // KIT 1..8 are the drum engine's E0 values 9..16 (eng_drum.c DK_USER0)
 const FUN_AT = 8, FUN_BYTES = 13212, TAIL_AT = FUN_AT + FUN_BYTES;
-const FUN_MAGIC = 0x46554E49, FBKS = 0x534B4246, KIT_MAGIC = 0x3154494B, PJ_MAGIC = 0x314A5048, PZ_MAGIC = 0x324A5048, PZ_RAW = 0x80000000;
+const FUN_MAGIC = 0x46554E49, FBKS = 0x534B4246, KIT_MAGIC = 0x3254494B, PAD_MAGIC = 0x32444150, PJ_MAGIC = 0x314A5048, PZ_MAGIC = 0x324A5048, PZ_RAW = 0x80000000;
 const NPART = 4, NTRK = 8, NPAT = 16, NSTEP = 64, MOTION_MAX = 64, CHAIN_ROWS = 64, CHAIN_OLD_ROWS = 16, CHAIN_OLD_BYTES = 36, FM6_NFN = 16;
 const NAME_LEN = 12;
 // the kits' synth by its ID (firmware/modules/shipped.h: DRUM's, Melodee's key and "drum"). A synth's ID: its 8 bytes
@@ -406,17 +419,25 @@ export function recRemap(rec, map) {
   put32(out, REC_BYTES - 4, fnv(out, 0, REC_BYTES - 4));
   return out;
 }
-export function kitCheck(bytes) {                // what any reader can tell of a kit record (the device checks all of it)
-  if (bytes.length < KIT_HEAD || bytes.length > KIT_MAX || bytes.length % 8 || u32(bytes, 0) !== KIT_MAGIC || (bytes[4] | bytes[5] << 8) !== KIT_HEAD)
-    throw new Error("Invalid drum kit in the project file");
+export function kitCheck(bytes) {                // what any reader can tell of a kit's blob (the device checks all of it)
+  const bad = () => { throw new Error("Invalid drum kit in the project file"); };
+  if (bytes.length < KIT_HEAD || bytes.length > KIT_MAX || u32(bytes, 0) !== KIT_MAGIC || (bytes[4] | bytes[5] << 8) !== KIT_HEAD ||
+      bytes[6] !== KIT_PADS) bad();
+  let at = KIT_HEAD;
+  for (let p = 0; p < KIT_PADS; p++) {
+    const n = u32(bytes, 20 + 4 * p);
+    if (n && (n < PAD_HEAD + 8 || n % 8 || at + n > bytes.length || u32(bytes, at) !== PAD_MAGIC)) bad();
+    at += n;
+  }
+  if (at !== bytes.length) bad();
 }
 
 // ------------------------------------------------------------------------------------------- the file ---
 const MEL_HEAD = 32, SEC_HEAD = 16, T_PROJECT = 1, T_KIT = 2;
-export const MEL_CONST = { REC_BYTES, KIT_MAX, KIT_FIRST, KIT_COUNT, KIT_HEAD, FUN_BYTES, TAIL_AT, FUN_MAGIC, FBKS, KIT_MAGIC, PJ_MAGIC, PZ_MAGIC, KIT_OWNER_UID };   // (test_mel.mjs: the firmware's)
+export const MEL_CONST = { REC_BYTES, KIT_MAX, KIT_FIRST, KIT_COUNT, KIT_HEAD, KIT_PADS, PAD_HEAD, FUN_BYTES, TAIL_AT, FUN_MAGIC, FBKS, KIT_MAGIC, PJ_MAGIC, PZ_MAGIC, KIT_OWNER_UID };   // (test_mel.mjs: the firmware's)
 export const MEL_MAX = MEL_HEAD + (1 + KIT_COUNT) * SEC_HEAD + REC_BYTES + KIT_COUNT * KIT_MAX;
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-// { project: a record, kits: [{ kit: 9..16, bytes: a KIT1 record or none }] } -> the file
+// { project: a record, kits: [{ kit: 9..16, bytes: a KIT2 blob or none }] } -> the file
 export function melPack({ project, kits = [] }) {
   const info = recInfo(project), list = [...kits].sort((a, b) => a.kit - b.kit);
   if (!same(list.map((k) => k.kit), info.kits)) throw new Error("The file's kits must be the ones the project names");
@@ -430,7 +451,7 @@ export function melPack({ project, kits = [] }) {
     total += SEC_HEAD + s.stored.length; decoded += s.bytes.length;
   }
   const out = new Uint8Array(total);
-  out.set([0x4D, 0x45, 0x4C, 0, 2, 0, MEL_HEAD, 0]);
+  out.set([0x4D, 0x45, 0x4C, 0, 3, 0, MEL_HEAD, 0]);
   put32(out, 12, total); put32(out, 16, decoded); out[20] = sections.length;
   let at = MEL_HEAD;
   for (const s of sections) {
@@ -448,7 +469,9 @@ export function melUnpack(file) {
   const bad = (why) => { throw new Error(`Not a Melodee project file (${why})`); };
   if (!(file instanceof Uint8Array)) file = new Uint8Array(file);
   if (file.length < MEL_HEAD + SEC_HEAD || u32(file, 0) !== 0x004C454D) bad("no MEL header");
-  if ((file[4] | file[5] << 8) !== 2) throw new Error("This project file needs a newer editor");
+  const version = file[4] | file[5] << 8;
+  if (version < 3) throw new Error("This project file is Melodee 1.x's: convert it in the web installer");
+  if (version !== 3) throw new Error("This project file needs a newer editor");
   if ((file[6] | file[7] << 8) !== MEL_HEAD || u32(file, 8) || file[22] || file[23]) bad("header");
   if (u32(file, 28) !== bkCrc(file.subarray(0, 28))) bad("header checksum");
   if (u32(file, 12) !== file.length || file.length > MEL_MAX) bad("length");

@@ -47,7 +47,7 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               # (SETTINGS, MLEARN, PADS, DEVICE_CHANGED)
               "menu_rows.c", "editor_device.c",
               # the data records' store and Record kit's sheet; SAMPLER's kits: their record check, a take's processing
-              # (its module's: drum_enc.c, the take's encoder, stays at the module's -O2: its speed is the wait on "Saving")
+              # (its module's: drum_enc.c, the take's encoder, stays at the module's -O2: it keeps up with the take as it is recorded)
               "rec_store.c", "rec_ui.c", "../modules/kits/kit_store.c", "../modules/kits/kit_take.c",
               # the synth modules' loader, slots, editor command and registration (their audio callbacks: eng_module.c, -Os)
               "module_store.c", "editor_module.c", "eng_module_main.c",

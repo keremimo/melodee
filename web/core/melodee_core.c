@@ -552,19 +552,19 @@ EXPORT(core_load_record) uint32_t core_load_record(const uint8_t *p, uint32_t n,
     song.g[G_SLOT] = (int16_t)(slot + 1u);
     return 0;
 }
-/* a data record (a user kit: KIT1, as DRUM's drum_enc.c / melodee_kit.wasm write it) into record slot u (0..7: KIT
- * 9..16), as the editor's BACKUP PUT of ids 92..99 commits it; n 0 empties the slot. 0 = done, 1 = not a record its
- * synth could play (or no such slot), 2 = the flash refused it */
+/* a kit's blob (KIT2: SAMPLER's drk_box_t head, then its pad records, as the editor's BACKUP GET of ids 92..99 gives
+ * it and melodee_kit.wasm makes it) into kit u (0..7: KIT 9..16), as the editor's BACKUP PUT commits it; n 0 empties
+ * the kit. 0 = done, 1 = not a kit its synth could play (or no such kit), 2 = the flash refused it */
 EXPORT(core_load_kit) uint32_t core_load_kit(const uint8_t *p, uint32_t n, uint32_t u)
 {
     st_stream_t w;
     int rc;
     if (u >= ST_NREC) return 1;
     if (!n) return rec_delete(u) ? 2u : 0u;
-    if (!rec_len_ok(n)) return 1;
-    if (rec_put_begin(&w, u, n) || rec_put_write(&w, p, n)) return 2;
-    rc = rec_put_commit(&w, u);
-    return rc == -2 ? 1u : rc ? 2u : 0u;
+    if (rec_box_put_begin(&w, u, n)) return 1;
+    rc = rec_box_put_write(p, n);
+    if (!rc) rc = rec_box_put_end();
+    return rc == -2 || rc == -1 ? 1u : rc ? 2u : 0u;
 }
 
 /* SONG from row (as SONG's PLAY): the internal clock, no loop, so it ends. 0 = started, else chain_prepare_from's */

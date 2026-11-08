@@ -113,7 +113,7 @@ static const char *const N_DRUM_KICK[] = {"PUNCH", "ROUND"};
 #if MELODEE_USER_KITS
 #include "drum_real.c"                         /* KIT 1..8: the user's recorded kits */
 #include "kit_store.c"                         /* .. their records' check (rec_check) */
-#include "kit_take.c"                          /* .. a take made a pad's (rec_take) */
+#include "kit_take.c"                          /* .. a take made a pad's as it comes (rec_stream) */
 #else
 static uint32_t drk_bytes(void) { return 0; }
 #endif
@@ -402,7 +402,7 @@ static drk_part_t *drk_part(uint32_t part) { return mod_part_mem(part, sizeof(dr
 
 /* a kit's engine: its name, its KIT values (the kit synths' one, SAMPLER's its eight records'), its presets */
 #if MELODEE_USER_KITS
-#define KIT_RECS .rec_check = drum_rec_check, .rec_take = drum_rec_take, .rec_pad = drum_rec_pad,
+#define KIT_RECS .rec_check = drum_rec_check, .rec_stream = drum_rec_stream, .rec_pad = drum_rec_pad,
 #else
 #define KIT_RECS
 #endif

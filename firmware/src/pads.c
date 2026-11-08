@@ -169,26 +169,17 @@ static const pads_c_t *rec_owner(uint32_t u)
             return &pads_c[i];
     return 0;
 }
-/* a listed record's name (its pads' rname, rnlen) into b (cap bytes): its length, 0 none */
+/* a kit's name (its name record's, rec_store.c keeps them) into b (cap bytes): its length, 0 none */
 static uint32_t rec_name(uint32_t u, char *b, uint32_t cap)
 {
-    const pads_c_t *c = rec_owner(u);
-    uint8_t h[MOD_SCH_PDHEAD];
-    uint32_t wid, g = rec_gen, n = 0, off, len;
+    uint32_t n = 0;
     if (cap)
         b[0] = 0;
-    if (!c || u >= MOD3_NREC || (g & 1u) || !rec_tab[u].n || pads_head(c->eng, h, &wid) || !cap)
+    if (u >= MOD3_NREC || !cap)
         return 0;
-    off = h[24] | (uint32_t)h[25] << 8;
-    len = h[26];
-    if (off + len > MOD3_REC_RUN0)
-        return 0;
-    const uint8_t *r = REC_BASE + rec_tab[u].sec[0] * 4096u + MOD3_REC_OFF + off;
-    for (; n < len && n + 1u < cap && r[n] >= ' ' && r[n] <= '~'; n++)
-        b[n] = (char)r[n];
+    for (; n < sizeof rec_nm[u] && rec_nm[u][n] && n + 1u < cap; n++)
+        b[n] = rec_nm[u][n];
     b[n] = 0;
-    if (rec_gen != g)
-        b[n = 0] = 0;
     return n;
 }
 

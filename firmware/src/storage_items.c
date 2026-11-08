@@ -27,7 +27,7 @@ static struct {
 static uint32_t sti_obj_sectors(uint32_t obj)           /* the sectors object obj's current record takes, 0 none */
 {
     st_hdr_t h;
-    uint8_t idx[ST_PROJECT_SECTORS];
+    uint8_t idx[ST_REC_MAX];
     if (st_current(obj, &h) < 0)
         return 0;
     uint32_t n = st_rec_sectors(&h, idx);
@@ -82,9 +82,12 @@ static void sti_make(void)
             sti_add(STI_PROJECT, p, sti_obj_sectors(STI_PROJ_OBJ(p)));
 #if MELODEE_FLASH
 #ifdef REC_STORE
-    for (uint32_t u = 0; u < ST_NREC; u++)
-        if ((s = sti_obj_sectors(rec_obj(u))) != 0u)
+    for (uint32_t u = 0; u < ST_NREC; u++) {            /* (a kit: its name record and its pads') */
+        s = sti_obj_sectors(rec_name_obj(u));
+        for (uint32_t p = 0; p < ST_RPAD; p++) s += sti_obj_sectors(rec_pad_obj(u * ST_RPAD + p));
+        if (s)
             sti_add(STI_KIT, u, s);
+    }
 #endif
 #ifndef UP_HOST
     for (uint32_t b = 0; b < UP_BANKS; b++)
@@ -190,7 +193,7 @@ static void sti_line(uint32_t it, char *b)              /* the card's line (a sh
 #ifdef REC_STORE
     case STI_KIT: {                                     /* "Plays on DRUM" */
         const pads_c_t *c = rec_owner(i);
-        if (!c || c->eng >= NENGINES || !rec_tab[i].n) { str_cpy(b, "Its synth is gone", 24); return; }
+        if (!c || c->eng >= NENGINES || rec_used(i) != 1) { str_cpy(b, "Its synth is gone", 24); return; }
         str_cpy(b, "Plays on ", 24);
         str_cpy(b + 9, eng_name(c->eng), 11);
         return;

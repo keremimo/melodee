@@ -52,7 +52,7 @@ static int drum_isuser(const track_t *t)                 /* the user's (drum_rea
 {
     return MELODEE_USER_KITS && (DRUM_ONLY ? DRUM_ONLY == DK_USER0 : t->p[P_E0] >= DK_USER0 && t->p[P_E0] <= DK_KIT_MAX);
 }
-static int drum_map11(const track_t *t) { return drum_is909(t) || drum_isuser(t); }   /* the 909's eleven drums, a real ride and crash */
+static int drum_map11(const track_t *t) { return drum_is909(t); }   /* the 909's eleven drums, a real ride and crash */
 static int drum_isone(const track_t *t) { return DRUM_KV(t->p) >= DK_SID; }      /* a whole kit on one voice */
 /* the 808's instruments (drum_808.c) and its own GM map: drum_sound_of names a note's drum by them */
 enum { DR_BD, DR_SD, DR_LT, DR_MT, DR_HT, DR_LC, DR_MC, DR_HC, DR_RS, DR_CL, DR_CP, DR_MA, DR_CB, DR_CY,
@@ -139,7 +139,7 @@ static uint32_t drum_lane(uint32_t note)
     return DV_TYPE_LANE[DRUM_GM[n - 35u][0]];
 }
 
-/* A user kit (KIT 1..8) on the keys: white key n plays MPC pad n (drum_mpc_note: the eleven drums, five again), from
+/* A user kit (KIT 1..8) on the keys: white key n plays MPC pad n (drum_mpc_note: its sixteen pads), from
  * the first white key (the FM-1's F3, the SMK-37's lowest C, so its sixteen reach D5); the black keys and the white
  * keys past the sixteenth are silent, the octave is not followed. ks: the key from F3 (the SMK-37's outer keys:
  * -5..-1 below, 27..31 above). DRUM_SILENT: seq.c's KB_SILENT (asserted there) */

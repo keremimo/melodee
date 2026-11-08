@@ -4,7 +4,8 @@
  * (2.0: each KIT value played by its own kit synth, 808 / 909 / SID KIT / CR78 / FM KIT / SAMPLER, the same rows):
  * tests/fixtures/pads-70111e91-fm1.txt (-smk37.txt) was written from 70111e91's own drum_map.c and ui_draw.c (every
  * KIT value 0..16: the pads' notes, names, abbreviations, third labels and knob order, the MPC pads, the lanes' names,
- * abbreviations and notes, each note's lane and pad, a user kit's keys). Here DRUM's pads block, read by the firmware
+ * abbreviations and notes, each note's lane and pad, a user kit's keys; KIT 9..16 rewritten when SAMPLER's kits took the
+ * 808's sixteen pads, PADS_WRITE=1). Here DRUM's pads block, read by the firmware
  * as any synth's, gives the same, line for line; a synth without pads is never a kit; the stored packing (MOD3_R_PACK)
  * is Melodee 1.x's KIT wire; and each mutation of the block (a note's lane, a map's selector, an MPC pad, a name, a
  * label, the record names, the lanes' notes, a flag) is caught. */
@@ -88,6 +89,13 @@ int main(int argc, char **argv)
     host_tracks_init();
     host_preset(&trk[3], ENGI_808, 0);
     facts();
+    if (getenv("PADS_WRITE")) {                 /* (the fixture written from the firmware as it is now: a deliberate change) */
+        FILE *w = fopen(argc > 1 ? argv[1] : (BOARD_SMK37 ? "tests/fixtures/pads-70111e91-smk37.txt" : "tests/fixtures/pads-70111e91-fm1.txt"), "wb");
+        if (!w || fwrite(got, 1, gn, w) != gn) return 1;
+        fclose(w);
+        printf("pads: fixture written\n");
+        return 0;
+    }
     check("the kit synths' pads blocks as the firmware reads any synth's: every KIT's pads, notes, names, labels, knob order, MPC pads, "
           "lanes, each note's lane and pad, a user kit's keys, as 70111e91's drum_map.c had them", gn == wn && !memcmp(got, want, wn));
     if (gn != wn || memcmp(got, want, wn)) {    /* (the first line that differs) */

@@ -206,7 +206,7 @@ static void drum_pads(void)
                 for (uint32_t n = 0; n < 128u; n++) {
                     uint32_t want = KB_SILENT;
                     for (uint32_t p = 0; p < 16u; p++)
-                        if (n == MPC_PAD_NOTES[k][p]) want = notes[kit == DK_909 || kit >= DK_USER0][p];
+                        if (n == MPC_PAD_NOTES[k][p]) want = notes[kit == DK_909][p];
                     assert(midi_map(t, n) == want);
                 }
                 /* Native keys retain their chromatic drum map and bank octave; a user kit: white key n is pad n
@@ -217,7 +217,7 @@ static void drum_pads(void)
                     if (kit >= DK_USER0) {
                         want = KB_SILENT;
                         for (uint32_t p = 0; p < 16u; p++)
-                            if (key == WHITE[p]) want = notes[1][p];
+                            if (key == WHITE[p]) want = notes[0][p];   /* (SAMPLER: the 808's sixteen) */
                     }
                     assert(kb_map(t, key) == want);
                 }
@@ -236,7 +236,7 @@ static void drum_pads(void)
                 t->p[P_QUANT] = Q_MPC; t->mpc_octave = 3;
                 for (uint32_t p = 0; p < 16u; p++) {
                     seq_stop(); memset(t->step, 0, sizeof t->step); song.rec = (uint8_t)(1u << k);
-                    uint32_t src = MPC_PAD_NOTES[k][p], want = notes[kit == DK_909 || kit >= DK_USER0][p];
+                    uint32_t src = MPC_PAD_NOTES[k][p], want = notes[kit == DK_909][p];
                     if (source == 1u) midi_in_event(0x09u | 0x90u << 8 | src << 16 | 100u << 24);
                     else { um_byte(0x90); um_byte((uint8_t)src); um_byte(100); }
                     events_block(CTL); frame();
