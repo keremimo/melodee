@@ -607,9 +607,20 @@ static void project_capture(project_t *p);
 /* FNV of each slot's stored bytes, as last written or read (0: unknown): autosave writes only what differs */
 static uint32_t proj_saved_hash[PROJ_SLOTS] __attribute__((section(".pool")));
 #if MELODEE_FLASH
-static void proj_space(void) { int n = flash_ok ? st_project_free() : -1; proj_free = (uint8_t)(n < 0 ? 0xFF : n); }
-/* the shared pool's free room (projects and preset banks share it) in KB of payload (-1 unknown): the SLOTS card */
-static int project_free_pct(void) { return proj_free == 0xFFu ? -1 : (int)(proj_free * ST_LIN_PAYLOAD_MAX / 1024u); }
+static uint32_t proj_space_gen;                  /* st_pool_gen when proj_free was counted */
+static void proj_space(void)
+{
+    int n = flash_ok ? st_project_free() : -1;
+    proj_free = (uint8_t)(n < 0 ? 0xFF : n);
+    proj_space_gen = st_pool_gen;
+}
+/* the shared pool's free room (projects, preset banks, kits and modules share it) in KB of payload (-1 unknown): the
+ * SLOTS card; counted again once any pool record came or went since (a kit deleted kept its old room shown) */
+static int project_free_pct(void)
+{
+    if (proj_space_gen != st_pool_gen) proj_space();
+    return proj_free == 0xFFu ? -1 : (int)(proj_free * ST_LIN_PAYLOAD_MAX / 1024u);
+}
 #else
 static void proj_space(void) {}
 static int project_free_pct(void) { return -1; }   /* (KB) */

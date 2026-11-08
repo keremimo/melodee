@@ -131,6 +131,7 @@ static int st_stream_publish(st_stream_t *w)
     st_hdr_t current;int copy=st_current(w->obj,&current);
     if(copy>=0?(copy==w->head.slot||current.seq+1u!=w->head.seq):w->head.seq!=1u)return -6;
     w->head.magic=ST_MAGIC;
+    st_pool_gen++;
     w->head.hcrc=st_crc32(&w->head,sizeof w->head-4u);
     if((rc=st_prog(st_sector(w->obj,w->head.slot),&w->head,sizeof w->head)))return rc;
     st_hdr_t check;

@@ -145,6 +145,9 @@ static int st_prog(uint32_t off, const void *src, uint32_t n);
 
 /* Allocation must not mistake a failed read for free project space. */
 static uint8_t st_read_failed;
+/* every pool record published or deleted moves it on: a count of free sectors kept from before is stale (project.c
+ * proj_space: the SLOTS card's room left after a kit, a module or a preset bank came or went) */
+static uint32_t st_pool_gen;
 static int st_fetch(uint32_t off, void *dst, uint32_t n)
 {
     int rc = st_read(off, dst, n);
@@ -705,6 +708,7 @@ static int st_project_free(void)
 static int st_project_delete(uint32_t obj)
 {
     uint32_t n = st_cands(obj) + 2u;
+    st_pool_gen++;
     for (uint32_t pass = 0; pass < n; pass++) {
         st_hdr_t h, best; uint32_t at = 0; int found = 0;
         for (uint32_t i = 0; i < n; i++) {

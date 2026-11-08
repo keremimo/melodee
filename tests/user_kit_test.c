@@ -260,11 +260,13 @@ int main(void)
 
     {   /* delete while it rings */
         kit(2); trk_note_on(&trk[0], 49, 127); run(0, 20u);
+        uint32_t gen = st_pool_gen;
         int rc = rec_delete(2);
         int32_t pk = run(0, 4u);
         trk_note_on(&trk[0], 38, 120);
         check("a kit deleted while it rings: silent at once and after, the slot empty, its sectors free",
               !rc && pk == 0 && run(0, 40u) == 0 && !drk_user[2].n && !rec_len[2] && st_project_free() == T_FREE0);
+        check("... and the room it gave back is counted again (SLOTS card: st_pool_gen moved on)", st_pool_gen != gen);
     }
     if (fails) { printf("USER KIT: %d FAILED\n", fails); return 1; }
     printf("USER KIT: all checks ok\n");
