@@ -36,6 +36,29 @@ def r35(b, at):
     return sum(b[at + i] << 7 * i for i in range(5)) & 0xFFFFFFFF
 
 
+def r70(b, at):
+    """a synth's ID (u70: 10 x 7 bits, low first) as 16 hex digits"""
+    return "%016x" % (sum(b[at + j] << 7 * j for j in range(10)) & 0xFFFFFFFFFFFFFFFF)
+
+
+def file_id(b):
+    """a file's ID from its IDNT chunk (version 2) as 16 hex digits, "" none (web/fm1mods.js mod_id)"""
+    if not b[7] & 1:
+        return ""
+    at = 60 + struct.unpack_from("<I", b, 12)[0] + 4 * struct.unpack_from("<I", b, 20)[0]
+    while at + 8 <= len(b):
+        tag, n = struct.unpack_from("<II", b, at)
+        if tag == 0x544E4449 and n == 96 and b[at + 16] == 2:
+            return "%016x" % struct.unpack_from("<Q", b, at + 8)[0]
+        at += 8 + ((n + 3) & ~3)
+    return ""
+
+
+def same(s, f):
+    """a slot holding a file's synth: by their IDs when both have one (a synth's number is the device's), else the number"""
+    return s["id"] == f["id"] if s["id"] and f["id"] else s["engine"] == f["engine"]
+
+
 def bundle(data):
     """the .mmod files of a melodee-mods.bin: [{engine, name, abi, crc, key, bytes}]"""
     out, at = [], 0
@@ -48,7 +71,7 @@ def bundle(data):
         b = data[at:at + total]
         out.append(dict(engine=engine, abi=abi, name=b[32:48].split(b"\0")[0].decode("ascii", "replace"),
                         crc=struct.unpack_from("<I", b, 28)[0], key=struct.unpack_from("<I", b, 52)[0] if abi >= 2 else 0,
-                        bytes=b))
+                        id=file_id(b), bytes=b))
         at += total
     return out
 
@@ -60,7 +83,7 @@ def slots(device):
         raise RuntimeError("this firmware has no synth module command (84)")
     out, p, own = [], 3, None
     for k in range(a[2]):
-        out.append(dict(slot=k, state=a[p], engine=a[p + 1], len=r35(a, p + 4), crc=0, key=0))
+        out.append(dict(slot=k, state=a[p], engine=a[p + 1], len=r35(a, p + 4), crc=0, key=0, id=""))
         p += 9
         while a[p]:
             p += 1
@@ -69,11 +92,11 @@ def slots(device):
         if not s["len"]:
             continue
         b = device.request(COMMAND, [5, s["slot"]], 5)
-        if len(b) != 19 or b[0]:
+        if len(b) not in (19, 30) or b[0]:              # 30: since its synths have IDs (ID u70, signer)
             raise RuntimeError("this firmware cannot report its synth modules")
         own = r35(b, 14)
         if not s.get("probe"):
-            s["crc"], s["key"] = r35(b, 4), r35(b, 9)
+            s["crc"], s["key"], s["id"] = r35(b, 4), r35(b, 9), r70(b, 19) if len(b) == 30 else ""
     return out, own
 
 
@@ -85,12 +108,12 @@ def push(device, data, say=print):
     lst, own = slots(device)
     if any(f["abi"] >= 2 and f["key"] and f["key"] != own for f in files):
         raise RuntimeError("these synth modules belong to another firmware build than the FM-1 runs")
-    todo = [f for f in files if not any(s["engine"] == f["engine"] and s["state"] in PLAYING and s["crc"] == f["crc"]
+    todo = [f for f in files if not any(same(s, f) and s["state"] in PLAYING and s["crc"] == f["crc"]
                                         and s["key"] == f["key"] for s in lst)]
     if not todo:
         return "current"
     for f in todo:
-        s = (next((x for x in lst if x["len"] and x["engine"] == f["engine"]), None) or
+        s = (next((x for x in lst if x["len"] and same(x, f)), None) or
              next((x for x in lst if x["len"] and x["state"] == BAD), None) or next((x for x in lst if not x["len"]), None))
         if s is None:
             raise RuntimeError("every synth module slot is in use: delete one in the editor (Settings)")
@@ -99,7 +122,7 @@ def push(device, data, say=print):
             rc = device.request(COMMAND, [4, k], 10)[0]
             if rc:
                 raise RuntimeError(f"slot {k + 1}: delete refused: {RC.get(rc, rc)}")
-            s.update(len=0, engine=0, state=0)
+            s.update(len=0, engine=0, id="", state=0)
         b = f["bytes"]
         rc = device.request(COMMAND, [1, k] + u35(len(b)), 10)[0]
         for off in range(0, len(b), 256):
@@ -113,7 +136,7 @@ def push(device, data, say=print):
         c = device.request(COMMAND, [3, k], 30)
         if c[0] and c[0] != 7:
             raise RuntimeError(f"{f['name']}: commit refused: {RC.get(c[0], c[0])}")
-        s.update(len=len(b), engine=f["engine"], state=c[1])
+        s.update(len=len(b), engine=f["engine"], id=f["id"], state=c[1])
     return "written"
 
 
