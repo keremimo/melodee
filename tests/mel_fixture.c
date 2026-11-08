@@ -20,7 +20,7 @@ static unsigned char nor[0x100000];
 #ifndef PJ_MAGIC
 #define PJ_MAGIC 0x314A5048u                     /* HPJ1: Melodee 1.x's compact image (web/mel_file.js still knows it) */
 #endif
-/* (DRUM's Record kit take, encoder and record check: built in, modules/drum/kit_take.c) */
+/* (SAMPLER's Record kit take, encoder and record check: built in, modules/kits/kit_take.c) */
 #include <assert.h>
 #include <sys/stat.h>
 
@@ -83,9 +83,10 @@ static void fill(uint32_t k, uint32_t b, uint32_t density, int drum)   /* a scal
 }
 static void song_project(uint32_t pats, uint32_t density, uint32_t notes, uint32_t rows, uint32_t sounds, uint32_t motions)
 {
-    static const uint8_t eng[NPART] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM};
+    static const uint8_t eng[NPART] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_SIDKIT};   /* (1.x DRUM preset 3: SID DIGI) */
+#define SP_PRE(k) ((k) == 3u ? 1u : (k))
     reset(); song.ntrk = NPART; lcg = 7;
-    for (uint32_t k = 0; k < NPART; k++) { set_engine_of(&trk[k], eng[k]); apply_preset_to(&trk[k], k); }
+    for (uint32_t k = 0; k < NPART; k++) { set_engine_of(&trk[k], eng[k]); apply_preset_to(&trk[k], SP_PRE(k)); }
     for (uint32_t k = 0; k < NPART; k++) for (uint32_t b = 0; b < pats; b++) fill(k, b, density, k == 3);
     for (uint32_t i = 0; i < notes; i++) {
         recorded_note_t r = {.on = (uint16_t)rnd(65536), .duration = (uint16_t)(2000u + rnd(30000)), .vel = (uint8_t)(60u + rnd(60))};
@@ -106,8 +107,9 @@ static void song_project(uint32_t pats, uint32_t density, uint32_t notes, uint32
         snprintf(name, sizeof name, "SOUND %u", (unsigned)(i + 1u));
         apply_preset_to(&trk[k], 3u + i); song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s, 0));
         if (!(id = song_sound_store(&s))) break;
-        chain_config.sound[i % rows][k] = (uint8_t)id; apply_preset_to(&trk[k], k);
+        chain_config.sound[i % rows][k] = (uint8_t)id; apply_preset_to(&trk[k], SP_PRE(k));
     }
+#undef SP_PRE
     for (uint32_t i = 0; i < motions; i++) motion_set_event(&trk[i % NPART], rnd(64), P_E1, (int16_t)rnd(60));
 }
 
@@ -126,8 +128,7 @@ static void kit_record(uint32_t u, int32_t k, const char *name)
         host_tracks_init();
         for (uint32_t p = 0; p < NPART; p++) memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
         eng_state_reset();
-        host_preset(&trk[0], ENGI_DRUM, 0);
-        trk[0].p[P_E0] = (int16_t)k;
+        host_kit_values(&trk[0], k);                 /* (1.x DRUM's preset 0, KIT k: its kit synth plays it) */
         trk_note_on(&trk[0], GM[d], 115);
         for (uint32_t i = 0; i < n; i += CTL) track_render(&trk[0], out + i, CTL);
         for (uint32_t i = 0; i < n; i++) pk = abs(out[i]) > pk ? abs(out[i]) : pk;
@@ -173,9 +174,9 @@ static void kit_project(void)
 {
     reset(); song.ntrk = NPART + 1u; lcg = 3;
     set_engine_of(&trk[T_KEYS], ENGI_PROPHET); apply_preset_to(&trk[T_KEYS], 1);
-    set_engine_of(&trk[T_DRUM2], ENGI_DRUM); apply_preset_to(&trk[T_DRUM2], 0);
+    set_engine_of(&trk[T_DRUM2], ENGI_SAMPLER); apply_preset_to(&trk[T_DRUM2], 0);
     set_engine_of(&trk[T_OTHER], ENGI_CZ); apply_preset_to(&trk[T_OTHER], 2);
-    set_engine_of(&trk[T_DRUM], ENGI_DRUM); apply_preset_to(&trk[T_DRUM], 0);
+    set_engine_of(&trk[T_DRUM], ENGI_SAMPLER); apply_preset_to(&trk[T_DRUM], 0);
     trk[T_KEYS].p[P_E0] = KIT_A;                     /* a synth's own E0: not a kit */
     trk[NPART].p[P_E0] = KIT_B;                      /* a MIDI-only track's channel: not a kit */
     for (uint32_t k = 0; k < NPART; k++) for (uint32_t b = 0; b < 5u; b++) fill(k, b, 30, k == T_DRUM || k == T_DRUM2);
@@ -212,14 +213,14 @@ static int16_t kit_to(int32_t v, const uint8_t *from, const uint8_t *to, uint32_
 static void kit_rename(const uint8_t *from, const uint8_t *to, uint32_t n)
 {
     for (uint32_t k = 0; k < NPART; k++)
-        if (trk[k].eng_req == ENGI_DRUM) trk[k].p[P_E0] = kit_to(trk[k].p[P_E0], from, to, n);
+        if (trk[k].eng_req == ENGI_SAMPLER) trk[k].p[P_E0] = kit_to(trk[k].p[P_E0], from, to, n);
     for (uint32_t j = 0; j < song_sound_count; j++) {
         song_sound_t *s = song_sound_pool() + j;
-        if (s->engine == ENGI_DRUM) s->p[P_E0] = (uint8_t)(kit_to(s->p[P_E0] - 64, from, to, n) + 64);
+        if (s->engine == ENGI_SAMPLER) s->p[P_E0] = (uint8_t)(kit_to(s->p[P_E0] - 64, from, to, n) + 64);
     }
     for (uint32_t i = 0; i < motion.count; i++) {
         uint32_t k = motion.event[i].place >> 6, id = pattern_sound[k][motion_pattern[i]];
-        int drums = id ? song_sound_get(id)->engine == ENGI_DRUM : trk[k].eng_req == ENGI_DRUM;
+        int drums = id ? song_sound_get(id)->engine == ENGI_SAMPLER : trk[k].eng_req == ENGI_SAMPLER;
         if (motion.event[i].param == P_E0 && drums && motion.event[i].value >= DK_USER0)
             motion.event[i].value = kit_to(motion.event[i].value, from, to, n);
     }
@@ -235,12 +236,12 @@ static int kit_project_is(int32_t a, int32_t b, int32_t e)
     IS(trk_n() == NPART + 1u);
     IS(trk[T_KEYS].eng_req == ENGI_PROPHET && trk[T_KEYS].p[P_E0] == KIT_A);
     IS(trk[NPART].p[P_E0] == KIT_B);
-    IS(trk[T_DRUM].eng_req == ENGI_DRUM && trk[T_DRUM].p[P_E0] == a);
-    IS(trk[T_DRUM2].eng_req == ENGI_DRUM && trk[T_DRUM2].p[P_E0] == b);
+    IS(trk[T_DRUM].eng_req == ENGI_SAMPLER && trk[T_DRUM].p[P_E0] == a);
+    IS(trk[T_DRUM2].eng_req == ENGI_SAMPLER && trk[T_DRUM2].p[P_E0] == b);
     IS(da && db && ky && pattern_sound[T_DRUM][4] == ky && song_sound_count == 3u);
     if (bad) return 0;
-    IS(song_sound_get(da)->engine == ENGI_DRUM && song_sound_get(da)->p[P_E0] == a + 64);
-    IS(song_sound_get(db)->engine == ENGI_DRUM && song_sound_get(db)->p[P_E0] == b + 64);
+    IS(song_sound_get(da)->engine == ENGI_SAMPLER && song_sound_get(da)->p[P_E0] == a + 64);
+    IS(song_sound_get(db)->engine == ENGI_SAMPLER && song_sound_get(db)->p[P_E0] == b + 64);
     IS(song_sound_get(ky)->engine == ENGI_PROPHET && song_sound_get(ky)->p[P_E0] == KIT_A + 64);
     IS(motion.count == 6u);
     for (uint32_t i = 0; i < 6u; i++) {
@@ -319,7 +320,7 @@ static int do_verify(void)
     /* the device test_mel.mjs imported into: KIT 1 held the 808 kit already; the page sent KIT 4 and the project */
     n = load("kit-808.bin", big, sizeof big);
     bad += check("mel: a kit record goes in through the backup's PUT", put_object(92, big, n) == 0 && rec_len[0] == n);
-    bad += check("mel: .. its owner the default (DRUM's), named in the owners record (2.0: every owner is)",
+    bad += check("mel: .. its owner the default (SAMPLER's), named in the owners record (2.0: every owner is)",
                  rec_uid[0] == rec_owner_uid(MOD3_NREC) && eng_map_dirty);
     n = load("out-kit-12.bin", big, sizeof big);
     uint32_t n909 = load("kit-909.bin", kit[0], sizeof kit[0]);

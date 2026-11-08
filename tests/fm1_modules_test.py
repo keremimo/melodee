@@ -16,9 +16,9 @@ import fm1_modules as M  # noqa: E402
 KEY = 0x13572468
 
 
-def module(engine, name, n, key=KEY, seed=1):
-    """a file: its head, n bytes of image, then its IDNT chunk (who it is: from its name; Melodee 2.0 knows a synth by its
-    ID alone, the engine byte means nothing)"""
+def module(engine, name, n, key=KEY, seed=1, uid=None):
+    """a file: its head, n bytes of image, then its IDNT chunk (who it is: from its name, or uid; Melodee 2.0 knows a
+    synth by its ID alone, the engine byte means nothing)"""
     b = bytearray((i * 29 + seed) & 255 for i in range(60 + n)) + bytearray(104)
     struct.pack_into("<IHBBI", b, 0, M.FILE_MAGIC, 3, engine, 1, len(b))
     struct.pack_into("<II", b, 12, n, 0)
@@ -26,7 +26,7 @@ def module(engine, name, n, key=KEY, seed=1):
     struct.pack_into("<I", b, 28, 0x1000 * seed + engine)
     b[32:48] = name.encode().ljust(16, b"\0")
     struct.pack_into("<I", b, 52, key)
-    struct.pack_into("<IIQ", b, 60 + n, 0x544E4449, 96, 0x5000 + sum(name.encode()))
+    struct.pack_into("<IIQ", b, 60 + n, 0x544E4449, 96, 0x5000 + sum(name.encode()) if uid is None else uid)
     b[76 + n] = 2
     return bytes(b)
 
@@ -122,12 +122,22 @@ def main():
         check("every slot taken: refused", False)
     except RuntimeError as e:
         check("every slot taken: refused", "every synth module slot" in str(e))
+    old = Device()                                       # 1.x's DRUM, by its real ID (2.0: retired, its kits synths)
+    old.slot[3].update(b=module(10, "DRUM", 2000, uid=0x241AACC57D998FFE), state=1)
+    old.slot[5].update(b=module(10, "DRUM", 2000, seed=3), state=1)                     # (a DRUM by name only: not it)
+    kit = module(5, "808", 500)
+    check("a slot holding DRUM's ID: emptied by the update, the kit synth written, the name alone kept",
+          M.push(old, kit, quiet) == "written" and old.slot[3]["b"] is None and old.slot[3]["state"] == 0 and
+          old.slot[5]["b"] is not None and old.log == ["808 -> 1"] and M.push(old, kit, quiet) == "current")
     real = ROOT / "build/melodee-mods.bin"
     if real.exists():
         files = M.bundle(real.read_bytes())
-        check("build/melodee-mods.bin: the ABI 3 CZ-1, SID, DRUM, FM6 and PROPHET files (no layout key: DRUM's pads by schema)",
-              sorted(f["name"] for f in files) == ["CZ-1", "DRUM", "FM6", "PROPHET", "SID"] and
-              all(f["abi"] == 3 for f in files) and not any(f["key"] for f in files))
+        check("build/melodee-mods.bin: the ABI 3 kit synths, CZ-1, SID, FM6 and PROPHET files, no DRUM (no layout key: "
+              "the kits' pads by schema)",
+              sorted(f["name"] for f in files) == sorted(["808", "909", "SID KIT", "CR78", "FM KIT", "SAMPLER", "CZ-1",
+                                                          "FM6", "PROPHET", "SID"]) and
+              all(f["abi"] == 3 for f in files) and not any(f["key"] for f in files) and
+              not any(f["id"] in M.RETIRED for f in files))
     print("fm1_modules tests", "FAILED" if bad else "passed")
     return 1 if bad else 0
 

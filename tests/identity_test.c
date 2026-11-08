@@ -229,8 +229,8 @@ int main(void)
     rec_uid[3] = 0x0123456789ABCDEFULL;
     eng_map_dirty = 1;
     boot();
-    bad += check("records' owners: the default (DRUM's, the manifest's General MIDI kit synth) and one kept by the owners "
-                 "record (its whole ID)", rec_owner_uid(0) == 0x241AACC57D998FFEULL &&
+    bad += check("records' owners: the default (SAMPLER's, the manifest's records' synth; DRUM's until 2.0) and one kept by "
+                 "the owners record (its whole ID)", rec_owner_uid(0) == 0xA7C6C5DCAB17D386ULL &&
                  rec_owner_uid(3) == 0x0123456789ABCDEFULL);
     {   /* an editor's PUT (a backup object, a module upload) is one stream over many messages, the main loop running
          * between them: the map record's save waits for it (else the stream goes stale: the PUT fails, rc 4) */
@@ -488,14 +488,17 @@ int main(void)
         }
         bad += check(".. that save on a device that has them (installed in another order: other numbers): every part and "
                      "sound plays its own synth", named && mods[11].engine != eng[0]);
-        /* a number given back: 27 synths named one after another on a device without them (23 handles) */
+        /* a number given back: 12 + N2 synths named one after another on a device without them (NENGINES - ENG_H_FREE0
+         * handles: 2.0's ten shipped synths leave 18; the last project's N2 as many as fit beside the 4 the loaded song's
+         * parts still name) */
+        const uint32_t N2 = NENGINES - ENG_H_FREE0 - 4u < 15u ? NENGINES - ENG_H_FREE0 - 4u : 15u;
         for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
-        for (uint32_t i = 12; i < 27u; i++) install(i - 12u, "acme", nm[i], 22, 16);
+        for (uint32_t i = 12; i < 12u + N2; i++) install(i - 12u, "acme", nm[i], 22, 16);
         boot();
         host_tracks_init();
         song_sound_reset();
-        chain_config.count = 11;
-        for (uint32_t i = 16; i < 27u; i++) {
+        chain_config.count = (uint8_t)(N2 - 4u);
+        for (uint32_t i = 16; i < 12u + N2; i++) {
             song_sound_t snd;
             trk[0].engine = trk[0].eng_req = mods[i - 12u].engine;
             song_sound_capture(&snd, &trk[0], nm[i]);
@@ -509,15 +512,17 @@ int main(void)
         project_load(4);                             /* (12 lent) */
         host_tracks_init();
         song_sound_reset();                          /* (another project: nothing names those 12 any more) */
-        project_load(6);                             /* (15 more: 27 > 23, the 12 given back as needed) */
+        project_load(6);                             /* (N2 more: more than are free, the 12 given back as needed) */
         named = 1;
         for (uint32_t k = 0; k < 4u; k++) named &= !strcmp(eng_name(trk[k].eng_req), nm[12u + k]);
-        for (uint32_t r = 0; r < 11u; r++) {
+        for (uint32_t r = 0; r < N2 - 4u; r++) {
             const song_sound_t *snd = song_sound_get(chain_config.sound[r][0]);
             named &= snd && snd->engine < NENGINES && !strcmp(eng_name(snd->engine), nm[16u + r]);
         }
-        bad += check(".. 27 synths named one after another where 23 handles are: the ones nothing names any more given "
-                     "back, the 15 of the last project all named", saved15 && named);
+        printf("persist: %u synths named one after another where %u handles are\n", (unsigned)(12u + N2),
+               (unsigned)(NENGINES - ENG_H_FREE0));
+        bad += check(".. more synths named one after another than there are handles: the ones nothing names any more given "
+                     "back, the last project's all named", saved15 && named && 12u + N2 > NENGINES - ENG_H_FREE0);
         /* Motion: a stored native event's synth by this device's number */
         motion_store_t ms;
         memset(&ms, 0, sizeof ms);

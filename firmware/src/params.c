@@ -715,9 +715,9 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
             for (uint32_t c = 0; c < VOICE_KINDS; c++) {
                 static const param_desc_t row = PE("-", N_VPOINTS, 0);
                 weights[c] = row;
-                for (uint32_t k = 0; k < NSHIP; k++)
+                for (uint32_t k = 0, n = 0; k < NSHIP; k++)  /* (a class one synth: its tag; the kits' class: DRUM) */
                     if (SHIP[k].wclass == c + 1u)
-                        weights[c].label = SHIP[k].tag;
+                        weights[c].label = n++ ? "DRUM" : SHIP[k].tag;
             }
             weights[VOICE_KINDS] = guard;
         }

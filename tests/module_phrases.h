@@ -80,14 +80,16 @@ static uint32_t mp_sid(uint32_t pi, uint32_t mono, int32_t model, uint32_t env3,
     return mp_hash(mp_out, MP_NB * CTL);
 }
 
-/* DRUM: KIT kit (its preset pi first), the GM notes from 35 up, every lane, chokes, retriggers; the part's drum
- * patch offsets, lane levels, DRV and ACC moved; recorded lengths and pitches on some hits */
+/* DRUM's kits (2.0: the kit synths): 1.x DRUM's preset pi on its kit synth, or KIT kit (1.x: DRUM's preset 0, then
+ * KIT kit; here on the kit synth that plays it), the GM notes from 35 up, every lane, chokes, retriggers; the part's
+ * drum patch offsets, lane levels, DRV and ACC moved; recorded lengths and pitches on some hits */
 static uint32_t mp_drum(uint32_t pi, int32_t kit, uint32_t batch)
 {
     mp_start();
-    host_preset(&inst, ENGI_DRUM, pi);
     if (kit >= 0)
-        inst.p[P_E0] = (int16_t)kit;
+        host_kit_values(&inst, kit);
+    else
+        host_kit_preset(&inst, pi);
     for (uint32_t s = 0; s < 16u; s++) {             /* every sound a little off its factory setting */
         int8_t *c = (int8_t *)(void *)patch_of(0) + 4u * s;   /* (the part's patch: DRUM's offsets) */
         c[0] = (int8_t)((int32_t)(s % 5u) - 2);
@@ -434,7 +436,7 @@ static uint32_t mp_p5(uint32_t pi, uint32_t mode, uint32_t batch)
 
 /* phrase k (0 .. MP_COUNT - 1) rendered into mp_out: its hash; *what, *a, *b: what it plays */
 #define MP_SID_PRESETS 32u
-#define MP_DRUM_PRESETS 6u
+#define MP_DRUM_PRESETS 6u                               /* (1.x DRUM's: 808 KIT, 909 KIT, SID KIT, SID DIGI, CR78 KIT, FM KIT) */
 #define MP_CZ_PRESETS 65u                                /* INIT TONE, Casio's 64 */
 #define MP_SID_A (2u * MP_SID_PRESETS * 2u)              /* every preset x POLY / LEGATO, serial then on CPU1 */
 #define MP_SID_B (2u * 4u * 2u * 2u)                     /* MODEL 0..3 x mode x ENV3, serial then on CPU1 */
@@ -489,10 +491,10 @@ static uint32_t mp_run(uint32_t k, const char **what, uint32_t *a, uint32_t *b)
     }
     uint32_t batch = k / (MP_DRUM / 2u), j = k % (MP_DRUM / 2u);
     if (j < MP_DRUM_PRESETS) {
-        *what = batch ? "DRUM preset (CPU1)" : "DRUM preset"; *a = j; *b = 0;
+        *what = batch ? "KIT preset (CPU1)" : "KIT preset"; *a = j; *b = 0;
         return mp_drum(j, -1, batch);
     }
-    *what = batch ? "DRUM KIT (CPU1)" : "DRUM KIT"; *a = j - MP_DRUM_PRESETS + 4u; *b = 0;   /* 808 909 SID CR78 FM, */
+    *what = batch ? "KIT (CPU1)" : "KIT"; *a = j - MP_DRUM_PRESETS + 4u; *b = 0;   /* 808 909 SID CR78 FM, */
     return mp_drum(0, (int32_t)(j - MP_DRUM_PRESETS + 4u), batch);                         /* user kits 1, 2 */
 }
 

@@ -87,7 +87,7 @@ static uint32_t mapping_faults(uint32_t e, uint32_t k, int verbose)
 static int mapping_tests(void)
 {
     int bad = 0;
-    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, ENGI_SID};
+    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_808, ENGI_SID};
     for (uint32_t i = 0; i < 5u; i++) {
         char what[96];
         ui_power_on();
@@ -169,7 +169,7 @@ static int cc_sets_role(uint32_t cc, uint32_t value, uint32_t role)
 static int role_tests(void)
 {
     int bad = 0;
-    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, ENGI_SID};
+    static const uint32_t E[5] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_808, ENGI_SID};
     for (uint32_t i = 0; i < 5u; i++) {
         char what[96];
         snprintf(what, sizeof what, "%s: every role names a parameter or a page it has", ENGINES[E[i]]->name);
@@ -233,7 +233,7 @@ static int blob_tests(void)
         static project_store_t packed;
         int same = 1;
         for (uint32_t k = 0; k < 4u; k++)
-            set_engine_of(&trk[k], k == 0u ? ENGI_PROPHET : k == 1u ? ENGI_FM6 : k == 2u ? ENGI_CZ : ENGI_DRUM);
+            set_engine_of(&trk[k], k == 0u ? ENGI_PROPHET : k == 1u ? ENGI_FM6 : k == 2u ? ENGI_CZ : ENGI_808);
         patch_of(0)[97] = 0x5A;                  /* (an opaque byte) */
         sch_set_t(1, 2 * FP_OP + FP_OL, 33);
         fm6_fn_set(1, FN_PTIME, 7);

@@ -349,6 +349,10 @@ static int mod_catalog(uint32_t k)
         return s->state = MS_NEWER;                 /* (a later firmware's: it needs Melodee's newer host table) */
     if (mod_id_find(k, &f))
         return s->state = MS_BAD;
+    for (uint32_t r = 0; r < NELEM(SHIP_RETIRED); r++)
+        if (s->uid == SHIP_RETIRED[r])
+            return s->state = MS_STALE;             /* (a synth of Melodee's this build no longer ships: the installer
+                                                     * empties its slot) */
     {
         uint32_t e = eng_map_take(s->uid, s->name);   /* its handle here (eng_map.c) */
         if (e >= NENGINES)

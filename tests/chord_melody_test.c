@@ -149,7 +149,7 @@ static void lifecycle(void)
     project_capture(&before);assert(proj_pack(&wire,&before) && proj_unpack(&after,wire.raw));
     assert(after.t[0].p[P_CHRD]==CH_MELODY && after.t[0].step[0].n==3);
     t=setup();t->p[P_VOICE]=V_MONO;key_down(7);assert(melody_gates(t)==1 && gated(t,60));key_up(7);assert(!melody_gates(t));
-    t=setup();host_preset(t,ENGI_DRUM,0);t->p[P_CHRD]=CH_MELODY;
+    t=setup();host_preset(t,ENGI_808,0);t->p[P_CHRD]=CH_MELODY;
     uint8_t out[4];assert(chord_build(t,36,out)==1 && out[0]==36);
     t=setup();t->p[P_SCALE]=31;t->p[P_QUANT]=Q_ALL;
     assert(chord_build(t,60,out)==1 && out[0]==60);

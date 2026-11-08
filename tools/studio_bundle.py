@@ -60,7 +60,7 @@ DUMPERS = {
     "settingsdump": ["-DMELODEE_USB_AUDIO=1", "-DMELODEE_USB_HOST=1", "-Itests/ble_fake"],
 }
 WASM = {"melodee_core.wasm": ["build/core/melodee_core.wasm"], "melodee_kit.wasm": ["build/kit/melodee_kit.wasm"]}
-CORE_MODULES = ["sid", "drum", "cz", "fm6", "prophet"]   # the synths the core plays as modules (web/core/build.sh MODS)
+CORE_MODULES = ["sid", "808", "909", "sidkit", "cr78", "fmkit", "sampler", "cz", "fm6", "prophet"]   # the synths the core plays as modules (web/core/build.sh MODS)
 
 
 def wasm_exports(path):

@@ -31,9 +31,9 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 static uint32_t patch_store_tag(uint32_t e)
 {
     return e == ENGI_FM6 ? MOD_SCH_STORE_VOICE : e == ENGI_PROPHET ? MOD_SCH_STORE_PROGRAM : e == ENGI_CZ ? MOD_SCH_STORE_TONE :
-           e == ENGI_DRUM ? MOD_SCH_STORE_KIT : MOD_SCH_STORE_NONE;
+           e >= ENGI_808 && e <= ENGI_SAMPLER ? MOD_SCH_STORE_KIT : MOD_SCH_STORE_NONE;
 }
-static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == ENGI_CZ ? 144u : e == ENGI_DRUM ? 64u : 0u; }
+static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == ENGI_CZ ? 144u : e >= ENGI_808 && e <= ENGI_SAMPLER ? 64u : 0u; }
 static uint32_t patch_sound_len(uint32_t e) { return e == ENGI_FM6 ? 128u : patch_len(e); }
 /* DRUM's KIT patch as its schema packs and checks it (drum_schema.h MOD3_R_PACK, its MOD3_R_CHECK records): per pad TUNE
  * in 6 bits (+ 24), DECAY and the third in 7 (+ 64), the cut in 7; TUNE -24..24, the others in their bytes' range */
@@ -211,7 +211,7 @@ int main(void)
     /* a drum grid by UP_PUT: kind 1, then bit 7 of each step's hits (bit 0) and accents (bit 1) */
     {
         uint8_t g[640];
-        uint32_t k, m = put_frame(g, 9, ENGI_DRUM, "My Beat", 0), at = m - 32u;
+        uint32_t k, m = put_frame(g, 9, ENGI_808, "My Beat", 0), at = m - 32u;
         for (k = 0; k < 16u; k++) {
             g[at + 2u * k] = (uint8_t)(k % 4u ? 0x08u : 0x09u);    /* HAT CL, the kick on the beats */
             g[at + 2u * k + 1u] = (uint8_t)(k == 0u ? 0x7Fu : 0u);  /* step 1: every lane's accent (one too many) */
@@ -222,7 +222,7 @@ int main(void)
         ok = up_parse(g, m, &got, &slot) == 0 && slot == 9u && got.ver == UP_VER_GRID && up_valid(&got) &&
              got.note[0] == 0x09u && got.flags[0] == 0x09u && got.note[1] == 0x08u && !got.flags[1] &&
              got.note[2] == 0x88u && got.flags[2] == 0x80u && got.note[5] == 0x08u && !got.flags[5] &&
-             got.engine == ENGI_DRUM && !up_pat_empty(&got);
+             got.engine == ENGI_808 && !up_pat_empty(&got);
         bad += check("UP_PUT kind 1: a grid record, accents only on hits", ok);
         g[m - 17u] = 0;                                     /* kind 0: the notes and flags as before */
         ok = up_parse(g, m, &got, &slot) == 0 && got.ver == UP_VER && got.note[2] == 0x08u && got.flags[0] == 4u;   /* (flags 0x7F: a tie) */

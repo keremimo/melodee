@@ -35,7 +35,8 @@ const MEL = opt("mel", [join(ROOT, "build/host/studio/mel"), join(ROOT, "build/h
 const SECONDS = Number(opt("seconds", 10));
 const ABI = 4;
 const MODDIR = resolve(opt("modules", join(ROOT, "build/modules/wasm")));
-const SYNTHS = [["sid", "SID"], ["drum", "DRUM"], ["cz", "CZ-1"], ["fm6", "FM6"], ["prophet", "PROPHET"]];
+const SYNTHS = [["sid", "SID"], ["808", "808"], ["909", "909"], ["sidkit", "SID KIT"], ["cr78", "CR78"], ["fmkit", "FM KIT"],
+  ["sampler", "SAMPLER"], ["cz", "CZ-1"], ["fm6", "FM6"], ["prophet", "PROPHET"]];
 /* a synth's handle on this core by its name (INFO: the version, five bytes, then each handle's name; Melodee 2.0's
    handles are the device's own, never a synth's identity) */
 const handleOf = (c, name) => {

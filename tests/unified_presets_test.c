@@ -165,7 +165,7 @@ int main(void)
     fail_after=2;bad+=check("torn replacement reports failure",native_put(ENGI_PROPHET,383,(uint8_t *)&p)==2);fail_after=-1;up_boot();bad+=check("torn replacement keeps previous engine and bytes",native_used(ENGI_CZ,383)&&!memcmp(native_raw(ENGI_CZ,383),cz,sizeof cz));
     bad+=check("favorite can be set at slot 384",favorite_set(USER_GENERAL,383,1));up_boot();bad+=check("favorite survives reboot",favorite_has(USER_GENERAL,383));
     bad+=check("favorite can be cleared",favorite_set(USER_GENERAL,383,0));up_boot();bad+=check("favorite clear survives reboot",!favorite_has(USER_GENERAL,383));
-    reset();up_boot();set_engine_of(TSEL,ENGI_DRUM);drum_patch_of(0)->c[15][0]=-24;drum_patch_of(0)->c[15][3]=127;
+    reset();up_boot();set_engine_of(TSEL,ENGI_808);drum_patch_of(0)->c[15][0]=-24;drum_patch_of(0)->c[15][3]=127;
     bad+=check("custom drum sound occupies any shared slot",!up_store(383,"DRUM MAX"));memset(drum_patch_of(0),0,sizeof(drum_patch_t));up_boot();up_load(383);
     bad+=check("drum offsets and attenuation survive compact storage",drum_patch_of(0)->c[15][0]==-24&&drum_patch_of(0)->c[15][3]==127);
     bad+=check("recent entries retain the ninth slot bit",(recent_push(USER_GENERAL,383),recent[0]==((uint32_t)USER_GENERAL<<16|383)));

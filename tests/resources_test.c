@@ -49,7 +49,7 @@ static int audio_tests(void)
 {
     int bad=0;int32_t in[CTL]={0},out[CTL],c[CTL]={0},d[CTL]={0},r[CTL]={0};
     audio_resources_reset();host_tracks_init();
-    const uint8_t engines[4]={0,ENGI_FM6,ENGI_SID,ENGI_DRUM};uint32_t expected=sizeof(fm6_part_t)+sizeof(sid_part_t)+sizeof(drum_lane_t)*DV_NLANE;
+    const uint8_t engines[4]={0,ENGI_FM6,ENGI_SID,ENGI_808};uint32_t expected=sizeof(fm6_part_t)+sizeof(sid_part_t)+sizeof(drum_lane_t)*DV_NLANE;
     for(uint32_t k=0;k<4u;k++){trk[k].engine=engines[k];eng_state_prepare(&trk[k]);}
     bad+=check("default engine setup and derived caches stay within 16 KiB",resource_used()==expected && expected<=16u*1024u);
     for(uint32_t cycle=0;cycle<2048u;cycle++){

@@ -154,9 +154,9 @@ static int preferences(void)
     bad += check("retired FX latch cannot be enabled", host_wire[5] == 2);
     a[0] = 2; request(ED_UI_SET, a, 2);
     bad += check("unsupported preference is reported without applying it", host_wire[5] == 2);
-    a[0] = ENGI_DRUM; a[1] = 0; a[2] = 64; a[3] = 1;
+    a[0] = ENGI_808; a[1] = 0; a[2] = 64; a[3] = 1;
     request(ED_FAV_SET, a, 4);
-    bad += check("FAV_SET marks DRUM as a normal engine", host_wire[5] == 3 && favorite_has(ENGI_DRUM, 0));
+    bad += check("FAV_SET marks the 808 as a normal engine", host_wire[5] == 3 && favorite_has(ENGI_808, 0));
     request(ED_FAV_GET, a, 4);
     bad += check("FAV_GET reads the bounded favorite range", host_wire[5] == 0 && host_wire[10] == 1);
     a[0] = USER_GENERAL; a[1] = 31; request(ED_FAV_SET, a, 4);
@@ -1495,7 +1495,7 @@ static int studio_device(void)
     /* PADS (53): a kit's pads as its synth's pads block has them (DRUM: TUNE, DECAY, the third, LEVEL) */
     a[0] = 0; request(ED_PADS, a, 1);
     bad += check("PADS on a track that is not a kit: rc 1, no pads", host_wire[6] == 1 && !host_wire[7] && !host_wire[8]);
-    set_engine_of(&trk[1], ENGI_DRUM); apply_preset_to(&trk[1], 0); trk[1].p[P_E0] = DK_808;
+    set_engine_of(&trk[1], ENGI_808); apply_preset_to(&trk[1], 0); trk[1].p[P_E0] = DK_808;
     a[0] = 1; n = request(ED_PADS, a, 1);
     {
         const uint8_t *q = host_wire + 9, *o = q + 12, *v = o + 16;  /* (the parameters, the order, the values) */
@@ -1517,9 +1517,9 @@ static int studio_device(void)
     a[3] = 49; request(ED_PADS, a, 11);
     bad += check("PADS TUNE past +24, past the pads, the wrong length: rc 1, unchanged", host_wire[6] == 1 && (*(drum_patch_t *)(void *)patch_of(1)).c[1][0] == 12 &&
                  (a[3] = 36, a[1] = 15, request(ED_PADS, a, 11), host_wire[6] == 1) && (a[1] = 1, request(ED_PADS, a, 10), host_wire[6] == 1));
-    trk[1].p[P_E0] = DK_909; request(ED_PADS, a, 1);
-    bad += check("PADS 909 kit: eleven pads, the 909's own third labels (ATTACK on its kick)", !host_wire[6] && host_wire[7] == D9_NUM &&
-                 !strcmp((const char *)host_wire + 9 + 12 + D9_NUM + 4 * D9_NUM + 5 + 5 + 6, "ATTACK"));
+    set_engine_of(&trk[1], ENGI_909); apply_preset_to(&trk[1], 0); trk[1].engine = trk[1].eng_req; request(ED_PADS, a, 1);   /* (the 909: a synth of its own) */
+    bad += check("PADS 909 kit: eleven pads, the 909's own third labels (CLICK on its kick)", !host_wire[6] && host_wire[7] == D9_NUM &&
+                 !strcmp((const char *)host_wire + 9 + 12 + D9_NUM + 4 * D9_NUM + 5 + 5 + 6, "CLICK"));
 
     /* WATCH bit 7: DEVICE_CHANGED */
     a[0] = 1; a[1] = 1; request(ED_WATCH, a, 2);

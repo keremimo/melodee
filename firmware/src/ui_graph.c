@@ -803,20 +803,14 @@ static uint32_t graph_sig(int play)
     return h;
 }
 static uint32_t graph_signature(void) { return graph_sig(1); }
-/* 4-letter engine tags of the preset list: a synth Melodee makes, its manifest row's (../modules/shipped.h); the
- * firmware's retired engines (reference builds) their own; any other its name */
+/* 4-letter engine tags of the preset list: a synth Melodee makes, its manifest row's (../modules/shipped.h); any other
+ * its name */
 static const char *eng_tag(uint32_t e)
 {
-    static const char *const A[][2] = {{"PHASE", "PHAS"}, {"SAMPLE", "SMPL"}, {"VOICE", "VOCL"}, {"GRAIN", "GRAN"},
-                                       {"NOISE", "NOIS"}, {"SLICE", "SLCE"}};
     const char *name = eng_name(e);
     const ship_t *r = ship_of(e % NENGINES);
-    uint32_t i;
     if (r && str_eq(name, r->name))
         return r->tag;
-    for (i = 0; i < sizeof A / sizeof A[0]; i++)
-        if (str_eq(name, A[i][0]))
-            return A[i][1];
     return name;
 }
 

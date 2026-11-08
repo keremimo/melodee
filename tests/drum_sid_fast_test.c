@@ -105,7 +105,7 @@ int main(void)
 {
     uint32_t cases=0;
     for(uint32_t config=0;config<4;config++){
-        eng_state_reset();memset(trk,0,sizeof trk);trk_voices_bind();host_tracks_init();host_preset(&trk[0],ENGI_DRUM,2);
+        eng_state_reset();memset(trk,0,sizeof trk);trk_voices_bind();host_tracks_init();host_kit_preset(&trk[0],2);
         track_t *t=&trk[0];dsk_part_t *K=dsk_of(t);
         for(uint32_t b=0;b<20000;b++){
             t->p[P_E6]=(int16_t)(config<2?config:(b/37u)&1u);

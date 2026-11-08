@@ -23,7 +23,7 @@ static void measure(uint32_t engine, uint32_t preset, uint32_t mode, uint32_t vo
     host_tracks_init();host_preset(&trk[0],engine,preset);
     uint32_t tracks=mixer?4u:1u;
     for(uint32_t t=0;t<tracks;t++){
-        if(t)host_preset(&trk[t],t==3?ENGI_DRUM:ENGI_FM6,0);
+        if(t)host_preset(&trk[t],t==3?ENGI_808:ENGI_FM6,0);
         trk[t].p[P_VOICE]=V_POLY;trk[t].p[P_ALLOC]=voices;trk[t].p[P_SUS]=127;
         if(trk[t].engine==ENGI_FM6)fm6_fn[t][FN_ENGINE]=(uint8_t)mode;
         for(uint32_t v=0;v<voices;v++)trk_note_on(&trk[t],48u+t*5u+v*4u,100);
@@ -49,7 +49,7 @@ static void run(uint32_t e,uint32_t p,uint32_t m,uint32_t v,int mix)
 }
 static void measure_drum(uint32_t kit,uint32_t sound,uint32_t changing)
 {
-    host_tracks_init();track_t *t=&trk[0];host_preset(t,ENGI_DRUM,kit);
+    host_tracks_init();track_t *t=&trk[0];host_kit_preset(t,kit);
     t->p[P_ALLOC]=8;t->p[P_VOICE]=V_POLY;
     int32_t out[CTL];uint64_t hash=0xcbf29ce484222325ull;
     uint64_t start=instructions();
@@ -86,7 +86,7 @@ int main(int argc,char **argv)
     if(argc>1 && !strcmp(argv[1],"drums")){drum_bench();return 0;}
     int full=argc>1 && !strcmp(argv[1],"full");
     puts("engine,preset,mode,voices,mixer,phase,host_instructions_per_frame,pcm_hash");
-    const uint32_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,3,ENGI_DRUM};
+    const uint32_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_808};
     for(uint32_t k=0;k<NELEM(engines);k++){
         uint32_t e=engines[k],count=full?ENGINES[e]->npresets:4u;
         if(count>ENGINES[e]->npresets)count=ENGINES[e]->npresets;

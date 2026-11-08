@@ -25,7 +25,8 @@
 #include "../wheel/eng_wheel.c"
 #elif HOST_STAGE == 3
 #if MELODEE_DRUM_BUILTIN
-#include "../drum/eng_drum.c"         /* DRUM: synthesized 808 circuits (drum_808.c), the 909, a C64's SID (drum_sid.c), CR78, FM */
+#include "../kits/eng_drum.c"         /* the kits (one implementation behind six synths): 808 circuits (drum_808.c), the
+                                       * 909, a C64's SID (drum_sid.c), CR78, FM, the user's (drum_real.c) */
 #endif
 #elif HOST_STAGE == 4
 #if MELODEE_FM6_BUILTIN
@@ -54,7 +55,8 @@ static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + 
 #define HOST_ESID
 #endif
 #if MELODEE_DRUM_BUILTIN
-#define HOST_EDRUM [ENGI_DRUM] = &ENG_DRUM,
+#define HOST_EDRUM [ENGI_808] = &ENG_KIT808, [ENGI_909] = &ENG_KIT909, [ENGI_SIDKIT] = &ENG_KITSID, [ENGI_CR78] = &ENG_KITCR, \
+                   [ENGI_FMKIT] = &ENG_KITFM, [ENGI_SAMPLER] = &ENG_SAMPLER,
 #else
 #define HOST_EDRUM
 #endif
@@ -97,7 +99,7 @@ static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + 
 #endif
 #define HOST_OMID HOST_OCZ HOST_OSID
 #if MELODEE_DRUM_BUILTIN
-#define HOST_ODRUM ENGI_DRUM,
+#define HOST_ODRUM ENGI_808, ENGI_909, ENGI_SIDKIT, ENGI_CR78, ENGI_FMKIT, ENGI_SAMPLER,
 #else
 #define HOST_ODRUM
 #endif
@@ -133,7 +135,7 @@ static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + 
 #include "../sid/sid_schema.h"
 #endif
 #if MELODEE_DRUM_BUILTIN
-#include "../drum/drum_schema.h"
+#include "../kits/drum_schema.h"
 #endif
 static const mod_sch_src *sch_builtin_src(uint32_t e)
 {
@@ -152,7 +154,11 @@ static const mod_sch_src *sch_builtin_src(uint32_t e)
     if (ENGINES[e] == &ENG_SID) return &SID_SCHEMA;
 #endif
 #if MELODEE_DRUM_BUILTIN
-    if (ENGINES[e] == &ENG_DRUM) return &DRUM_SCHEMA;
+    if (ENGINES[e] == &ENG_KIT808 || ENGINES[e] == &ENG_KITFM) return &KIT808_SCHEMA;   /* (FM KIT: the 808's pads) */
+    if (ENGINES[e] == &ENG_KIT909) return &KIT909_SCHEMA;
+    if (ENGINES[e] == &ENG_KITSID) return &KITSID_SCHEMA;
+    if (ENGINES[e] == &ENG_KITCR) return &KITCR_SCHEMA;
+    if (ENGINES[e] == &ENG_SAMPLER) return &SAMPLER_SCHEMA;
 #endif
     return 0;
 }

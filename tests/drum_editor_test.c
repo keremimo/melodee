@@ -5,7 +5,7 @@
 #include "recording_test.c"
 static void kit(uint32_t model)
 {
-    midi_test_reset();set_engine_of(TSEL,ENGI_DRUM);apply_preset_to(TSEL,model==DK_909);TSEL->engine=TSEL->eng_req;panic_req=0;song.master_q12=4096;
+    midi_test_reset();set_engine_of(TSEL,kit_engine((int32_t)model));apply_preset_to(TSEL,0);TSEL->engine=TSEL->eng_req;panic_req=0;song.master_q12=4096;
 }
 static void scope(uint32_t sc)
 {ui.home=0;for(uint32_t i=0;i<NPAGES;i++)if(PG(i).scope==sc){ui.page=(uint8_t)i;break;}ui.force=1;}
@@ -31,7 +31,7 @@ static int voices909(void)
     bad+=check("909 closed hat chokes open hat without ending the closed hit",k && !k->d.smp[1].playing && k->d.smp[0].playing);
     kit(DK_909);for(uint32_t i=0;i<D9_NUM;i++)trk_note_on(TSEL,DRUM_SOUND_NOTE[i],127);
     bad+=check("909 respects the eight-voice shared budget",active_count()<=8 && audio(128)>30);
-    kit(DK_909);for(uint32_t tr=0;tr<NPART;tr++){set_engine_of(&trk[tr],ENGI_DRUM);apply_preset_to(&trk[tr],1);trk[tr].engine=trk[tr].eng_req;trk_note_on(&trk[tr],36,110);trk_note_on(&trk[tr],38,110);}panic_req=0;
+    kit(DK_909);for(uint32_t tr=0;tr<NPART;tr++){set_engine_of(&trk[tr],ENGI_909);apply_preset_to(&trk[tr],0);trk[tr].engine=trk[tr].eng_req;trk_note_on(&trk[tr],36,110);trk_note_on(&trk[tr],38,110);}panic_req=0;
     uint32_t total=0;int32_t peak=audio(128);for(uint32_t tr=0;tr<NPART;tr++)for(uint32_t v=0;v<NVOICE;v++)total+=trk[tr].v[v].active;
     bad+=check("four independent 909 parts share the eight-voice budget and render together",total==8 && peak>30 && peak<32768);
     return bad;
@@ -92,7 +92,7 @@ static int edits_and_store(void)
     int ok=proj_rec_round(&decoded,&proj_scratch);
     bad+=check("project roundtrip keeps sound settings, instrument, pitch and length",ok && PROJ_DRUM(decoded,0)->c[D9_BD][0]==5 && PROJ_DRUM(decoded,0)->c[D9_LT][3]==19 && recorded_note(&decoded.recording[0])==36 && decoded.recording[0].pitch==7 && decoded.recording[0].length);
     bad+=check("new bank schema fits existing atomic flash copies",BANK_STORE_SIZE<=27904u && bank_pack(proj_wire_u.raw,&proj_scratch,1) && bank_valid(proj_wire_u.raw,BANK_STORE_SIZE));
-    TSEL->engine=ENGI_DRUM;TSEL->eng_req=ENGI_DRUM;song.playing=0;
+    TSEL->engine=TSEL->eng_req=(uint8_t)kit_engine(TSEL->p[P_E0]);song.playing=0;
     bad+=check("general drum preset stores its own sound controls",up_store(0,"OWN 909")==3 && (drum_patches_zero(),!up_load(0)) && drum_patch_of(0)->c[D9_BD][0]==5 && drum_patch_of(0)->c[D9_LT][3]==19);
     template_save();drum_patches_zero();template_load();
     bad+=check("template restores the edited drum kit",drum_patch_of(0)->c[D9_BD][0]==5 && drum_patch_of(0)->c[D9_LT][3]==19);

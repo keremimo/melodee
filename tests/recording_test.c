@@ -529,7 +529,7 @@ static int first_note_start(void)
     input_off(t, 60); seq_stop();
 
     timing_reset(0, 24000000u); t = TSEL;
-    set_engine_of(t, ENGI_DRUM); t->engine = t->eng_req;
+    set_engine_of(t, ENGI_808); t->engine = t->eng_req;
     input_on(t, 36, 105);
     bad += check("the first armed drum hit starts the take and is recorded at zero", song.playing && recorded_note(&recording[0]) == 36 && !recording[0].on && recording[0].vel == 105);
     input_off(t, 36); seq_stop();

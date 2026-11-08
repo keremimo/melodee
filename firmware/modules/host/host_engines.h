@@ -25,13 +25,13 @@
 #define MELODEE_PROPHET 1
 /* the engines one can pick among them (core.h NENG_SHOWN): the built-in ones */
 #define HOST_NENG (MELODEE_P5_BUILTIN + MELODEE_FM6_BUILTIN + MELODEE_CZ_BUILTIN + MELODEE_SID_BUILTIN + \
-                   MELODEE_DRUM_BUILTIN)
+                   6u * MELODEE_DRUM_BUILTIN)                 /* (the six kits: 808 909 SID KIT CR78 FM KIT SAMPLER) */
 /* schema.c writes the built-in engines' SCHM chunks from their descriptions */
 #define HOST_SCHEMAS (MELODEE_P5_BUILTIN || MELODEE_CZ_BUILTIN || MELODEE_FM6_BUILTIN || MELODEE_DRUM_BUILTIN || \
                       MELODEE_SID_BUILTIN)
 /* presets.c: the factory presets' patches from the built-in engines' makers */
 #define HOST_MAKERS (MELODEE_P5_BUILTIN || MELODEE_CZ_BUILTIN || MELODEE_FM6_BUILTIN)
 /* engine e built in (eng_module_main.c mod_shipped_ok: a built-in synth needs no module) */
-#define HOST_BUILTIN(e) (((e) == ENGI_SID && MELODEE_SID_BUILTIN) || ((e) == ENGI_DRUM && MELODEE_DRUM_BUILTIN) || \
+#define HOST_BUILTIN(e) (((e) == ENGI_SID && MELODEE_SID_BUILTIN) || ((e) >= ENGI_808 && (e) <= ENGI_SAMPLER && MELODEE_DRUM_BUILTIN) || \
                          ((e) == ENGI_CZ && MELODEE_CZ_BUILTIN) || ((e) == ENGI_FM6 && MELODEE_FM6_BUILTIN) || \
                          ((e) == ENGI_PROPHET && MELODEE_P5_BUILTIN))

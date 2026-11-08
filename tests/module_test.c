@@ -4,7 +4,8 @@
  * file the firmware loads, binds to its host table and plays through the frozen views of its own track_t and voice_t.
  * The modules here are firmware/modules/<name>/<name>.c built for the host ONCE (tests/run_tests.sh: objects linked
  * beside this test; the same objects in every configuration, also a firmware whose private track_t / voice_t fields
- * are padded and reordered, MELODEE_ABI_SHUFFLE): SID, DRUM, CZ-1, FM6 and the Prophet render bit for bit what the
+ * are padded and reordered, MELODEE_ABI_SHUFFLE): SID, the kit synths (808, 909, SID KIT, CR78, FM KIT, SAMPLER: DRUM's
+ * kits until 2.0), CZ-1, FM6 and the Prophet render bit for bit what the
  * built-in engines render (this build, MELODEE_*_BUILTIN 1) and what they rendered before they left the firmware
  * (MP_GOLDEN, tests/module_phrases.h: every preset, POLY and LEGATO, the C64 models, ENV3, every kit, every CZ-1 tone
  * edited as it plays with the matrix's ENV, every FM6 voice with every algorithm, ENGINE and controller, a DX7 bank by
@@ -30,8 +31,29 @@
 #if !MELODEE_FM6_BUILTIN
 #include "melodee_fm6.h"                        /* (FM6_INIT for the DX7 voice phrase: no FM6 built in here) */
 #endif
-extern const mod_desc_v3 mod_sid, mod_drum, mod_cz, mod_fm6, mod_p5, mod_trio, mod_wheel;   /* (firmware/modules/: the
-                                                 * host's objects, built once) */
+extern const mod_desc_v3 mod_sid, mod_808, mod_909, mod_sidkit, mod_cr78, mod_fmkit, mod_sampler, mod_cz, mod_fm6, mod_p5,
+    mod_trio, mod_wheel;                         /* (firmware/modules/: the host's objects, built once) */
+/* the kit synths' modules (2.0: DRUM's kits, each a synth of its own): handle, name, its slug (who it is), its device
+ * file's stem, its slot, its image, its presets; the 909 the long one (two records) */
+#define MK_N 6u
+static const struct { uint8_t e; const char *name, *slug, *stem; uint8_t slot; uint32_t image, npre; const mod_desc_v3 *d; } MK[MK_N] = {
+    {ENGI_808, "808", "808", "808", 8, 3000, 1, &mod_808}, {ENGI_909, "909", "909", "909", 5, 48000, 1, &mod_909},
+    {ENGI_SIDKIT, "SID KIT", "sidkit", "sidkit", 9, 3000, 2, &mod_sidkit}, {ENGI_CR78, "CR78", "cr78", "cr78", 10, 3000, 1, &mod_cr78},
+    {ENGI_FMKIT, "FM KIT", "fmkit", "fmkit", 11, 3000, 1, &mod_fmkit},
+    {ENGI_SAMPLER, "SAMPLER", "sampler", "sampler", 12, 3000, 8, &mod_sampler}};
+/* the engine-source modules' handles: SID, the kits, CZ-1, FM6, the Prophet (their built-in engines swapped in and out) */
+#define ME_N (5u + MK_N)
+static const uint8_t ME[ME_N] = {ENGI_SID, ENGI_808, ENGI_909, ENGI_SIDKIT, ENGI_CR78, ENGI_FMKIT, ENGI_SAMPLER, ENGI_CZ,
+                                 ENGI_FM6, ENGI_PROPHET};
+static void me_swap(const engine_t **e, uint8_t *at)   /* ENGINES and mod_at of ME's handles <-> e, at */
+{
+    for (uint32_t i = 0; i < ME_N; i++) {
+        const engine_t *g = ENGINES[ME[i]];
+        uint8_t a = mod_at[ME[i]];
+        ENGINES[ME[i]] = e[i]; mod_at[ME[i]] = at[i];
+        e[i] = g; at[i] = a;
+    }
+}
 static mod_desc_v3 trio22;                      /* TRIO as another synth (TRIO2) */
 /* the host's objects by the files' IDs (their uid: Melodee's key and the slug of the test's name), as the loader asks
  * for them (module_store.c mod_host_desc_id: 2.0, a file's number means nothing) */
@@ -95,9 +117,10 @@ static uint32_t mmod_chunks(const char *stem, uint8_t *dst, uint32_t cap)
     return got;
 }
 /* a module file for the host loader (its image a pattern; the host plays hdesc_id()); key: its legacy key (0: an SDK
- * module), host: the host table it needs; stem: the device build's file whose chunks it carries (its presets), 0 none */
-static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t nrel, uint32_t key,
-                          uint32_t npresets, const char *stem)
+ * module), host: the host table it needs; stem: the device build's file whose chunks it carries (its presets), 0 none;
+ * slug: who it is (0: its name's) */
+static uint32_t make_file_as(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t nrel, uint32_t key,
+                             uint32_t npresets, const char *stem, const char *slug)
 {
     mod_file3_t h;
     memset(&h, 0, sizeof h);
@@ -113,13 +136,18 @@ static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_
              ck = stem ? mmod_chunks(stem, b + MOD3_HEAD + body, MOD_FILE_MAX - MOD3_HEAD - body) : 0u,
              at = MOD3_HEAD + body + ck;
     /* who it is: Melodee's synth of that name (Melodee's key, the test key signing), as tools/mod_build.py makes it */
-    h.uid = test_idnt(b, &at, "melodee", test_slug(name), name, MOD_SIGN_KEYS[0], 0);
+    h.uid = test_idnt(b, &at, "melodee", slug ? slug : test_slug(name), name, MOD_SIGN_KEYS[0], 0);
     test_seal(b, &at, TEST_SEED);
     h.flags = (uint8_t)MOD3_FILE_CHUNKS;
     h.total = at;
     h.crc = st_crc32(b + MOD3_HEAD, at - MOD3_HEAD);
     memcpy(b, &h, MOD3_HEAD);
     return h.total;
+}
+static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t nrel, uint32_t key,
+                          uint32_t npresets, const char *stem)
+{
+    return make_file_as(b, engine, name, image, nrel, key, npresets, stem, 0);
 }
 /* the same file's head made another firmware's: abi, its key, the host it needs (the CRC stays right) */
 static void make_other(uint8_t *b, uint32_t abi, uint32_t key, uint32_t host)
@@ -136,11 +164,18 @@ static uint32_t mpr_fnv(const void *p, uint32_t n, uint32_t h)
     for (uint32_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x01000193u;
     return h;
 }
-/* an engine as c53538c9 numbered it (the hashes hold those numbers; 2.0's handles are this build's) */
+/* an engine as c53538c9 numbered it (the hashes hold those numbers; 2.0's handles are this build's; the kit synths:
+ * DRUM's, 10) */
 static uint8_t mpr_num(uint32_t e)
 {
-    return e == ENGI_PROPHET ? 19u : e == ENGI_FM6 ? 12u : e == ENGI_CZ ? 15u : e == ENGI_SID ? 3u : e == ENGI_DRUM ? 10u :
-           e == ENGI_MIDI ? 21u : (uint8_t)e;
+    return e == ENGI_PROPHET ? 19u : e == ENGI_FM6 ? 12u : e == ENGI_CZ ? 15u : e == ENGI_SID ? 3u :
+           e >= ENGI_808 && e <= ENGI_SAMPLER ? 10u : e == ENGI_MIDI ? 21u : (uint8_t)e;
+}
+/* a preset as c53538c9 numbered it: a kit synth's, DRUM's (808 KIT 0, 909 KIT 1, SID KIT 2, SID DIGI 3, CR78 KIT 4,
+ * FM KIT 5) */
+static uint8_t mpr_pre(uint32_t e, uint32_t k)
+{
+    return (uint8_t)(e == ENGI_909 ? 1u : e == ENGI_SIDKIT ? 2u + k : e == ENGI_CR78 ? 4u : e == ENGI_FMKIT ? 5u : k);
 }
 /* the five engines' factory presets as fetched now (pick 0: each preset's entry, its name and category; 1: each one
  * picked on part 2 from zeroed parameters) against c53538c9's makers (MPR_*): how many differ */
@@ -168,7 +203,7 @@ static uint32_t mpr_diff(int pick, const char *how)
                 memset(t->p, 0, sizeof t->p);
                 engine_load_of(t, e, k);
                 uint32_t pk = (uint32_t)t->p[P_E0] * 17u + (uint32_t)t->p[P_E1];   /* (c53538c9's CZ-1 pick: E1 * 17 + E2) */
-                uint8_t pe[2] = {t->preset, mpr_num(t->eng_req)}, cp[2] = {(uint8_t)pk, (uint8_t)(pk >> 8)};
+                uint8_t pe[2] = {mpr_pre(t->eng_req, t->preset), mpr_num(t->eng_req)}, cp[2] = {(uint8_t)pk, (uint8_t)(pk >> 8)};
                 h = mpr_fnv(pe, 2, mpr_fnv(t->p, sizeof t->p, 0x811C9DC5u));
                 if (e == ENGI_PROPHET) h = mpr_fnv(patch_of(1), sizeof(p5_patch_t), h);
                 if (e == ENGI_CZ) h = mpr_fnv(patch_of(1), CZ_BYTES, h);
@@ -438,44 +473,60 @@ int main(int argc, char **argv)
     for (uint32_t i = 0; i < CTL; i++) silent &= buf[i] == 0;
     bad += check("its track renders silence", silent);
 
-    /* the engine-source modules: SID, DRUM, CZ-1, FM6 and the Prophet (mod_engine.h: the engines' own sources) */
+    /* the engine-source modules: SID, the kit synths, CZ-1, FM6 and the Prophet (mod_engine.h: the engines' own sources) */
     {
-        static uint8_t nf[5][MOD_FILE_MAX];
-        const engine_t *sid_in = ENGINES[ENGI_SID], *drum_in = ENGINES[ENGI_DRUM], *cz_in = ENGINES[ENGI_CZ],
-                       *fm6_in = ENGINES[ENGI_FM6], *p5_in = ENGINES[ENGI_PROPHET];   /* (built in on the host, or
-                                                                                     * retired) */
+        static uint8_t nf[5][MOD_FILE_MAX], kf[MK_N][MOD_FILE_MAX];
+        const engine_t *in[ME_N];                     /* (built in on the host, or retired) */
+        for (uint32_t i = 0; i < ME_N; i++) in[i] = ENGINES[ME[i]];
+        const engine_t *sid_in = in[0];
         for (uint32_t k = 0; k < NMOD; k++) mod_delete(k);
-        ENGINES[ENGI_SID] = ENGINES[ENGI_DRUM] = ENGINES[ENGI_CZ] = ENGINES[ENGI_FM6] = ENGINES[ENGI_PROPHET] =
-            &ENG_NONE;                                /* (the numbers free for the modules) */
+        for (uint32_t i = 0; i < ME_N; i++) ENGINES[ME[i]] = &ENG_NONE;   /* (the numbers free for the modules) */
         uint32_t ns = make_file(nf[0], ENGI_SID, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
         mod_file3_t sid_head;
         memcpy(&sid_head, nf[0], sizeof sid_head);
-        uint32_t nd = make_file(nf[1], ENGI_DRUM, "DRUM", 48000, 12, 0, MP_DRUM_PRESETS, "drum");
+        uint32_t nk_[MK_N], nd = 0, kflags = 1;
+        for (uint32_t i = 0; i < MK_N; i++) {
+            nk_[i] = make_file_as(kf[i], MK[i].e, MK[i].name, MK[i].image, 12, 0, MK[i].npre, MK[i].stem, MK[i].slug);
+            kflags &= ((const mod_file3_t *)(const void *)kf[i])->flags != 0;
+            if (MK[i].slot == 5u) nd = nk_[i];
+        }
         uint32_t nc = make_file(nf[2], ENGI_CZ, "CZ-1", 9000, 12, 0, MP_CZ_PRESETS, "cz");
         uint32_t nm = make_file(nf[3], ENGI_FM6, "FM6", 20000, 12, 0, MP_FM6_PRESETS, "fm6");
         uint32_t np = make_file(nf[4], ENGI_PROPHET, "PROPHET", 16000, 12, 0, MP_P5_PRESETS, "prophet");
-        hd_add(nf[0], &mod_sid); hd_add(nf[1], &mod_drum); hd_add(nf[2], &mod_cz); hd_add(nf[3], &mod_fm6); hd_add(nf[4], &mod_p5);
+        hd_add(nf[0], &mod_sid); hd_add(nf[2], &mod_cz); hd_add(nf[3], &mod_fm6); hd_add(nf[4], &mod_p5);
+        for (uint32_t i = 0; i < MK_N; i++) hd_add(kf[i], MK[i].d);
         bad += check("the device build's module files carry their factory presets (build/modules/*.mmod: a PRST chunk "
                      "each, tools/mod_build.py)",
-                     sid_head.flags == MOD3_FILE_CHUNKS && ((const mod_file3_t *)(const void *)nf[1])->flags &&
+                     sid_head.flags == MOD3_FILE_CHUNKS && kflags &&
                      ((const mod_file3_t *)(const void *)nf[2])->flags && ((const mod_file3_t *)(const void *)nf[3])->flags &&
                      ((const mod_file3_t *)(const void *)nf[4])->flags);
-        int rs = put(4, nf[0], ns), rd = put(5, nf[1], nd), rc7 = put(7, nf[2], nc), rf3 = put(3, nf[3], nm),
+        int rs = put(4, nf[0], ns), rd = MS_LOADED, rc7 = put(7, nf[2], nc), rf3 = put(3, nf[3], nm),
             rp2 = put(2, nf[4], np);
-        if (rs != MS_LOADED || rd != MS_LOADED || rc7 != MS_LOADED || rf3 != MS_LOADED || rp2 != MS_LOADED)
-            printf("  put: SID %d DRUM %d CZ-1 %d FM6 %d PROPHET %d\n", rs, rd, rc7, rf3, rp2);
-        bad += check("SID and DRUM files: committed and loaded, DRUM in two records (longer than one)",
+        for (uint32_t i = 0; i < MK_N; i++) {
+            int r = put(MK[i].slot, kf[i], nk_[i]);
+            if (r != MS_LOADED) printf("  put: %s %d\n", MK[i].name, r), rd = r;
+        }
+        if (rs != MS_LOADED || rc7 != MS_LOADED || rf3 != MS_LOADED || rp2 != MS_LOADED)
+            printf("  put: SID %d CZ-1 %d FM6 %d PROPHET %d\n", rs, rc7, rf3, rp2);
+        bad += check("SID and the kit synths' files: committed and loaded, the 909 in two records (longer than one)",
                      rs == MS_LOADED && rd == MS_LOADED && mods[4].abi == MOD3_ABI && mods[5].len == nd &&
                      nd > ST_PROJECT_MAX && st_exists(ST_MFILE0 + 5) && st_exists(ST_MXFILE0 + 5) &&
                      !st_exists(ST_MXFILE0 + 4));
-        bad += check("SID and DRUM play on their manifest rows' handles with their own callbacks (their engines copied into their blocks)",
-                     plays(ENGI_SID, &mod_sid) && plays(ENGI_DRUM, &mod_drum) &&
-                     !strcmp(eng_name(ENGI_SID), "SID") && !strcmp(eng_name(ENGI_DRUM), "DRUM") && eng_ok(ENGI_SID) &&
-                     eng_ok(ENGI_DRUM) && ENGINES[ENGI_SID]->wclass == 4 && ENGINES[ENGI_DRUM]->wclass == 5 &&
-                     ENGINES[ENGI_SID]->env_q15 && ENGINES[ENGI_SID]->chord && ENGINES[ENGI_DRUM]->reuse &&
-                     ENGINES[ENGI_DRUM]->oneshot && ENGINES[ENGI_SID]->npresets == MP_SID_PRESETS &&
-                     ENGINES[ENGI_DRUM]->npresets == MP_DRUM_PRESETS && eng_state_size(ENGI_SID) == ENGINES[ENGI_SID]->state(0) &&
-                     listed(ENGI_SID) && listed(ENGI_DRUM));
+        {
+            int kits = 1;
+            for (uint32_t i = 0; i < MK_N; i++) {
+                uint32_t e = MK[i].e;
+                kits &= plays(e, MK[i].d) && !strcmp(eng_name(e), MK[i].name) && eng_ok(e) && ENGINES[e]->wclass == 5 &&
+                        ENGINES[e]->reuse && ENGINES[e]->oneshot && ENGINES[e]->npresets == MK[i].npre && listed(e) &&
+                        ENGINES[e]->edit[0].min == eng_preset(ENGINES[e], 0)->e[0];
+            }
+            bad += check("SID and the kit synths (808, 909, SID KIT, CR78, FM KIT, SAMPLER) play on their manifest rows' "
+                         "handles with their own callbacks (their engines copied into their blocks)",
+                         plays(ENGI_SID, &mod_sid) && kits && !strcmp(eng_name(ENGI_SID), "SID") && eng_ok(ENGI_SID) &&
+                         ENGINES[ENGI_SID]->wclass == 4 && ENGINES[ENGI_SID]->env_q15 && ENGINES[ENGI_SID]->chord &&
+                         ENGINES[ENGI_SID]->npresets == MP_SID_PRESETS &&
+                         eng_state_size(ENGI_SID) == ENGINES[ENGI_SID]->state(0) && listed(ENGI_SID));
+        }
         bad += check("CZ-1 as a module: engine 15 with its own callbacks (DCA as the matrix's ENV, CPU1, its presets "
                      "Casio's tones from its file)",
                      rc7 == MS_LOADED && plays(ENGI_CZ, &mod_cz) && !strcmp(eng_name(ENGI_CZ), "CZ-1") &&
@@ -519,25 +570,19 @@ int main(int argc, char **argv)
             const char *w; uint32_t a, b, h = mp_run(k, &w, &a, &b);
             int64_t e = 0;
             for (uint32_t i = 0; i < MP_NB * CTL; i++) e += mp_out[i] < 0 ? -mp_out[i] : mp_out[i];
-            heard &= e > (k >= MP_CZ0 ? 10000 : 100000) || !strncmp(w, "DRUM KIT", 8) && a >= 9u;   /* (the user kits:
+            heard &= e > (k >= MP_CZ0 ? 10000 : 100000) || !strncmp(w, "KIT", 3) && a >= 9u;   /* (SAMPLER's kits:
                                                          * none on the host; CZ-1's slow tones: quiet in a phrase) */
             if (k >= MP_FM60 && e <= 100000) printf("  phrase %u %s %u %u: quiet (%lld)\n", k, w, a, b, (long long)e);
             golden += h == MP_GOLDEN[k];
             if (h != MP_GOLDEN[k] && first == MP_COUNT) { first = k; printf("  phrase %u %s %u %u: %08x, golden %08x\n", k, w, a, b, h, MP_GOLDEN[k]); }
             if (sid_in != &ENG_NONE) {
-                const engine_t *ms = ENGINES[ENGI_SID], *md = ENGINES[ENGI_DRUM], *mc = ENGINES[ENGI_CZ], *mf = ENGINES[ENGI_FM6],
-                               *mp = ENGINES[ENGI_PROPHET];
-                uint8_t as = mod_at[ENGI_SID], ad = mod_at[ENGI_DRUM], ac = mod_at[ENGI_CZ], af = mod_at[ENGI_FM6],
-                        ap = mod_at[ENGI_PROPHET];
+                const engine_t *x[ME_N];
+                uint8_t ax[ME_N] = {0};
+                memcpy(x, in, sizeof x);
                 memcpy(mp_mod, mp_out, sizeof mp_mod);
-                ENGINES[ENGI_SID] = sid_in; ENGINES[ENGI_DRUM] = drum_in; ENGINES[ENGI_CZ] = cz_in; ENGINES[ENGI_FM6] = fm6_in;
-                ENGINES[ENGI_PROPHET] = p5_in;
-                mod_at[ENGI_SID] = mod_at[ENGI_DRUM] = mod_at[ENGI_CZ] = mod_at[ENGI_FM6] = mod_at[ENGI_PROPHET] = 0;
+                me_swap(x, ax);                          /* (the built-in engines) */
                 (void)mp_run(k, &w, &a, &b);
-                ENGINES[ENGI_SID] = ms; ENGINES[ENGI_DRUM] = md; ENGINES[ENGI_CZ] = mc; ENGINES[ENGI_FM6] = mf;
-                ENGINES[ENGI_PROPHET] = mp;
-                mod_at[ENGI_SID] = as; mod_at[ENGI_DRUM] = ad; mod_at[ENGI_CZ] = ac; mod_at[ENGI_FM6] = af;
-                mod_at[ENGI_PROPHET] = ap;
+                me_swap(x, ax);                          /* (the modules again) */
                 for (uint32_t i = 0; i < MP_NB * CTL; i++)
                     if (mp_mod[i] != mp_out[i]) {
                         if (same) printf("  phrase %u %s %u %u: sample %u module %d built-in %d\n", k, w, a, b, i, mp_mod[i], mp_out[i]);
@@ -547,7 +592,7 @@ int main(int argc, char **argv)
             }
         }
         printf("persist: %u phrases, %u as golden%s\n", MP_COUNT, golden, sid_in != &ENG_NONE ? ", each against the built-in engine" : "");
-        bad += check("SID, DRUM, CZ-1, FM6 and Prophet modules render what the built-in engines rendered (every preset, "
+        bad += check("SID, the kit synths, CZ-1, FM6 and Prophet modules render what the built-in engines rendered (every preset, "
                      "POLY / LEGATO, C64, ENV3, every kit, every CZ-1 tone edited as it plays, every FM6 voice, algorithm, "
                      "ENGINE and controller, a DX7 bank by SysEx, every Prophet program in POLY / UNISON edited as it "
                      "plays, CPU0 and CPU1)",
@@ -557,19 +602,14 @@ int main(int argc, char **argv)
         {
             uint32_t fe = mpr_diff(0, "file"), fp = mpr_diff(1, "file"), be = 0, bp = 0;
             if (sid_in != &ENG_NONE) {
-                const engine_t *ms = ENGINES[ENGI_SID], *md = ENGINES[ENGI_DRUM], *mc = ENGINES[ENGI_CZ],
-                               *mf = ENGINES[ENGI_FM6], *mp = ENGINES[ENGI_PROPHET];
-                uint8_t at[5] = {mod_at[ENGI_SID], mod_at[ENGI_DRUM], mod_at[ENGI_CZ], mod_at[ENGI_FM6], mod_at[ENGI_PROPHET]};
-                ENGINES[ENGI_SID] = sid_in; ENGINES[ENGI_DRUM] = drum_in; ENGINES[ENGI_CZ] = cz_in; ENGINES[ENGI_FM6] = fm6_in;
-                ENGINES[ENGI_PROPHET] = p5_in;
-                mod_at[ENGI_SID] = mod_at[ENGI_DRUM] = mod_at[ENGI_CZ] = mod_at[ENGI_FM6] = mod_at[ENGI_PROPHET] = 0;
-                sch_gen++;                               /* (the engines' schemas as built in: a DRUM kit's category) */
+                const engine_t *x[ME_N];
+                uint8_t ax[ME_N] = {0};
+                memcpy(x, in, sizeof x);
+                me_swap(x, ax);
+                sch_gen++;                               /* (the engines' schemas as built in: a kit's category) */
                 be = mpr_diff(0, "built in"); bp = mpr_diff(1, "built in");
                 sch_gen++;
-                ENGINES[ENGI_SID] = ms; ENGINES[ENGI_DRUM] = md; ENGINES[ENGI_CZ] = mc; ENGINES[ENGI_FM6] = mf;
-                ENGINES[ENGI_PROPHET] = mp;
-                mod_at[ENGI_SID] = at[0]; mod_at[ENGI_DRUM] = at[1]; mod_at[ENGI_CZ] = at[2]; mod_at[ENGI_FM6] = at[3];
-                mod_at[ENGI_PROPHET] = at[4];
+                me_swap(x, ax);
             }
             uint32_t inits = 1;
             for (uint32_t i = 0; i < MPR_NE; i++)
@@ -577,20 +617,25 @@ int main(int argc, char **argv)
             printf("persist: %u presets from the files, %u differ (picked: %u)%s\n", MPR_COUNT, fe,
                    fp, sid_in != &ENG_NONE ? "; the built-in makers too" : "");
             bad += check("every factory preset decoded from its module's file is byte for byte what the makers made before "
-                         "the presets left the firmware (201 Prophet, 65 CZ-1, 25 FM6, 32 SID, 6 DRUM: values, name, "
+                         "the presets left the firmware (201 Prophet, 65 CZ-1, 25 FM6, 32 SID, DRUM's 6 on its kit synths: values, name, "
                          "category, patch; picked: the part and its patch); host builds' makers the same",
                          !fe && !fp && !be && !bp && inits);
         }
         /* the capabilities that replaced the engine-number checks in voice.c, mix.c and main.c: declared by the modules */
         bad += check("capabilities: the Prophet sets its own bend range (its BEND) and plays the wheel itself, FM6 plays the "
-                     "wheel itself and keeps CPU0's reserve, cost classes 1..5 (Prophet, CZ-1, FM6, SID, DRUM), no other "
+                     "wheel itself and keeps CPU0's reserve, cost classes 1..5 (Prophet, CZ-1, FM6, SID, the kits), no other "
                      "engine claims one",
                      ENGINES[ENGI_PROPHET]->bend_range && (ENGINES[ENGI_PROPHET]->caps & MOD3_CAP_WHEEL) &&
                      (ENGINES[ENGI_FM6]->caps & MOD3_CAP_WHEEL) && ENGINES[ENGI_FM6]->reserve && !ENGINES[ENGI_FM6]->bend_range &&
-                     !ENGINES[ENGI_SID]->caps && !ENGINES[ENGI_SID]->bend_range && !ENGINES[ENGI_DRUM]->caps && !ENGINES[ENGI_CZ]->caps &&
-                     !ENGINES[ENGI_CZ]->bend_range && !ENGINES[ENGI_DRUM]->reserve && !ENGINES[ENGI_PROPHET]->reserve &&
+                     !ENGINES[ENGI_SID]->caps && !ENGINES[ENGI_SID]->bend_range && !ENGINES[ENGI_CZ]->caps &&
+                     !ENGINES[ENGI_CZ]->bend_range && !ENGINES[ENGI_PROPHET]->reserve &&
                      ENGINES[ENGI_PROPHET]->wclass == 1 && ENGINES[ENGI_CZ]->wclass == 2 && ENGINES[ENGI_FM6]->wclass == 3 &&
-                     ENGINES[ENGI_SID]->wclass == 4 && ENGINES[ENGI_DRUM]->wclass == 5 && !ENGINES[ENGI_MIDI]->caps);
+                     ENGINES[ENGI_SID]->wclass == 4 && !ENGINES[ENGI_MIDI]->caps &&
+                     !ENGINES[ENGI_808]->caps && !ENGINES[ENGI_909]->caps && !ENGINES[ENGI_SIDKIT]->caps &&
+                     !ENGINES[ENGI_CR78]->caps && !ENGINES[ENGI_FMKIT]->caps && !ENGINES[ENGI_SAMPLER]->caps &&
+                     !ENGINES[ENGI_808]->reserve && !ENGINES[ENGI_909]->reserve && !ENGINES[ENGI_SIDKIT]->reserve &&
+                     !ENGINES[ENGI_CR78]->reserve && !ENGINES[ENGI_FMKIT]->reserve && !ENGINES[ENGI_SAMPLER]->reserve &&
+                     ENGINES[ENGI_808]->wclass == 5 && ENGINES[ENGI_SAMPLER]->wclass == 5);
         {   /* the Prophet's bend: the wheel's target from its program's BEND (voice.c trk_bend_own), as before */
             host_preset(&trk[2], ENGI_PROPHET, 3);
             patch_of(2)[P5_BEND] = 7;
@@ -638,13 +683,15 @@ int main(int argc, char **argv)
                      mods[4].crc == sid_head.crc && mods[4].len == sid_head.total &&
                      mods[5].key == 0u && mods[4].key == 0u && mods[5].abi == MOD3_ABI);
         (void)mod_delete(6);
-        bad += check("SID, DRUM, CZ-1, FM6 and the Prophet on the device: the start asks for no setup (main.c, ui_boot.c)",
+        bad += check("SID, the kit synths, CZ-1, FM6 and the Prophet on the device: the start asks for no setup (main.c, ui_boot.c)",
                      shipped);
-        /* power-on: listed from their heads, nothing in SRAM; wanting DRUM reads its two records */
+        /* power-on: listed from their heads, nothing in SRAM; wanting the 909 reads its two records */
         for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k, 0), memset(&mods[k], 0, sizeof mods[k]);
         mod_boot();
-        int idle = mods[4].state == MS_STORED && mods[5].state == MS_STORED && ENGINES[ENGI_DRUM] == &ENG_MOD_IDLE &&
-                   eng_npresets(ENGI_DRUM) == 6 && !resource[RES_MODULE0 + 5].size;
+        int idle = mods[4].state == MS_STORED;
+        for (uint32_t i = 0; i < MK_N; i++)
+            idle &= mods[MK[i].slot].state == MS_STORED && ENGINES[MK[i].e] == &ENG_MOD_IDLE &&
+                    eng_npresets(MK[i].e) == MK[i].npre && !resource[RES_MODULE0 + MK[i].slot].size;
         {   /* the lists with no module loaded: names and categories from the files (the browser's rows, its LIST) */
             uint32_t j = 0, names = 1, none_loaded = 1, total, as, ak, bass = 0;
             for (uint32_t i = 0; i < MPR_NE; i++)
@@ -670,10 +717,10 @@ int main(int argc, char **argv)
                          "read from its module's file, LIST BASS as the makers' categories make it, nothing loaded",
                          idle && names && bass == MPR_BASS && none_loaded && preset_init(ENGI_FM6) == 24u);
         }
-        mod_want(ENGI_DRUM);
-        bad += check("modules at power-on: listed unloaded; DRUM loaded from its two records when wanted",
-                     idle && mods[5].state == MS_LOADED && plays(ENGI_DRUM, &mod_drum) &&
-                     mods[4].state == MS_STORED);
+        mod_want(ENGI_909);
+        bad += check("modules at power-on: listed unloaded; the 909 loaded from its two records when wanted, the other kits not",
+                     idle && mods[5].state == MS_LOADED && plays(ENGI_909, &mod_909) &&
+                     mods[4].state == MS_STORED && mods[8].state == MS_STORED && mods[12].state == MS_STORED);
         /* the Prophet, the first engine shown: at power-on listed from its head; without its module retired as any
          * other (its tracks keep the number, silent; its programs and their names the firmware's), the next engine
          * first, the start asks for setup; back in its slot, first again */
@@ -744,14 +791,13 @@ int main(int argc, char **argv)
                      SHIPPED_OK() == (MELODEE_CZ_BUILTIN && MELODEE_FM6_BUILTIN));
         host_preset(&trk[1], ENGI_CZ, 0);
         int rdel = mod_delete(5);
-        bad += check("delete: both of a long file's records gone, DRUM retired, its tracks keep the number",
+        bad += check("delete: both of a long file's records gone, the 909 retired, its tracks keep the number",
                      !rdel && !st_exists(ST_MFILE0 + 5) && !st_exists(ST_MXFILE0 + 5) &&
-                     ENGINES[ENGI_DRUM] == &ENG_NONE && (MELODEE_DRUM_BUILTIN || !eng_ok(ENGI_DRUM)));
-        bad += check("without DRUM's module the start asks for setup (\"Synths missing\"), unless DRUM is built in",
+                     ENGINES[ENGI_909] == &ENG_NONE && (MELODEE_DRUM_BUILTIN || !eng_ok(ENGI_909)));
+        bad += check("without the 909's module the start asks for setup (\"Synths missing\"), unless the kits are built in",
                      SHIPPED_OK() == MELODEE_DRUM_BUILTIN);
         for (uint32_t k = 0; k < NMOD; k++) mod_delete(k);
-        ENGINES[ENGI_SID] = sid_in; ENGINES[ENGI_DRUM] = drum_in; ENGINES[ENGI_CZ] = cz_in; ENGINES[ENGI_FM6] = fm6_in;
-        ENGINES[ENGI_PROPHET] = p5_in;
+        for (uint32_t i = 0; i < ME_N; i++) ENGINES[ME[i]] = in[i];
     }
 
     /* the real module file (pi32v2): relocated at the block, its descriptor read back through the moved words */

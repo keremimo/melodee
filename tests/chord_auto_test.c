@@ -192,7 +192,7 @@ static void integration(void)
     seq_stop(); assert(!chord_auto[0].n);
     t=setup(); t->p[P_VOICE]=V_MONO;
     key_down(7); assert(auto_gates(t)==1); key_up(7); assert(!auto_gates(t));
-    t=setup(); host_preset(t,ENGI_DRUM,0); t->p[P_CHRD]=CH_AUTO;
+    t=setup(); host_preset(t,ENGI_808,0); t->p[P_CHRD]=CH_AUTO;
     uint32_t n=chord_build(t,36,out); assert(n==1 && out[0]==36);
     t=setup(); t->p[P_SCALE]=31; t->p[P_QUANT]=Q_ALL;
     n=chord_build(t,60,out); assert(n==1 && out[0]==60);

@@ -21,7 +21,7 @@
  * return (mix.c master_samples), both before punch, the limiter and the DC blocker, so they do not sum to the
  * master exactly.
  *
- * CORE_MODULES (web/core/build.sh builds it so): the five synths as the device plays them, synth modules
+ * CORE_MODULES (web/core/build.sh builds it so): the shipped synths as the device plays them, synth modules
  * (eng_module.c, module_store.c in the pool) bound to the same ABI 3 host table. The module files (build/modules/
  * <name>.mmod, the device's) go into the pool as an installer puts them (core_mod_install); their code is the
  * module's own source built for this core: in WebAssembly a side module the page links into the core's memory and
@@ -754,17 +754,18 @@ static int render_main(const char *rec, uint32_t secs, const char *out)
     return 0;
 }
 #ifdef CORE_MODULES
-extern const mod_desc_v3 mod_sid, mod_drum, mod_cz, mod_fm6, mod_p5;   /* (the module objects, linked beside) */
-/* the five synths: their objects named, the device's files (CORE_MODULES_DIR, else build/modules) in the pool of a new
+extern const mod_desc_v3 mod_sid, mod_808, mod_909, mod_sidkit, mod_cr78, mod_fmkit, mod_sampler, mod_cz, mod_fm6, mod_p5;   /* (the module objects, linked beside) */
+/* the shipped synths: their objects named, the device's files (CORE_MODULES_DIR, else build/modules) in the pool of a new
  * device, then booted again (an installed FM-1's power-on), as web/core/core_check.mjs does in WebAssembly */
 static int boot_modules(void)
 {
-    static const char *const stem[] = {"sid", "drum", "cz", "fm6", "prophet"};
-    static const mod_desc_v3 *const desc[] = {&mod_sid, &mod_drum, &mod_cz, &mod_fm6, &mod_p5};
+    static const char *const stem[] = {"sid", "808", "909", "sidkit", "cr78", "fmkit", "sampler", "cz", "fm6", "prophet"};
+    static const mod_desc_v3 *const desc[] = {&mod_sid, &mod_808, &mod_909, &mod_sidkit, &mod_cr78, &mod_fmkit, &mod_sampler,
+                                               &mod_cz, &mod_fm6, &mod_p5};
     const char *dir = getenv("CORE_MODULES_DIR");
     core_boot(0);
     core_poll(100);
-    for (uint32_t i = 0; i < 5u; i++) {
+    for (uint32_t i = 0; i < sizeof stem / sizeof *stem; i++) {
         char path[512];
         snprintf(path, sizeof path, "%s/%s.mmod", dir ? dir : "build/modules", stem[i]);
         FILE *f = fopen(path, "rb");

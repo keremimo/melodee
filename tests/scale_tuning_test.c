@@ -227,7 +227,7 @@ static void tunings(void)
     assert(!tune_active(t));                             /* a microtonal scale tunes itself */
     t->p[P_QUANT] = Q_OFF; assert(heard_cents(t, 69) == 6900.0);
     t->p[P_SCALE] = 1; assert(tune_active(t));
-    t->eng_req = ENGI_DRUM; assert(!tune_active(t)); t->eng_req = t->engine;
+    t->eng_req = ENGI_808; assert(!tune_active(t)); t->eng_req = t->engine;
     t->p[P_TUNING] = TUNING_COUNT; assert(!tune_active(t));
     t->p[P_TUNING] = 0;
     puts("scales and tunings: tables, what each is built on, any scale in any tuning, what passes one by");

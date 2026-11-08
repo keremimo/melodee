@@ -12,7 +12,7 @@
  *    again names it as it did. A lent handle nothing in RAM names any more is given back when another is needed.
  *  - The data records' owners (rec_store.c): the ID of the synth that wrote each slot, kept in the pool record ST_MAPOBJ,
  *    saved from the main loop when the transport is stopped (a record written with no module running, a backup's, is
- *    the manifest's SHIP_F_GM synth's).
+ *    the manifest's SHIP_F_RECS synth's).
  * Built for size (tools/size_fns.py). */
 typedef struct { uint64_t uid; char name[MOD3_NAME_MAX]; } eng_id_t;
 #define SHIP_MAPROW(u, nm, tg, wc, st, ns, f) {u, nm},
@@ -111,7 +111,7 @@ static int eng_map_own(uint32_t e)
 /* the data record slot u's owner's ID */
 static uint64_t rec_owner_uid(uint32_t u)
 {
-    uint32_t e = ship_flag(SHIP_F_GM);
+    uint32_t e = ship_flag(SHIP_F_RECS);
     return u < MOD3_NREC && rec_uid[u] ? rec_uid[u] : e < NENGINES ? eng_map_default(e) : 0u;
 }
 

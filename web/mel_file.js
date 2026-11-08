@@ -212,7 +212,7 @@ const NPART = 4, NTRK = 8, NPAT = 16, NSTEP = 64, MOTION_MAX = 64, CHAIN_ROWS = 
 const NAME_LEN = 12;
 // the kits' synth by its ID (firmware/modules/shipped.h: DRUM's, Melodee's key and "drum"). A synth's ID: its 8 bytes
 // little endian as 16 hex digits, the high first (as firmware's uint64_t prints)
-const KIT_OWNER_UID = "241aacc57d998ffe", EMX_TAG = 0x32584D45, EMX_TRAIL = 12, EMAP_ENTRY = 28;
+const KIT_OWNER_UID = "a7c6c5dcab17d386", EMX_TAG = 0x32584D45, EMX_TRAIL = 12, EMAP_ENTRY = 28;
 export const synthId = (b, at) => Array.from(b.subarray(at, at + 8)).reverse().map((x) => x.toString(16).padStart(2, "0")).join("");
 // FBKS (pattern_store.c, Melodee 2.0's only project record): an end block before the sum ("EMX2"), an entry for every
 // synth the project names (eng_map.c: its handle there, 0 x 3, ID, name; a handle no entry names: none), the patches of

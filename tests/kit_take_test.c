@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Record kit's take (DRUM's: modules/drum/kit_take.c, drum_enc.c through the firmware's data records, rec_store.c;
+/* Record kit's take (DRUM's: modules/kits/kit_take.c, drum_enc.c through the firmware's data records, rec_store.c;
  * usb_audio_stream.c kt_hear) on a simulated NOR flash: the
  * capture keeps ~3 ms before the trigger and ends at silence or a full buffer; the device encoder decodes back
  * through the player within its SNR and writes what tools/drum_codec.c writes for the same samples; a kick goes in at
@@ -109,7 +109,7 @@ static void kit_on(uint32_t u)
     host_tracks_init();
     for (uint32_t p = 0; p < NPART; p++) memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, 0);   /* (808 KIT: on both boards) */
+    host_preset(&trk[0], ENGI_SAMPLER, 0);   /* (SAMPLER's KIT 1: on both boards) */
     trk[0].p[P_E0] = (int16_t)(DK_USER0 + u);
 }
 static int32_t run(int32_t *buf, uint32_t nb)
@@ -135,7 +135,7 @@ int main(int argc, char **argv)
     memset(nor, 0xFF, sizeof nor);
     rec_scan();                                  /* (the records' boot scan: the host's record calls DRUM writes through) */
     check("KIT 1..8 are 9..16, straight after FM", DK_USER0 == DK_FM + 1 && DK_KIT_MAX == 16 &&
-          ENG_DRUM.edit[0].max == DK_KIT_MAX && !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && !strcmp(N_DRUM_KIT[DK_KIT_MAX], "KIT 8"));
+          ENG_SAMPLER.edit[0].max == DK_KIT_MAX && !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && !strcmp(N_DRUM_KIT[DK_KIT_MAX], "KIT 8"));
 
     {   /* the capture */
         uint32_t n = hit(0, src, 1.0f), got = record(src, n);

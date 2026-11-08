@@ -189,7 +189,7 @@ static void phrase(track_t *t, uint32_t base)
 enum { J_PRESET, J_MODE, J_DRUMS, J_SONG, J_CPU, J_CHECK, J_SLICER };
 typedef struct {
     char name[64];
-    uint8_t kind, e, pi, arg, cpu_notes;
+    uint8_t kind, e, pi, arg, cpu_notes, empty;  /* empty: a kit with no take recorded here (SAMPLER's): silent */
     const uint8_t (*parts)[3];                 /* J_CPU mixes */
     int (*check)(char *msg, uint32_t n);       /* J_CHECK */
     res_t r;
@@ -946,7 +946,7 @@ int main(int argc, char **argv)
     double heavy[NENGINES] = {0}, heavy_ns[NENGINES] = {0}, idle_base;
     uint32_t heavy_p[NENGINES] = {0};
     uint64_t t_start = now_ns();
-    char name[64], s[64];
+    char name[64], s[64], en[24];
     if (jobs_at_once < 1u || jobs_at_once > 64u)
         jobs_at_once = 8;
 
@@ -956,10 +956,14 @@ int main(int argc, char **argv)
         for (pi = 0; e != ENGI_MIDI && pi < ENGINES[e]->npresets; pi++) {
             job_t *j;
             slug(s, eng_preset(ENGINES[e], pi)->name, sizeof s);
-            snprintf(name, sizeof name, "preset/%s/%02u_%s", ENGINES[e]->name, pi, s);
+            slug(en, ENGINES[e]->name, sizeof en);   /* (a synth's name with a space: SID KIT, FM KIT) */
+            snprintf(name, sizeof name, "preset/%s/%02u_%s", en, pi, s);
             j = add(J_PRESET, name);
             j->e = (uint8_t)e;
             j->pi = (uint8_t)pi;
+            host_tracks_init();                        /* (SAMPLER's kits: their takes, none on the host) */
+            host_preset(&trk[0], e, pi);
+            j->empty = pads_flag(&trk[0], MOD3_PD_RECORD) && pads_rec(&trk[0]) >= 0 && !rec_tab[pads_rec(&trk[0])].n;
         }
     add(J_DRUMS, "drums/808_kit");
     for (i = 0; i < 3u; i++)
@@ -999,7 +1003,8 @@ int main(int argc, char **argv)
         for (pi = 0; e != ENGI_MIDI && pi < ENGINES[e]->npresets; pi++) {
             job_t *j;
             slug(s, eng_preset(ENGINES[e], pi)->name, sizeof s);
-            snprintf(name, sizeof name, "cpu/%s/%02u_%s", ENGINES[e]->name, pi, s);
+            slug(en, ENGINES[e]->name, sizeof en);   /* (a synth's name with a space: SID KIT, FM KIT) */
+            snprintf(name, sizeof name, "cpu/%s/%02u_%s", en, pi, s);
             j = add(J_CPU, name);
             memset(cpu_parts[ncpu], 0, sizeof cpu_parts[ncpu]);
             cpu_parts[ncpu][0][0] = (uint8_t)e;
@@ -1058,8 +1063,10 @@ int main(int argc, char **argv)
             snprintf(why + strlen(why), sizeof why - strlen(why), " %u samples >= %d;", r->near, LIM_NEAR);
         if (fabs(r->dc) > LIM_DC)
             snprintf(why + strlen(why), sizeof why - strlen(why), " DC %.1f (limit %d);", r->dc, LIM_DC);
-        if (r->peak < LIM_PEAK_MIN)
+        if (r->peak < LIM_PEAK_MIN && !j->empty)
             snprintf(why + strlen(why), sizeof why - strlen(why), " peak %d (min %d);", r->peak, LIM_PEAK_MIN);
+        if (j->empty && r->peak)
+            snprintf(why + strlen(why), sizeof why - strlen(why), " an empty kit sounds: peak %d;", r->peak);
         if (r->free_s < 0)
             snprintf(why + strlen(why), sizeof why - strlen(why), " voices not free %d s after the note-offs;", FREE_CAP_S);
         if (abs(r->tail_dc) > LIM_TAIL_DC)

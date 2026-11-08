@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-"""Write a build's synth modules (ABI 3: SID, DRUM, CZ-1, FM6, the Prophet) into the connected FM-1's module slots
+"""Write a build's synth modules (ABI 3: firmware/modules/shipped.h's) into the connected FM-1's module slots
 through USB editor command 84, as the web installer does (web/fm1mods.js): pool records, first come first served like
 projects and preset banks. A slot holding the very file stays; one holding a module of the same synth (its ID: another
 firmware's, damaged) is emptied and written again. tools/fm1_install.py runs this after the resources when
@@ -52,6 +52,10 @@ def file_id(b):
             return "%016x" % struct.unpack_from("<Q", b, at + 8)[0]
         at += 8 + ((n + 3) & ~3)
     return ""
+
+
+# Melodee's own synths a later build no longer ships (2.0: DRUM split into the kit synths): an update empties their slots
+RETIRED = {"241aacc57d998ffe"}                           # DRUM
 
 
 def same(s, f):
@@ -108,10 +112,18 @@ def push(device, data, say=print):
     lst, own = slots(device)
     if any(f["abi"] >= 2 and f["key"] and f["key"] != own for f in files):
         raise RuntimeError("these synth modules belong to another firmware build than the FM-1 runs")
+    removed = 0
+    for s in lst:                                        # (a retired synth of Melodee's: its slot emptied)
+        if s["len"] and s["id"] in RETIRED:
+            rc = device.request(COMMAND, [4, s["slot"]], 10)[0]
+            if rc:
+                raise RuntimeError(f"slot {s['slot'] + 1}: delete refused: {RC.get(rc, rc)}")
+            s.update(len=0, engine=0, id="", state=0)
+            removed += 1
     todo = [f for f in files if not any(same(s, f) and s["state"] in PLAYING and s["crc"] == f["crc"]
                                         and s["key"] == f["key"] for s in lst)]
     if not todo:
-        return "current"
+        return "written" if removed else "current"
     for f in todo:
         s = (next((x for x in lst if x["len"] and same(x, f)), None) or
              next((x for x in lst if x["len"] and x["state"] == BAD), None) or next((x for x in lst if not x["len"]), None))

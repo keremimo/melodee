@@ -194,7 +194,7 @@ web_tests() {                                     # the editor mock's tables mus
 module_tests() {                                  # synth modules (ABI 3): built for the host ONCE, three firmwares
     _m="$OUT/modules" _o= _dev="-DMELODEE_SID_BUILTIN=0 -DMELODEE_DRUM_BUILTIN=0 -DMELODEE_CZ_BUILTIN=0 -DMELODEE_FM6_BUILTIN=0 -DMELODEE_P5_BUILTIN=0"
     mkdir -p "$_m/abi"
-    for _s in sid drum cz fm6 prophet; do          # (the engine sources' modules; again for another firmware's layout)
+    for _s in sid 808 909 sidkit cr78 fmkit sampler cz fm6 prophet; do          # (the engine sources' modules; again for another firmware's layout)
         $CC -c -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/$_s/$_s.c -o "$_m/$_s.o" &&
             $CC -c -O2 -DMELODEE_ABI_SHUFFLE=1 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW \
                 firmware/modules/$_s/$_s.c -o "$_m/abi/$_s.o" || { fail "compile firmware/modules/$_s/$_s.c"; return; }
@@ -206,12 +206,12 @@ module_tests() {                                  # synth modules (ABI 3): built
         _o="$_o $_m/$_s.o"
     done
     step "synth module objects: the same against another firmware's private track_t / voice_t and its options (a module sees ABI 3's views only)" \
-        sh -c "for s in sid drum cz fm6 prophet; do cmp -s '$_m/'\$s.o '$_m/abi/'\$s.o || { echo \$s.o differs; exit 1; }; done"
+        sh -c "for s in sid 808 909 sidkit cr78 fmkit sampler cz fm6 prophet; do cmp -s '$_m/'\$s.o '$_m/abi/'\$s.o || { echo \$s.o differs; exit 1; }; done"
     (build module_test module_test -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
-        step "synth modules: TRIO, WHEEL, SID, DRUM, CZ-1, FM6 and the Prophet (ABI 3) bit-exact, their presets from their files as the makers made them, files into slots, relocation, boot, refusals, capabilities (tools/mod_build.py)" \
+        step "synth modules: TRIO, WHEEL, SID, the kit synths (808, 909, SID KIT, CR78, FM KIT, SAMPLER), CZ-1, FM6 and the Prophet (ABI 3) bit-exact, their presets from their files as the makers made them, files into slots, relocation, boot, refusals, capabilities (tools/mod_build.py)" \
             "$OUT/module_test") > "$_m/1.log" 2>&1 &
     (build module_test_device module_test -O2 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
-        step "synth modules as the device builds them: SID, DRUM, CZ-1, FM6 and the Prophet out of the firmware, the modules against the old renders, their presets (files only) against the old makers" \
+        step "synth modules as the device builds them: SID, the kit synths, CZ-1, FM6 and the Prophet out of the firmware, the modules against the old renders, their presets (files only) against the old makers" \
             "$OUT/module_test_device") > "$_m/2.log" 2>&1 &
     (build module_test_abi module_test -O2 -DMELODEE_ABI_SHUFFLE=1 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
         step "synth modules ABI stability: the same module objects in a firmware whose private track_t / voice_t fields are padded and reordered, bit-exact" \
@@ -304,7 +304,7 @@ studio_bundle() {                                 # the firmware's data for Melo
     if [ -f build/core/melodee_core.wasm ] && command -v node >/dev/null 2>&1; then
         _ver=$(sed -n 's/^#define MELODEE_VERSION "\([^"]*\)".*/\1/p' firmware/src/melodee.c | head -n 1)
         mkdir -p "$OUT/core_mods"                 # (the synths as modules: their objects beside the native core)
-        for _s in sid drum cz fm6 prophet; do
+        for _s in sid 808 909 sidkit cr78 fmkit sampler cz fm6 prophet; do
             $CC -c -O2 -DMOD_IN_CORE=1 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/$_s/$_s.c -o "$OUT/core_mods/$_s.o" ||
                 { fail "compile firmware/modules/$_s/$_s.c (core)"; return 1; }
         done
@@ -621,7 +621,7 @@ if core && [ $TABLES = 1 ]; then
     t "GLO double-tap lock, SCL tap navigation, SCREEN OFF, LFO 2 SYNC / TRIG / POL" layer_screen_test \
         -O1 -DMELODEE_USB_AUDIO=1 $FW
     t "DRUM EDITOR: synthesized 909, sound controls, individual pitch/length, undo and storage" drum_editor_test -O2 $FW
-    t "pads: DRUM's pads block read as any synth's == 70111e91's drum_map.c (every KIT), flags, records, the KIT packing, mutations caught" \
+    t "pads: the kit synths' pads blocks read as any synth's == 70111e91's drum_map.c (every kit; the 909's CLICK), flags, records, the KIT packing, mutations caught" \
         pads_test $FW
     run "no synth code in firmware/src: every hit of a synth's name, number or symbol under a rule with its reason (tests/no_synth_code.py)" \
         "$PY" tests/no_synth_code.py

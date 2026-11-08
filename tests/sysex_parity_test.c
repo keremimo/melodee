@@ -39,7 +39,7 @@ static uint8_t sx_num(uint32_t e)
 #if SX_OLD
     return (uint8_t)e;
 #else
-    return e == ENGI_PROPHET ? 19u : e == ENGI_FM6 ? 12u : e == ENGI_CZ ? 15u : e == ENGI_SID ? 3u : e == ENGI_DRUM ? 10u :
+    return e == ENGI_PROPHET ? 19u : e == ENGI_FM6 ? 12u : e == ENGI_CZ ? 15u : e == ENGI_SID ? 3u : e >= ENGI_808 && e <= ENGI_SAMPLER ? 10u :
            e == ENGI_MIDI ? 21u : (uint8_t)e;
 #endif
 }

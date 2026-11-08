@@ -56,7 +56,7 @@ int main(void)
     q.t[2].p[P_M2SRC] = 6;
     q.t[2].p[P_M2DST] = 11;
     q.t[2].p[P_M2AMT] = -17;
-    q.t[0].engine = ENGI_DRUM;
+    q.t[0].engine = ENGI_808;
     q.t[0].step[0] = (step_t){{36, 42, 0, 0}, 2, ST_NOTE, 0, 96, 1u << DV_SNARE, 1u << DV_SNARE};
     q.sum = proj_sum(&q);
     bad += check("project_t: as stored (a matrix slot, engine 8, a DRUM step with notes and hits)",

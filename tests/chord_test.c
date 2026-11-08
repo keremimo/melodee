@@ -311,7 +311,7 @@ static int kits(void)
     bad += check("  MIDI IN on the DRUM track: one hit, no chord kept", !mchord[0].id);
     midi(0x83, 38, 0);
     song.sel = 0;
-    host_preset(&trk[0],ENGI_DRUM,0);trk[0].p[P_CHRD]=CH_DIA3;
+    host_preset(&trk[0],ENGI_808,0);trk[0].p[P_CHRD]=CH_DIA3;
     bad += check("DRUM ignores melodic chords",chord_kit(&trk[0]) && chord_build(&trk[0],38,out)==1u);
     return bad;
 }

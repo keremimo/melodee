@@ -8,7 +8,12 @@
 enum { DV_KICK, DV_SNARE, DV_CLAP, DV_HATC, DV_HATO, DV_TOM, DV_RIM, DV_BELL, DV_NLANE };
 enum { DVT_PUNCH, DVT_ROUND, DVT_SNARE, DVT_CLAP, DVT_HATC, DVT_HATO, DVT_TOM, DVT_CONGA,
        DVT_RIM, DVT_CLAVE, DVT_BELL, DVT_CYM, DVT_COUNT };
-enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_USER0 = 9 }; /* Retain the stored value of existing 808 patches. */
+#define DK_808 4                                 /* the kits' KIT values (macros: DRUM_ONLY's #if tests them) */
+#define DK_909 5
+#define DK_SID 6
+#define DK_CR78 7
+#define DK_FM 8
+#define DK_USER0 9
 #ifndef MELODEE_USER_KITS
 #define MELODEE_USER_KITS 1                      /* the user's kits (kit_store.c): KIT 9..16, played by drum_real.c, both boards */
 #endif
@@ -31,14 +36,24 @@ static uint32_t drum_gm(const int16_t *p,uint32_t note,int32_t *st);
 #define drum_event_pitch note_hit_pitch
 #define drum_event_length note_hit_len
 #endif
-static int drum_is909(const track_t *t) { return t->p[P_E0] == DK_909; }
-static int drum_issid(const track_t *t) { return t->p[P_E0] == DK_SID; }
-static int drum_iscr(const track_t *t) { return t->p[P_E0] == DK_CR78; }
-static int drum_isfm(const track_t *t) { return t->p[P_E0] == DK_FM; }
-static int drum_islane(const track_t *t) { return t->p[P_E0] == DK_CR78 || t->p[P_E0] == DK_FM; }   /* the lane kits (drum_lanes.c) */
-static int drum_isuser(const track_t *t) { return MELODEE_USER_KITS && t->p[P_E0] >= DK_USER0 && t->p[P_E0] <= DK_KIT_MAX; }   /* the user's (drum_real.c) */
+/* A kit module plays one kit (its KIT value is fixed; SAMPLER's: the user kits, DK_USER0, its KIT the record): DRUM_ONLY
+ * names it, so the other kits' code folds away; 0: every kit by KIT (a host build's reference engine) */
+#ifndef DRUM_ONLY
+#define DRUM_ONLY 0
+#endif
+#define DRUM_KV(p) (DRUM_ONLY ? DRUM_ONLY : (p)[P_E0])   /* the kit's class: its value, the user kits' DK_USER0 */
+#define DRUM_IS(p, k) (DRUM_KV(p) == (k))
+static int drum_is909(const track_t *t) { return DRUM_IS(t->p, DK_909); }
+static int drum_issid(const track_t *t) { return DRUM_IS(t->p, DK_SID); }
+static int drum_iscr(const track_t *t) { return DRUM_IS(t->p, DK_CR78); }
+static int drum_isfm(const track_t *t) { return DRUM_IS(t->p, DK_FM); }
+static int drum_islane(const track_t *t) { return drum_iscr(t) || drum_isfm(t); }   /* the lane kits (drum_lanes.c) */
+static int drum_isuser(const track_t *t)                 /* the user's (drum_real.c) */
+{
+    return MELODEE_USER_KITS && (DRUM_ONLY ? DRUM_ONLY == DK_USER0 : t->p[P_E0] >= DK_USER0 && t->p[P_E0] <= DK_KIT_MAX);
+}
 static int drum_map11(const track_t *t) { return drum_is909(t) || drum_isuser(t); }   /* the 909's eleven drums, a real ride and crash */
-static int drum_isone(const track_t *t) { return t->p[P_E0] >= DK_SID; }      /* a whole kit on one voice */
+static int drum_isone(const track_t *t) { return DRUM_KV(t->p) >= DK_SID; }      /* a whole kit on one voice */
 /* the 808's instruments (drum_808.c) and its own GM map: drum_sound_of names a note's drum by them */
 enum { DR_BD, DR_SD, DR_LT, DR_MT, DR_HT, DR_LC, DR_MC, DR_HC, DR_RS, DR_CL, DR_CP, DR_MA, DR_CB, DR_CY,
        DR_OH, DR_CH, DR_N };

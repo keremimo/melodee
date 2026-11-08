@@ -189,10 +189,15 @@ def main():
         return 0
     fns = functions(dis)
     # the synth modules built beside the image (tools/mod_build.py: build/modules/<name>.dis): engines that left the
-    # image (SID, DRUM, CZ-1, FM6, the Prophet) keep their budgets there; a function the image has stays the image's
+    # image (SID, the kit synths, CZ-1, FM6, the Prophet) keep their budgets there; a function the image has stays the
+    # image's; one in several modules (the kits' shared sources: drum_render in each kit synth) counts its costliest
+    own = set(fns)
     for mod in sorted(glob.glob(os.path.join(os.path.dirname(dis) or ".", "modules", "*.dis"))):
         for name, insns in functions(mod).items():
-            fns.setdefault(name, insns)
+            if name in own:
+                continue
+            if name not in fns or cost(insns)["cost"] > cost(fns[name])["cost"]:
+                fns[name] = insns
     res = {n: cost(fns[n]) for n in FUNCS if fns.get(n)}
     # A wrapper may inline away; keep its old budget identity and include
     # all extracted work rather than reporting a missing or zero-cost render.

@@ -8,14 +8,16 @@
  * loop). A part of a synth without pads is never a kit's: its steps' hits play the pattern format's lane notes
  * (core.h STEP_LANE_NOTE). Included after schema.c */
 #define PADS_NSEL 24u                            /* the selector's values a part's map follows (the rest: map 0) */
-#define PADS_NMAP 6u
+#define PADS_NMAP 4u                             /* a synth's maps (a kit synth has one) */
+#define PADS_NSYN 8u                             /* the synths with pads held (the six kits, two more): in .pool, the
+                                                  * arena's room */
 typedef struct {
     uint8_t eng, flags, sel, nsel, nrec, rec0, npar, pstride;
     uint8_t seltab[PADS_NSEL];
     uint8_t note_lane[64];                       /* a note's lane, two a byte (low first) */
     struct { uint8_t flags, npads; uint8_t mpc_note[16]; } map[PADS_NMAP];
 } pads_c_t;
-static pads_c_t pads_c[NPART] __attribute__((section(".pool")));
+static pads_c_t pads_c[PADS_NSYN] __attribute__((section(".pool")));
 static uint8_t pads_nc;
 static uint32_t pads_u16(const uint8_t *b) { return b[0] | (uint32_t)b[1] << 8; }
 /* e's pads block: its head into b (MOD_SCH_PDHEAD bytes), its widget data offset; 0 ok */
@@ -70,7 +72,7 @@ static void pads_sync(void)
     pads_nc = 0;
     for (e = 0; e < NENGINES; e++) {
         sch_info[e].pads = 0;
-        if (pads_nc >= NPART || ENGINES[e] == &ENG_NONE || pads_head(e, b, &wid))
+        if (pads_nc >= PADS_NSYN || ENGINES[e] == &ENG_NONE || pads_head(e, b, &wid))
             continue;
         pads_make(&pads_c[pads_nc], e);
         if (pads_c[pads_nc].map[0].npads)
@@ -87,7 +89,8 @@ static const pads_c_t *pads_of(const track_t *t)
 }
 static int pads_on(const track_t *t) { return pads_of(t) != 0; }
 static int pads_eng(uint32_t e) { SCH_INFO(); return e < NENGINES && sch_info[e].pads; }   /* engine e plays pads */
-static uint32_t pads_first(void) { SCH_INFO(); return pads_nc ? pads_c[0].eng : NENGINES; }   /* the first synth with pads */
+static uint32_t pads_first(void) { SCH_INFO(); return pads_nc ? pads_c[0].eng : NENGINES; }   /* the first synth with pads
+                                                                                   * (the manifest's order: the 808) */
 static uint32_t pads_flag(const track_t *t, uint32_t f) { const pads_c_t *c = pads_of(t); return c ? c->flags & f : 0u; }
 /* the map part t's own parameter picks */
 static uint32_t pads_map_c(const pads_c_t *c, const track_t *t)

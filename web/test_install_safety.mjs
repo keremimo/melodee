@@ -150,14 +150,14 @@ const region = new Uint8Array(32 + 3000).map((_,i) => (i * 13 + 5) & 255);
 new DataView(region.buffer).setUint32(0,0x3153524d,true);new DataView(region.buffer).setUint32(4,3000,true);
 // the build's synth modules (fm1mods.js): ABI 3 .mmod files (60-byte heads, the fake firmware's legacy key), one after another
 // (then its IDNT chunk: Melodee 2.0 knows a synth by its ID alone, here made from its name; the engine byte means nothing)
-const fakeModule = (engine, name, n, key = 0x13572468, seed = 1) => {
+const fakeModule = (engine, name, n, key = 0x13572468, seed = 1, uid = null) => {   /* uid: its ID (else from its name) */
   const b = new Uint8Array(60 + n + 104).map((_, i) => i < 60 + n ? (i * 29 + seed) & 255 : 0), v = new DataView(b.buffer);
   v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 3, true); b[6] = engine; b[7] = 1; v.setUint32(8, b.length, true);
   v.setUint32(12, n, true); v.setUint32(20, 0, true);
   v.setUint32(28, 0x1000 * seed + engine, true); b.fill(0, 32, 48); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); });
   v.setUint32(52, key, true);
   v.setUint32(60 + n, 0x544E4449, true); v.setUint32(64 + n, 96, true);
-  v.setBigUint64(68 + n, 0x5000n + BigInt([...name].reduce((t, c) => t + c.charCodeAt(0), 0)), true); b[76 + n] = 2;
+  v.setBigUint64(68 + n, uid ?? 0x5000n + BigInt([...name].reduce((t, c) => t + c.charCodeAt(0), 0)), true); b[76 + n] = 2;
   return b;
 };
 const joinBytes = (...xs) => { const o = new Uint8Array(xs.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of xs) { o.set(x, at); at += x.length; } return o; };
@@ -290,6 +290,25 @@ console.log('Resource region: refused write shows Finish setup and retries alone
   link.close();
 }
 console.log('Synth modules: written into the pool slots, current ones left, older ones replaced in place, room / build / slots refused');
+
+// A slot holding 1.x's DRUM by its ID (2.0 retired it: its kits are synths of their own): Find reports it, the update
+// empties it and writes the kit synth; a module only named DRUM is not it.
+{
+  const sim=fakeAccess({images:{firmware:logicalImage(firmware)},identity:productOf(firmware),after:productOf(firmware),loader:MELODEE_LOADER,timers:clock});
+  const input=sim.access.inputs.values().next().value,output=sim.access.outputs.values().next().value;
+  const link=new BackupConnection(input,output),rq=(r,o)=>link.request(r,o),slot=sim.device.mods.slot;
+  const kit=joinBytes(fakeModule(5,'808',500));
+  assert.equal(await installModules(rq,kit),'written');
+  slot[3].bytes=fakeModule(10,'DRUM',2000,0x13572468,2,0x241AACC57D998FFEn);slot[3].state=1;   /* DRUM's real ID */
+  slot[5].bytes=fakeModule(10,'DRUM',2000,0x13572468,3);slot[5].state=1;                      /* a DRUM by name only */
+  assert.equal(await modulesMissing(rq,kit),true,'a retired synth in a slot: the update has work');
+  assert.equal(await installModules(rq,kit),'written','a slot holding DRUM\'s ID is emptied by the update');
+  assert(!slot[3].bytes && slot[3].state===0 && slot[5].bytes && slot[0].bytes,'only the retired ID\'s slot emptied');
+  assert.equal(await modulesMissing(rq,kit),false);
+  assert.equal(await installModules(rq,kit),'current');
+  link.close();
+}
+console.log('Synth modules: a slot holding a retired synth (DRUM\'s ID) emptied by the update, a name alone kept');
 
 // Saadet's optional last stage, with the real pinned boot package.
 const bootRaw=new Uint8Array(readFileSync(new URL('m-bootloader/fm1-uboot.fwsc',import.meta.url)));

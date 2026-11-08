@@ -18,7 +18,7 @@ static void kit(uint32_t preset, int digi)       /* part 1 on a DRUM preset, not
     for (uint32_t p = 0; p < NPART; p++)
         memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, preset);
+    host_kit_preset(&trk[0], preset);
     if (preset == 2u)
         trk[0].p[P_E6] = (int16_t)digi;
 }
@@ -112,10 +112,10 @@ int main(int argc, char **argv)
             }
         }
         check("16 frame programs: TRI, PULSE or NOISE a step, steps and loops in range, a gate", ok);
-        check("KIT 6 is SID: factory kits SID KIT (DIGI OFF) and SID DIGI (DIGI ON)", ENG_DRUM.edit[0].max >= DK_SID &&
-              !strcmp(N_DRUM_KIT[DK_SID], "SID") && ENG_DRUM.npresets >= 4u && !strcmp(ENG_DRUM.presets[2].name, "SID KIT") &&
-              ENG_DRUM.presets[2].e[0] == DK_SID && !ENG_DRUM.presets[2].e[6] && !strcmp(ENG_DRUM.presets[3].name, "SID DIGI") &&
-              ENG_DRUM.presets[3].e[0] == DK_SID && ENG_DRUM.presets[3].e[6] == 1);
+        check("KIT 6 is SID: factory kits SID KIT (DIGI OFF) and SID DIGI (DIGI ON)", ENG_KITSID.edit[0].min == DK_SID &&
+              ENG_KITSID.edit[0].max == DK_SID && !strcmp(N_DRUM_KIT[DK_SID], "SID") && ENG_KITSID.npresets == 2u &&
+              !strcmp(ENG_KITSID.presets[0].name, "SID KIT") && ENG_KITSID.presets[0].e[0] == DK_SID && !ENG_KITSID.presets[0].e[6] &&
+              !strcmp(ENG_KITSID.presets[1].name, "SID DIGI") && ENG_KITSID.presets[1].e[0] == DK_SID && ENG_KITSID.presets[1].e[6] == 1);
     }
     {   /* every drum alone, DIGI OFF: sounds, bounded, deterministic, over */
         int sound = 1, bounded = 1, det = 1, ends = 1, mapped = 1;

@@ -198,7 +198,7 @@ static void drum_pads(void)
         setup_mpc();
         for (uint32_t k = 0; k < NPART; k++) {
             track_t *t = &trk[k];
-            set_engine_of(t, ENGI_DRUM); t->p[P_E0] = (int16_t)kit;
+            set_engine_of(t, kit_engine((int32_t)kit)); t->p[P_E0] = (int16_t)kit;
             t->p[P_QUANT] = Q_MPC; t->p[P_SCALE] = 2; t->p[P_ROOT] = 11;
             t->p[P_TRANS] = 24; t->p[P_MPCDEG] = 7;
             for (int32_t oct = -3; oct <= 3; oct++) {
@@ -232,7 +232,7 @@ static void drum_pads(void)
         for (uint32_t kit = DK_808; kit <= (uint32_t)DK_KIT_MAX; kit++) {
             setup_mpc(); song.g[G_MIDI] = (int16_t)(source - 1u); ui.msg_t = 0;
             for (uint32_t k = 0; k < NPART; k++) {
-                track_t *t = &trk[k]; set_engine_of(t, ENGI_DRUM); t->p[P_E0] = (int16_t)kit;
+                track_t *t = &trk[k]; set_engine_of(t, kit_engine((int32_t)kit)); t->p[P_E0] = (int16_t)kit;
                 t->p[P_QUANT] = Q_MPC; t->mpc_octave = 3;
                 for (uint32_t p = 0; p < 16u; p++) {
                     seq_stop(); memset(t->step, 0, sizeof t->step); song.rec = (uint8_t)(1u << k);
@@ -253,10 +253,10 @@ static void drum_pads(void)
             }
         }
     /* Duplicated 909 hits retain separate pad ownership across a kit/octave change. */
-    setup_mpc(); set_engine_of(&trk[0], ENGI_DRUM); trk[0].p[P_QUANT] = Q_MPC; trk[0].p[P_E0] = DK_909;
+    setup_mpc(); set_engine_of(&trk[0], ENGI_909); trk[0].p[P_QUANT] = Q_MPC; trk[0].p[P_E0] = DK_909;
     int32_t out[2u * CTL];
     for (uint32_t b = 0; b < 8u; b++) mix_block_q15(out, CTL); /* finish the normal engine switch */
-    assert(trk[0].engine == ENGI_DRUM && !trk[0].xf_on);
+    assert(trk[0].engine == ENGI_909 && !trk[0].xf_on);
     midi_event(0x90, 0, MPC_PAD_NOTES[0][0], 100);
     midi_event(0x90, 0, MPC_PAD_NOTES[0][12], 119);
     assert(midi_owners[0] == 2u && midi_note_held(&trk[0], 36));

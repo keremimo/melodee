@@ -5,7 +5,7 @@
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
-static const uint8_t kinds[VOICE_KINDS] = {ENGI_PROPHET, ENGI_CZ, ENGI_FM6, ENGI_SID, ENGI_DRUM};
+static const uint8_t kinds[VOICE_KINDS] = {ENGI_PROPHET, ENGI_CZ, ENGI_FM6, ENGI_SID, ENGI_808};
 /* The rule before GLO > WEIGHTS (admission off): what AUTO must keep. */
 static uint32_t builtin(const track_t *t)
 {

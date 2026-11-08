@@ -133,6 +133,7 @@ typedef struct { uint8_t wclass, store, ns, flags; uint64_t uid; const char *nam
 static const ship_t SHIP[] = {SHIP_ROWS(SHIP_ROW)};
 #undef SHIP_ROW
 #define NSHIP (sizeof SHIP / sizeof SHIP[0])
+static const uint64_t SHIP_RETIRED[] = {SHIP_RETIRED_IDS};
 _Static_assert(ENG_H_SHIP0 + NSHIP <= NENGINES, "the shipped synths' handles: their rows' places (tests/identity_test.c "
                "holds shipped.h's ENGI_* to them)");
 static const ship_t *ship_of(uint32_t e)            /* handle e's row, 0: none */

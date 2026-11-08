@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The user's drum kits (DRUM's data records: src/rec_store.c keeps them, modules/drum/kit_store.c checks them,
- * modules/drum/drum_real.c plays them) on a simulated NOR flash: a kit of eleven synthetic takes
+/* The user's drum kits (DRUM's data records: src/rec_store.c keeps them, modules/kits/kit_store.c checks them,
+ * modules/kits/drum_real.c plays them) on a simulated NOR flash: a kit of eleven synthetic takes
  * (src/drum_enc.c, a looped crash among them) written as a pool record spanning seven sectors decodes, take by take,
  * sample for sample as the same slices read from one block of RAM (the sector edges cost nothing), and the track
  * plays it the same twice and without the resource region; an empty slot, a deleted kit and a rewritten slot are
@@ -92,7 +92,7 @@ static void kit(int user_slot)
     for (uint32_t p = 0; p < NPART; p++)
         memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, 0);
+    host_preset(&trk[0], user_slot < 0 ? ENGI_808 : ENGI_SAMPLER, 0);
     trk[0].p[P_E0] = (int16_t)(user_slot < 0 ? DK_808 : DK_USER0 + user_slot);
 }
 static int32_t run(int32_t *buf, uint32_t nb)
@@ -162,7 +162,7 @@ int main(void)
     static int16_t y[FS * 4u], z[FS * 4u];
     memset(nor, 0xFF, sizeof nor);
     check("KIT 9..16 are the user's: eight slots after FM, names KIT 1..8 until written",
-          DK_USER0 == DK_FM + 1 && DK_KIT_MAX == DK_USER0 + 7 && ENG_DRUM.edit[0].max == DK_KIT_MAX &&
+          DK_USER0 == DK_FM + 1 && DK_KIT_MAX == DK_USER0 + 7 && ENG_SAMPLER.edit[0].max == DK_KIT_MAX && ENG_SAMPLER.edit[0].min == DK_USER0 &&
           !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && !strcmp(N_DRUM_KIT[DK_KIT_MAX], "KIT 8"));
 
     uint32_t len = make_record(0, "ROCK", 27500);       /* (past six 4,056-byte sectors) */
@@ -198,8 +198,8 @@ int main(void)
 
     {   /* the card's name */
         const char *unit; char v[8], e[8];
-        param_format(&ENG_DRUM.edit[0], DK_USER0 + 2, v, &unit);
-        param_format(&ENG_DRUM.edit[0], DK_USER0 + 5, e, &unit);
+        param_format(&ENG_SAMPLER.edit[0], DK_USER0 + 2, v, &unit);
+        param_format(&ENG_SAMPLER.edit[0], DK_USER0 + 5, e, &unit);
         check("the KIT card shows the kit's own name, EMPTY for none", !strcmp(v, "ROCK") && !strcmp(e, "EMPTY"));
     }
 
@@ -247,13 +247,13 @@ int main(void)
     }
 
     {   /* boot before DRUM is listed (a module written after power-on; nightly dc2209de scanned before mod_boot) */
-        const engine_t *drum = ENGINES[ENGI_DRUM];
+        const engine_t *drum = ENGINES[ENGI_SAMPLER];
         memset(drk_user, 0, sizeof drk_user); memset(rec_len, 0, sizeof rec_len);
-        ENGINES[ENGI_DRUM] = &ENG_NONE; sch_gen++;
+        ENGINES[ENGI_SAMPLER] = &ENG_NONE; sch_gen++;
         rec_scan();
         int waited = !drk_user[2].n && (rec_pend >> 2 & 1u);
         int hidden = rec_hidden(2) && !rec_hidden(3);     /* (Record kit's sheet never takes slot 2 for an empty one) */
-        ENGINES[ENGI_DRUM] = drum; sch_gen++;
+        ENGINES[ENGI_SAMPLER] = drum; sch_gen++;
         rec_recheck();                                    /* (eng_module_main.c mod_register: DRUM in SRAM) */
         check("kits found before their synth is listed wait for it, then play (not dropped until a save)",
               waited && drk_user[2].n && rec_len[2] && !drk_user[3].n && !rec_pend);

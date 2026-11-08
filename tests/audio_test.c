@@ -84,7 +84,7 @@ static void overload(void)
     check("a lead alone on each part stays protected", lead->gate && bass->gate && shed_count == 1u);
 
     fresh();
-    host_preset(&trk[0], ENGI_DRUM, 0);
+    host_preset(&trk[0], ENGI_808, 0);
     trk_note_on(&trk[0], 36, 100); trk_note_on(&trk[0], 38, 100);
     lead = held(&trk[0], 36); extra = held(&trk[0], 38);
     shed_voice(); mix_block_q15(out, CTL);

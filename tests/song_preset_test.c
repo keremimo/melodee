@@ -77,7 +77,7 @@ static void playback(void)
 }
 static void native_and_persistence(void)
 {
-    const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, ENGI_SID};
+    const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_808, ENGI_SID};
     for (uint32_t j = 0; j < NELEM(engines); j++) {
         setup(3); uint32_t id = choose(1, engines[j], 1);
         song_sound_t expected = *song_sound_get(id);
@@ -248,7 +248,7 @@ static void pattern_presets(void)
 
 static void pattern_native_and_recorded_undo(void)
 {
-    const uint32_t engines[] = {ENGI_FM6, ENGI_CZ, ENGI_PROPHET, ENGI_DRUM, ENGI_SID};
+    const uint32_t engines[] = {ENGI_FM6, ENGI_CZ, ENGI_PROPHET, ENGI_808, ENGI_SID};
     for (uint32_t e = 0; e < NELEM(engines); e++) {
         setup(0); engine_load_of(TSEL, ENGI_FM6, 9);
         song_sound_t base, live;

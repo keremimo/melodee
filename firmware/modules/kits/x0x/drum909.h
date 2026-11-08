@@ -105,17 +105,20 @@ struct drum909 {
 };
 typedef struct drum909 drum909_t;
 
-void drum909_init(drum909_t *d);
-void drum909_trigger(drum909_t *d, int voice, float vel);
-void drum909_render(drum909_t *d, float *dry, int n);
+#ifndef D9_API
+#define D9_API                               /* the API's storage class: a kit module's own static copy (kit_module.h) */
+#endif
+D9_API void drum909_init(drum909_t *d);
+D9_API void drum909_trigger(drum909_t *d, int voice, float vel);
+D9_API void drum909_render(drum909_t *d, float *dry, int n);
 /* X0X stereo: each voice placed by its PAN into dry_l / dry_r; all centred, both are
  * drum909_render's dry exactly */
-void drum909_render_st(drum909_t *d, float *dry_l, float *dry_r, int n);
-void drum909_pan_settle(drum909_t *d);   /* every pan to its target at once (the kit is silent: no zipper) */
-int drum909_nparams(int voice);
-const x0x_param_t *drum909_param(int voice, int i);
-void drum909_set(drum909_t *d, int voice, int i, int value);
-int drum909_get(const drum909_t *d, int voice, int i);
+D9_API void drum909_render_st(drum909_t *d, float *dry_l, float *dry_r, int n);
+D9_API void drum909_pan_settle(drum909_t *d);   /* every pan to its target at once (the kit is silent: no zipper) */
+D9_API int drum909_nparams(int voice);
+D9_API const x0x_param_t *drum909_param(int voice, int i);
+D9_API void drum909_set(drum909_t *d, int voice, int i, int value);
+D9_API int drum909_get(const drum909_t *d, int voice, int i);
 
 /* true while any voice is still sounding (for a caller that wants to skip work) */
-int drum909_active(const drum909_t *d);
+D9_API int drum909_active(const drum909_t *d);

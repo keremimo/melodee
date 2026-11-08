@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* DRUM's schema (firmware/modules/sdk/mod_schema.h): its patch (drum_patch.h: the kit's offsets, zero the factory
+/* The kits' schemas (firmware/modules/sdk/mod_schema.h): their patch (drum_patch.h: the kit's offsets, zero the factory
  * kit; stored as Melodee 1.x's KIT format, its packing MOD3_R_PACK), MIDI CC 74 on TUNE (E3), its pads (MOD3_R_PADS). The
  * module file carries it as its SCHM chunk; host builds compile it in (eng_drum.c) */
 static const mod_sch_role_src DRUM_SCH_ROLE[] = {
@@ -11,9 +11,8 @@ static const uint8_t DRUMS_CHECK[] = {         /* (a kit's offsets as Melodee 1.
     DRUMS_CK(0, -24, 24), DRUMS_CK(1, -64, 63), DRUMS_CK(2, -64, 63), DRUMS_CK(3, 0, 127),
 };
 #undef DRUMS_CK
-/* its pads (mod_schema.h MOD3_R_PADS): KIT (E1) picks the map, 808 (and the values before it), SID, 909, CR78, FM, the
- * user's recorded kits (KIT 1..8: its data records 0..7). Tables as drum_map.c plays them (tests/pads_test.c holds
- * them to it) */
+/* the kits' pads (mod_schema.h MOD3_R_PADS): each kit synth's one map (the 808's, FM KIT's, SID KIT's, the 909's,
+ * CR78's, SAMPLER's: its recorded kits). Tables as drum_map.c plays them (tests/pads_test.c holds them to it) */
 #define DRUM_PD_LANES "KICK", "SNARE", "CLAP", "HATCL", "HATOP", "TOM", "RIM"
 static const uint8_t DRUM_PD_LANE_NOTE[MOD3_NLANE] = {36, 38, 39, 42, 46, 45, 37, 56};
 static const char *const DRUM_PD_LANE_NAME[MOD3_NLANE] = {DRUM_PD_LANES, "BELL"};
@@ -61,32 +60,31 @@ static const uint8_t DRUM_PD_NOTE_PAD11[128] = {
 static const char *const DRUM_PD_NAME11[11] = {DRUM_PD_FIVE, "CLAP", "HAT C", "HAT O", "CRASH", "RIDE"};
 static const char *const DRUM_PD_ABBR11[11] = {"BD", "SD", "LT", "MT", "HT", "RS", "CP", "CH", "OH", "CR", "RD"};
 #undef DRUM_PD_FIVE
-/* the third parameter's label by the pad (CHARACTER: SNAPPY on the snare, the 909's ATTACK on its kick and toms, the
+/* the third parameter's label by the pad (CHARACTER: SNAPPY on the snare, the 909's CLICK (its ATTACK) on its kick and toms, the
  * SID's SNAP), pad * 4 + parameter */
 #define DRUM_PD_SN 0, 0, 0, 0, 0, 0, "SNAPPY", 0
 static const char *const DRUM_PD_LABEL16[64] = {DRUM_PD_SN};
 static const char *const DRUM_PD_LABEL11[44] = {DRUM_PD_SN};
 #undef DRUM_PD_SN
-#define DRUM_PD_AT 0, 0, "ATTACK", 0
+#define DRUM_PD_AT 0, 0, "CLICK", 0
 static const char *const DRUM_PD_LABEL909[44] = {DRUM_PD_AT, 0, 0, "SNAPPY", 0, DRUM_PD_AT, DRUM_PD_AT, DRUM_PD_AT};
 #undef DRUM_PD_AT
 #define DRUM_PD_S 0, 0, "SNAP", 0
 static const char *const DRUM_PD_LABEL_SID[64] = {DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S,
     DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S, DRUM_PD_S};
 #undef DRUM_PD_S
-static const mod_sch_padmap_src DRUM_PD_MAP[] = {
-    {16, 0, DRUM_PD_NAME16, DRUM_PD_ABBR16, DRUM_PD_NOTES16, DRUM_PD_MPC16, DRUM_PD_ORDER16, DRUM_PD_NOTE_PAD16, 0, 0,
-     DRUM_PD_LABEL16},                           /* 0: the 808, FM */
-    {16, 0, DRUM_PD_NAME16, DRUM_PD_ABBR16, DRUM_PD_NOTES16, DRUM_PD_MPC16, DRUM_PD_ORDER16, DRUM_PD_NOTE_PAD16, 0, 0,
-     DRUM_PD_LABEL_SID},                         /* 1: SID */
-    {11, 0, DRUM_PD_NAME11, DRUM_PD_ABBR11, DRUM_PD_NOTES11, DRUM_PD_MPC11, DRUM_PD_ORDER11, DRUM_PD_NOTE_PAD11,
-     DRUM_PD_LANE_NAME11, DRUM_PD_LANE_ABBR11, DRUM_PD_LABEL909},      /* 2: the 909 */
-    {16, 0, DRUM_PD_NAME_CR, DRUM_PD_ABBR_CR, DRUM_PD_NOTES16, DRUM_PD_MPC16, DRUM_PD_ORDER16, DRUM_PD_NOTE_PAD16,
-     DRUM_PD_LANE_NAME_CR, DRUM_PD_LANE_ABBR_CR, DRUM_PD_LABEL16},     /* 3: CR78 */
-    {11, MOD3_PM_KEYMAP, DRUM_PD_NAME11, DRUM_PD_ABBR11, DRUM_PD_NOTES11, DRUM_PD_MPC11, DRUM_PD_ORDER11,
-     DRUM_PD_NOTE_PAD11, DRUM_PD_LANE_NAME11, DRUM_PD_LANE_ABBR11, DRUM_PD_LABEL11},   /* 4: KIT 1..8, white keys */
-};
-static const uint8_t DRUM_PD_SEL[17] = {0, 0, 0, 0, 0, 2, 1, 3, 0, 4, 4, 4, 4, 4, 4, 4, 4};   /* KIT 0..16 */
+#define DRUM_PD_MAP_808 {16, 0, DRUM_PD_NAME16, DRUM_PD_ABBR16, DRUM_PD_NOTES16, DRUM_PD_MPC16, DRUM_PD_ORDER16,      \
+                         DRUM_PD_NOTE_PAD16, 0, 0, DRUM_PD_LABEL16}   /* the 808, FM KIT */
+#define DRUM_PD_MAP_SID {16, 0, DRUM_PD_NAME16, DRUM_PD_ABBR16, DRUM_PD_NOTES16, DRUM_PD_MPC16, DRUM_PD_ORDER16,      \
+                         DRUM_PD_NOTE_PAD16, 0, 0, DRUM_PD_LABEL_SID}
+#define DRUM_PD_MAP_909 {11, 0, DRUM_PD_NAME11, DRUM_PD_ABBR11, DRUM_PD_NOTES11, DRUM_PD_MPC11, DRUM_PD_ORDER11,      \
+                         DRUM_PD_NOTE_PAD11, DRUM_PD_LANE_NAME11, DRUM_PD_LANE_ABBR11, DRUM_PD_LABEL909}
+#define DRUM_PD_MAP_CR {16, 0, DRUM_PD_NAME_CR, DRUM_PD_ABBR_CR, DRUM_PD_NOTES16, DRUM_PD_MPC16, DRUM_PD_ORDER16,      \
+                        DRUM_PD_NOTE_PAD16, DRUM_PD_LANE_NAME_CR, DRUM_PD_LANE_ABBR_CR, DRUM_PD_LABEL16}
+#define DRUM_PD_MAP_USER {11, MOD3_PM_KEYMAP, DRUM_PD_NAME11, DRUM_PD_ABBR11, DRUM_PD_NOTES11, DRUM_PD_MPC11,          \
+                          DRUM_PD_ORDER11, DRUM_PD_NOTE_PAD11, DRUM_PD_LANE_NAME11, DRUM_PD_LANE_ABBR11,              \
+                          DRUM_PD_LABEL11}                     /* KIT 1..8, white keys */
+static const uint8_t DRUM_PD_SEL[17] = {0};    /* (a kit synth's KIT is its own: one map, whatever KIT 0..16 holds) */
 static const mod_sch_padpar_src DRUM_PD_PAR[] = {      /* a pad's four bytes (drum_patch.h): TUNE, DECAY, the third, LEVEL */
     {0, MOD3_PP_SIGNED, -24, 24, 0, "TUNE", "ST", "NOTE"},
     {1, MOD3_PP_SIGNED, -64, 63, 64, "DECAY", 0, "HIT"},
@@ -94,21 +92,34 @@ static const mod_sch_padpar_src DRUM_PD_PAR[] = {      /* a pad's four bytes (dr
     {3, MOD3_PP_INVERT, 0, 127, 0, "LEVEL", 0, 0},
 };
 static const char *const DRUM_PD_WORDS[MOD3_PW_COUNT] = {"DRUM SOUND", "DRUM MIX", "DRUM HIT", "DRUM", "Drum"};
-static const mod_sch_pads_src DRUM_PADS = {
-    .flags = MOD3_PD_NOBEND | MOD3_PD_NOSUS | MOD3_PD_HITS | MOD3_PD_RECORD, .sel = MOD3_P_E0, .nsel = 17,
-    .npar = 4, .pstride = 4, .seltab = DRUM_PD_SEL, .lane_note = DRUM_PD_LANE_NOTE, .note_lane = DRUM_PD_NOTE_LANE,
-    .lane_names = DRUM_PD_LANE_NAME, .lane_abbrs = DRUM_PD_LANE_ABBR, .map = DRUM_PD_MAP,
-    .nmap = sizeof DRUM_PD_MAP / sizeof *DRUM_PD_MAP, .par = DRUM_PD_PAR, .words = DRUM_PD_WORDS,
-    .rec0 = 9, .nrec = 8, .rname = 8, .rnlen = 5,  /* (KIT 1..8 = values 9..16; a record's name: drk_kit_t.name, */
-    .rsec = 7, .rmin = 616,                        /* its sectors, its header: drum_kit.h DRK_KSEC, DRK_KIT_BYTES) */
-};
+/* a kit's pads (mod_schema.h MOD3_R_PADS): its one map; SAMPLER's records too (KIT 1..8 = values 9..16 = its data records
+ * 0..7; a record's name: drk_kit_t.name, its sectors, its header: drum_kit.h DRK_KSEC, DRK_KIT_BYTES) */
+#define KIT_PADS(sym, mapsym, flags_, ...)                                                                          \
+    static const mod_sch_padmap_src mapsym##_MAP[] = {mapsym};                                                    \
+    static const mod_sch_pads_src sym = {                                                                         \
+        .flags = MOD3_PD_NOBEND | MOD3_PD_NOSUS | MOD3_PD_HITS | (flags_), .sel = MOD3_P_E0, .nsel = 17,           \
+        .npar = 4, .pstride = 4, .seltab = DRUM_PD_SEL, .lane_note = DRUM_PD_LANE_NOTE,                           \
+        .note_lane = DRUM_PD_NOTE_LANE, .lane_names = DRUM_PD_LANE_NAME, .lane_abbrs = DRUM_PD_LANE_ABBR,          \
+        .map = mapsym##_MAP, .nmap = 1, .par = DRUM_PD_PAR, .words = DRUM_PD_WORDS, __VA_ARGS__};
+KIT_PADS(KIT808_PADS, DRUM_PD_MAP_808, 0, .rec0 = 0)
+KIT_PADS(KITSID_PADS, DRUM_PD_MAP_SID, 0, .rec0 = 0)
+KIT_PADS(KIT909_PADS, DRUM_PD_MAP_909, 0, .rec0 = 0)
+KIT_PADS(KITCR_PADS, DRUM_PD_MAP_CR, 0, .rec0 = 0)
+KIT_PADS(SAMPLER_PADS, DRUM_PD_MAP_USER, MOD3_PD_RECORD, .rec0 = 9, .nrec = 8, .rname = 8, .rnlen = 5, .rsec = 7, .rmin = 616)
+#undef KIT_PADS
 /* Melodee 1.x's KIT store (projects, user presets): per pad TUNE in 6 bits (+ 24), DECAY, the third in 7 (+ 64), the
  * cut in 7 */
 static const mod_sch_pack_field DRUM_PACK_F[] = {{6, 24}, {7, 64}, {7, 64}, {7, 0}};
 static const mod_sch_pack_src DRUM_PACK = {DRUM_PACK_F, 4, 16, 4};
-static const mod_sch_src DRUM_SCHEMA = {
-    .patch = sizeof(drum_patch_t), .store = MOD_SCH_STORE_KIT, .wdef = MOD_SCH_NONE, .mmap = MOD_SCH_NONE,
-    .role = DRUM_SCH_ROLE, .nrole = sizeof DRUM_SCH_ROLE / sizeof *DRUM_SCH_ROLE,
-    .check = DRUMS_CHECK, .ncheck = sizeof DRUMS_CHECK / MOD_SCH_CREC,
-    .pads = &DRUM_PADS, .pack = &DRUM_PACK,
-};
+#define KIT_SCHEMA(sym, pads_)                                                                                       \
+    static const mod_sch_src sym = {                                                                              \
+        .patch = sizeof(drum_patch_t), .store = MOD_SCH_STORE_KIT, .wdef = MOD_SCH_NONE, .mmap = MOD_SCH_NONE,    \
+        .role = DRUM_SCH_ROLE, .nrole = sizeof DRUM_SCH_ROLE / sizeof *DRUM_SCH_ROLE,                            \
+        .check = DRUMS_CHECK, .ncheck = sizeof DRUMS_CHECK / MOD_SCH_CREC, .pads = &pads_, .pack = &DRUM_PACK,  \
+    };
+KIT_SCHEMA(KIT808_SCHEMA, KIT808_PADS)
+KIT_SCHEMA(KIT909_SCHEMA, KIT909_PADS)
+KIT_SCHEMA(KITSID_SCHEMA, KITSID_PADS)
+KIT_SCHEMA(KITCR_SCHEMA, KITCR_PADS)
+KIT_SCHEMA(SAMPLER_SCHEMA, SAMPLER_PADS)
+#undef KIT_SCHEMA

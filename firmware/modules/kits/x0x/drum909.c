@@ -103,19 +103,19 @@ static const uint8_t d9_nspec[D9_NUM + 1] = {
     NP(d9_ch_p), NP(d9_oh_p), NP(d9_cr_p), NP(d9_rd_p), NP(d9_kit_p),
 };
 
-int drum909_nparams(int voice)
+D9_API int drum909_nparams(int voice)
 {
     return voice >= 0 && voice <= D9_KIT ? d9_nspec[voice] : 0;
 }
 
-const x0x_param_t *drum909_param(int voice, int i)
+D9_API const x0x_param_t *drum909_param(int voice, int i)
 {
     if (voice < 0 || voice > D9_KIT || i < 0 || i >= d9_nspec[voice])
         return 0;
     return &d9_specs[voice][i].ui;
 }
 
-int drum909_get(const drum909_t *d, int voice, int i)
+D9_API int drum909_get(const drum909_t *d, int voice, int i)
 {
     if (voice < 0 || voice > D9_KIT || i < 0 || i >= d9_nspec[voice])
         return 0;
@@ -232,7 +232,7 @@ static void d9_set_panel(drum909_t *d, int voice, int i, int value, int deferred
     d9_apply(d, voice, s->field, d9_pot_value(s, value),deferred);
 }
 
-void drum909_set(drum909_t *d,int voice,int i,int value)
+D9_API void drum909_set(drum909_t *d,int voice,int i,int value)
 { d9_set_panel(d,voice,i,value,0); }
 
 /* ===================================================================== */
@@ -253,7 +253,7 @@ static void d9_bt_init(d9_bt_t *v)
     d9_shape_prep(&v->shape, v->drive, v->dist_type);
 }
 
-void drum909_init(drum909_t *d)
+D9_API void drum909_init(drum909_t *d)
 {
     uint8_t *p = (uint8_t *)d;
     for (unsigned i = 0; i < sizeof(*d); ++i)
@@ -419,7 +419,7 @@ static void d9_tom_trigger(d9_tom_t *t, const d9_bt_t *p, float accent)
     t->mute = d9_ceil((d1 + 60.0f) * D9_MS);
 }
 
-void drum909_trigger(drum909_t *d, int voice, float vel)
+D9_API void drum909_trigger(drum909_t *d, int voice, float vel)
 {
     if (voice < 0 || voice >= D9_NUM)
         return;
@@ -529,7 +529,7 @@ static void d9_warm(d9_biquad_t *f, const float *end)
 }
 
 /* Kick (er99_bt_render with the stock sweep, one shell) */
-static void d9_render_bd(d9_bt_t *v, const float *nz, const d9_bus_t *bus, int n)
+static __attribute__((noinline)) void d9_render_bd(d9_bt_t *v, const float *nz, const d9_bus_t *bus, int n)
 {
     const int m = n < v->mute ? n : v->mute;
     v->mute -= m;
@@ -576,7 +576,7 @@ static void d9_render_bd(d9_bt_t *v, const float *nz, const d9_bus_t *bus, int n
 
 /* Snare (er99_bt_render, two shells + ENV4 noise). Its click path is pinned
  * off (attack 0 at every trigger), so it is not computed: 0 either way. */
-static void d9_render_sd(d9_bt_t *v, const float *nz, const d9_bus_t *bus, int n)
+static __attribute__((noinline)) void d9_render_sd(d9_bt_t *v, const float *nz, const d9_bus_t *bus, int n)
 {
     const int m = n < v->mute ? n : v->mute;
     v->mute -= m;
@@ -617,7 +617,7 @@ static void d9_render_sd(d9_bt_t *v, const float *nz, const d9_bus_t *bus, int n
 /* Toms (er99_tom909_render): three VCOs on their own envelopes + stick noise.
  * The two upper partials and the stick are attack features (110 / 70 / 8 ms);
  * once their envelopes have run out (-100 dB) they are skipped. */
-static void d9_render_tom(d9_tom_t *t, const d9_bt_t *p, const float *nz, const d9_bus_t *bus, int n)
+static __attribute__((noinline)) void d9_render_tom(d9_tom_t *t, const d9_bt_t *p, const float *nz, const d9_bus_t *bus, int n)
 {
     const int m = n < t->mute ? n : t->mute;
     t->mute -= m;
@@ -661,7 +661,7 @@ static void d9_render_tom(d9_tom_t *t, const d9_bt_t *p, const float *nz, const 
 }
 
 /* Rim shot (er99_rim909_render) */
-static void d9_render_rim(d9_rim_t *v, const float *nz, const d9_bus_t *bus, int n)
+static __attribute__((noinline)) void d9_render_rim(d9_rim_t *v, const float *nz, const d9_bus_t *bus, int n)
 {
     const int m = n < v->mute ? n : v->mute;
     v->mute -= m;
@@ -682,7 +682,7 @@ static void d9_render_rim(d9_rim_t *v, const float *nz, const d9_bus_t *bus, int
 }
 
 /* Hand clap (er99_clap909_render) */
-static void d9_render_clap(d9_clap_t *v, const float *nz, const d9_bus_t *bus, int n)
+static __attribute__((noinline)) void d9_render_clap(d9_clap_t *v, const float *nz, const d9_bus_t *bus, int n)
 {
     static const float amp[4] = { 1.22f, 1.35f, 1.68f, 1.0f };
     const int m = n < v->mute ? n : v->mute;
@@ -714,7 +714,7 @@ static void d9_render_clap(d9_clap_t *v, const float *nz, const d9_bus_t *bus, i
 /* Sample-free metallic voices: six detuned pulse oscillators, band/high-pass
  * filtering and white-noise excitation. These are Melodee approximations,
  * not the sampled 909 cymbals in x0x/9W9. Phase stays integer. */
-static void d9_render_smp(d9_smp_t *s, const d9_bus_t *bus, int n)
+static __attribute__((noinline)) void d9_render_smp(d9_smp_t *s, const d9_bus_t *bus, int n)
 {
     static const float hz[6] = {205.3f, 304.4f, 369.6f, 522.7f, 540.0f, 800.0f};
     int m = n < s->mute ? n : s->mute;
@@ -845,13 +845,13 @@ static void d9_render(drum909_t *d, float *dry, int n)
     }
 }
 
-void drum909_render(drum909_t *d, float *dry, int n)
+D9_API void drum909_render(drum909_t *d, float *dry, int n)
 {
     d9_dry_r = 0;
     d9_render(d, dry, n);
 }
 
-void drum909_render_st(drum909_t *d, float *dry_l, float *dry_r, int n)
+D9_API void drum909_render_st(drum909_t *d, float *dry_l, float *dry_r, int n)
 {
     d9_dry_r = dry_r;
     for (int v = 0; v < D9_NUM; ++v) {             /* every voice's pan glides, sounding or not */
@@ -864,7 +864,7 @@ void drum909_render_st(drum909_t *d, float *dry_l, float *dry_r, int n)
     d9_dry_r = 0;
 }
 
-void drum909_pan_settle(drum909_t *d)
+D9_API void drum909_pan_settle(drum909_t *d)
 {
     for (int v = 0; v < D9_NUM; ++v) {
         d->pan_lc[v] = d->pan_l[v];
@@ -872,7 +872,7 @@ void drum909_pan_settle(drum909_t *d)
     }
 }
 
-int drum909_active(const drum909_t *d)
+D9_API int drum909_active(const drum909_t *d)
 {
     for (int i = 0; i < 5; ++i)
         if (i < 2 ? d->bt[i].mute > 0 : d->tom[i - 2].mute > 0)

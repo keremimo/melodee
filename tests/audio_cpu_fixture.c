@@ -7,7 +7,7 @@
 #include "ui_test.c"
 #include <assert.h>
 
-static const uint8_t cpu_engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_DRUM,ENGI_DRUM};
+static const uint8_t cpu_engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_808,ENGI_909};
 static uint8_t fixture_raw[BANK_STORE_SIZE];
 static recorded_note_t fixture_notes[RECORD_MAX];
 /* Stopped, disarmed, empty four-track project with the assigned engines. */

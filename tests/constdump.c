@@ -11,7 +11,7 @@ static unsigned char nor[0x100000];
 #define BACKUP_TEST_NO_MAIN 1
 #define BACKUP_TEST_KITS 1
 #include "backup_test.c"
-/* (DRUM's Record kit take, encoder and record check: built in, modules/drum/kit_take.c) */
+/* (DRUM's Record kit take, encoder and record check: built in, modules/kits/kit_take.c) */
 
 static void magic(uint32_t m, int first)
 {

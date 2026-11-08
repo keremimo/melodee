@@ -224,12 +224,14 @@ static void route_recipe_tests(void)
         trk_note_on(TSEL,pads_on(TSEL)?36:60,100);int64_t energy=0;int32_t out[CTL];
         for(uint32_t k=0;k<1000;k++){track_render(TSEL,out,CTL);for(uint32_t n=0;n<CTL;n++)energy+=llabs(out[n]);}
         if(TSEL->eng_req==ENGI_MIDI)valid &= !energy && !gates();
-        else if(!energy){printf("silent recipe: %s %s\n",ENGINES[TSEL->eng_req]->name,DS_GOAL[goal]);audible=0;}
+        else if(!energy && !(pads_flag(TSEL,MOD3_PD_RECORD) && pads_rec(TSEL)>=0 && !rec_tab[pads_rec(TSEL)].n)){   /* (SAMPLER's
+            * kit with no take recorded here: silent, as the device's) */
+            printf("silent recipe: %s %s\n",ENGINES[TSEL->eng_req]->name,DS_GOAL[goal]);audible=0;}
         trk_note_off(TSEL,pads_on(TSEL)?36:60);
         designer_close(1);
     }
     failures+=check("ALL pages: every eligible page, each FM operator switched on, nothing switched off",coverage);
-    failures+=check("every engine and goal recipe produces audio through the real DSP",audible);
+    failures+=check("every engine and goal recipe produces audio through the real DSP (SAMPLER's kits: once recorded)",audible);
     failures+=check("all CZ goal recipes retain valid native envelope records",valid);
     failures+=check("wizard keys stay playable and do not become layer/grid shortcuts",clean);
 }

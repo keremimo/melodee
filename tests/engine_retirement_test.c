@@ -7,7 +7,7 @@ int main(void)
     int bad=0; reset(); up_boot();
     bad+=check("2.0 handles: none 0, the MIDI Track 1, the manifest's synths from 2, the user kinds past the handles",
                ENG_H_NONE==0 && ENGI_MIDI==1 && ENG_H_SHIP0==2 && NENGINES<=32u && USER_GENERAL>=NENGINES && USER_NATIVE_P5>=NENGINES &&
-               eng_map[ENGI_MIDI].uid==SHIP_ID_MIDI && eng_map[ENGI_PROPHET].uid==SHIP[0].uid && eng_map[ENGI_DRUM].uid==SHIP[4].uid);
+               eng_map[ENGI_MIDI].uid==SHIP_ID_MIDI && eng_map[ENGI_PROPHET].uid==SHIP[0].uid && eng_map[ENGI_808].uid==SHIP[4].uid && eng_map[ENGI_SAMPLER].uid==SHIP[9].uid);
     uint8_t entry[EMAP_ENTRY]={0};entry[0]=9;mod_put64(entry+4,0x1122334455667788ULL);memcpy(entry+12,"GONE",4);
     uint32_t from,e=eng_map_get(entry,&from);
     bad+=check("a synth a store names that is not here: a lent handle, its name, silent, not offered",

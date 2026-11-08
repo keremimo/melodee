@@ -16,7 +16,7 @@
 #include "drum_kit.h"                    /* the user kits' records */
 #include "drum_patch.h"                  /* the part's patch: the kit's offsets (where the firmware keeps it) */
 #include "drum_808.c"
-#include "x0x/drum909.c"
+#include "x0x/drum909.c"               /* (another kit's module: folded away, its calls with it) */
 
 typedef struct {
     dr8_t r;
@@ -135,7 +135,7 @@ static void drum_choke(drum_lane_t *K)                   /* a closed hat chokes 
 /* the lane voice v plays, 0 when it plays none (any more) */
 static drum_lane_t *drum_lane_of(track_t *t, const voice_t *v)
 {
-    if (t->p[P_E0] >= DK_909 || v->s[2] >= DK_909) return 0;
+    if (DRUM_KV(t->p) >= DK_909 || v->s[2] >= DK_909) return 0;
     drum_lane_t *K = drum_kit_of(t), *L;
     uint32_t i = voice_ix(t, v);
     if (!K || i >= NVOICE)
@@ -245,7 +245,7 @@ static int32_t drum_amp(track_t *t, voice_t *v, int32_t adsr)
 static __attribute__((noinline)) int drum_source(track_t *t,voice_t *v,drum_lane_t *L,int32_t *y,uint32_t n,dr_scratch_t *scratch,const int16_t *p)
 {
     uint32_t i;
-    if(p[P_E0]==DK_909) {
+    if(DRUM_IS(p, DK_909)) {
         drum909_part_t *k=drum909_of(t); if(!k || !k->nz)return 0;
         float f[CTL]={0}; drum909_render_voice(&k->d,v->s[1],k->nz,f,(int)n);
         for(i=0;i<n;i++)y[i]=(int32_t)(fm_clampf(f[i],-2.0f,2.0f)*12000.0f);
@@ -279,19 +279,19 @@ static __attribute__((noinline)) int32_t drum_lane_level(track_t *t,voice_t *v,d
 }
 static void drum_render_into(track_t *t,voice_t *v,int32_t *out,uint32_t n,const vmod_t *m,dr_scratch_t *scratch,const int16_t *p)
 {
-    if (p[P_E0] == DK_SID) {
+    if (DRUM_IS(p, DK_SID)) {
         if (v->s[2] == DK_SID)
             dsk_render(t, out, n > CTL ? CTL : n, m, p);
         return;
     }
 #if MELODEE_USER_KITS
-    if (p[P_E0] >= DK_USER0) {
+    if (DRUM_KV(p) >= DK_USER0) {
         if (v->s[2] == p[P_E0])
             drk_render(t, out, n > CTL ? CTL : n, m, p);
         return;
     }
 #endif
-    if (p[P_E0] >= DK_CR78) {
+    if (DRUM_KV(p) >= DK_CR78) {
         if (v->s[2] == p[P_E0])
             dlk_render(t, out, n > CTL ? CTL : n, m, p);
         return;
@@ -334,7 +334,7 @@ static void drum_render_p(track_t *t,voice_t *v,int32_t *out,uint32_t n,const vm
 { dr_scratch_t scratch; drum_render_into(t,v,out,n,m,&scratch,p); }   /* (CPU1: voice.c engine_batch_kernel) */
 /* the kit's cost on CPU1: the 909 its own, KIT SID the SID's, KIT FM FM6's, the others the 808's */
 static int32_t drum_batch(const track_t *t) { return drum_issid(t) ? AP_SID : drum_is909(t) ? AP_909 : drum_isfm(t) ? AP_FM6 : AP_808; }
-static uint32_t drum_state(const track_t *t) { return t ? drum_bytes(t) : sizeof(drum909_part_t); }
+static uint32_t drum_state(const track_t *t) { return t || DRUM_ONLY ? drum_bytes(t) : sizeof(drum909_part_t); }   /* (0: the most a kit takes) */
 
 /* the GM drum map, the first C (key 7) is the kick (C2, 36); a user kit: its white keys (drum_user_key) */
 static int32_t drum_keys(const track_t *t, uint32_t k)
@@ -344,18 +344,33 @@ static int32_t drum_keys(const track_t *t, uint32_t k)
     return clamp(29 + 12 * input_octave(t) + (int32_t)k, 0, 127);
 }
 
-/* {KIT, TUNE, TONE, DECY, SNAP, ACC, KICK, DRV} (SID: DIGI, RES; CR78: HATS); every kit suggests the BEAT pattern (GM notes) */
-#define DRUM_NPRESETS 6u
+/* {KIT, TUNE, TONE, DECY, SNAP, ACC, KICK, DRV} (SID: DIGI, RES; CR78: HATS); every kit suggests the BEAT pattern (GM
+ * notes). Each kit is a synth of its own (808, 909, SID KIT, CR78, FM KIT, SAMPLER: their presets below) */
+#define KIT808_N 1u
+#define KIT909_N 1u
+#define KITSID_N 2u
+#define KITCR_N 1u
+#define KITFM_N 1u
+#define SAMPLER_N 8u
 #if !MOD_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
-static const preset_t DRUM_PRESETS[] = {
-    DRUM_PRESET_808,
-    {"909 KIT", {DK_909, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
+static const preset_t KIT808_PRESETS[] = {DRUM_PRESET_808};
+static const preset_t KIT909_PRESETS[] = {{"909 KIT", {DK_909, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0}};
+static const preset_t KITSID_PRESETS[] = {
     {"SID KIT", {DK_SID, 64, 80, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},    /* every drum on the SID */
     {"SID DIGI", {DK_SID, 64, 80, 64, 64, 100, 1, 0}, {0, 100, 127, 100}, 0, 0},   /* kick, snare on $D418 */
-    {"CR78 KIT", {DK_CR78, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
-    {"FM KIT", {DK_FM, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
 };
-_Static_assert(NELEM(DRUM_PRESETS) == DRUM_NPRESETS, "DRUM's presets");
+static const preset_t KITCR_PRESETS[] = {{"CR78 KIT", {DK_CR78, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0}};
+static const preset_t KITFM_PRESETS[] = {{"FM KIT", {DK_FM, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0}};
+#define SAMPLER_KIT(n) {"KIT " #n, {DK_USER0 + n - 1, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0}
+static const preset_t SAMPLER_PRESETS[] = {SAMPLER_KIT(1), SAMPLER_KIT(2), SAMPLER_KIT(3), SAMPLER_KIT(4), SAMPLER_KIT(5),
+                                           SAMPLER_KIT(6), SAMPLER_KIT(7), SAMPLER_KIT(8)};
+#undef SAMPLER_KIT
+_Static_assert(NELEM(KIT808_PRESETS) == KIT808_N && NELEM(KIT909_PRESETS) == KIT909_N && NELEM(KITSID_PRESETS) == KITSID_N &&
+               NELEM(KITCR_PRESETS) == KITCR_N && NELEM(KITFM_PRESETS) == KITFM_N && NELEM(SAMPLER_PRESETS) == SAMPLER_N,
+               "the kits' presets");
+#define KIT_PRESETS(x) .presets = x,
+#else
+#define KIT_PRESETS(x)
 #endif
 /* KIT SID: KICK is DIGI (KICK and SNARE on $D418), DRV the filter's resonance */
 static const char *const N_DRUM_DIGI[] = {"OFF", "ON"};
@@ -385,38 +400,50 @@ static dlk_part_t *dlk_part(uint32_t part) { return mod_part_mem(part, sizeof(dl
 static drk_part_t *drk_part(uint32_t part) { return mod_part_mem(part, sizeof(drk_part_t)); }
 #endif
 
-static const engine_t ENG_DRUM = {
-    .name = "DRUM",
-    .page_title = {"KIT", "HIT"},
-    .edit = {
-        {"KIT", F_ENUM, DK_808, DK_LAST, DK_808, N_DRUM_KIT, 0},
-        {"TUNE", F_PCT, 0, 127, 64, 0, 0},
-        {"TONE", F_PCT, 0, 127, 64, 0, 0},
-        {"DECY", F_PCT, 0, 127, 64, 0, 0},
-        {"SNAP", F_PCT, 0, 127, 64, 0, 0},
-        {"ACC", F_PCT, 0, 127, 100, 0, 0},
-        {"KICK", F_ENUM, 0, 1, 0, N_DRUM_KICK, 0},
-        {"DRV", F_PCT, 0, 127, 0, 0, 0},
-    },
-#if !MOD_SIDE
-    .presets = DRUM_PRESETS,
-#endif
-    .npresets = DRUM_NPRESETS,
-    .note_on = drum_note_on,
-    .render = drum_render,
-    .amp = drum_amp,
-    .block = drum_block,
-    .knob = {P_E1, P_E2, P_E3, P_E4},
-    .poly = DV_NLANE,
-    .cap = drum_cap,
-    .desc = drum_desc,
-    .oneshot = 1,
-    .keys = drum_keys,
-    .state = drum_state,
-    .reuse = drum_reuse,
-    .batch = drum_batch, .render_p = drum_render_p,
-    .wclass = 5,
+/* a kit's engine: its name, its KIT values (the kit synths' one, SAMPLER's its eight records'), its presets */
 #if MELODEE_USER_KITS
-    .rec_check = drum_rec_check, .rec_take = drum_rec_take, .rec_pad = drum_rec_pad,
+#define KIT_RECS .rec_check = drum_rec_check, .rec_take = drum_rec_take, .rec_pad = drum_rec_pad,
+#else
+#define KIT_RECS
 #endif
-};
+#define KIT_ENGINE(sym, nm, lo, hi, pre, npre, recs)                                                                  \
+    static const engine_t sym = {                                                                                  \
+        .name = nm,                                                                                                \
+        .page_title = {"KIT", "HIT"},                                                                              \
+        .edit = {                                                                                                  \
+            {"KIT", F_ENUM, lo, hi, lo, N_DRUM_KIT, 0},                                                            \
+            {"TUNE", F_PCT, 0, 127, 64, 0, 0},                                                                     \
+            {"TONE", F_PCT, 0, 127, 64, 0, 0},                                                                     \
+            {"DECY", F_PCT, 0, 127, 64, 0, 0},                                                                     \
+            {"SNAP", F_PCT, 0, 127, 64, 0, 0},                                                                     \
+            {"ACC", F_PCT, 0, 127, 100, 0, 0},                                                                     \
+            {"KICK", F_ENUM, 0, 1, 0, N_DRUM_KICK, 0},                                                             \
+            {"DRV", F_PCT, 0, 127, 0, 0, 0},                                                                       \
+        },                                                                                                         \
+        KIT_PRESETS(pre)                                                                                           \
+        .npresets = npre,                                                                                          \
+        .note_on = drum_note_on, .render = drum_render, .amp = drum_amp, .block = drum_block,                     \
+        .knob = {P_E1, P_E2, P_E3, P_E4},                                                                          \
+        .poly = DV_NLANE, .cap = drum_cap, .desc = drum_desc, .oneshot = 1, .keys = drum_keys,                    \
+        .state = drum_state, .reuse = drum_reuse, .batch = drum_batch, .render_p = drum_render_p,                 \
+        .wclass = 5, recs                                                                                          \
+    };
+#if !DRUM_ONLY || DRUM_ONLY == DK_808
+KIT_ENGINE(ENG_KIT808, "808", DK_808, DK_808, KIT808_PRESETS, KIT808_N, )
+#endif
+#if !DRUM_ONLY || DRUM_ONLY == DK_909
+KIT_ENGINE(ENG_KIT909, "909", DK_909, DK_909, KIT909_PRESETS, KIT909_N, )
+#endif
+#if !DRUM_ONLY || DRUM_ONLY == DK_SID
+KIT_ENGINE(ENG_KITSID, "SID KIT", DK_SID, DK_SID, KITSID_PRESETS, KITSID_N, )
+#endif
+#if !DRUM_ONLY || DRUM_ONLY == DK_CR78
+KIT_ENGINE(ENG_KITCR, "CR78", DK_CR78, DK_CR78, KITCR_PRESETS, KITCR_N, )
+#endif
+#if !DRUM_ONLY || DRUM_ONLY == DK_FM
+KIT_ENGINE(ENG_KITFM, "FM KIT", DK_FM, DK_FM, KITFM_PRESETS, KITFM_N, )
+#endif
+#if MELODEE_USER_KITS && (!DRUM_ONLY || DRUM_ONLY == DK_USER0)
+KIT_ENGINE(ENG_SAMPLER, "SAMPLER", DK_USER0, DK_KIT_MAX, SAMPLER_PRESETS, SAMPLER_N, KIT_RECS)
+#endif
+#undef KIT_ENGINE

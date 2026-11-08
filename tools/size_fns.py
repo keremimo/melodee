@@ -46,9 +46,9 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               # the HOME menu's rows (the menu and the editor's SETTINGS share them); Melodee Studio's FM-1 page commands
               # (SETTINGS, MLEARN, PADS, DEVICE_CHANGED)
               "menu_rows.c", "editor_device.c",
-              # the data records' store and Record kit's sheet; DRUM's kits: their record check, a take's processing
+              # the data records' store and Record kit's sheet; SAMPLER's kits: their record check, a take's processing
               # (its module's: drum_enc.c, the take's encoder, stays at the module's -O2: its speed is the wait on "Saving")
-              "rec_store.c", "rec_ui.c", "../modules/drum/kit_store.c", "../modules/drum/kit_take.c",
+              "rec_store.c", "rec_ui.c", "../modules/kits/kit_store.c", "../modules/kits/kit_take.c",
               # the synth modules' loader, slots, editor command and registration (their audio callbacks: eng_module.c, -Os)
               "module_store.c", "editor_module.c", "eng_module_main.c",
               # the factory presets: fetched, named, a pick's patch put on its part (a module's: read from its file)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-// The synth modules a build ships (SID, DRUM, CZ-1, FM6, the Prophet: ABI 3, firmware/modules/sdk/mod_abi3.h), written
+// The synth modules a build ships (ABI 3, firmware/modules/sdk/mod_abi3.h: firmware/modules/shipped.h's), written
 // after an update through editor command 84 into the device's module slots: pool records, taken first come first served
 // like projects and preset banks. The file is build/melodee-mods.bin: the build's .mmod files one after another (each
 // head gives its length). A module of host 1..3 could name a firmware's own data key (the head's u32 at 52; since host 4
@@ -30,6 +30,9 @@ function mod_id(b) {
   return "";
 }
 const modError = (code, msg, rc) => Object.assign(new Error(msg), { code, rc });
+/* Melodee's own synths a later build no longer ships (2.0: DRUM split into the kit synths 808, 909, SID KIT, CR78, FM KIT,
+   SAMPLER): an update empties their slots, their pool sectors free again */
+export const MOD_RETIRED = ["241aacc57d998ffe"];      /* DRUM */
 /* module_store.c MS_*: a slot whose module plays (or will) */
 const MOD_MS = { EMPTY: 0, LOADED: 1, STORED: 2, BAD: 3, NORAM: 4, CLASH: 5, SKIPPED: 6, STALE: 7 };
 
@@ -90,8 +93,16 @@ export async function installModules(request, bundle, onProgress = () => {}) {
   if (files.some((f) => f.abi >= 2 && f.key && f.key !== own))
     throw modError("modbuild", "These synth modules belong to another firmware build");
   const playing = (s) => [MOD_MS.LOADED, MOD_MS.STORED, MOD_MS.NORAM, MOD_MS.SKIPPED].includes(s.state);
+  let removed = 0;
+  for (const s of list) {                                /* (a retired synth of Melodee's: its slot emptied) */
+    if (!s.len || !MOD_RETIRED.includes(s.id)) continue;
+    const rc = (await ask([4, s.slot], 10000))[0];
+    if (rc === 4) throw modError("modbusy", "Stop playback, then retry", rc);
+    if (rc) throw modError("modwrite", `Could not empty slot ${s.slot + 1} (${rc})`, rc);
+    s.len = 0; s.engine = 0; s.id = ""; s.state = MOD_MS.EMPTY; removed++;
+  }
   const todo = files.filter((f) => !list.some((s) => mod_same(s, f) && playing(s) && s.crc === f.crc && s.key === f.key));
-  if (!todo.length) return "current";
+  if (!todo.length) return removed ? "written" : "current";
   const total = todo.reduce((n, f) => n + f.bytes.length, 0);
   let done = 0;
   for (const f of todo) {
@@ -130,7 +141,8 @@ export async function modulesMissing(request, bundle) {
     const files = modBundle(bundle);
     if (!files.length) return false;
     const { list } = await modSlots((args, timeout) => request([MOD_COMMAND, args], { timeout }));
-    return files.some((f) => !list.some((s) => mod_same(s, f) && s.crc === f.crc && s.key === f.key &&
+    return list.some((s) => s.len && MOD_RETIRED.includes(s.id)) ||
+           files.some((f) => !list.some((s) => mod_same(s, f) && s.crc === f.crc && s.key === f.key &&
                                                [MOD_MS.LOADED, MOD_MS.STORED, MOD_MS.NORAM, MOD_MS.SKIPPED].includes(s.state)));
   } catch (_) { return null; }
 }

@@ -39,6 +39,9 @@ const E = vm.runInNewContext(proto + `
 /* the synths' schemas, byte for byte as the firmware's SCHEMA sends them (tests/descdump.c -> build/host/desc.json) */
 const DESC_JSON = join(HERE, "../build/host/desc.json");
 const SCHEMAS = existsSync(DESC_JSON) ? JSON.parse(readFileSync(DESC_JSON, "utf8")).SCHEMAS || null : null;
+/* the firmware's synths by handle (desc.json's ENG: the schemas' keys) */
+const FW_NAMES = SCHEMAS ? (JSON.parse(readFileSync(DESC_JSON, "utf8")).ENG || []).map((e) => e.name) : [];
+const KIT_NAMES = ["808", "909", "SID KIT", "CR78", "FM KIT", "SAMPLER"];   /* (2.0: DRUM's kits, synths of their own) */
 /* Melodee 2.0: engine numbers are a session's handles (0 none, 1 the MIDI Track, the shipped synths, then modules), never
    stored: the checks look them up by name, in INFO where they have one (H), else in the mock's own table (HN) */
 const engineHandles = (info) => (name) => info.engines.indexOf(name);
@@ -52,7 +55,7 @@ ok(["FM-1", "FM-1 MIDI 1", "Melodee", "Felucca"].every(name => E.isDevicePort({n
 {
   const mock=E.makeMockDevice({shared:true}),input=[...mock.access.inputs.values()][0],output=[...mock.access.outputs.values()][0];
   const link=new E.Link(d=>output.send(d),{timeout:500});input.onmidimessage=e=>link.receive(e.data);const rq=(r,o)=>link.request(r,o),info=E.parse[E.CMD.INFO](await rq(E.req.info()));
-  const H=engineHandles(info),P5=H("PROPHET"),CZ=H("CZ-1"),DR=H("DRUM");
+  const H=engineHandles(info),P5=H("PROPHET"),CZ=H("CZ-1"),DR=H("808");
   ok(info.shared?.total===384,"shared: one 384-slot capability replaces the engine pools");
   let all=await E.bank.list(rq,info);ok(all.total===384&&all.slots.at(-1).slot===383,"shared: pagination reaches slot U384 without wrapping");
   const raw=Array.from({length:138},(_,i)=>(i*37)&255);
@@ -157,7 +160,7 @@ async function editorMock() {
   inp.onmidimessage = (e) => link.receive(e.data);
   const rq = async (r, o) => link.request(r, o);
   const info = E.parse[E.CMD.INFO](await rq(E.req.info())), H = engineHandles(info);
-  ok(info.nengines === 30 && info.engines.slice(0, 7).join() === "-,MIDI Track,PROPHET,FM6,CZ-1,SID,DRUM" && info.engines.slice(7).every((n) => n === "-") &&
+  ok(info.nengines === 30 && info.engines.slice(0, 12).join() === "-,MIDI Track,PROPHET,FM6,CZ-1,SID,808,909,SID KIT,CR78,FM KIT,SAMPLER" && info.engines.slice(12).every((n) => n === "-") &&
      info.midi === 1 && info.namespace.general === 0x40 && info.namespace.fm === 0x41 && info.namespace.cz === 0x42 && info.namespace.p5 === 0x43 &&
      info.pcount === 124 && info.pe0 === 116,
     "editor: INFO (2.0 handles: 0 none, 1 MIDI Track, the shipped synths; the 0x49 tag's MIDI handle and user kinds)");
@@ -267,11 +270,11 @@ async function editorMock() {
   ok(!prefs.favorites[info.namespace.general][31] && !E.devicePresetRows(info, names, prefs).some((r) => r.user), "editor: erased slot disappears and loses star");
   {   /* the lists in the device's order: FM6 second, MIDI Track last, "-" never; the handles stay */
     const shown = E.engineOrder(info.engines).map((i) => info.engines[i]);
-    ok(shown.join() === "PROPHET,FM6,CZ-1,SID,DRUM,MIDI Track" &&
+    ok(shown.join() === "PROPHET,FM6,CZ-1,SID,808,909,SID KIT,CR78,FM KIT,SAMPLER,MIDI Track" &&
        E.engineOrder(info.engines)[1] === H("FM6") && E.engineOrder(info.engines).at(-1) === info.midi,
        "editor: engines listed FM6 second, MIDI Track last (indices kept)");
-    ok(E.engineOrder(["ANALOG", "X", "-", "DRUM", "FM6"]).join() === "0,4,3,1", "editor: an unknown engine follows the known ones");
-    m.state.favorites[H("DRUM")][0] = m.state.favorites[H("FM6")][0] = true;
+    ok(E.engineOrder(["X", "-", "808", "FM6"]).join() === "3,2,0", "editor: an unknown engine follows the known ones");
+    m.state.favorites[H("808")][0] = m.state.favorites[H("FM6")][0] = true;
     await rq(E.req.uiSet(3, 0));
     prefs = await E.readDevicePreferences(rq, info, names, prefs);
     const rows = E.devicePresetRows(info, names, prefs).filter((r) => !r.user), eng = [...new Set(rows.map((r) => r.engine))];
@@ -385,14 +388,16 @@ async function editorMidiTrack() {
    parameter descriptors, engines (titles, EDIT, presets), power-on sounds */
 function mockTables() {
   {
-    const m0 = E.makeMockDevice({ auto: false }), dr = m0.tables.ENG.find((e) => e.name === "DRUM");
+    const m0 = E.makeMockDevice({ auto: false }), dr = m0.tables.ENG.find((e) => e.name === "808");
     m0.stop();
     ok(!m0.tables.ENG.some((e) => ["PHASE", "VOICE", "TRIO", "WHEEL", "PHYS", "NOISE"].includes(e.name)) &&
        m0.tables.ENG.filter((e) => e.name === "-").every((e) => !e.presets.length),
        "editor: PHASE, VOICE, TRIO, WHEEL, PHYS and NOISE retired (no handle); a free handle has no presets");
-    ok(dr.name === "DRUM" && dr.edit.map((d) => d.label).join() === "KIT,TUNE,TONE,DECY,SNAP,ACC,KICK,DRV" &&
-       dr.edit[0].names.join() === "808,909,SID,CR78,FM,KIT 1,KIT 2,KIT 3,KIT 4,KIT 5,KIT 6,KIT 7,KIT 8" && dr.edit[0].min === 4 && dr.edit[0].max === 16 && dr.presets.length === 6 && dr.presets[0].name === "808 KIT" && dr.presets[2].name === "SID KIT" && dr.presets[3].name === "SID DIGI" && dr.presets[4].name === "CR78 KIT" && dr.presets[5].name === "FM KIT",
-       "editor: DRUM engine (KIT TUNE TONE DECY SNAP ACC KICK DRV, KIT 808), 808, 909, SID, CR78, FM kits, user kits 1..8");
+    const kits = ["808", "909", "SID KIT", "CR78", "FM KIT", "SAMPLER"].map((n) => m0.tables.ENG.find((e) => e.name === n));
+    ok(dr.name === "808" && dr.edit.map((d) => d.label).join() === "KIT,TUNE,TONE,DECY,SNAP,ACC,KICK,DRV" &&
+       kits.every((k) => k && k.edit[0].label === "KIT") && kits.map((k) => k.edit[0].min + ".." + k.edit[0].max).join() === "4..4,5..5,6..6,7..7,8..8,9..16" &&
+       kits.map((k) => k.presets.map((p) => p.name).join("+")).join() === "808 KIT,909 KIT,SID KIT+SID DIGI,CR78 KIT,FM KIT,KIT 1+KIT 2+KIT 3+KIT 4+KIT 5+KIT 6+KIT 7+KIT 8",
+       "editor: the kits, synths of their own (KIT TUNE TONE DECY SNAP ACC KICK DRV): 808, 909, SID KIT, CR78, FM KIT, SAMPLER (KIT 1..8)");
   }
   const dj = join(HERE, "../build/host/desc.json");
   if (!existsSync(dj)) { console.log("editor: mock tables == firmware (no build/host/desc.json)        skip"); return; }
@@ -679,7 +684,7 @@ async function editorGrid() {
   const w = E.parse[C.TRACK_STEP](await rq(E.req.trackStep(2, 4, { n: 0, notes: [0, 0, 0, 0], time: 0, flags: 0, vel: 0, hit: 0x12, acc: 0x02 })));
   ok(w.hit === 0x12 && w.acc === 0x02 && E.parse[C.TRACK_STEP]([2, 4, 0, 0, 0, 0, 0, 0, 0, 0]).hit === 0,
     "grid: TRACK_STEP carries the hits (an older firmware's reply: none)");
-  await rq(E.req.preset(engineHandles(info)("DRUM"), 0));   /* the selected track a DRUM kit, its 16 steps a grid */
+  await rq(E.req.preset(engineHandles(info)("808"), 0));   /* the selected track the 808 kit, its 16 steps a grid */
   for (let i = 0; i < 16; i++) {
     await rq(E.req.stepSet(i, { n: i === 2 ? 1 : 0, notes: [i === 2 ? 49 : 0, 0, 0, 0], time: i % 4 === 0 || i === 2 ? 0 : 2, flags: 0,
       vel: 0, hit: i % 4 === 0 ? 1 | (i === 0 ? 128 : 0) : 0, acc: i === 0 ? 128 : 0 }));
@@ -795,7 +800,7 @@ async function editorTracks() {
   const info = E.parse[C.INFO](await rq(E.req.info())), H = engineHandles(info);
   const tr = E.parse[C.TRACK](await rq(E.req.track()));
   ok(info.ntrk === 4 && tr.sel === 0 && tr.ntrk === 4 && tr.tracks[0].engine === H("PROPHET") && tr.tracks[1].engine === H("FM6")
-    && tr.tracks[3].engine === H("DRUM") && tr.tracks[3].preset === 0, "tracks: INFO NTRK, TRACK lists 4 parts (track 4: DRUM KIT)");
+    && tr.tracks[3].engine === H("808") && tr.tracks[3].preset === 0, "tracks: INFO NTRK, TRACK lists 4 parts (track 4: the 808 KIT)");
   /* the v1 commands follow the selected track */
   const d0 = E.parse[C.DUMP](await rq(E.req.dump()), info);
   const t1 = E.parse[C.TRACK](await rq(E.req.track(1)));
@@ -823,7 +828,7 @@ async function editorTracks() {
   const us = E.parse[C.UP_STORE](await rq(E.req.upStore(20, "X"), { timeout: 2500, retries: 0 }));
   const ul = E.parse[C.UP_LOAD](await rq(E.req.upLoad(1), { timeout: 2500, retries: 0 }));
   const dl = E.parse[C.DUMP](await rq(E.req.dump()), info);
-  ok(dd.engine === H("DRUM") && us.rc === 0 && ul.rc === 0 && dl.engine === H("FM6"), "tracks: track 4 selected -> DUMP engine DRUM, UP_STORE / UP_LOAD rc 0");
+  ok(dd.engine === H("808") && us.rc === 0 && ul.rc === 0 && dl.engine === H("FM6"), "tracks: track 4 selected -> DUMP engine 808, UP_STORE / UP_LOAD rc 0");
   /* pushes carry the selected track */
   await rq(E.req.track(0));
   ok(await E.startWatch(rq), "tracks: WATCH on");
@@ -856,7 +861,7 @@ async function editorMixer() {
   const info = E.parse[C.INFO](await rq(E.req.info()));
   const PAN = 39, MUTE = 40;
   const m0 = await E.mixer.read(rq, info, { pan: PAN });
-  ok(m0.ntrk === 4 && m0.tracks.length === 4 && m0.tracks[1].pan === -24 && m0.tracks[2].pan === 20 && m0.tracks[3].engine === engineHandles(info)("DRUM")
+  ok(m0.ntrk === 4 && m0.tracks.length === 4 && m0.tracks[1].pan === -24 && m0.tracks[2].pan === 20 && m0.tracks[3].engine === engineHandles(info)("808")
     && m0.tracks.every((x) => Number.isInteger(x.level) && (x.mute === 0 || x.mute === 1)), "mixer: read = TRACK + pan of every track (TRACK_DUMP)");
   /* level / mute of tracks that are not selected (clamped) */
   const a = await E.mixer.setMix(rq, 2, 70, 1);
@@ -958,7 +963,8 @@ async function editorTrackParam() {
    firmware's schemas: no synth's own code in the editor */
 async function synthTests() {
   if (!SCHEMAS) { console.log("synths (no build/host/desc.json)".padEnd(64) + " skip"); return; }
-  const FM = HN("FM6"), CZ = HN("CZ-1"), P5 = HN("PROPHET"), SID = HN("SID"), DR = HN("DRUM");   /* (the schemas: by handle) */
+  const FM = HN("FM6"), CZ = HN("CZ-1"), P5 = HN("PROPHET"), SID = HN("SID");   /* (the schemas: by handle) */
+  const KITS = KIT_NAMES.map((n) => FW_NAMES.indexOf(n));                         /* (the kit synths: the firmware's handles) */
   const schemas = Object.fromEntries(Object.entries(SCHEMAS).map(([e, b]) => [e, Uint8Array.from(b)]));
   const parsed = new Map(Object.entries(schemas).map(([e, b]) => [+e, E.SYNTH.parse(b)]));
   const bad = [];
@@ -971,17 +977,18 @@ async function synthTests() {
       if (!eq(b, s.def)) bad.push(`${e}: ${p.id}`);
     }
   }
-  ok(parsed.size === 5 && !bad.length, `synths: schemas ${[...parsed.keys()].join(" ")} parse, every field reads and writes back${bad.length ? " (" + bad.slice(0, 3) + ")" : ""}`);
-  {   /* a kit synth's pads and stored packing, from its schema alone (DRUM: 1.x's KIT wire, 54 bytes) */
-    const kit = [...parsed].filter(([, s]) => s.pads).map(([e]) => e), d = parsed.get(DR);
+  ok(parsed.size === 4 + KITS.length && KITS.every((e) => parsed.has(e)) && !bad.length, `synths: schemas ${[...parsed.keys()].join(" ")} parse, every field reads and writes back${bad.length ? " (" + bad.slice(0, 3) + ")" : ""}`);
+  {   /* a kit synth's pads and stored packing, from its schema alone (each kit's: 1.x's KIT wire, 54 bytes) */
+    const kit = [...parsed].filter(([, s]) => s.pads).map(([e]) => e), d = parsed.get(KITS[0]);
     const zero = (() => { const r = new Array(E.SYNTH.packedLen(d)).fill(0); let pos = 0;   /* (every offset 0: TUNE 24, the others 64) */
       const put = (v, w) => { for (let i = 0; i < w; i++, pos++) if ((v >> i) & 1) r[pos >> 3] |= 1 << (pos & 7); };
       for (let g = 0; g < 16; g++) { put(24, 6); put(64, 7); put(64, 7); put(0, 7); } return r; })();
     const far = zero.slice(); far[0] = (far[0] & ~63) | 49;  /* (TUNE +25: past its range) */
-    ok(kit.length === 1 && kit[0] === DR && d.pads.lanes.join() === "KICK,SNARE,CLAP,HATCL,HATOP,TOM,RIM,BELL" &&
-       E.SYNTH.packedLen(d) === 54 && E.SYNTH.packedOk(d, zero) && E.SYNTH.unpack(d, zero).every((v) => v === 0) &&
-       !E.SYNTH.packedOk(d, far) && !E.SYNTH.packedOk(parsed.get(SID), zero),
-       "synths: a kit's pads and its stored packing read from its schema (DRUM's: 54 bytes, its checks; SID: none)");
+    const each = KITS.every((e) => { const k = parsed.get(e);
+      return k && k.pads.lanes.join() === "KICK,SNARE,CLAP,HATCL,HATOP,TOM,RIM,BELL" && E.SYNTH.packedLen(k) === 54 &&
+             E.SYNTH.packedOk(k, zero) && E.SYNTH.unpack(k, zero).every((v) => v === 0) && !E.SYNTH.packedOk(k, far); });
+    ok(d && kit.length === KITS.length && KITS.every((e) => kit.includes(e)) && each && !E.SYNTH.packedOk(parsed.get(SID), zero),
+       "synths: each kit synth's pads and stored packing read from its schema (808 .. SAMPLER: 54 bytes, its checks; SID: none)");
   }
   const shown = [FM, CZ, P5].map((e) => [...E.SYNTH.sections(parsed.get(e))].length);
   ok(shown.every((n) => n > 1), `synths: FM6, CZ-1 and PROPHET pages from their schemas (${shown} sections)`);
@@ -1113,20 +1120,24 @@ async function editorModules() {
     const t = E.MODS.head(new Uint8Array(readFileSync(sid)));
     ok(t.name === "SID" && t.key === 0 && t.host === 4 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (no key, host table 4)");
   }
-  const drum = join(HERE, "..", "build", "modules", "drum.mmod");   /* (its pads and kits: the host table's since host 4) */
-  if (existsSync(drum)) {
-    const t = E.MODS.head(new Uint8Array(readFileSync(drum)));
-    ok(t.name === "DRUM" && t.key === 0 && t.host === 4 && t.npresets === 6, "modules: the built DRUM file's head reads as the firmware's (no key: its pads in its schema, its kits the host's data records)");
+  /* the kit synths (2.0: DRUM's kits, each a module; their pads and SAMPLER's kits: the host table's since host 4) */
+  const kits = [["808", "808", 1], ["909", "909", 1], ["sidkit", "SID KIT", 2], ["cr78", "CR78", 1], ["fmkit", "FM KIT", 1], ["sampler", "SAMPLER", 8]];
+  const kitFiles = kits.map(([stem]) => join(HERE, "..", "build", "modules", stem + ".mmod"));
+  if (kitFiles.every((f) => existsSync(f))) {
+    const heads = kitFiles.map((f) => E.MODS.head(new Uint8Array(readFileSync(f))));
+    ok(heads.every((t, i) => t.name === kits[i][1] && t.key === 0 && t.host === 4 && t.npresets === kits[i][2]) &&
+       !existsSync(join(HERE, "..", "build", "modules", "drum.mmod")),
+       "modules: the built kit synths' files (808, 909, SID KIT, CR78, FM KIT, SAMPLER) read as the firmware's (no key: their pads in their schemas, SAMPLER's kits the host's data records); no DRUM file");
   }
   let list = await E.MODS.list(rq);
   ok(!list.rc && !list.skipped && list.slots.length === 8 && list.slots.every((x) => !x.len), "modules: eight empty slots listed");
   const r = await E.MODS.upload(rq, f, null);
   list = await E.MODS.list(rq);
-  ok(!r.rc && r.slot === 0 && r.engine === 7 && list.slots[0].len === 1156 && list.slots[0].name === "TRIO" && list.slots[0].state === 1,
-     "modules: upload in pieces, committed, listed with its name and size, the first free handle (7: past the manifest's)");
+  ok(!r.rc && r.slot === 0 && r.engine === 12 && list.slots[0].len === 1156 && list.slots[0].name === "TRIO" && list.slots[0].state === 1,
+     "modules: upload in pieces, committed, listed with its name and size, the first free handle (12: past the manifest's)");
   const again = await E.MODS.upload(rq, file(22, "J106", 500, 3, 0x7106106n), null);
   const clash = await E.MODS.upload(rq, file(22, "J106 B", 400, 3, 0x7106106n), 2);
-  ok(!again.rc && again.slot === 1 && again.engine === 8 && clash.rc === 6, "modules: the next empty slot; a synth (its ID) another slot has refused");
+  ok(!again.rc && again.slot === 1 && again.engine === 13 && clash.rc === 6, "modules: the next empty slot; a synth (its ID) another slot has refused");
   const replaced = await E.MODS.upload(rq, file(6, "TRIO", 800, 3, 0x7106n), null);
   ok(!replaced.rc && replaced.slot === 0, "modules: the same synth (its ID) again replaces its slot");
   ok(!(await E.MODS.remove(rq, 1)) && !(await E.MODS.list(rq)).slots[1].len, "modules: delete empties the slot");

@@ -418,7 +418,7 @@ static int test_sound_loads(void)
     for (i = 0; i < NPART; i++)
         empty &= (uint32_t)seq_is_empty(&trk[i]);
     bad += check("power-on: the four sounds, every sequencer empty, no undo copy", empty && undo.trk == 0 && undo_depth == 0 &&
-                 trk[3].eng_req == ENGI_DRUM && trk[3].preset == 0u && trk[0].preset == TRK_DEF[0][1]);
+                 trk[3].eng_req == ENGI_808 && trk[3].preset == 0u && trk[0].preset == TRK_DEF[0][1]);
     set_engine_of(t, ENGI_SID);
     my_steps(t);
     t->p[P_E0 + 1] = 77;                          /* a sound edit */
@@ -509,7 +509,7 @@ static int test_sound_loads(void)
     track_defaults_steps(t);
     project_load(0);
     bad += check("saved 808 DRUM keeps every parameter and step with valid display metadata",
-                 t->eng_req == ENGI_DRUM && t->preset == 0u && !memcmp(t->p, before.p, sizeof t->p) &&
+                 t->eng_req == ENGI_808 && t->preset == 0u && !memcmp(t->p, before.p, sizeof t->p) &&
                  !memcmp(t->step, before.step, sizeof t->step));
     printf("ui: undo level %u bytes\n", (unsigned)sizeof undo);
     return bad;
@@ -1021,7 +1021,7 @@ static int test_track_count(void)
               seq_is_empty(&trk[i]);
     bad += check("a new song: four tracks, It's a Prophet 5, FM6 SOLID BASS, CZ-1 SYNTH.LEAD 1, 808 KIT; T1 selected",
                  ok && TRK_DEF[0][0] == ENGI_PROPHET && TRK_DEF[1][0] == ENGI_FM6 && TRK_DEF[2][0] == ENGI_CZ &&
-                 TRK_DEF[3][0] == ENGI_DRUM);
+                 TRK_DEF[3][0] == ENGI_808);
     bad += check("  NEW SONG without a template: all four", template_tracks() == NPART);
     song.ntrk = 1;                                      /* (a song down to one track) */
     ui.force = 1; frame();
@@ -1078,7 +1078,7 @@ static int test_track_count(void)
         track_defaults_steps(&trk[i]);
         one_note(&trk[i], i, 60 + i);
     }
-    set_engine_of(&trk[2], ENGI_DRUM);
+    set_engine_of(&trk[2], ENGI_808);
     trk[2].p[P_E0] = 4;
     pattern_t other; pattern_read(1, 3, &other);
     other.step[5].time = ST_NOTE; other.step[5].n = 1; other.step[5].note[0] = 70; pattern_write(1, 3, &other);
@@ -1112,7 +1112,7 @@ static int test_track_count(void)
     ok = trk_n() == 3u && song.sel == 1 && msg_is("TRACK 2 REMOVED") && proj_cur == 0u;
     bad += check("  Yes: three tracks, the one after it selected in its place, still project A's", ok);
     ok = trk[0].p[P_LEVEL] == 40 && trk[0].step[0].note[0] == 60 &&
-         trk[1].p[P_LEVEL] == 60 && trk[1].eng_req == ENGI_DRUM && trk[1].p[P_E0] == 4 && trk[1].step[2].note[0] == 62 &&
+         trk[1].p[P_LEVEL] == 60 && trk[1].eng_req == ENGI_808 && trk[1].p[P_E0] == 4 && trk[1].step[2].note[0] == 62 &&
          trk[2].p[P_LEVEL] == 70 && trk[2].step[3].note[0] == 63;
     bad += check("  T3, T4 moved down a place: their sound, level and steps", ok);
     bad += check("  their patterns too (old T3's bank 3 is T2's; old T2's gone)", pattern_at(1, 3)->step[6].note[0] == 72 &&
@@ -1341,7 +1341,7 @@ static int test_grid(void)
     track_t *t = &trk[0];
     uint32_t i, k, leds, ok;
     ui_power_on();
-    set_engine_of(t, ENGI_DRUM);
+    set_engine_of(t, ENGI_808);
     t->engine = t->eng_req;
     open_family(FAM_SEQ);
     frame();
@@ -1502,7 +1502,7 @@ static int test_grid(void)
         seq_release(t);
         bad += check("a sound load keeps the grid; on SID its hits play as their GM notes", ok);
         hold(B_EDIT);                             /* undo the sound loads: DRUM again */
-        set_engine_of(t, ENGI_DRUM);
+        set_engine_of(t, ENGI_808);
         t->engine = t->eng_req;
     }
     /* the menu: the keys play again */
@@ -1574,7 +1574,7 @@ static int test_browser(void)
                 ok &= (c = preset_cat(e, k)) >= 1u && c < CAT_N && CAT_LETTER[c] == PRESET_CAT[e][k];
         }
     for (i = 0; i < NENG_SHOWN; i++)
-        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || eng_vis(i) == ENGI_DRUM || eng_vis(i) == 11u;
+        ok &= (PRESET_CAT[eng_vis(i)] && PRESET_CAT[eng_vis(i)][0]) || pads_eng(eng_vis(i));   /* (a kit: its pads' category) */
     bad += check("BROWSE: a category letter for each factory preset of every engine shown", ok);
     bad += check("BROWSE: factory categories (Prophet, FM6, CZ-1, the kits)",
                  preset_cat(ENGI_PROPHET, find_preset(ENGI_PROPHET, "Fat Poly Bass")) == CAT_BASS &&
@@ -1584,14 +1584,14 @@ static int test_browser(void)
                  preset_cat(ENGI_FM6, find_preset(ENGI_FM6, "STEEL DRUM")) == CAT_BELL &&
                  preset_cat(ENGI_CZ, find_preset(ENGI_CZ, "METALLIC")) == CAT_BELL &&
                  preset_cat(ENGI_CZ, find_preset(ENGI_CZ, "SAXOPHONE")) == CAT_WIND &&
-                 preset_cat(ENGI_DRUM, find_preset(ENGI_DRUM, "909 KIT")) == CAT_DRUM);
+                 preset_cat(ENGI_909, find_preset(ENGI_909, "909 KIT")) == CAT_DRUM);
     bad += check("BROWSE: a slot's category from its name: a factory sound's of its engine, else its words",
                  cat_guess(ENGI_PROPHET, "Fat Poly Bas") == CAT_BASS &&
                  cat_guess(ENGI_PROPHET, "PICKLE PINCHER") == preset_cat(ENGI_PROPHET, find_preset(ENGI_PROPHET, "Pickle Pincher")) &&
                  cat_guess(ENGI_FM6, "E.PIANO 1") == CAT_KEYS && cat_guess(ENGI_FM6, "SYN-BASS 3") == CAT_BASS &&
                  cat_guess(ENGI_FM6, "PLUCKITY") == CAT_PLUCK && cat_guess(ENGI_FM6, "EPIC LEAD") == CAT_LEAD &&
                  cat_guess(ENGI_FM6, "TUBULAR BEL") == CAT_BELL && cat_guess(ENGI_CZ, "STRINGS 9") == CAT_STRING &&
-                 cat_guess(ENGI_DRUM, "ANYTHING") == CAT_DRUM && cat_guess(ENGI_FM6, "MY SOUND") == CAT_OTHER);
+                 cat_guess(ENGI_808, "ANYTHING") == CAT_DRUM && cat_guess(ENGI_FM6, "MY SOUND") == CAT_OTHER);
     preset_all_pos(&all);
     for (i = 0, sum = 0; i < NELEM(CAT_ORDER); i++) {
         list_set(LM_CAT + i);
@@ -1780,11 +1780,11 @@ static int test_favorites(void)
     bad += check("one favorite occupies one browser entry, without repeated copies",
                  preset_at(pos, &slot) == ENGI_PROPHET && slot == TSEL->preset &&
                  preset_at(total, &slot) == USER_GENERAL && slot == UP_SLOTS);
-    select_engine(ENGI_DRUM);
+    select_engine(ENGI_808);
     before = *TSEL;
     turn(EN_K3, 1);
     bad += check("a DRUM sound can be a favorite on any track", preset_favorite() &&
-                 favorite_has(ENGI_DRUM, 0) && !memcmp(TSEL, &before, sizeof before));
+                 favorite_has(ENGI_808, 0) && !memcmp(TSEL, &before, sizeof before));
     turn(EN_PRESET, 1);
     bad += check("filtered browsing crosses DRUM and synth sounds while retaining the track's pattern and ARP",
                  TSEL->eng_req == ENGI_PROPHET && preset_favorite() && !memcmp(TSEL->step, before.step, sizeof before.step) &&
@@ -1794,7 +1794,7 @@ static int test_favorites(void)
     bad += check("unmarking the current sound leaves it loaded even when outside the filtered list",
                  !preset_favorite() && total == 1 && pos == total && TSEL->eng_req == ENGI_PROPHET);
     turn(EN_PRESET, -1);
-    bad += check("browsing from a nonfavorite selects the last favorite", TSEL->eng_req == ENGI_DRUM);
+    bad += check("browsing from a nonfavorite selects the last favorite", TSEL->eng_req == ENGI_808);
     turn(EN_K3, -1);
     before = *TSEL;
     turn(EN_PRESET, 1);
@@ -2654,7 +2654,7 @@ static int test_popups(void)
         bad += check("SECTIONS: Prophet map, one detent each: KNOB 1 Filter/tune -> PW/mix, KNOB 2 Sound -> Osc",
                      o && smap.on && str_eq(sec.name[smap.row], "Osc"));
         press(B_HOME);
-        const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, 3u, ENGI_DRUM};
+        const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_SID, ENGI_808};
         int categories = 1, pages = 1;
         for (uint32_t e = 0; e < NELEM(engines); e++) {
             ui_power_on(); set_engine_of(TSEL, engines[e]); frame(); press(B_EDIT); press(B_EDIT);
@@ -2686,7 +2686,7 @@ static int test_popups(void)
         bad += check("SECTIONS: map KNOB 1 / SELECT move one page a detent inside the category in every engine", pages);
         /* The Drum example: KNOB 1 stays within Sound; KNOB 2 jumps straight to Drum.
          * A fresh category starts at its first page; a previously opened page is still recalled. */
-        ui_power_on(); set_engine_of(TSEL, ENGI_DRUM); go_title("EDIT 1"); frame(); press(B_EDIT);
+        ui_power_on(); set_engine_of(TSEL, ENGI_808); go_title("EDIT 1"); frame(); press(B_EDIT);
         uint8_t drum_pages[8];
         uint32_t sound_row = smap.row;
         char first[16], second[16];
@@ -3597,7 +3597,7 @@ static int test_boot_template(void)
     bad += check("KNOB 1 past 32: SLOT TMPL", song.g[G_SLOT] == PROJ_TMPL && str_eq(v, "TMPL"));
     trk[1].p[P_LEVEL] = 77;
     fm6_fn_set(1, FN_PBUP, 7);                           /* (track 2's FM6 bend range: kept too) */
-    set_engine_of(&trk[2], ENGI_DRUM);
+    set_engine_of(&trk[2], ENGI_808);
     trk[2].p[P_E0] = 4;                                  /* (KIT 808) */
     sheet_do("Save as template");
     bad += check("SAVE on TMPL: the template, at once (no NAME, no dialog)", template_used() && !name_on() &&
@@ -3610,7 +3610,7 @@ static int test_boot_template(void)
     trk[0].step[3].time = ST_NOTE; trk[0].step[3].n = 1; trk[0].step[3].note[0] = 60;
     project_save(0);                                     /* (A used: the template's project goes to B) */
     sheet_do("Load template");
-    ok = trk[1].p[P_LEVEL] == 77 && trk[2].eng_req == ENGI_DRUM && trk[2].p[P_E0] == 4 && fm6_fn_of(1)[FN_PBUP] == 7u;
+    ok = trk[1].p[P_LEVEL] == 77 && trk[2].eng_req == ENGI_808 && trk[2].p[P_E0] == 4 && fm6_fn_of(1)[FN_PBUP] == 7u;
     for (i = 0; i < NPART; i++)
         ok &= seq_is_empty(&trk[i]);
     bad += check("LOAD on TMPL: its sounds, every pattern empty, SLOT on a free slot (B)", ok &&
@@ -3884,7 +3884,7 @@ static int test_key_lights(void)
     for (k = 0, ok = 1; k < 27u; k++)
         ok &= key_light(14u + k) == (key_black(k) ? 0u : 1u);
     bad += check("QNT WHITE: the white keys glow, the black ones (silent) dark", ok);
-    set_engine_of(TSEL, ENGI_DRUM);
+    set_engine_of(TSEL, ENGI_808);
     frame(); ui_leds();
     for (k = 0, ok = 1; k < 27u; k++)
         ok &= key_light(14u + k) == 1u;
@@ -4523,7 +4523,7 @@ static int test_chord_page(void)
     t->p[P_CHRD] = CH_MIN7; t->p[P_VOIC] = VC_BASS;
     apply_preset_to(t, 1);
     bad += check("  a sound load keeps CHRD and VOIC (SCL settings)", t->p[P_CHRD] == CH_MIN7 && t->p[P_VOIC] == VC_BASS);
-    set_engine_of(t, ENGI_DRUM); t->engine = t->eng_req; frame();
+    set_engine_of(t, ENGI_808); t->engine = t->eng_req; frame();
     screen_clear(); ui.force = 1; ui_draw();
     bad += check("  a kit (DRUM): the page says so, MONO gray", chord_kit(t) && screen_gray());
     ui_power_on();
@@ -5019,7 +5019,7 @@ static int test_stage(void)
     }
     ui_power_on();
     track_select(3);
-    set_engine_of(TSEL, ENGI_DRUM);
+    set_engine_of(TSEL, ENGI_808);
     events_block(4);
     pads_flash[3] = 0;
     input_on(TSEL, 38, 100); input_off(TSEL, 38);
@@ -5041,7 +5041,7 @@ static int test_stage_knobs_after_drum(void)
     uint64_t s0;
     ui_power_on();
     track_select(3);
-    set_engine_of(TSEL, ENGI_DRUM);
+    set_engine_of(TSEL, ENGI_808);
     go_title("DRUM SOUND");
     frame();
     go_home();
@@ -6175,7 +6175,7 @@ static int test_smk_user_kit_keys(void)
     static const uint8_t WHITE[12] = {1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1};   /* C .. B */
     track_t *t = &trk[3];
     int ok = 1, gm = 1;
-    set_engine_of(t, ENGI_DRUM);
+    set_engine_of(t, ENGI_SAMPLER);
     for (int32_t oct = -2; oct <= 2; oct++) {
         t->p[P_E0] = DK_USER0;
         song.octave = (int8_t)oct; t->mpc_octave = (int8_t)oct;
@@ -6186,8 +6186,9 @@ static int test_smk_user_kit_keys(void)
             ok &= got == want;
             w += WHITE[kb % 12];
         }
-        t->p[P_E0] = DK_909;
+        set_engine_of(t, ENGI_909);                      /* (the 909: a synth of its own) */
         gm &= kb_map(t, 7) == (uint32_t)clamp(36 + 12 * input_octave(t), 0, 127) && smk_ext_map(t, -5) == kb_map(t, 0) - 5u;
+        set_engine_of(t, ENGI_SAMPLER);
     }
     song.octave = 0; t->mpc_octave = 0;
     set_engine_of(t, trk_def_engine(3));

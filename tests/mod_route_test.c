@@ -44,7 +44,7 @@ static void compare(track_t *t)
 }
 static void parity(void)
 {
-    static const uint32_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_DRUM};
+    static const uint32_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_808};
     host_tracks_init();
     for(uint32_t k=0;k<50000;k++){
         track_t *t=&trk[k%NPART];
