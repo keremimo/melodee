@@ -509,7 +509,8 @@ def check(path):
     if schm and (len(schm) < 52 or zlib.crc32(schm[52:]) != struct.unpack_from("<I", schm, 48)[0]):
         raise SystemExit(f"{path}: its SCHM chunk does not check")
     print(f"{path}: {vendor.rstrip(bytes(1)).decode()}/{n} uid {uid:08x}, engine {engine}, ABI {abi} host {host}" + (f", key {key:08x} (another firmware's)" if key else "") +
-          f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
+          f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}, "
+          + ("signed" if len(chunks.get(SIGN_TAG, b"")) == 64 else "unsigned") + ": ok")
 
 
 WASM_TAG = 0x4D534157                          # "WASM": the module as a WebAssembly side module (Studio's core)

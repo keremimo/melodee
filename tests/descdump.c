@@ -110,6 +110,9 @@ int main(void)
             putchar(',');
         js_str(ENGINES[eng_vis(k)]->name);
     }
+    printf("],\n\"MAP\":[");                        /* the engine map's defaults (eng_map.c): each number's UID, 0 none */
+    for (k = 0; k < NENGINES; k++)
+        printf("%s%u", k ? "," : "", (unsigned)eng_map[k].uid);
     printf("],\n\"TRK_DEF\":[");
     for (k = 0; k < NPART; k++)
         printf("%s[%d,%d]", k ? "," : "", TRK_DEF[k][0], TRK_DEF[k][1]);

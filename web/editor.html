@@ -370,6 +370,10 @@
 <script>
 "use strict";
 /*PROTO-BEGIN*/
+/* Melodee's synths by their module UIDs (firmware/modules/shipped.h: CRC-32 of "melodee/<name>"): who a device's
+   engine number is comes from its engine map (editor 84 op 6), these are the ones Melodee ships */
+const UID = { SID: 0xC4263526, TRIO: 0xDEA21A21, WHEEL: 0x6A2E8CB7, DRUM: 0x86C271CF, FM6: 0x04AC81A9, CZ1: 0xAB53D627,
+  PROPHET: 0xA2CFA9AB };
 const SCALE_INFO = [{"name": "CHR", "title": "Chromatic", "family": "Western", "count": 12}, {"name": "MAJ", "title": "Major", "family": "Western", "count": 7}, {"name": "MIN", "title": "Natural minor", "family": "Western", "count": 7}, {"name": "DOR", "title": "Dorian", "family": "Western", "count": 7}, {"name": "MIX", "title": "Mixolydian", "family": "Western", "count": 7}, {"name": "PEN", "title": "Major pentatonic", "family": "Western", "count": 5}, {"name": "MPEN", "title": "Minor pentatonic", "family": "Western", "count": 5}, {"name": "HARM", "title": "Harmonic minor", "family": "Western", "count": 7}, {"name": "PHRY", "title": "Phrygian", "family": "Western", "count": 7}, {"name": "LYD", "title": "Lydian", "family": "Western", "count": 7}, {"name": "LOC", "title": "Locrian", "family": "Western", "count": 7}, {"name": "MEL", "title": "Melodic minor", "family": "Western", "count": 7}, {"name": "BLUES", "title": "Blues", "family": "Western", "count": 6}, {"name": "WHOLE", "title": "Whole tone", "family": "Western", "count": 6}, {"name": "DIMHW", "title": "Half-whole diminished", "family": "Western", "count": 8}, {"name": "DIMWH", "title": "Whole-half diminished", "family": "Western", "count": 8}, {"name": "5EDO", "title": "5-tone equal division", "family": "Equal divisions", "count": 5}, {"name": "7EDO", "title": "7-tone equal division", "family": "Equal divisions", "count": 7}, {"name": "9EDO", "title": "9-tone equal division", "family": "Equal divisions", "count": 9}, {"name": "10EDO", "title": "10-tone equal division", "family": "Equal divisions", "count": 10}, {"name": "13EDO", "title": "13-tone equal division", "family": "Equal divisions", "count": 13}, {"name": "14EDO", "title": "14-tone equal division", "family": "Equal divisions", "count": 14}, {"name": "15EDO", "title": "15-tone equal division", "family": "Equal divisions", "count": 15}, {"name": "16EDO", "title": "16-tone equal division", "family": "Equal divisions", "count": 16}, {"name": "17EDO", "title": "17-tone equal division", "family": "Equal divisions", "count": 17}, {"name": "18EDO", "title": "18-tone equal division", "family": "Equal divisions", "count": 18}, {"name": "19EDO", "title": "19-tone equal division", "family": "Equal divisions", "count": 19}, {"name": "20EDO", "title": "20-tone equal division", "family": "Equal divisions", "count": 20}, {"name": "21EDO", "title": "21-tone equal division", "family": "Equal divisions", "count": 21}, {"name": "22EDO", "title": "22-tone equal division", "family": "Equal divisions", "count": 22}, {"name": "23EDO", "title": "23-tone equal division", "family": "Equal divisions", "count": 23}, {"name": "24EDO", "title": "24-tone equal division", "family": "Equal divisions", "count": 24}, {"name": "26EDO", "title": "26-tone equal division", "family": "Equal divisions", "count": 26}, {"name": "27EDO", "title": "27-tone equal division", "family": "Equal divisions", "count": 27}, {"name": "29EDO", "title": "29-tone equal division", "family": "Equal divisions", "count": 29}, {"name": "31EDO", "title": "31-tone equal division", "family": "Equal divisions", "count": 31}, {"name": "34EDO", "title": "34-tone equal division", "family": "Equal divisions", "count": 34}, {"name": "36EDO", "title": "36-tone equal division", "family": "Equal divisions", "count": 36}, {"name": "41EDO", "title": "41-tone equal division", "family": "Equal divisions", "count": 41}, {"name": "53EDO", "title": "53-tone equal division", "family": "Equal divisions", "count": 53}, {"name": "JI-MAJ", "title": "Just major", "family": "Just intonation", "count": 7}, {"name": "JI-MIN", "title": "Just minor", "family": "Just intonation", "count": 7}, {"name": "JI-12", "title": "Just chromatic", "family": "Just intonation", "count": 12, "retired": true}, {"name": "JI-7L", "title": "7-limit chromatic", "family": "Just intonation", "count": 12, "retired": true}, {"name": "JI-7", "title": "Just diatonic", "family": "Just intonation", "count": 7}, {"name": "HARM8", "title": "Harmonic series 8", "family": "Harmonic", "count": 8}, {"name": "HARM16", "title": "Harmonic series 16", "family": "Harmonic", "count": 16}, {"name": "PARTCH", "title": "Partch 43-tone", "family": "Just intonation", "count": 43}, {"name": "HARRIS", "title": "Harrison 8-tone", "family": "Just intonation", "count": 8}, {"name": "PYTH", "title": "Pythagorean", "family": "Historical", "count": 12, "retired": true}, {"name": "MT-1/4", "title": "Quarter-comma meantone", "family": "Historical", "count": 12, "retired": true}, {"name": "MT-1/3", "title": "Third-comma meantone", "family": "Historical", "count": 12, "retired": true}, {"name": "MT-1/6", "title": "Sixth-comma meantone", "family": "Historical", "count": 12, "retired": true}, {"name": "WERCK3", "title": "Werckmeister III", "family": "Historical", "count": 12, "retired": true}, {"name": "KIRN3", "title": "Kirnberger III", "family": "Historical", "count": 12, "retired": true}, {"name": "VALLOT", "title": "Vallotti", "family": "Historical", "count": 12, "retired": true}, {"name": "YOUNG2", "title": "Young II", "family": "Historical", "count": 12, "retired": true}, {"name": "RAST-J", "title": "Rast 11-limit", "family": "Regional", "count": 7}, {"name": "SABA-J", "title": "Saba just", "family": "Regional", "count": 8}, {"name": "SHRUTI", "title": "Indian 22 shruti", "family": "Regional", "count": 22}, {"name": "SLENDR", "title": "Slendro average", "family": "Regional", "count": 5}, {"name": "PELOG", "title": "Pelog", "family": "Regional", "count": 7}, {"name": "BP-ET", "title": "Bohlen-Pierce equal", "family": "Non-octave", "count": 13}, {"name": "BP-JI", "title": "Bohlen-Pierce just", "family": "Non-octave", "count": 13}, {"name": "RAST-D", "title": "Rast", "family": "Maqam models", "count": 7, "retired": true}, {"name": "BAYAT-D", "title": "Bayati", "family": "Maqam models", "count": 7, "retired": true}, {"name": "HIJAZ-D", "title": "Hijaz", "family": "Maqam models", "count": 7, "retired": true}, {"name": "SABA-D", "title": "Saba", "family": "Maqam models", "count": 7, "retired": true}, {"name": "HUSAY-D", "title": "Husayni", "family": "Maqam models", "count": 7, "retired": true}, {"name": "SIKAH-D", "title": "Sikah", "family": "Maqam models", "count": 7, "retired": true}, {"name": "RAST", "title": "Rast", "family": "Maqam models", "count": 7}, {"name": "BAYATI", "title": "Bayati", "family": "Maqam models", "count": 7}, {"name": "HIJAZ", "title": "Hijaz", "family": "Maqam models", "count": 7}, {"name": "SABA", "title": "Saba", "family": "Maqam models", "count": 7}, {"name": "HUSAYN", "title": "Husayni", "family": "Maqam models", "count": 7}, {"name": "SIKAH", "title": "Sikah", "family": "Maqam models", "count": 7}]; /* generated scale metadata */
 /* Match metadata by stable short name, keeping older/unknown device lists usable. */
 function scaleRows(desc, family = "All scales", query = "", favorites = [], current = -1) {
@@ -1866,6 +1870,12 @@ function makeMockDevice(opt = {}) {
     {name:"MIDI Track",titles:["MIDI Track","-"],edit:[D("CH",F.INT,1,16,1),E("TRS",["OFF","ON"],0),...Array(6).fill(NONE)],
       presets:[P("MIDI Track",[1,0,0,0,0,0,0,0],[0,0,0,0],0)]});
   ENG.push(...Array.from({length:8},()=>({name:"-",titles:["-","-"],edit:Array(8).fill(NONE),presets:[]})));   /* 22..29: synth modules' numbers */
+  /* the mock device's engine map (firmware eng_map.c: each number's module UID, 0 none; == desc.json MAP): the
+     synths it plays by who they are, not by their numbers */
+  const MOCK_MAP = Array(30).fill(0);
+  [[3, UID.SID], [6, UID.TRIO], [7, UID.WHEEL], [10, UID.DRUM], [12, UID.FM6], [15, UID.CZ1], [19, UID.PROPHET]]
+    .forEach(([n, u]) => { MOCK_MAP[n] = u; });
+  const MOCK_ENGI = (uid) => MOCK_MAP.indexOf(uid);
   const FM6_E = ENG.findIndex((e) => e.name === "FM6"), FM6_BANK = 0;
   /* the mock's demo sequences (the device powers on empty; it has no pattern library): absolute notes, 0 rest;
      flags 1 accent, 2 slide, 4 tie (holds the previous note). ACID, BEAT */
@@ -1977,14 +1987,15 @@ function makeMockDevice(opt = {}) {
       st.p[P_E0] = st.sel + 1;
       for (let slot=0;slot<3;slot++) {st.p[96+slot*4]=0;st.p[108+slot]=0;}
     }
-    if (st.engine === 15 || st.engine === 19) st.p[33] = st.p[34] = st.p[35] = st.p[36] = 0;   /* (their presets: dry) */
+    if (st.engine === MOCK_ENGI(UID.CZ1) || st.engine === MOCK_ENGI(UID.PROPHET))
+      st.p[33] = st.p[34] = st.p[35] = st.p[36] = 0;   /* (their presets: dry) */
     st.tracks[st.sel].patch = st.schemaParsed.has(st.engine) ? st.schemaParsed.get(st.engine).def.slice() : [];   /* (the
                                                       * mock has no synth's presets: its starting patch) */
   }
   function setEngine(ei) {
     st.engine = ei % ENG.length;
     for (let i = 0; i < 8; i++) st.p[P_E0 + i] = ENG[st.engine].edit[i].def;
-    applyPreset(st.engine===19?1:0);   /* PROPHET: the first factory program */
+    applyPreset(st.engine===MOCK_ENGI(UID.PROPHET)?1:0);   /* PROPHET: the first factory program */
   }
   const snapshot = (name) => {                   /* (upreset.c up_store: a DRUM track that strikes a lane: its grid) */
     const grid = isDrum() ? gridFromSteps(st.step) : null;
@@ -2006,7 +2017,8 @@ function makeMockDevice(opt = {}) {
     clearSteps(); st.p[29] = 16;
   });
   /* the power-on sounds (engines.c TRK_DEF): IT'S A PROPHET 5, SOLID BASS, SYNTH.LEAD 1, 808 KIT */
-  [[1, FM6_E, 10], [2, 15, 52], [3, 10, 0], [0, 19, 1]].forEach(([i, e, p]) => { st.sel = i; setEngine(e); applyPreset(p); });
+  [[1, MOCK_ENGI(UID.FM6), 10], [2, MOCK_ENGI(UID.CZ1), 52], [3, MOCK_ENGI(UID.DRUM), 0], [0, MOCK_ENGI(UID.PROPHET), 1]]
+    .forEach(([i, e, p]) => { st.sel = i; setEngine(e); applyPreset(p); });
   /* the device powers on with its sequencers empty; the mock starts as a little demo to look at: track 1 with
      IT'S A PROPHET 5, track 4 with BEAT, bass left, lead right */
   st.sel = 3; loadDemo(1);
@@ -2539,7 +2551,7 @@ function makeMockDevice(opt = {}) {
   ];
   return {
     state: st, sim,
-    tables: { TP, GP, ENG, P_COUNT, G_COUNT, NSTEP, P_E0, G_ENGSEL, P_RESERVED45, NTRK },   /* test_web.mjs: == the firmware */
+    tables: { TP, GP, ENG, P_COUNT, G_COUNT, NSTEP, P_E0, G_ENGSEL, P_RESERVED45, NTRK, MAP: MOCK_MAP },   /* test_web.mjs: == the firmware */
     stop: () => timers.forEach(clearInterval),
     access: { sysexEnabled: true, inputs: new Map([[input.id, input]]), outputs: new Map([[output.id, output]]), onstatechange: null },
   };
