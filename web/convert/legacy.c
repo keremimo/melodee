@@ -554,13 +554,62 @@ EXPORT(cv_in_size) uint32_t cv_in_size(void) { return CV_MAX; }
 EXPORT(cv_out) uint8_t *cv_out(void) { return cv_outb; }
 EXPORT(cv_report) const char *cv_report(void) { return lg_rep; }
 EXPORT(cv_report_len) uint32_t cv_report_len(void) { return lg_rep_n; }
-/* project id (n bytes) -> its FBKS record: its length; 0: 1.x refused it */
+/* ---- a 2.0 project record packed as firmware 2.0 saves one (project_stream.c HPJ2: the 32-byte head, the tail block,
+ * the FUN record's block, each packed or as it is), so a converted project takes the room a saved one does: a raw
+ * record stays 27,904 bytes (seven sectors) on the device until it is saved there again. 1.x's packer is 2.0's
+ * (pz_find, pz_note: the same code), its output into RAM here; firmware 2.0 unpacks the record on PUT and checks its
+ * sum (proj_stream_load) */
+static uint32_t lg_pz(uint8_t *o, const uint8_t *s, uint32_t n)   /* pz_pack's bytes for s[0..n): their count */
+{
+    uint16_t *head = (uint16_t *)(void *)proj_wire_u.raw;
+    uint32_t i = 0, lit = 0, at = 0;
+#define LG_LITS(end, k) do { if (k) { o[at++] = (uint8_t)((k) - 1u); memcpy(o + at, (end) - (k), (k)); at += (k); } } while (0)
+    memset(head, 0xFF, 2u * PZ_WAYS << PZ_HBITS);
+    while (i < n) {
+        uint32_t c = 0, next, len = pz_find(s, n, i, head, &c);
+        pz_note(s, n, i, head);
+        if (len >= 3u && pz_find(s, n, i + 1u, head, &next) > len) len = 0;
+        if (len >= 3u) {
+            LG_LITS(s + i, lit); lit = 0;
+            o[at++] = (uint8_t)(0x80u | (len - 3u)); o[at++] = (uint8_t)(i - c - 1u); o[at++] = (uint8_t)((i - c - 1u) >> 8);
+            for (len--, i++; len; len--, i++) pz_note(s, n, i, head);
+        } else {
+            i++;
+            if (++lit == 128u) { LG_LITS(s + i, lit); lit = 0; }
+        }
+    }
+    LG_LITS(s + i, lit);
+#undef LG_LITS
+    return at;
+}
+_Static_assert(8u + sizeof(project_store_t) == BANK_ACTIVE_OFF && BANK_ACTIVE_OFF + BANK_TAIL_SIZE == BANK_STORE_SIZE &&
+               BANK_STORE_SIZE == 27904u, "HPJ2: 2.0's record is 1.x's layout (header, FUN record, tail, sum)");
+static uint32_t lg_hpj2(const uint8_t *raw, uint8_t *out)   /* raw[BANK_STORE_SIZE] -> HPJ2 in out: its length */
+{
+    static uint8_t blk[BANK_STORE_SIZE + BANK_STORE_SIZE / 64u];
+    const uint32_t off[2] = {BANK_ACTIVE_OFF, 8u}, len[2] = {PZ_TAIL, sizeof(project_store_t)};
+    pj_head_t h;
+    uint32_t at = PJ_HEAD;
+    memset(&h, 0, sizeof h);
+    h.magic = PZ_MAGIC; h.len = BANK_STORE_SIZE;
+    memcpy(&h.map[0], raw, 4u); memcpy(&h.map[1], raw + BANK_STORE_SIZE - 4u, 4u);
+    for (uint32_t k = 0; k < 2u; k++) {
+        uint32_t m = lg_pz(blk, raw + off[k], len[k]);
+        if (m < len[k]) { memcpy(out + at, blk, m); h.map[2u + k] = m; }
+        else { memcpy(out + at, raw + off[k], len[k]); h.map[2u + k] = (m = len[k]) | PZ_RAW; }
+        at += m;
+    }
+    memcpy(out, &h, sizeof h);
+    return at;
+}
+/* project id (n bytes) -> its FBKS record, packed (HPJ2): its length; 0: 1.x refused it */
 EXPORT(cv_project) uint32_t cv_project(uint32_t id, uint32_t n)
 {
+    static uint8_t rec[BANK_STORE_SIZE];
     lg_note("project %u\n", (unsigned)id);
-    uint32_t rc = n <= CV_MAX ? lg_project(cv_inb, n, cv_outb) : 0x82u;
+    uint32_t rc = n <= CV_MAX ? lg_project(cv_inb, n, rec) : 0x82u;
     if (rc) lg_note("  1.x refused it (%#x): left out\n", (unsigned)rc);
-    return rc ? 0u : BANK_STORE_SIZE;
+    return rc ? 0u : lg_hpj2(rec, cv_outb);
 }
 /* preset bank id (n bytes) into the 1.x runtime: rc 0 taken */
 EXPORT(cv_bank_in) uint32_t cv_bank_in(uint32_t id, uint32_t n)

@@ -18,6 +18,7 @@ import { MELODEE_LOADER, STOCK_LOADER, melodeeLoader } from "../fm1ota.js";
 import { BackupConnection } from "../fm1backup.js";
 import { installResources, resHeader, resStatus, RES_COMMAND } from "../fm1res.js";
 import { installModules, modulesMissing } from "../fm1mods.js";
+import { prepareConversion, writeConverted } from "./conversion.js";
 import { setupLeaving } from "./leave.js";
 
 const IS_OTA = (id) => /^ota-/i.test(id.model);
@@ -53,6 +54,7 @@ const TEXT = {
     goResume: "Resume installation", goBoot: "Install m-bootloader",
     planInstall: "Melodee {v} replaces this FM-1's firmware. Back up your sounds first: Settings, then Backup, in the editor.",
     planUpdate: "Back up your sounds before updating: Settings, then Backup, in the editor.",
+    planConvert: "Melodee {v} keeps projects and sounds in a new form. Updating saves a backup of yours to this computer, converts them and writes them back.",
     planResume: "The FM-1 is waiting in update mode. Resuming writes Melodee {v} again from the start of the write.",
     planThis: "Melodee {v} is already on this FM-1. Reinstalling is safe and keeps your sounds.",
     planBoot: "Melodee {v} is already on this FM-1, so only m-bootloader is written.",
@@ -86,6 +88,9 @@ const TEXT = {
     stWrite: "Writing the firmware", stReboot: "Restarting the FM-1", stBootWait: "Waiting for Melodee to start",
     stBoot: "Writing m-bootloader. The FM-1 restarts by itself", stFind: "Finding the FM-1 in update mode",
     stRes: "Writing the fonts and factory sounds",
+    stCheck: "Checking your projects and sounds", stBackup: "Backing up your projects and sounds",
+    stRestore: "Writing your projects and sounds back",
+    phBackup: "Back up", phRestore: "Your sounds",
     etaMin: "About {n} min left", etaSec: "Less than a minute left",
     stall: "Waiting for the FM-1… keep the cable connected.",
     backKept: "You left this tab for {s}. The installation kept going, but please stay here until it's done.",
@@ -104,6 +109,16 @@ const TEXT = {
     endSetupMods: "Melodee {v} runs, but its SID and DRUM synths weren't written. Until they are, tracks on them stay silent.",
     tipResRestart: "Switch the FM-1 off and on once, so every sound list shows the factory sounds.",
     tipEditor: "Open the editor to browse sounds and make backups.",
+    tipConverted: "Your projects and sounds were converted for Melodee {v} and written back.",
+    tipBackupSaved: "A backup of them as they were is in your downloads: {f}.",
+    tipConvertNotes: "A few things couldn't stay exactly as they were. The log lists them.",
+    endSoundsH: "Melodee {v} is installed, but your sounds weren't written back",
+    endSounds: "Your backup and a converted copy are in your downloads ({f}). Restore the converted copy in the editor: Settings, then Backup.",
+    e_convbackup: "Your projects and sounds couldn't be backed up, so nothing was written. Stop playback and try again. ({d})",
+    e_convfetch: "The converter for your sounds couldn't be downloaded, so nothing was written: {d}",
+    e_convfail: "Your projects and sounds couldn't be converted, so nothing was written: {d}",
+    e_convlost: "The FM-1 stopped answering. Keep the cable connected.",
+    e_convwrite: "Writing them back stopped: {d}", e_convverify: "What was written back didn't check out: {d}",
     tipBoot: "To check m-bootloader: switch the FM-1 off, hold PLAY and switch it on. Its recovery menu appears.",
     endPausedH: "Installation paused",
     endPaused: "The FM-1 is safe. It waits in update mode until the installation finishes, even if it's switched off.",
@@ -187,6 +202,7 @@ const TEXT = {
     goResume: "インストールを再開", goBoot: "m-bootloader をインストール",
     planInstall: "この FM-1 のファームウェアを Melodee {v} に置き換えます。先にサウンドをバックアップしてください（エディターの「設定」→「バックアップ」）。",
     planUpdate: "アップデート前にサウンドをバックアップしてください（エディターの「設定」→「バックアップ」）。",
+    planConvert: "Melodee {v} ではプロジェクトとサウンドの形式が新しくなります。アップデートでは、まずバックアップをこのコンピューターに保存し、変換してから書き戻します。",
     planResume: "FM-1 はアップデートモードで待機しています。再開すると、書き込みの最初から Melodee {v} を書き込み直します。",
     planThis: "この FM-1 には Melodee {v} がすでに入っています。再インストールしても安全で、サウンドは残ります。",
     planBoot: "この FM-1 には Melodee {v} がすでに入っているため、m-bootloader だけを書き込みます。",
@@ -220,6 +236,9 @@ const TEXT = {
     stWrite: "ファームウェアを書き込んでいます", stReboot: "FM-1 を再起動しています", stBootWait: "Melodee の起動を待っています",
     stBoot: "m-bootloader を書き込んでいます。FM-1 は自動で再起動します", stFind: "アップデートモードの FM-1 を探しています",
     stRes: "フォントとファクトリーサウンドを書き込んでいます",
+    stCheck: "プロジェクトとサウンドを確認しています", stBackup: "プロジェクトとサウンドをバックアップしています",
+    stRestore: "プロジェクトとサウンドを書き戻しています",
+    phBackup: "バックアップ", phRestore: "サウンド",
     etaMin: "残り約 {n} 分", etaSec: "残り 1 分未満",
     stall: "FM-1 を待っています… ケーブルは接続したままにしてください。",
     backKept: "このタブを {s} 離れていました。インストールは続いていましたが、完了までこのタブにいてください。",
@@ -238,6 +257,16 @@ const TEXT = {
     endSetupMods: "Melodee {v} は動いていますが、SID と DRUM のシンセを書き込めませんでした。書き込むまでは、これらのトラックは鳴りません。",
     tipResRestart: "FM-1 の電源を一度切って入れ直すと、すべてのサウンドリストにファクトリーサウンドが表示されます。",
     tipEditor: "エディターでサウンドの閲覧やバックアップができます。",
+    tipConverted: "プロジェクトとサウンドを Melodee {v} 用に変換して書き戻しました。",
+    tipBackupSaved: "変換前のバックアップはダウンロードフォルダーにあります：{f}",
+    tipConvertNotes: "一部はそのままの形では引き継げませんでした。詳細はログをご覧ください。",
+    endSoundsH: "Melodee {v} はインストールされましたが、サウンドを書き戻せませんでした",
+    endSounds: "バックアップと変換済みのコピーはダウンロードフォルダーにあります（{f}）。エディターの「設定」→「バックアップ」で変換済みのコピーを復元してください。",
+    e_convbackup: "プロジェクトとサウンドをバックアップできなかったため、何も書き込んでいません。再生を止めてもう一度お試しください。（{d}）",
+    e_convfetch: "サウンドの変換ツールをダウンロードできなかったため、何も書き込んでいません：{d}",
+    e_convfail: "プロジェクトとサウンドを変換できなかったため、何も書き込んでいません：{d}",
+    e_convlost: "FM-1 が応答しなくなりました。ケーブルを接続したままにしてください。",
+    e_convwrite: "書き戻しが途中で止まりました：{d}", e_convverify: "書き戻した内容を確認できませんでした：{d}",
     tipBoot: "m-bootloader の確認：FM-1 の電源を切り、PLAY を押しながら電源を入れると、リカバリーメニューが表示されます。",
     endPausedH: "インストールが中断しました",
     endPaused: "FM-1 は安全です。インストールが完了するまで、電源を切ってもアップデートモードで待機します。",
@@ -312,6 +341,7 @@ const st = {
   access: null, dev: null,                            // the MIDI access; the FM-1 found: { id, kind, version, text }
   running: false, run: null,                          // the install under way (its screen's state)
   connErr: null, stockErr: null, demo: null,
+  hasConvert: false,                                  // the build converts Melodee 1.x's records (<package>-convert.bin)
 };
 const ver = () => (st.meta ? st.meta.version : "");
 const buildKey = () => [build(),st.meta.version,st.meta.commit || "",st.meta.product,st.meta.sha256?.dual || ""].join(":");
@@ -390,6 +420,34 @@ function resRegion() {
   }
   return regions.get(key);
 }
+/* the build's converter for Melodee 1.x's records (web/convert: <package>-convert.bin beside a 2.0 package, fetched only
+   when the FM-1 holds 1.x's records): whether there is one (asked once a build), and its files */
+const converters = new Map();
+const convertUrl = (chosen) => chosen.pkg.dual.replace(/(\.fwsc)?$/, "-convert.bin") + (chosen.commit ? "?commit=" + chosen.commit : "");
+function convertAvailable() {
+  if (DEMO) return Promise.resolve(false);
+  const key = "head:" + buildKey();
+  if (!converters.has(key)) {
+    const p = fetch(convertUrl(st.meta), { method: "HEAD", cache: "no-cache" }).then((r) => {
+      if (r.status === 404) return false;
+      if (!r.ok) throw new Error(`${convertUrl(st.meta)}: HTTP ${r.status}`);
+      return true;
+    });
+    converters.set(key, p);
+    p.catch(() => { if (converters.get(key) === p) converters.delete(key); });
+  }
+  return converters.get(key);
+}
+async function convertFile() {
+  const key = buildKey();
+  if (!converters.has(key)) {
+    const p = fetchBytes(convertUrl(st.meta));
+    converters.set(key, p);
+    p.catch(() => { if (converters.get(key) === p) converters.delete(key); });
+  }
+  try { return await converters.get(key); }
+  catch (e) { throw fail("convfetch", e.message, e.message); }
+}
 function releaseOptions() {
   const selected = $("release").value || meta.version;
   $("release").replaceChildren(...(meta.releases || [meta]).map(r => Object.assign(document.createElement("option"), {
@@ -417,6 +475,8 @@ async function loadRelease() {
     if (epoch !== buildEpoch) return;
     st.image = images.get(key);
     resRegion().catch(() => { /* Install writes the firmware anyway; its end screen offers Finish setup */ });
+    st.hasConvert = false;
+    convertAvailable().then((on) => { if (epoch === buildEpoch) { st.hasConvert = on; render(); } }).catch(() => { /* asked again on Install */ });
     if (st.dev) { st.dev = {id:st.dev.id,res:st.dev.res,...describeDevice(st.dev.id,st.meta.product)};offerSetup(); }
     if (meta.boot) {
       try {
@@ -579,7 +639,7 @@ function render() {
     go.disabled = st.running || finding || !st.image;
     $("gohint").hidden = true;
     const words = dev.setup ? "planSetup" : plan.resume ? "planResume" : !plan.firmware ? "planBoot"
-      : dev.kind === "this" ? "planThis" : ["melodee", "dev"].includes(dev.kind) ? "planUpdate" : "planInstall";
+      : dev.kind === "this" ? "planThis" : ["melodee", "dev"].includes(dev.kind) ? (st.hasConvert ? "planConvert" : "planUpdate") : "planInstall";
     $("plantext").textContent = t(words, { v: ver() });
   }
   /* Finish setup: the region alone, the install button second */
@@ -634,7 +694,7 @@ function preflight(plan) {
 $("pfok").addEventListener("change", () => { $("pfgo").disabled = !$("pfok").checked; });
 
 /* ---- the install's screen ---- */
-const ICON = { done: "#i-check", paused: "#i-pause", safe: "#i-info", restart: "#i-alert", partial: "#i-alert", setup: "#i-alert" };
+const ICON = { done: "#i-check", paused: "#i-pause", safe: "#i-info", restart: "#i-alert", partial: "#i-alert", setup: "#i-alert", sounds: "#i-alert" };
 const FAVICON = (c) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='${c}'/></svg>`)}`;
 const baseTitle = document.title;
 
@@ -645,8 +705,13 @@ function log(line) {
 }
 
 function phasesFor(plan) {
-  return [plan.firmware && !plan.resume && "prepare", plan.firmware && "write", plan.firmware && "restart", plan.res && "setup",
-          plan.boot && "boot"].filter(Boolean);
+  return [plan.convert && "backup", plan.firmware && !plan.resume && "prepare", plan.firmware && "write", plan.firmware && "restart",
+          plan.res && "setup", plan.convert && "restore", plan.boot && "boot"].filter(Boolean);
+}
+function dropPhase(phase) {                           // (nothing of 1.x's on the FM-1: nothing to write back)
+  st.run.list = st.run.list.filter((p) => p !== phase);
+  const li = document.querySelector(`#phases [data-ph="${phase}"]`);
+  if (li) li.hidden = true;
 }
 
 function openRun(plan, isStock) {
@@ -696,10 +761,12 @@ function setStep(key, phase) {
 function stepper(pm) {
   const r = st.run, share = r.plan.boot ? (r.plan.firmware ? 0.94 : 0) : 1;
   return (k, a, b) => {
-    if ((k !== "res" && k !== "mods") || a === b || a % 8192 < 256) log(`${k} ${a ?? ""}${b != null ? " " + b : ""}`);
+    if (!["res", "mods", "backup", "restore"].includes(k) || a === b || a % 8192 < 256) log(`${k} ${a ?? ""}${b != null ? " " + b : ""}`);
     r.lastAt = Date.now();
     $("stall").hidden = true;
-    if (k === "start") setStep("stStart", "prepare");
+    if (k === "backup") setStep("stBackup", "backup");
+    else if (k === "restore") setStep("stRestore", "restore");
+    else if (k === "start") setStep("stStart", "prepare");
     else if (k === "verify") { setStep("stVerify", "prepare"); setPct(pm.verify(b) * share); }
     else if (k === "loader") setStep("stLoader", "prepare");
     else if (k === "write") {
@@ -780,6 +847,10 @@ function endRun(state, err) {
     else {
       title = t(plan.boot ? "endDoneBootH" : "endDoneH", v);
       text = t("endDone", v);
+      if (r.conv) {
+        tips.push(t("tipConverted", v), t("tipBackupSaved", { f: r.backupName }));
+        if (/^ {2}\S/m.test(r.conv.report)) tips.push(t("tipConvertNotes"));
+      }
       if (r.res?.ok) tips.push(t(r.res.mods ? "tipResModsOk" : "tipResOk"));
       tips.push(t("tipEditor"));
       if (plan.boot) tips.push(t("tipBoot"));
@@ -805,6 +876,13 @@ function endRun(state, err) {
     if (reason) tips.push(reason);
     if (resFailed) { tips.push(t(modsFailed ? "endSetupMods" : "endSetup", v), why(r.res.error)); setupAgain(true); }
     button("btnClose", !resFailed, closeRun);
+  } else if (state === "sounds") {
+    title = t("endSoundsH", v); text = t("endSounds", { f: r.convName });
+    tips.push(why(r.restoreError), t("tipBackupSaved", { f: r.backupName }));
+    if (resFailed) tips.push(t(modsFailed ? "endSetupMods" : "endSetup", v), why(r.res.error));
+    link("btnEditor", "../editor/", true);
+    if (resFailed) setupAgain(false);
+    button("btnClose", false, closeRun);
   } else if (state === "setup") {
     title = t("endSetupH"); text = t(modsFailed ? "endSetupMods" : "endSetup", v);
     tips.push(why(r.res?.error));
@@ -840,6 +918,58 @@ async function resumeWrite(up, image, product, step) {
   const own = melodeeLoader(product);           /* (an SMK-37 build: its model's loader) */
   if (ota.id.text !== own) throw fail("wrongloader",`This package requires ${own}; found ${ota.id.text}`,ota.id.text);
   if (!await up.resume(image,step,product,own)) throw fail("stopped","The update did not finish");
+}
+/* fn(request) on the running Melodee's editor (fm1backup.js BackupConnection), found as pushResources finds it */
+async function withEditor(up, fn) {
+  const model = st.meta.product.split("_")[0];
+  for (let tries = 0; tries < 20; tries++) {
+    const dev = await up.find((id) => id.model === model);
+    if (dev) {
+      const input = dev.link.input, output = dev.link.output; dev.link.close();
+      const link = new BackupConnection(input, output);
+      try { return await fn((r, o) => link.request(r, o)); }
+      finally { link.close(); }
+    }
+    await sleep(500);
+  }
+  throw fail("convlost", "no answer");
+}
+/* a file into the user's downloads */
+const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
+function download(name, file) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+/* Before the firmware (an FM-1 running Melodee, a build with a converter): its records looked at; Melodee 1.x's backed up
+ * into the downloads and converted (conversion.js), or nothing to do (the restore phase goes). A failure here fails
+ * safe: nothing was written */
+async function convertBefore(up, step) {
+  const r = st.run, firmware = st.dev?.id?.text || "";
+  setStep("stCheck", "backup");
+  const conv = await withEditor(up, (request) => prepareConversion(request, firmware, convertFile, (a, b) => step("backup", a, b)));
+  if (!conv) { dropPhase("restore"); log("convert: nothing of Melodee 1.x's on the FM-1"); return; }
+  r.conv = conv;
+  r.backupName = `Melodee-1.x-backup-${stamp()}.json`;
+  download(r.backupName, conv.before);
+  log(`convert: Melodee 1.x's records ${conv.old.join(" ")}; the backup saved as ${r.backupName}`);
+  for (const line of conv.report.split("\n")) if (line) log(`convert: ${line}`);
+}
+/* After the firmware and its synths: the converted records written back. Never fails the install (the firmware runs):
+ * a failure leaves the converted copy in the downloads for the editor's restore, and the end screen says so */
+async function convertAfter(up, step) {
+  const r = st.run;
+  setStep("stRestore", "restore");
+  try {
+    const ids = await withEditor(up, (request) => writeConverted(request, r.conv.after, (a, b) => step("restore", a, b)));
+    log(`convert: written back: ${ids.join(" ")}`);
+  } catch (e) {
+    r.restoreError = e.code ? e : fail("convwrite", e.message, e.message);
+    log(`convert: ${e.message}`);
+    r.convName = `Melodee-${ver()}-converted-${stamp()}.json`;
+    download(r.convName, r.conv.after);
+  }
 }
 /* the resource region (firmware/src/res.c) after the firmware, or alone (Finish setup): the build's region through
  * editor command 82, then its synth modules through command 84 (fm1mods.js: into the pool, first come first served,
@@ -930,6 +1060,11 @@ async function start(isStock = false) {
   /* Setup follows the firmware when the build has a resource region (a failed fetch shows there, with its retry) */
   if (plan.firmware && !isStock)
     plan.res = (await resRegion().catch(() => undefined)) !== null || (await modBundleFile().catch(() => undefined)) !== null;
+  /* an FM-1 running Melodee, updated to a build with a converter: Melodee 1.x's records go along (convertBefore,
+     convertAfter). The question failing: asked in the run, where it fails safe */
+  let convertErr = null;
+  if (plan.firmware && !plan.resume && !isStock && ["melodee", "dev", "this"].includes(st.dev?.kind))
+    plan.convert = await convertAvailable().catch((e) => { convertErr = fail("convfetch", e.message, e.message); return true; });
   openRun(plan, isStock);
   const image = isStock ? st.stock.image : st.image;
   const product = isStock ? st.stock.product : st.meta.product;
@@ -939,6 +1074,10 @@ async function start(isStock = false) {
   try {
     if (!st.access) st.access = await midi();
     const up = new SteadyUpdater(st.access,log);
+    if (plan.convert) {
+      if (convertErr) throw convertErr;
+      await convertBefore(up, step);
+    }
     if (plan.firmware) {
       if (plan.resume) { phase = "staged"; await resumeWrite(up, image, product, step); }
       else {
@@ -947,10 +1086,9 @@ async function start(isStock = false) {
       }
       phase = "done";
       mark(false);
-      if (plan.res) {
-        st.run.res = await pushResources(up, step);
-        if (plan.boot) setStep("stBootWait", "boot");
-      }
+      if (plan.res) st.run.res = await pushResources(up, step);
+      if (st.run.conv) await convertAfter(up, step);
+      if (plan.res && plan.boot) setStep("stBootWait", "boot");
     }
     if (plan.boot) { phase = "boot"; await up.installBoot(st.boot.image, product, step); }
   } catch (e) {
@@ -963,8 +1101,9 @@ async function start(isStock = false) {
   }
   st.running = false;
   release();
-  if (state === "done" && st.run.res && !st.run.res.ok) state = "setup";   /* the firmware runs; its region doesn't */
-  if (state === "done" || state === "setup") st.dev = null;   /* what it runs now is shown on the next Find */
+  if (state === "done" && st.run.restoreError) state = "sounds";   /* the firmware runs; the user's records aren't back */
+  else if (state === "done" && st.run.res && !st.run.res.ok) state = "setup";   /* the firmware runs; its region doesn't */
+  if (["done", "setup", "sounds"].includes(state)) st.dev = null;   /* what it runs now is shown on the next Find */
   endRun(state, error);
   render();
 }

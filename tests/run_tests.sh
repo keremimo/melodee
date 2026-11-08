@@ -68,7 +68,7 @@
 #                   the firmware's own sources (tests/protodump.c, constdump.c, settingsdump.c), checked against itself
 #                   and its manifest's hashes; with web/core/build.sh's WebAssembly, the virtual FM-1 core
 #                   (web/core/core_check.mjs): Studio's commands, a render, taps, events, kits, the NOR, WASM == native,
-#                   the five synths' modules in WebAssembly (tools/mod_build.py --wasm) == the native core's.
+#                   the synths' modules in WebAssembly (tools/mod_build.py --wasm) == the native core's.
 # DRUM (tests/drum_test.c): the drum voices (src/drum_voice.c): pitch, decay, centroid and level against
 #                   Melodee's targets, the controls' directions, no clipping, DC, retriggers, the hat choke, the
 #                   kick on a small speaker; the DRUM engine (src/eng_drum.c): its key map, the 8 lanes together,
@@ -182,6 +182,16 @@ web_tests() {                                     # the editor mock's tables mus
         step "installer safety: tab locks, wake/leave guards, throttled MIDI, preflight and interrupted resumes" node web/test_install_safety.mjs
         step "TransitFM1: verified package, backup, loader isolation and resume" node web/test_transit.mjs
         step "web backup: capture, validation before writes, restore order" node web/test_backup.mjs
+        # the update from Melodee 1.x (web/install/conversion.js): 1.x's and 2.0's virtual FM-1s in WebAssembly
+        # (web/convert/build.sh, web/core/build.sh: emcc in Docker), the converter's fixtures from its native build
+        if [ -f build/melodee-convert.bin ] && [ -f build/core/melodee_core.wasm ] && [ -x build/convert/legacy_native ]; then
+            step "installer 1.x -> 2.0: backup, conversion, write back over the backup protocol, both FM-1s' own code" \
+                node web/convert/update_check.mjs
+            step "installer page 1.x -> 2.0: backed up before the write, converted, written back; safe and failed cases" \
+                node web/test_install_convert.mjs
+        else
+            echo "== skip the installer's 1.x -> 2.0 checks (no build/melodee-convert.bin, build/core/melodee_core.wasm: web/convert/build.sh, web/core/build.sh)"
+        fi
         step "stock restore: the unmodified official V15 file is the image, CHECK HEAD range" node web/test_stock_restore.mjs
         if [ -f FM-1_v15.fwsc ]; then
             build v15_ldr ldr_test &&
@@ -310,7 +320,7 @@ studio_bundle() {                                 # the firmware's data for Melo
         done
         $CC -O2 -std=gnu99 $FW -Itests -DMELODEE_RAM_AUDIO=1 -DMELODEE_VERSION="\"$_ver\"" -DCORE_MODULES=1 -DCORE_NATIVE_MAIN \
             -o "$OUT/core_native" web/core/melodee_core.c "$OUT"/core_mods/*.o -lm || { fail "compile web/core/melodee_core.c"; return 1; }
-        step "virtual FM-1 core: Studio's commands, a render, taps, MIDI events, kits, the NOR kept, the five synths as WebAssembly modules (WASM == native)" \
+        step "virtual FM-1 core: Studio's commands, a render, taps, MIDI events, kits, the NOR kept, the synths as WebAssembly modules (WASM == native)" \
             node web/core/core_check.mjs --native "$OUT/core_native" --mel "$OUT/studio/mel"
     else
         echo "== skip the virtual FM-1 core check (no build/core/melodee_core.wasm: web/core/build.sh; or no node)"

@@ -9,7 +9,7 @@ const meta={...releases[0],releases,rc:{version:'1.4.0-rc.1',product:'rc',pkg:{d
 const pending=[];
 Object.assign(w,{
  meta,describeDevice,planFor,progressModel,remaining,logicalImage:b=>b,productOf:b=>['new','old','rc'][b[0]],
- fetch:url=>/-(res|mods)\.bin/.test(url)?Promise.resolve({ok:false,status:404}):new Promise(resolve=>pending.push({url,resolve})),
+ fetch:url=>/-(res|mods|convert)\.bin/.test(url)?Promise.resolve({ok:false,status:404}):new Promise(resolve=>pending.push({url,resolve})),
  setupLeaving:()=>({lock(){},applyLang(){}}),hold:async()=>()=>{},busyElsewhere:async()=>false,
 });
 w.eval(controllerSource+'\nwindow.controller={st,render,log,loadRelease,resRegion,modBundleFile};');

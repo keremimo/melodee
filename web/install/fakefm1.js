@@ -27,6 +27,9 @@
 //     interruptAt  0..1: step 2 loses the cable at that share of its reads, once (the device stays in update mode)
 //     stride       reads only every stride-th block of a pass (a quicker demo; 1 = all)
 //     timers       { set, clear }: the device's own clock (the tests throttle the page's, not the device's)
+//     backup       (cmd, args, installed) -> reply payload or null: the backup protocol (65 LIST, 66 GET, 67 PUT) of the
+//                  firmware running (installed: the package's), answered by the caller (web/test_install_convert.mjs:
+//                  Melodee 1.x's and 2.0's virtual FM-1s); without it those commands go unanswered
 
 import { pack7, unpack7 } from "../fm1ota.js";
 import { bkUnpack } from "../fm1backup.js";
@@ -89,6 +92,7 @@ class Device {
     this.state = o.state || "app";
     this.interruptAt = o.interruptAt || 0;
     this.stride = Math.max(1, o.stride || 1);
+    this.backup = o.backup || null;
     this.online = true;
     this.sends = [];                          // what the page sent, with the delay it asked for
     this.log = [];                            // what the device did, in words
@@ -208,6 +212,11 @@ class Device {
   // the region's payload (the real one checks the CRC-32 it reads back).
   editor(cmd, a) {
     const r = this.res;
+    if (cmd >= 65 && cmd <= 67 && this.backup && this.state === "app") {
+      const reply = this.backup(cmd, Array.from(a), this.identity === this.after);
+      if (reply) this.emit([0xF0, 0x7D, 0x46, 0x4C, cmd, ...reply, 0xF7]);
+      return;
+    }
     if (cmd === 84 && this.state === "app" && this.identity === this.after) return this.modules(a);
     if (cmd !== 82 || !r || this.state !== "app" || this.identity !== this.after) return;
     const head = new DataView(r.region.buffer, r.region.byteOffset, 32), len = head.getUint32(4, true), crc = head.getUint32(8, true);

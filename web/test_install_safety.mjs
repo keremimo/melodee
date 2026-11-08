@@ -162,7 +162,8 @@ const fakeModule = (engine, name, n, key = 0x13572468, seed = 1, uid = null) => 
 };
 const joinBytes = (...xs) => { const o = new Uint8Array(xs.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of xs) { o.set(x, at); at += x.length; } return o; };
 const mods = joinBytes(fakeModule(10, 'DRUM', 3000), fakeModule(3, 'SID', 900));
-const serve = url => url.includes('-res.bin') ? {ok:true,status:200,arrayBuffer:async()=>region.slice().buffer}
+const serve = url => url.includes('-convert.bin') ? {ok:false,status:404}   /* (no converter: web/test_install_convert.mjs) */
+  : url.includes('-res.bin') ? {ok:true,status:200,arrayBuffer:async()=>region.slice().buffer}
   : url.includes('-mods.bin') ? {ok:true,status:200,arrayBuffer:async()=>mods.slice().buffer}
   : {ok:true,status:200,arrayBuffer:async()=>firmware.slice().buffer};
 for (const valid of [false,true]) {
@@ -331,7 +332,7 @@ for(const scenario of ['update+boot','boot-only','refused','bad-boot-hash','wron
  win.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
  win.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
  win.TextEncoder=TextEncoder;Object.defineProperty(win.crypto,'subtle',{value:webcrypto.subtle});
- win.fetch=async url=>/-(res|mods)\.bin/.test(url)?{ok:false,status:404}:({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
+ win.fetch=async url=>/-(res|mods|convert)\.bin/.test(url)?{ok:false,status:404}:({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
  win.navigator.requestMIDIAccess=async()=>model.access;
  const metadata={version:'1.4.5',product:PRODUCT,pkg:{dual:'test.fwsc'},sha256:{dual:createHash('sha256').update(releaseRaw).digest('hex')},
   boot:{version:'1.2',pkg:'boot.fwsc',sha256:scenario==='bad-boot-hash'?'0'.repeat(64):bootDigest}};

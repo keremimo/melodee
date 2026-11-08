@@ -38,6 +38,39 @@ export function readBackupV1(file) {
   return out;
 }
 
+const u32 = (b, o) => (b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) >>> 0;
+const FBKS = 0x534B4246, HPJ2 = 0x324A5048, PER6 = 0x50455236, UPB3 = 0x33425055, KIT2 = 0x3254494B;
+/** The ids of a backup (Map id -> bytes) that hold Melodee 1.x's records: what firmware 2.0 does not read (its own: FBKS
+ * projects, raw or packed in HPJ2 with FBKS as the record's first word; PER6 settings; UPB3 preset banks; KIT2 kits) */
+export function legacyIds(objects) {
+  const own = (id, b) => {
+    const m = u32(b, 0);
+    if (id === 1) return m === PER6;
+    if (id >= 6 && id <= 28) return m === UPB3;
+    if (id >= 92 && id <= 99) return m === KIT2;
+    if (PROJECTS.includes(id)) return m === FBKS || (m === HPJ2 && b.length >= 12 && u32(b, 8) === FBKS);
+    return true;
+  };
+  return [...objects].filter(([id, b]) => b?.length >= 4 && !own(id, b)).map(([id]) => id).sort((a, b) => a - b);
+}
+
+/** The converter's files in one (web/convert/build.sh: build/melodee-convert.bin, published beside a 2.0 package as
+ * <package>-convert.bin): "MCV1", their count, then each file's name[16], length and bytes (to 4 bytes) ->
+ * { wasm, modules } as legacyConverter takes them */
+export function convertBundle(bytes) {
+  const b = Uint8Array.from(bytes), files = {};
+  if (b.length < 8 || u32(b, 0) !== 0x3156434D) throw new Error("Not the converter's files");
+  for (let k = 0, at = 8, n = u32(b, 4); k < n; k++) {
+    if (at + 20 > b.length) throw new Error("The converter's files are cut short");
+    const name = String.fromCharCode(...b.subarray(at, at + 16)).replace(/\0.*$/, ""), len = u32(b, at + 16);
+    if (at + 20 + len > b.length) throw new Error("The converter's files are cut short");
+    files[name] = b.subarray(at + 20, at + 20 + len);
+    at += 20 + ((len + 3) & ~3);
+  }
+  if (!files["legacy.wasm"]) throw new Error("The converter's files have no converter");
+  return { wasm: files["legacy.wasm"], modules: Object.fromEntries(LEGACY_MODULES.map((m) => [m, files[m]])) };
+}
+
 /** The converter: wasm (melodee_legacy.wasm's bytes or a compiled WebAssembly.Module), modules ({sid, drum, cz, fm6,
  * prophet}: their .wasm.mmod files' bytes). */
 export async function legacyConverter(wasm, modules) {

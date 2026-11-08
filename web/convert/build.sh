@@ -4,7 +4,8 @@
 # this repository's history) built as its own virtual FM-1 with legacy.c in it. Needs what ./build.sh needs (the 1.x
 # tree's device build makes its generated headers and its synths' files), cc for the native converter, and emcc
 # 3.1.74 (else the emscripten/emsdk:3.1.74 Docker image) for the WebAssembly one. NATIVE=1: the native one only.
-#   web/convert/build.sh  ->  build/convert/{legacy_native, melodee_legacy.wasm, modules/*.mmod}
+#   web/convert/build.sh  ->  build/convert/{legacy_native, melodee_legacy.wasm, modules/*.mmod}, build/melodee-convert.bin
+#   (the installer's copy: web/make_site.py publishes it beside a 2.x package, and refuses one without it)
 set -e
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -52,3 +53,15 @@ else
 fi
 for m in $MODS; do (cd "$L" && "$PY" tools/mod_build.py --wasm "build/modules/$m.mmod" >/dev/null) && cp "$L/build/modules/wasm/$m.mmod" "build/convert/modules/$m.wasm.mmod"; done
 echo "convert: build/convert/melodee_legacy.wasm ($(wc -c < build/convert/melodee_legacy.wasm | tr -d ' ') B), build/convert/modules"
+# the installer's copy (convert.mjs convertBundle): "MCV1", the count, each file's name[16], length, bytes (to 4 bytes);
+# web/make_site.py publishes it beside the package as <package>-convert.bin
+"$PY" - "$MODS" <<'EOF'
+import struct, sys
+files = [("legacy.wasm", "build/convert/melodee_legacy.wasm")] + [(m, f"build/convert/modules/{m}.wasm.mmod") for m in sys.argv[1].split()]
+out = bytearray(struct.pack("<II", 0x3156434D, len(files)))
+for name, path in files:
+    b = open(path, "rb").read()
+    out += name.encode().ljust(16, b"\0") + struct.pack("<I", len(b)) + b + b"\0" * (-len(b) % 4)
+open("build/melodee-convert.bin", "wb").write(out)
+print(f"convert: build/melodee-convert.bin ({len(out)} B)")
+EOF

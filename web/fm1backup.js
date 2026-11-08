@@ -87,6 +87,10 @@ export function readBackup(file) {
     if (bytes.length !== o.size || bkCrc(bytes) !== o.crc) throw new Error("Backup checksum mismatch");
     const shared=o.id>=6&&o.id<=28&&o.id!==8&&o.size===3716&&new DataView(bytes.buffer).getUint32(0,true)===0x32425055;
     if(shared){const v=new DataView(bytes.buffer);if(v.getUint16(4,true)!==206||v.getUint16(6,true)!==18)throw Error("Invalid shared preset bank");}
+    /* Melodee 2.0's preset banks (UPB3: the records, then the synths they name by ID) */
+    const upb3=o.id>=6&&o.id<=28&&o.size>=3716&&new DataView(bytes.buffer).getUint32(0,true)===0x33425055;
+    if(upb3){const v=new DataView(bytes.buffer);if(v.getUint16(4,true)!==206||v.getUint16(6,true)!==18)throw Error("Invalid preset bank");}
+    if(upb3)return { ...o, bytes };
     if(o.id>=23&&o.id<=27&&o.size&&!shared){
       if(o.size!==3600)throw Error("Invalid Prophet bank size");const v=new DataView(bytes.buffer),used=v.getUint32(4,true),fav=v.getUint32(8,true),mask=(1<<(o.id===27?24:26))-1;
       if(v.getUint32(0,true)!==0x31553550||(used&~mask)||(fav&~(mask|(o.id===23?0x80000000:0))))throw Error("Invalid Prophet bank");
@@ -122,7 +126,14 @@ export function readBackup(file) {
   if (!objects[0].size || !objects[1].size) throw new Error("Backup is missing the current music or settings");
   return { ...file, objects };
 }
-export async function captureBackup(request, firmware, onProgress = () => {}) {
+/* a backup file of objects [{ id, bytes }] (every id the device lists, in its order) */
+export function backupFile(objects, firmware) {
+  return { format: "felucca-backup", version: 1, firmware, created: new Date().toISOString(),
+           objects: objects.map(({ id, bytes }) => ({ id, size: bytes.length, crc: bkCrc(bytes), data: bkBase64(bytes) })) };
+}
+/* every object the device lists, read and checked (check: what the file must pass; the installer's 1.x -> 2.0 update
+   reads 1.x objects this page's checks no longer take, and leaves them to the converter's own) */
+export async function captureBackup(request, firmware, onProgress = () => {}, check = readBackup) {
   const manifest = bkManifest(await request([BACKUP_CMD.LIST, []], { timeout: 3000, retries: 0 }));
   const objects = [], total = manifest.reduce((n, o) => n + o.size, 0); let done = 0;
   for (const o of manifest) {
@@ -136,10 +147,10 @@ export async function captureBackup(request, firmware, onProgress = () => {}) {
       done += size; onProgress(done, total);
     }
     if (bkCrc(bytes) !== o.crc) throw new Error("The device changed during backup. Try again while stopped.");
-    objects.push({ ...o, data: bkBase64(bytes) });
+    objects.push({ id: o.id, bytes });
   }
-  const file = { format: "felucca-backup", version: 1, firmware, created: new Date().toISOString(), objects };
-  readBackup(file); return file;
+  const file = backupFile(objects, firmware);
+  check(file); return file;
 }
 export async function restoreBackup(request, file, onProgress = () => {}) {
   const archive = readBackup(file); // Validate every byte before the first destructive request.
