@@ -281,7 +281,9 @@ static uint32_t ed_bk_commit_inner(void)
         uint32_t bank=ed_bk_preset_bank(ed_bk_id);
 #if MELODEE_FLASH
         if(ed_bk_len && !ed_bk_preset_valid(bank,raw,ed_bk_len))return 2;
-        if(!flash_ok || st_save(up_obj(bank),raw,ed_bk_len))return 4;
+        /* (an empty bank: its record deleted. Saved empty, a pool record took a sector of its own for nothing: a
+         * backup's restore puts every bank, and 23 empty ones left no room for its kits) */
+        if(!flash_ok || (!ed_bk_len && st_listed(up_obj(bank)) ? st_project_delete(up_obj(bank)) : st_save(up_obj(bank),raw,ed_bk_len)))return 4;
         up_cache_reset();up_gen++;sync_reload=1;ui.force=1;
 #else
         if(ed_bk_len && (ed_bk_len!=sizeof(up_bank_t) || !up_bank_shape(ed_bk_len,((const up_bank_t *)raw)->rsize)))return 2;
