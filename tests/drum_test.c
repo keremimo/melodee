@@ -19,7 +19,7 @@ static int32_t blocks_peak(uint32_t nb)          /* nb blocks of the mix, its pe
     int32_t o[2 * CTL], pk = 0;
     uint32_t i, k;
     for (i = 0; i < nb; i++) {
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (k = 0; k < 2u * CTL; k++)
             pk = abs(o[k]) > pk ? abs(o[k]) : pk;
     }
@@ -165,7 +165,7 @@ static double blocks_rms(uint32_t nb)
     double s = 0;
     uint32_t i, k;
     for (i = 0; i < nb; i++) {
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (k = 0; k < 2u * CTL; k++)
             s += (double)o[k] * o[k];
     }

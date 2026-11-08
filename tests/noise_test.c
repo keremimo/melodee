@@ -300,7 +300,7 @@ static void dc_and_clip(void)
             for (i = 0; i < 8u; i++)
                 trk_note_on(&trk[0], 24 + 12 * i, 127);
             for (i = 0; i < FS / CTL; i++) {
-                mix_block(o, CTL);
+                mix_block_q15(o, CTL);
                 for (uint32_t j = 0; j < 2u * CTL; j++)
                     omax = abs(o[j]) > omax ? abs(o[j]) : omax;
             }
@@ -356,10 +356,10 @@ static double mix_cost(const int16_t *e, uint32_t notes)
     for (i = 0; i < notes; i++)
         trk_note_on(&trk[0], 48 + 3 * i, 100);
     for (i = 0; i < 64u; i++)
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
     i0 = instr_now();
     for (i = 0; i < nb; i++)
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
     return (double)(instr_now() - i0) / (nb * CTL);
 }
 
@@ -421,7 +421,7 @@ static void demo(const char *dir, uint32_t pi)
         }
         for (i = 0; i < step; i += CTL) {
             uint32_t j;
-            mix_block(o, CTL);
+            mix_block_q15(o, CTL);
             for (j = 0; j < CTL; j++)
                 wav_put(w, o[2 * j], o[2 * j + 1]);
             frames += CTL;
@@ -431,7 +431,7 @@ static void demo(const char *dir, uint32_t pi)
         trk_note_off(&trk[0], held);
     for (i = 0; i < FS * 2u; i += CTL) {
         uint32_t j;
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (j = 0; j < CTL; j++)
             wav_put(w, o[2 * j], o[2 * j + 1]);
         frames += CTL;

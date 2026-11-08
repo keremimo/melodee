@@ -17,9 +17,9 @@ static uint64_t render_hash(int legacy)
             settings.lowcut=2;favorites.factory[15][30]|=1u;
         }
         uint64_t h=1469598103934665603ull;int32_t out[CTL*2];
-        mix_block(out,CTL);trk_note_on(TSEL,60,100);mix_block(out,CTL);uint32_t used=resource_used();
+        mix_block_q15(out,CTL);trk_note_on(TSEL,60,100);mix_block_q15(out,CTL);uint32_t used=resource_used();
         for(uint32_t k=0;k<1024;k++){
-            mix_block(out,CTL);for(uint32_t i=0;i<CTL*2;i++)h=(h^(uint32_t)out[i])*1099511628211ull;
+            mix_block_q15(out,CTL);for(uint32_t i=0;i<CTL*2;i++)h=(h^(uint32_t)out[i])*1099511628211ull;
             assert(resource_used()==used);
         }
         assert(write(fds[1],&h,sizeof h)==sizeof h);_exit(0);

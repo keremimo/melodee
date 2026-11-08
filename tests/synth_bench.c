@@ -34,7 +34,7 @@ static void measure(uint32_t engine, uint32_t preset, uint32_t mode, uint32_t vo
         uint32_t blocks=phase==1?4096u:512u;
         uint64_t start=instructions();
         for(uint32_t b=0;b<blocks;b++){
-            if(mixer)mix_block(out,CTL);
+            if(mixer)mix_block_q15(out,CTL);
             else{memset(out,0,sizeof out);track_render(&trk[0],out,CTL);}
             hash=(hash^(uint32_t)out[b%CTL])*0x100000001b3ull;
         }

@@ -39,7 +39,7 @@ static void matrix_render(const uint32_t cat[4],uint32_t variant,int parallel)
         if(block==40u)for(uint32_t p=0;p<4;p++)for(uint32_t k=0;k<2;k++)trk_note_on(&trk[p],cat[p]>=4?(k?38:36):48+p*3+k*7,100);
         if(block==56u){song.g[G_MFXTYPE]=FX_CHORUS;for(uint32_t p=0;p<4;p++)trk[p].p[P_FXSEND]=30;}
         if(block==72u)for(uint32_t p=0;p<4;p++){trk[p].p[P_E1]+=cat[p]==3?0:1;trk[p].p[P_LD_PIT]=4;}
-        mix_block(out,CTL);
+        mix_block_q15(out,CTL);
         assert(!audio_batch_count && AW_LOAD(&audio_worker.request)==AW_LOAD(&audio_worker.complete));
         assert(!resource_failures && !audio_worker.timeouts && !injected_faults);
         if(block<16u)for(uint32_t p=0;p<4;p++)assert(active_voices(&trk[p])==2);

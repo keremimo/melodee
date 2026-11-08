@@ -197,7 +197,8 @@ static void usb_out_drain(void)                        /* the IN endpoint's MIDI
 /* the sound: stereo float, made a millisecond at a time and kept until core_render takes it */
 #define RING 32768u                                     /* frames: 0.74 s (an ed_flash_stop waits 100 ms at most) */
 #define TAPS (NPART + 1u)                               /* core_render_taps: each audio track, then the FX return */
-#define OUT_SCALE (1.0f / 32768.0f)                     /* Q15 full scale = 1.0 */
+#define OUT_SCALE (1.0f / (32768.0f * MIX_ONE))         /* the bus (Q15 << MIX_FRAC, mix.c): full scale = 1.0 */
+#define METER_SCALE (1.0f / 32768.0f)                   /* a track's meter (trk_peak_take): Q15 */
 static float ring[RING * 2u], rendered[4096u * 2u];
 static float tap_ring[RING][TAPS * 2u], tapped[4096u * 2u * (1u + TAPS)];
 static uint32_t ring_w, ring_r, owed, ring_lost;
@@ -238,8 +239,8 @@ static void core_mix_block_taps(int32_t *out, uint32_t n, int32_t tap[TAPS][2u *
         for (uint32_t i = 0; i < n; i++) {
             if (gain != target) gain += clamp(target - gain, -128, 128);
             uint32_t ret = (uint32_t)gain * 2u;
-            tap[NPART][2u * i] = fx_scale(fx_left[i], ret);
-            tap[NPART][2u * i + 1u] = fx_scale(fx_right[i], ret);
+            tap[NPART][2u * i] = mix_fx_return(fx_left[i], ret);
+            tap[NPART][2u * i + 1u] = mix_fx_return(fx_right[i], ret);
         }
     }
     void (*volatile run)(int32_t *,uint32_t)=master_samples;
@@ -668,7 +669,7 @@ EXPORT(core_midi_events) uint32_t core_midi_events(uint8_t *p, uint32_t max)
 static float meters[NTRK + 4u];
 EXPORT(core_meters) float *core_meters(void)
 {
-    for (uint32_t k = 0; k < NTRK; k++) meters[k] = (float)trk_peak_take(k, 0) * OUT_SCALE;
+    for (uint32_t k = 0; k < NTRK; k++) meters[k] = (float)trk_peak_take(k, 0) * METER_SCALE;
     meters[NTRK] = (float)master_peak[0] * OUT_SCALE;
     meters[NTRK + 1u] = (float)master_peak[1] * OUT_SCALE;
     master_peak[0] = master_peak[1] = 0;

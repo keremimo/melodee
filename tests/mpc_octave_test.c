@@ -255,7 +255,7 @@ static void drum_pads(void)
     /* Duplicated 909 hits retain separate pad ownership across a kit/octave change. */
     setup_mpc(); set_engine_of(&trk[0], ENGI_DRUM); trk[0].p[P_QUANT] = Q_MPC; trk[0].p[P_E0] = DK_909;
     int32_t out[2u * CTL];
-    for (uint32_t b = 0; b < 8u; b++) mix_block(out, CTL); /* finish the normal engine switch */
+    for (uint32_t b = 0; b < 8u; b++) mix_block_q15(out, CTL); /* finish the normal engine switch */
     assert(trk[0].engine == ENGI_DRUM && !trk[0].xf_on);
     midi_event(0x90, 0, MPC_PAD_NOTES[0][0], 100);
     midi_event(0x90, 0, MPC_PAD_NOTES[0][12], 119);

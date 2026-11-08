@@ -32,7 +32,7 @@ static void setup(const uint8_t modes[3],int tracks,int setting,int mixer){
 }
 static void block(int tracks,int mixer,uint32_t frame){
     int32_t out[CTL*2],b[CTL];
-    if(mixer){mix_block(out,CTL);checksum^=(uint32_t)out[0];return;}
+    if(mixer){mix_block_q15(out,CTL);checksum^=(uint32_t)out[0];return;}
     for(uint32_t i=0;i<CTL;i++)b[i]=sine_i((frame*CTL+i)*0x01734567u)/2;
     for(int t=0;t<tracks;t++){int active=fx_kernel_process(&trk[t],b,CTL);checksum^=(uint32_t)(active?fx_left[0]:b[0]);}
 }

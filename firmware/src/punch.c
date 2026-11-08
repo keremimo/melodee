@@ -267,7 +267,13 @@ static void punch_freeze_block(const int32_t *l,const int32_t *r,uint32_t n,int3
     if(feed<n)fx_sloop_reverb_run_mode(&punch.freeze,s,n-feed,32768,wl+feed,wr+feed,2);
 }
 
-/* l, r: the mix before the master (fx.c mix_block), n samples, in place */
+/* the bus sample dry with the effect's wet (Q15) faded in by g (Q15): at g = 0 the dry keeps every bit */
+static inline __attribute__((always_inline)) int32_t punch_mix(int32_t dry, int32_t wet, int32_t g)
+{
+    return dry + (int32_t)(((int64_t)(wet * MIX_ONE - dry) * g) >> 15);
+}
+/* l, r: the mix before the master (mix.c master_samples, on the bus: Q15 << MIX_FRAC), n samples, in place. The
+ * effects, their ring and their filters run on its Q15 */
 static __attribute__((noinline,section(".audio_text"))) void punch_process(int32_t *l, int32_t *r, uint32_t n)
 {
     if (!n) return;
@@ -289,14 +295,18 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
     tsvf_t c1, c2;
     if (punch.cur < 0 && want < 0) {                   /* idle: only the ring */
         if (punch_ring && !punch.was_freeze) for (i = 0; i < n; i++)
-            punch_ring[punch.w++ & (PUNCH_N - 1u)] = (int16_t)clamp((l[i] + r[i]) >> 4, -32768, 32767);
+            punch_ring[punch.w++ & (PUNCH_N - 1u)] = (int16_t)clamp(((l[i] >> MIX_FRAC) + (r[i] >> MIX_FRAC)) >> 4, -32768, 32767);
         return;
     }
     if (punch.cur < 0 && want >= 0) {
         punch_start(want); punch.song_gate = punch_song_gate;
     }
     int restart = punch.req < 0 && punch.song_gate != punch_song_gate;
-    if(punch.cur==PX_FREEZE)punch_freeze_block(l,r,n,kl,kr);
+    for (i = 0; i < n && i < CTL; i++) {               /* the block at Q15: FREEZE and the kills run on it in place */
+        kl[i] = l[i] >> MIX_FRAC;
+        kr[i] = r[i] >> MIX_FRAC;
+    }
+    if(punch.cur==PX_FREEZE)punch_freeze_block(kl,kr,n,kl,kr);
     beat = beat_samples();                              /* per block: no divide per sample */
     step = beat / 4u ? beat / 4u : 1u;
     echo_d = beat * 3u / 4u;
@@ -318,8 +328,8 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
                 tsvf_coef_k(&khi, 89 << 8, 5799);
             }
             if (n <= CTL) {
-                px_kill_run(fx, &klo, &khi, l, kl, n, &punch.z[0]);
-                px_kill_run(fx, &klo, &khi, r, kr, n, &punch.z[4]);
+                px_kill_run(fx, &klo, &khi, kl, kl, n, &punch.z[0]);
+                px_kill_run(fx, &klo, &khi, kr, kr, n, &punch.z[4]);
             }
         } else if (fx==PX_LPF || fx==PX_HPF || fx==PX_TEL) {
             tsvf_coef_k(&c1, fx == PX_LPF ? punch.cut : fx == PX_HPF ? (127 << 8) - punch.cut + (40 << 8) : 96 << 8, 2807);
@@ -328,7 +338,7 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
     }
     int32_t fx=punch.cur;
     for (i = 0; i < n; i++) {
-        int32_t dry_l=l[i],dry_r=r[i];
+        int32_t dry_l=l[i]>>MIX_FRAC,dry_r=r[i]>>MIX_FRAC;
         int32_t x=clamp(dry_l,-131071,131071),y=clamp(dry_r,-131071,131071),wl=x,wr=y,m=(x+y)>>1;
         uint32_t target = fx >= 0 && want == fx && !restart ? 32767u : 0u;
         if (punch_ring && !punch.was_freeze && !punch_owns(fx, punch.w))                   /* (a held loop keeps its material) */
@@ -460,8 +470,8 @@ static __attribute__((noinline,section(".audio_text"))) void punch_process(int32
             punch.g = punch.g + 512 > 32767 ? 32767 : punch.g + 512;
         else if ((uint32_t)punch.g > target)
             punch.g = punch.g < 512 ? 0 : punch.g - 512;
-        l[i] = dry_l + ((((wl - dry_l) >> 3) * (punch.g >> 3)) >> 9);   /* (no 32-bit overflow) */
-        r[i] = dry_r + ((((wr - dry_r) >> 3) * (punch.g >> 3)) >> 9);
+        l[i] = punch_mix(l[i], wl, punch.g);
+        r[i] = punch_mix(r[i], wr, punch.g);
         punch.w++;
         punch.t++;
     }

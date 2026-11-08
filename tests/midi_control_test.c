@@ -419,17 +419,17 @@ static int drum_retrigger_accounting(void)
     midi_test_reset();track_t *t=&trk[0];int32_t out[CTL*2];int bad=0;
     int16_t previous_budget=settings_budget;settings_budget=32;
     set_engine_of(t,ENGI_DRUM);apply_preset_to(t,0);t->engine=t->eng_req;t->p[P_VOICE]=V_POLY;song.g[G_ROUTE]=0;settings_drumch=0;
-    midi_note_event(0,36,110);midi_note_event(0,38,110);mix_block(out,CTL);
+    midi_note_event(0,36,110);midi_note_event(0,38,110);mix_block_q15(out,CTL);
     capacity_steals=0;
     for(uint32_t repeat=0;repeat<100;repeat++){
-        midi_note_event(0,36,110);midi_note_event(0,38,110);mix_block(out,CTL);
+        midi_note_event(0,36,110);midi_note_event(0,38,110);mix_block_q15(out,CTL);
     }
     bad+=check("same-pitch MIDI drum retriggers reuse circuits without capacity steals",capacity_steals==0);
     uint32_t before=capacity_steals;midi_note_event(0,35,110);
     bad+=check("replacing another drum pitch on its lane still counts",capacity_steals==before+1u);
     midi_test_reset();set_engine_of(t,ENGI_CZ);apply_preset_to(t,0);t->engine=t->eng_req;t->p[P_VOICE]=V_POLY;settings_budget=8;
     capacity_steals=0;
-    for(uint32_t note=48;note<60;note++){trk_note_on(t,note,100);mix_block(out,CTL);}
+    for(uint32_t note=48;note<60;note++){trk_note_on(t,note,100);mix_block_q15(out,CTL);}
     bad+=check("actual shared-budget pressure still counts capacity steals",capacity_steals>0);
     settings_budget=previous_budget;return bad;
 }

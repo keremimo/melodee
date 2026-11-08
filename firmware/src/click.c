@@ -13,7 +13,8 @@ static volatile uint8_t click_req;          /* seq.c: 1 a beat, 2 the bar's firs
 #define CLICK_GAIN_FULL 8192                 /* Q12 at 100 %: the downbeat's peak at DAC full scale (Q15) */
 static struct { int32_t s, c, k, env, g; } clk;
 
-/* add the click to one block of DAC samples (stereo Q15, after the master): out of line, a loop only while it sounds */
+/* add the click to one block of DAC samples (stereo, the bus: Q15 << MIX_FRAC, after the master): out of line, a loop
+ * only while it sounds */
 static __attribute__((noinline)) void click_render(int32_t *out, uint32_t n)
 {
     uint32_t i;
@@ -35,14 +36,14 @@ static __attribute__((noinline)) void click_render(int32_t *out, uint32_t n)
         int32_t v, l, r;
         s += (k * c) >> 15;
         c -= (k * s) >> 15;
-        v = (((s * env) >> 15) * g) >> 12;
+        v = ((((s * env) >> 15) * g) >> (12 - MIX_FRAC));
         env -= (env >> 8) + 1;
         if (env < 0)
             env = 0;
         l = out[2u * i] + v;
         r = out[2u * i + 1u] + v;
-        out[2u * i] = l > 32767 ? 32767 : l < -32767 ? -32767 : l;
-        out[2u * i + 1u] = r > 32767 ? 32767 : r < -32767 ? -32767 : r;
+        out[2u * i] = clamp(l, -32767 * MIX_ONE, 32767 * MIX_ONE);
+        out[2u * i + 1u] = clamp(r, -32767 * MIX_ONE, 32767 * MIX_ONE);
     }
     clk.s = s; clk.c = c; clk.env = env;
 }

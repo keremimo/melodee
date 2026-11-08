@@ -11,6 +11,20 @@
 
 struct result { uint64_t hash, energy, monitor, taken; };   /* taken: the stereo capture's energy */
 
+/* a capture ring's sample at at (hi: top 16 bits, lo: the 8 below) against the bus sample x (Q15 << 8) it took: PCM24
+ * exact, PCM16 rounded within its dither's 1 LSB, a sample on the 16-bit grid (0 too) exact */
+static int cap_is(const int16_t *hi, const uint8_t *lo, uint32_t at, int32_t x)
+{
+    x = ua_clip24(x);
+    if (ua.cap_alt == 2u) return hi[at] == (int16_t)(x >> 8) && lo[at] == (uint8_t)x;
+    int32_t want = (x + 128) >> 8;
+    return !lo[at] && (x & 255 ? hi[at] >= want - 1 && hi[at] <= want + 1 : hi[at] == (int16_t)(x >> 8));
+}
+static int cap_ch_is(uint32_t frame, uint32_t ch, int32_t x)   /* channel ch of a ring frame (ch 2, 3: the stems' bank) */
+{
+    return ch < 2u ? cap_is(ua.cap, ua.cap_lo, frame * 2u + ch, x) : cap_is(ua_track_extra, ua_track_extra_lo, frame * 2u + ch - 2u, x);
+}
+
 static struct result render(uint32_t channel, int sliced, int variant)
 {
     int fd[2], status;
@@ -37,21 +51,22 @@ static struct result render(uint32_t channel, int sliced, int variant)
             t->p[P_LEVEL] = 0;
         trk_note_on(t, 60, 100);
         for (uint32_t block = 0; block < 2048; block++) {
-            mix_block(out, CTL);
+            mix_block(out, CTL);                        /* (the bus: what ua_audio takes) */
             ua.cw = ua.cr = 0;
+            ua.cap_alt = (uint8_t)(1u + (block & 1u));  /* PCM16 and PCM24 by turns */
             ua_audio(out, track_capture, CTL, song.master_q12);
             for (uint32_t i = 0; i < CTL; i++) {
                 for (uint32_t ch = 0; ch < NPART; ch++) {
                     int32_t x = track_capture[i * NPART + ch];
-                    assert((ch<2u?ua.cap[i*2u+ch]:ua_track_extra[i*2u+ch-2u]) == ua_clip(x));
+                    assert(cap_ch_is(i, ch, x));
                     if (ch != channel) assert(x == 0);
                     else {
                         result.hash = (result.hash ^ (uint32_t)x) * 16777619u;
-                        result.energy += (int64_t)x * x;
+                        result.energy += (int64_t)(x >> 8) * (x >> 8);
                     }
                 }
-                result.monitor += (int64_t)out[i * 2] * out[i * 2];
-                result.monitor += (int64_t)out[i * 2 + 1] * out[i * 2 + 1];
+                result.monitor += (int64_t)(out[i * 2] >> 8) * (out[i * 2] >> 8);
+                result.monitor += (int64_t)(out[i * 2 + 1] >> 8) * (out[i * 2 + 1] >> 8);
             }
         }
         memset(trk, 0, sizeof trk);trk_voices_bind();
@@ -96,19 +111,20 @@ static struct result stereo_render(int insert, int send, uint32_t master)
         for (uint32_t i = 0; i < CTL * NPART; i++) track_capture[i] = 123456;
         trk_note_on(&trk[0], 60, 100);
         for (uint32_t block = 0; block < 2048; block++) {
-            mix_block(out, CTL);
+            mix_block(out, CTL);                        /* (the bus: what ua_audio takes) */
             assert(!track_capture_on && master_capture_on);   /* stereo: the mix before MASTER, L R a frame (#103) */
             for (uint32_t i = CTL * 2; i < CTL * NPART; i++) assert(track_capture[i] == 123456);
             ua.cw = ua.cr = 0;
+            ua.cap_alt = (uint8_t)(1u + (block & 1u));  /* PCM16 and PCM24 by turns */
             ua_audio(out, track_capture, CTL, master);
             assert(ua.cw == CTL);
             for (uint32_t i = 0; i < CTL * 2; i++) {
-                assert(out[i] >= -32768 && out[i] <= 32767);
-                assert(ua.cap[i] == ua_clip(track_capture[i]));
-                if (master == 4096u) assert(ua.cap[i] == out[i]);   /* (full MASTER: the output itself) */
+                assert(out[i] >= -32768 * 256 && out[i] <= 32767 * 256);
+                assert(cap_is(ua.cap, ua.cap_lo, i, track_capture[i]));
+                if (master == 4096u) assert(track_capture[i] == out[i]);   /* (full MASTER: the output itself) */
                 result.taken += (int64_t)ua.cap[i] * ua.cap[i];
                 result.hash = (result.hash ^ (uint32_t)out[i]) * 16777619u;
-                result.energy += (int64_t)out[i] * out[i];
+                result.energy += (int64_t)(out[i] >> 8) * (out[i] >> 8);
                 if (!(i & 1u)) result.monitor += abs(out[i] - out[i + 1u]);
             }
         }
@@ -132,7 +148,7 @@ static void mode_packets(uint8_t alt)
     assert(child >= 0);
     if (!child) {
         int32_t out[CTL * 2];
-        int16_t expected[(UA_TARGET + CTL) * NPART];
+        int32_t expected[(UA_TARGET + CTL) * NPART];
         uint8_t packet[UA_PACKET];
         host_tracks_init();
         for (uint32_t ch = 0; ch < NPART; ch++) {
@@ -152,14 +168,21 @@ static void mode_packets(uint8_t alt)
             assert(ua_cap_channels == channels);
             for (uint32_t at = 0; at < UA_TARGET + CTL; at += CTL) {
                 for (uint32_t i = 0; i < CTL * NPART; i++) track_capture[i] = 123456;
-                mix_block(out, CTL);
+                mix_block(out, CTL);                    /* (the bus: what ua_audio takes) */
                 assert(track_capture_on == tracks && master_capture_on == !tracks);
                 for (uint32_t i = 0; i < CTL * 2u; i++) assert(out[i] == 0);
                 if (!tracks)                            /* stereo: the mix before MASTER (0 here), L R a frame (#103) */
                     for (uint32_t i = CTL * 2u; i < CTL * NPART; i++) assert(track_capture[i] == 123456);
-                for (uint32_t i = 0; i < CTL * channels; i++)
-                    expected[at * channels + i] = (int16_t)ua_clip(track_capture[i]);
+                uint32_t cw = ua.cw;
                 ua_audio(out, track_capture, CTL, song.master_q12);
+                for (uint32_t f = 0; f < CTL; f++)      /* the ring took each lane; a packet sends the ring */
+                    for (uint32_t ch = 0; ch < channels; ch++) {
+                        uint32_t ri = ((cw + f) & (UA_RING - 1u)) * 2u + (ch & 1u);
+                        const int16_t *hi = ch < 2u ? ua.cap : ua_track_extra;
+                        const uint8_t *lo = ch < 2u ? ua.cap_lo : ua_track_extra_lo;
+                        assert(cap_is(hi, lo, ri, track_capture[f * channels + ch]));
+                        expected[(at + f) * channels + ch] = hi[ri] * 256 + lo[ri];
+                    }
             }
             uint32_t read = 0, width = ua_sample_bytes(alt);
             uint64_t energy[NPART] = {0};
@@ -192,7 +215,7 @@ static void memory_budget(void)
     ua_tracks_set(1,1000);
     assert(ua_off_apply(1600)==2&&usb.up&&usb.config&&ua.cap_alt==1&&ua.cw==700&&ua.cap[0]==12345&&!ua_track_extra&&!resource[RES_USB_TRACKS].size);
     for(uint32_t b=0;b<RESOURCE_BANKS;b++)resource_release(b);
-    assert(ua_tracks_memory_prepare(1)&&ua_track_extra&&resource[RES_USB_TRACKS].size==4096u);
+    assert(ua_tracks_memory_prepare(1)&&ua_track_extra&&resource[RES_USB_TRACKS].size==UA_TRACKS_BYTES);
     memset(ua_track_extra,0x5a,4096u);
     void *saved=ua_track_extra;
     assert(ua_tracks_memory_prepare(1)&&ua_track_extra==saved&&ua_track_extra[2047]==0x5a5a);

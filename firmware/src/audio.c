@@ -3,12 +3,13 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* I2S output (ALNK0 -> external codec) and the
  * audio ISR: per half buffer, blocks of CTL samples: mix_block (mix.c: events ->
- * each synth part -> dist -> level / pan -> sends -> buses -> master) -> 24-bit stereo. */
+ * each synth part -> dist -> level / pan -> sends -> buses -> master, Q15 << MIX_FRAC from the level on) -> 24-bit
+ * stereo with the bus's low bits. */
 /* registers: hal/fm1_audio.h */
 #define HALF_WORDS (HALF_FRAMES * 2u)
 #define DAC_TICKS 544u            /* TIMER4 ticks per I2S frame (24 MHz / 44,117.6 Hz) */
 #define CPU_AVG (4096u / HALF_FRAMES)   /* halves the load meter averages: ~93 ms whatever the half */
-#define OUT_SHIFT 7               /* Q15 -> 24-bit, -6 dBFS ceiling (M0f ran clean at -18 dBFS) */
+#define OUT_SHIFT (MIX_FRAC - 7)  /* the bus (Q15 << MIX_FRAC) -> 24-bit as Q15 << 7: -6 dBFS ceiling (M0f ran clean at -18 dBFS) */
 
 static int32_t abuf[2u * HALF_WORDS] __attribute__((aligned(32)));
 
@@ -33,7 +34,7 @@ static uint32_t audio_cpu_rem;                         /* keep the fractional II
 static int16_t scope_buf[SCOPE_N];
 static uint32_t scope_w;
 
-static void audio_block(int32_t *out, uint32_t n)       /* mix (mix.c), then Q15 -> 24 bit */
+static void audio_block(int32_t *out, uint32_t n)       /* mix (mix.c, the bus), then 24 bit */
 {
     uint32_t i;
     mix_block(out, n);
@@ -51,9 +52,9 @@ static void audio_block(int32_t *out, uint32_t n)       /* mix (mix.c), then Q15
     click_render(out, n);
     for (i = 0; i < n; i++) {
         if (i & 1u)
-            scope_buf[scope_w++ & (SCOPE_N - 1u)] = (int16_t)out[2u * i];
-        out[2u * i] *= 1 << OUT_SHIFT;
-        out[2u * i + 1u] *= 1 << OUT_SHIFT;
+            scope_buf[scope_w++ & (SCOPE_N - 1u)] = (int16_t)(out[2u * i] >> MIX_FRAC);
+        out[2u * i] >>= OUT_SHIFT;
+        out[2u * i + 1u] >>= OUT_SHIFT;
 #if defined(MELODEE_BENCH_SILENT) && MELODEE_BENCH_SILENT
         /* Bench builds silence only the physical output. Full engine/mixer work,
          * scope and USB capture still run; never use track mutes for timing. */

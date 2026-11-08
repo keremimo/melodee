@@ -3,8 +3,12 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 #include "performance_options.h"
 /* Engine output -> optional stereo insert -> track level -> master.
- * The bypass retains the original level/pan/spread path exactly. */
+ * The bypass retains the original level/pan/spread path exactly.
+ * From the track level on the bus is Q15 << MIX_FRAC (dsp.c): mix_l / mix_r, the stems, the master and mix_block's
+ * output. The FX sends and the FX themselves stay Q15 (fx.c), their return goes back onto the bus. */
 #include "fx.c"
+#define MIX_TRACK_MAX (524287 * MIX_ONE)         /* a track after its level: +24 dB over full scale */
+#define MIX_BUS_MAX ((1 << 29) - 1)              /* the master's input: four tracks at MIX_TRACK_MAX (x - dc fits) */
 static int32_t part_storage[CTL],mix_l[CTL],mix_r[CTL];
 static int32_t *part_buf=part_storage;
 static uint8_t fx_send_on;
@@ -18,47 +22,60 @@ static __attribute__((noinline,section(".audio_text"))) void mix_extra_sends(uin
         }
     }
 }
+/* l, r on the bus; send (fx_send_gain) takes them down to the FX's Q15 */
 static inline __attribute__((always_inline)) void mix_add(int32_t l,int32_t r,uint32_t i,uint32_t send)
 {
     mix_l[i]+=l;mix_r[i]+=r;if(send){fx_send_l[i]+=fx_scale(l,send);fx_send_r[i]+=fx_scale(r,send);}
 }
+/* x (the bus) x g / 4096: the pan laws' Q12 gains */
+static inline __attribute__((always_inline)) int32_t mix_q12(int32_t x, int32_t g)
+{
+    return (int32_t)(((int64_t)x * g) >> 12);
+}
+/* the FX return (Q15, fx.c) at ret (Q16) onto the bus */
+static inline __attribute__((always_inline)) int32_t mix_fx_return(int32_t wet, uint32_t ret)
+{
+    return fx_scale(clamp(wet, -(MIX_BUS_MAX >> MIX_FRAC), MIX_BUS_MAX >> MIX_FRAC) * MIX_ONE, ret);
+}
 static volatile uint32_t kb_mask, kb_layer;
 static volatile uint8_t kb_lock;
-#define LIM_T 26000                              /* -2 dBFS: only overs, a chord does not duck a held note (#108) */
+#define LIM_T (26000 * MIX_ONE)                  /* -2 dBFS: only overs, a chord does not duck a held note (#108) */
 static int32_t lim_env = LIM_T;
 static int32_t dc_l, dc_r, dce_l, dce_r;
 
-/* DC blocker (~2 Hz), always on: a leaky integrator of the input (Q6 state) subtracted from it.
- * The >> 12 step keeps its remainder (error feedback, 0..4095) and adds it to the next one, so no
- * part of the step is lost: the state follows the input exactly, down to 0 after the sound stops.
- * (A rounded step of (x - dc) / 4096 would stop moving at |x - dc| < 2048 and leave an offset of up
- * to +-31 at the output after silence.) */
+/* DC blocker (~2 Hz), always on: a leaky integrator of the input subtracted from it (the bus's MIX_FRAC low bits
+ * are the state's fraction). The >> 12 step keeps its remainder (error feedback, 0..4095) and adds it to the next
+ * one, so no part of the step is lost: the state follows the input exactly, down to 0 after the sound stops.
+ * (A rounded step of (x - dc) / 4096 would stop moving at |x - dc| < 2048 and leave an offset at the output after
+ * silence.) |x| <= MIX_BUS_MAX: x - dc fits */
 static inline __attribute__((always_inline)) int32_t dc_block(int32_t x, int32_t *dc, int32_t *err)
 {
-    int32_t e = x * 64 - *dc + *err, d = e >> 12;
+    int32_t e = x - *dc + *err, d = e >> 12;
     *err = e - d * 4096;
     *dc += d;
-    return x - ((*dc + 32) >> 6);
+    return x - *dc;
 }
 
-/* linear up to 24576 (-2.5 dBFS), above it 4096 tanh(d / 4096): slope 1 at the knee, ceiling 28524 (-1.2 dBFS).
- * Only what the limiter's attack lets through bends (a held -2 dBFS peak loses 0.02 dB); a full tanh here bent
- * every sample and turned chords into intermodulation (-26 dB on a Prophet chord, -52 dB now). */
+/* linear up to 24576 (-2.5 dBFS), above it 4096 tanh(d / 4096): slope 1 at the knee, ceiling 28524 (-1.2 dBFS),
+ * on the bus (x MIX_ONE). Only what the limiter's attack lets through bends (a held -2 dBFS peak loses 0.02 dB); a
+ * full tanh here bent every sample and turned chords into intermodulation (-26 dB on a Prophet chord, -52 dB now) */
+#define KNEE (24576 * MIX_ONE)
 static inline __attribute__((always_inline)) int32_t master_knee(int32_t y)
 {
     int32_t a = y < 0 ? -y : y;
-    if (a <= 24576)
+    if (a <= KNEE)
         return y;
-    a -= 24576;
-    a = 24576 + (softclip((a < 8192 ? a : 8192) * 8) >> 3);   /* (softclip is flat from 65536 on) */
+    a -= KNEE;
+    /* softclip's input d / 4096 in Q15 (flat from 65536 on), its output / 8 back on the bus */
+    a = KNEE + softclip((a < 8192 * MIX_ONE ? a : 8192 * MIX_ONE) >> (MIX_FRAC - 3)) * (MIX_ONE >> 3);
     return y < 0 ? -a : a;
 }
 
 static __attribute__((noinline,section(".dsp_text"))) void master_out(int32_t *l, int32_t *r)
 {
     int32_t al, ar, a;
-    *l = dc_block(*l, &dc_l, &dce_l);
-    *r = dc_block(*r, &dc_r, &dce_r);
+    *l = dc_block(clamp(*l, -MIX_BUS_MAX, MIX_BUS_MAX), &dc_l, &dce_l);
+    *r = dc_block(clamp(*r, -MIX_BUS_MAX, MIX_BUS_MAX), &dc_r, &dce_r);
 #ifdef MELODEE_MASTER_RAW
     if (MELODEE_MASTER_RAW) return;                     /* (web/core/melodee_core.c: an export without the limiter) */
 #endif
@@ -68,11 +85,11 @@ static __attribute__((noinline,section(".dsp_text"))) void master_out(int32_t *l
     if (a > lim_env)
         lim_env += (a - lim_env) >> 2;
     else if (lim_env > LIM_T)
-        lim_env -= ((lim_env - LIM_T) >> 12) + 1;
+        lim_env -= ((lim_env - LIM_T) >> 12) + MIX_ONE;
     if (lim_env > LIM_T) {
-        int32_t g = (int32_t)(((uint32_t)LIM_T << 15) / (uint32_t)lim_env);   /* < 32768 */
-        *l = ((*l >> 4) * g) >> 11;                      /* >> 4 first: |l| may be far above Q15 */
-        *r = ((*r >> 4) * g) >> 11;
+        int32_t g = (int32_t)(((uint32_t)(LIM_T >> MIX_FRAC) << 15) / (uint32_t)(lim_env >> MIX_FRAC));   /* <= 32768 */
+        *l = (int32_t)(((int64_t)*l * g) >> 15);
+        *r = (int32_t)(((int64_t)*r * g) >> 15);
     }
     *l = master_knee(*l);
     *r = master_knee(*r);
@@ -140,15 +157,16 @@ static __attribute__((noinline)) void mix_cache_update(const track_t *t, mix_cac
     mc->lvl=LEVEL_Q12[mc->level & 127];
     mc->gl=4096-(mc->pan>0?mc->pan*64:0);mc->gr=4096+(mc->pan<0?mc->pan*64:0);
 }
-/* b (the part's sum, +-884000) x lvl (Q12, up to +7.5 dB) / 4096, dithered (dsp.c dith_cut): (b >> 2) * lvl fills 31
- * bits, so the two low bits of b go in apart, (4A + B) >> 12 = (A + (B >> 2)) >> 10. b = 0 or lvl = 0 stays 0 */
-static inline __attribute__((always_inline)) int32_t mix_level(int32_t b, int32_t lvl, uint32_t k)
+/* b (the part's sum, +-884000) x lvl (Q12, up to +7.5 dB) / 4096 onto the bus, rounded: the MIX_FRAC bits below Q15
+ * stay (no dither: the cut is far below the DAC's). b = 0 or lvl = 0 stays 0 */
+static inline __attribute__((always_inline)) int32_t mix_level(int32_t b, int32_t lvl)
 {
-    int32_t a, lo, d = ((int32_t)dith[k & (DITH_N - 1u)] >> 3) + 2048;
     b = clamp(b, -884000, 884000);
-    a = (b >> 2) * lvl; lo = (b & 3) * lvl;
-    return clamp((a + ((lo + (d & -(int32_t)((a | lo) != 0))) >> 2)) >> 10, -524287, 524287);
+    return clamp((int32_t)(((int64_t)b * lvl + (1 << (11 - MIX_FRAC))) >> (12 - MIX_FRAC)), -MIX_TRACK_MAX, MIX_TRACK_MAX);
 }
+/* a track's meter stays Q15 (trk_peak_take); the loops below keep it on the bus scale while they run */
+#define PEAK_IN(t) ((t)->peak * MIX_ONE)
+#define PEAK_OUT(t, pk) ((t)->peak = (pk) >> MIX_FRAC)
 static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_t n)
 {
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
@@ -157,19 +175,18 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
     int32_t pa=clamp(pan-s,-64,63),pb=clamp(pan+s,-64,63);
     int32_t gla=4096-(pa>0?pa*64:0),gra=4096+(pa<0?pa*64:0);
     int32_t glb=4096-(pb>0?pb*64:0),grb=4096+(pb<0?pb*64:0);
-    int32_t glm=(gla+glb)>>1,grm=(gra+grb)>>1,gld=(gla-glb)>>1,grd=(gra-grb)>>1,pk=t->peak;
-    uint32_t dk=(uint32_t)(t-trk)*8u;
+    int32_t glm=(gla+glb)>>1,grm=(gra+grb)>>1,gld=(gla-glb)>>1,grd=(gra-grb)>>1,pk=PEAK_IN(t);
     for(uint32_t i=0;i<n;i++){
-        int32_t x=mix_level(b[i],lvl,i+dk);
-        int32_t y=mix_level((d[i]<<1)-b[i],lvl,i+dk+4u);
+        int32_t x=mix_level(b[i],lvl);
+        int32_t y=mix_level((d[i]<<1)-b[i],lvl);
         int32_t a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
-        mix_add(((x*glm)>>12)+((y*gld)>>12),((x*grm)>>12)+((y*grd)>>12),i,send);
+        mix_add(mix_q12(x,glm)+mix_q12(y,gld),mix_q12(x,grm)+mix_q12(y,grd),i,send);
     }
-    t->peak=pk;
+    PEAK_OUT(t,pk);
 }
 #if MELODEE_MODULES
 /* host 5 (mod_abi3.h stereo, eng_module.c MOD_HOST3): mix_part names the part it renders; its module's post, on this
@@ -193,19 +210,18 @@ static __attribute__((noinline)) void mix_stereo(track_t *t,const int32_t *b,uin
     if(!mc->valid || mc->level!=t->p[P_LEVEL] || mc->pan!=t->p[P_PAN])mix_cache_update(t,mc);
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
     const int32_t *d=spread_buf;
-    int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=t->peak;
-    uint32_t dk=(uint32_t)(t-trk)*8u;
+    int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=PEAK_IN(t);
     for(uint32_t i=0;i<n;i++){
-        int32_t l=mix_level(d[i],lvl,i+dk),r=mix_level(b[i]-d[i],lvl,i+dk+4u);
+        int32_t l=mix_level(d[i],lvl),r=mix_level(b[i]-d[i],lvl);
         int32_t al=l<0?-l:l,ar=r<0?-r:r;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=(l+r)>>1;
 #endif
         if(al>pk)pk=al;
         if(ar>pk)pk=ar;
-        mix_add((l*gl)>>12,(r*gr)>>12,i,send);
+        mix_add(mix_q12(l,gl),mix_q12(r,gr),i,send);
     }
-    t->peak=pk;
+    PEAK_OUT(t,pk);
 }
 #endif
 #if MELODEE_MIX_FAST
@@ -216,17 +232,16 @@ static __attribute__((noinline)) void mix_stereo(track_t *t,const int32_t *b,uin
 static __attribute__((noinline,section(".dsp_text"))) void MIX_MONO_GENERAL(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
 {
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
-    int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=t->peak;
-    uint32_t dk=(uint32_t)(t-trk)*8u;
+    int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=PEAK_IN(t);
     for(uint32_t i=0;i<n;i++){
-        int32_t x=mix_level(b[i],lvl,i+dk),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
-        mix_add((x*gl)>>12,(x*gr)>>12,i,send);
+        mix_add(mix_q12(x,gl),mix_q12(x,gr),i,send);
     }
-    t->peak=pk;
+    PEAK_OUT(t,pk);
 }
 #undef MIX_MONO_GENERAL
 #if MELODEE_MIX_FAST
@@ -234,37 +249,35 @@ static __attribute__((noinline,section(".dsp_text"))) void MIX_MONO_GENERAL(trac
  * reads/writes. Keep this loop separate from the centered-send path. */
 static __attribute__((noinline,section(".dsp_text"))) void mix_mono_dry(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
 {
-    int32_t lvl=mc->lvl,pk=t->peak;
-    uint32_t dk=(uint32_t)(t-trk)*8u;
+    int32_t lvl=mc->lvl,pk=PEAK_IN(t);
     for(uint32_t i=0;i<n;i++){
-        int32_t x=mix_level(b[i],lvl,i+dk),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
         mix_l[i]+=x;mix_r[i]+=x;
     }
-    t->peak=pk;
+    PEAK_OUT(t,pk);
 }
 static __attribute__((noinline,section(".dsp_text"))) void mix_mono_samples(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
 {
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
     if(mc->pan){mix_mono_general(t,b,n,mc);return;}
     if(!send){mix_mono_dry(t,b,n,mc);return;}
-    /* x is clamped to +/-524287, so unity pan multiplication is exact and
-     * cannot overflow. Equal channels also share the send's scaling work.
+    /* centred: unity pan is x itself (mix_q12(x, 4096) == x for any x on the bus).
+     * Equal channels also share the send's scaling work.
      * Keep each loop separate to avoid register pressure in the general path. */
-    int32_t lvl=mc->lvl,pk=t->peak;
-    uint32_t dk=(uint32_t)(t-trk)*8u;
+    int32_t lvl=mc->lvl,pk=PEAK_IN(t);
     for(uint32_t i=0;i<n;i++){
-        int32_t x=mix_level(b[i],lvl,i+dk),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
         mix_add(x,x,i,send);
     }
-    t->peak=pk;
+    PEAK_OUT(t,pk);
 }
 #endif
 
@@ -325,7 +338,7 @@ static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
     if(t->engine==ENGI_MIDI){t->peak=0;return;}
     uint32_t extra=0;
     if(fx_send_on && fx_bus_separate)for(uint32_t slot=0;slot<FX_SLOTS-1u;slot++){
-        uint32_t amount=(uint32_t)t->p[P_FXSEND2+slot];fx_extra_gain[slot]=(amount+(amount==127u))*512u;extra|=amount;
+        uint32_t amount=(uint32_t)t->p[P_FXSEND2+slot];fx_extra_gain[slot]=(amount+(amount==127u))*(512u>>MIX_FRAC);extra|=amount;
     }
     /* Reuse the return workspace until the worker starts. The difference is
      * this track's exact post-fader/pan/solo contribution; CHAIN's sample loops
@@ -401,8 +414,8 @@ static __attribute__((noinline,section(".dsp_text"))) void master_samples(int32_
         if(gain!=target)gain+=clamp(target-gain,-128,128);
         int32_t l=mix_l[i],r=mix_r[i];
         {uint32_t ret=(uint32_t)gain*2u;
-            l+=fx_scale(fx_left[i],ret);
-            r+=fx_scale(fx_right[i],ret);}
+            l+=mix_fx_return(fx_left[i],ret);
+            r+=mix_fx_return(fx_right[i],ret);}
         mix_l[i]=l;mix_r[i]=r;
     }
     punch_process(mix_l,mix_r,n);
@@ -413,7 +426,7 @@ static __attribute__((noinline,section(".dsp_text"))) void master_samples(int32_
         if(master_capture_on){track_capture[2u*i]=l;track_capture[2u*i+1u]=r;}   /* (USB stereo capture: before MASTER, #103) */
 #endif
         if(master==4096){out[2u*i]=l;out[2u*i+1u]=r;continue;}   /* (full MASTER: nothing to cut) */
-        out[2u*i]=dith_cut(l*master,12,i+5u);out[2u*i+1u]=dith_cut(r*master,12,i+5u);}   /* (one dither: mono stays L = R) */
+        out[2u*i]=(int32_t)(((int64_t)l*master+2048)>>12);out[2u*i+1u]=(int32_t)(((int64_t)r*master+2048)>>12);}
     fx_bus_mix=gain;
 }
 static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
@@ -444,6 +457,14 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
     void (*volatile run)(int32_t *,uint32_t)=master_samples;
     AP_START(output_start);run(out,n);AP_END(AP_OUTPUT,output_start);
 }
+#ifndef FM1_IRQ_TARGET
+/* (host tests: mix_block's output at the 16-bit scale, Q15, rounded; regress hashes the bus itself) */
+static __attribute__((unused)) void mix_block_q15(int32_t *out,uint32_t n)
+{
+    mix_block(out,n);
+    for(uint32_t i=0;i<2u*n;i++)out[i]=(out[i]+(MIX_ONE>>1))>>MIX_FRAC;
+}
+#endif
 
 /* A track's meter has two readers (0 the screen's meters, 1 the editor's METERS push): each takes the peak (|sample|,
  * Q15, after level, solo and mute) since its own last read. Main loop only */

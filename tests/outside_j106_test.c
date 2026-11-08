@@ -142,7 +142,8 @@ static void play(int32_t *out, uint32_t n, uint32_t parts)
         memset(mix_r, 0, sizeof mix_r);
         for (uint32_t k = 0; k < parts; k++)
             mix_part(&trk[k], CTL);
-        for (uint32_t j = 0; j < CTL; j++) out[2u * (i + j)] = mix_l[j], out[2u * (i + j) + 1u] = mix_r[j];
+        for (uint32_t j = 0; j < CTL; j++)              /* (the bus's Q15, rounded) */
+            out[2u * (i + j)] = (mix_l[j] + (MIX_ONE >> 1)) >> MIX_FRAC, out[2u * (i + j) + 1u] = (mix_r[j] + (MIX_ONE >> 1)) >> MIX_FRAC;
     }
 }
 /* preset p, a chord then a melody, on part 0 (tests/outside_author_test.c's phrase, longer): its block as a render
@@ -209,13 +210,13 @@ static uint32_t mixed(uint32_t e, uint32_t p, int32_t pan, int32_t send, int32_t
         st += mix_st_on;
         for (uint32_t j = 0; j < CTL; j++) {
             int32_t l, r;
-            if (mix_st_on) l = mix_level(spread_buf[j], mc->lvl, j), r = mix_level(part_buf[j] - spread_buf[j], mc->lvl, j + 4u);
-            else l = r = mix_level(part_buf[j], mc->lvl, j);
+            if (mix_st_on) l = mix_level(spread_buf[j], mc->lvl), r = mix_level(part_buf[j] - spread_buf[j], mc->lvl);
+            else l = r = mix_level(part_buf[j], mc->lvl);
             if (heard)                                   /* (a block with no voice: not mixed, its buffer not written) */
-                *law &= mix_l[j] == ((l * mc->gl) >> 12) && mix_r[j] == ((r * mc->gr) >> 12) &&
+                *law &= mix_l[j] == mix_q12(l, mc->gl) && mix_r[j] == mix_q12(r, mc->gr) &&
                         fx_send_l[j] == (g ? fx_scale(mix_l[j], g) : 0) && fx_send_r[j] == (g ? fx_scale(mix_r[j], g) : 0) &&
                         track_capture[j * NPART] == (mix_st_on ? (l + r) >> 1 : l);
-            out[2u * (i + j)] = mix_l[j], out[2u * (i + j) + 1u] = mix_r[j];
+            out[2u * (i + j)] = (mix_l[j] + (MIX_ONE >> 1)) >> MIX_FRAC, out[2u * (i + j) + 1u] = (mix_r[j] + (MIX_ONE >> 1)) >> MIX_FRAC;
             if (eng) eng[i + j] = heard ? part_buf[j] : 0;
         }
     }
@@ -370,10 +371,10 @@ static int run(void)
             dc_l = dc_r = dce_l = dce_r = 0;            /* (the master's DC blocker: each side's own state) */
             for (uint32_t i = 0; i < 8u * CTL; i += CTL)  /* (quiet blocks first: the run's first mix_block calls
                                                          * dropped a chord started with them) */
-                mix_block(blk, CTL);
+                mix_block_q15(blk, CTL);
             for (uint32_t i = 0; i < 400u * CTL; i += CTL) {
                 phrase_notes(i / CTL);
-                mix_block(blk, CTL);
+                mix_block_q15(blk, CTL);
                 for (uint32_t j = 0; j < CTL; j++) sides[k] += blk[2u * j] != blk[2u * j + 1u], loud |= blk[2u * j] != 0;
             }
         }

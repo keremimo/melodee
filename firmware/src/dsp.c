@@ -5,6 +5,11 @@
  * Voice output convention: add sample * amp to out[], where a full-scale
  * oscillator at amp = 1.0 (Q15 32767) contributes VOICE_FS. */
 #define VOICE_FS 24000           /* per-voice level: one voice peaks near -6 dBFS before the master */
+/* The bus from the track level on (mix.c) to the DAC and USB: Q15 full scale with MIX_FRAC bits below it (32767 <<
+ * MIX_FRAC = full scale), so the 24-bit outputs carry the level, pan, FX return, limiter and MASTER math's own low
+ * bits instead of a 16-bit cut. The engines, the FX and the punch effects stay Q15 */
+#define MIX_FRAC 8
+#define MIX_ONE (1 << MIX_FRAC)
 
 /* n bytes packed by tools/gen_tables.py lz_pack (reSID's waveforms, CZ-1's factory tones): c < 0x80: c + 1 bytes
  * follow; c >= 0x80: (c & 0x7F) + 3 bytes copied from d + 1 back, d in the next two bytes. A copy may reach back

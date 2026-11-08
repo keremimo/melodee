@@ -331,7 +331,7 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
             fm1_in.notes = 0;
             keys_on = 0;
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         if (busy_now() > bmax)
             bmax = busy_now();
         for (i = 0; i < CTL; i++) {
@@ -400,7 +400,7 @@ static double tracks_cost(const uint8_t parts[NPART][3], uint32_t *busy_max)
             if (parts[3][2] == DRUM_HITS && (k * CTL) % (FS / 8u) < CTL)   /* 16ths at 120 BPM */
                 drum_hit((k * CTL) / (FS / 8u));
             t0 = now_ns();
-            mix_block(o, CTL);
+            mix_block_q15(o, CTL);
             if (k >= 2u * FS / CTL) {                  /* (the host's own noise only ever adds) */
                 ns += now_ns() - t0;
                 if ((k - 2u * FS / CTL) % seg == seg - 1u) {
@@ -467,7 +467,7 @@ static int steal_test(const char *dir)
             p = ms / 500u % 2u ? 1u : 2u;          /* parts 2, 3 in turn: each takes a voice */
             trk_note_on(&trk[p], 76u + ms / 250u, 90);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         if (voice_kills != k0 && nev < 6u)
             events[nev++] = f;
         for (i = 0; i < CTL; i++) {
@@ -559,7 +559,7 @@ static int xfade_test(const char *dir)
             late_ok = late_ok && t->engine == to[3];
             trk_note_off(t, 60);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (i = 0; i < CTL; i++) {
             L[f + i] = o[2 * i];
             wav_put(w, o[2 * i], o[2 * i + 1]);
@@ -593,7 +593,7 @@ static void rec_run_to(track_t *t, uint32_t idx, uint32_t q)
     int32_t o[2 * CTL];
     uint32_t guard = 0;
     do {
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
     } while (++guard < 100000u && !(t->seq_idx == idx &&
              t->seq_pos >= step_samples(t, seq_div_samples((uint32_t)t->p[P_SDIV]), idx) * q / 100u));
 }
@@ -714,7 +714,7 @@ static void trs_bytes(const uint8_t *b, uint32_t n)
     int32_t o[2 * CTL];
     while (n--)
         um_byte(*b++);
-    mix_block(o, CTL);
+    mix_block_q15(o, CTL);
 }
 static int trs_test(void)
 {
@@ -975,7 +975,7 @@ int main(int argc, char **argv)
             if (sscanf(getenv("PSWEEP"), "%d:%d:%d", &id, &a, &b) == 3 && id >= 0 && id < P_COUNT)
                 inst.p[id] = (int16_t)(a + (int64_t)(b - a) * f / frames);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         {   /* VOICES=1: report the most voices active at once (engine voice caps) */
             static uint32_t vmax, hi;
             uint32_t k, a = 0;

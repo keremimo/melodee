@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Comparator retained from mix.c at f109b21 (Melodee-authored mono mixer).
+/* Comparator retained from mix.c at f109b21 (Melodee-authored mono mixer), on the 24-bit bus (Q15 << MIX_FRAC).
  * Compare all outputs, sends, peaks and stems, including noncenter fallback. */
 #define MELODEE_MIX_FAST 1
 #define MELODEE_USB_AUDIO 1
@@ -24,16 +24,16 @@ static uint64_t instructions(void)
 static __attribute__((noinline)) void reference(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
 {
     uint32_t send=fx_send_on?fx_send_gain(t):0u;
-    int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=t->peak;
+    int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=PEAK_IN(t);
     for(uint32_t i=0;i<n;i++){
-        int32_t x=mix_level(b[i],lvl,i+(uint32_t)(t-trk)*8u),a=x<0?-x:x;
+        int32_t x=mix_level(b[i],lvl),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
         if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
-        mix_add((x*gl)>>12,(x*gr)>>12,i,send);
+        mix_add(mix_q12(x,gl),mix_q12(x,gr),i,send);
     }
-    t->peak=pk;
+    PEAK_OUT(t,pk);
 }
 /* hostsim drops target section attributes; restore only this function's
  * noinline contract so the fallback benchmark matches the firmware split. */
