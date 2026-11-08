@@ -315,6 +315,9 @@ static int ed_flash_stop(void)
 #ifdef RES_BASE                          /* (the firmware: res.c) */
 #include "editor_res.c"
 #endif
+#ifdef MODULE_STORE                      /* (the firmware: module_store.c) */
+#include "editor_module.c"
+#endif
 #include "editor_backup.c"
 #include "editor_fm6.c"
 #include "editor_cz.c"
@@ -380,6 +383,9 @@ static int (*const ED_HANDLERS[])(uint32_t cmd, const uint8_t *a, uint32_t n) = 
 #endif
 #ifdef RES_BASE
     ed_res_handle,
+#endif
+#ifdef MODULE_STORE
+    ed_module_handle,
 #endif
     ed_ui_handle, ed_backup_handle, ed_fm6_handle, ed_cz_handle, ed_library_handle, ed_native_handle,
 };

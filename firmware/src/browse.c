@@ -265,7 +265,7 @@ static int list_keep(uint32_t m, uint32_t src, uint32_t k)
 /* one pass over the list LIST keeps: *total its length; the place of entry (ws, wk) (total: not in it); entry n in
  * *as, *ak (USER_GENERAL, UP_SLOTS past the end). The segments: 2 per engine in ENGINE_ORDER (factory, native), then
  * the user presets */
-#define LSEG_USER (2u * NENG_SHOWN)
+#define LSEG_USER (2u * (uint32_t)eng_nshown)
 static uint32_t lseg_src(uint32_t seg){return seg&1u?USER_GENERAL:eng_vis(seg/2u);}
 static uint32_t lseg_len(uint32_t seg){return seg&1u?UP_SLOTS:ENGINES[eng_vis(seg/2u)]->npresets;}
 static uint32_t list_scan(uint32_t m, uint32_t ws, uint32_t wk, uint32_t n, uint32_t *as, uint32_t *ak,

@@ -723,6 +723,10 @@ def main():
     print(f"app      {OUT / 'melodee.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
+    # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py)
+    for src in sorted((FW / "modules").glob("*/*.c")):
+        if src.parent.name != "sdk" and src.stem == src.parent.name:
+            subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src], check=True)
     if a.cpu_manifest:
         if any(hashlib.sha256((SRC / p).read_bytes()).hexdigest() != digest for p, digest in cpu_sources.items()):
             raise SystemExit("Firmware source changed during CPU experiment build; rebuild before measuring")

@@ -168,6 +168,9 @@ static void midi_thru(uint32_t pkt, uint32_t source);   /* midi_thru.c, after th
 #if MELODEE_USER_KITS
 #include "kit_store.c"           /* the user's drum kits in the pool (drum_real.c plays them) */
 #endif
+#if MELODEE_MODULES
+#include "module_store.c"        /* synth modules in the pool (eng_module.c plays them) */
+#endif
 #if KIT_REC
 #include "kit_take.c"            /* a drum take from USB audio, encoded and kept */
 #include "kit_rec_ui.c"          /* Record kit: the drum track's sheet */

@@ -1504,6 +1504,9 @@ static void persist_boot(void)                    /* before settings_init / pane
 #ifdef KIT_STORE
     kit_scan();                                    /* the user's drum kits, for the player (kit_store.c) */
 #endif
+#ifdef MODULE_STORE
+    mod_boot();                                    /* the synth modules, before the boot project names one */
+#endif
 #if MELODEE_SLICE
     slc_store_boot();                              /* (the scans read each slot's stored slices) */
 #endif

@@ -63,6 +63,13 @@ def analyze(ir, dis, src):
                 calls.add(m[1])
         frames[name] = total
         direct[name] = calls
+    # A synth module's callbacks (module_abi.h) are not in the image: one stand-in node with the stack a module may
+    # use (MOD_STACK_MAX; tools/mod_build.py refuses a module whose own call paths need more).
+    abi = src / 'module_abi.h'
+    module_budget = re.search(r'#define MOD_STACK_MAX (\d+)u', abi.read_text()) if abi.exists() else None
+    MODULE = '(synth module)'
+    if module_budget:
+        asm[MODULE], frames[MODULE], direct[MODULE] = [], int(module_budget[1]), set()
     # Possible function-pointer values: globals and local function-address uses.
     taken = set(REFERENCE.findall(FUNCTION.sub('', ir))) & fns.keys()
     for name, m in fns.items():
@@ -168,6 +175,8 @@ def analyze(ir, dis, src):
                 targets = {n for n in worker_entries if n in asm}
             if name == 'audio_batch_worker':
                 targets = {n for n in batch_entries if n in asm}
+            if not targets and module_budget and '%struct.mod_ctx_t*' in typ:
+                targets = {MODULE}
             indirect.setdefault(name, set()).update(targets)
             if not targets:
                 missing.append((name, typ, line.strip()))

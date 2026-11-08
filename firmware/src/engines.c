@@ -46,8 +46,16 @@ static const engine_t ENG_RETIRED = {         /* 13 without MELODEE_SLICE: reser
 /* Each track owns only its selected engine's working state. Simple engines
  * use voice_t alone. State is released after the old engine's switch fade. */
 #include "resources.c"
+#if MELODEE_MODULES
+static uint8_t mod_at[NENGINES];                    /* engine -> its module's slot + 1, 0: none (eng_module.c) */
+static uint32_t mod_part_bytes(uint32_t e);
+#endif
 static uint32_t eng_state_size(uint32_t e)
 {
+#if MELODEE_MODULES
+    if (e < NENGINES && mod_at[e])
+        return mod_part_bytes(e);
+#endif
     switch (e) {
 #if MELODEE_PROPHET
     case ENGI_PROPHET: return sizeof(p5_part_t);
@@ -101,8 +109,13 @@ static p5_part_t *p5_part(uint32_t part) { return resource_get(RES_ENGINE0 + par
 static int16_t (*slc_rbuf(uint32_t part))[SLC_RB] { return resource_get(RES_ENGINE0 + part % NPART, sizeof(slc_rb_t)); }
 #endif
 
-/* the editor protocol, user presets and projects store these indices: append, never reorder */
+/* the editor protocol, user presets and projects store these indices: append, never reorder. A loaded synth module
+ * takes its number's entry (eng_module.c mod_register), so the table is in RAM with modules */
+#if MELODEE_MODULES
+static const engine_t *ENGINES[NENGINES] = {
+#else
 static const engine_t *const ENGINES[NENGINES] = {
+#endif
 #if MELODEE_PROPHET_PROTOTYPE
     &ENG_P5_TEST,                /* test firmware only: RAM patches, NEVER persist */
 #else
@@ -155,6 +168,8 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_P5_TEST,                /* 19: Prophet (ANALOG's ID 0 stays reserved) */
     &ENG_RETIRED,                /* 20: Prophet user-preset namespace */
     &ENG_MIDI,                   /* 21: USB MIDI Track */
+    &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED,   /* 22..29: synth modules (ENGI_MOD0), silent while */
+    &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED,   /* none is loaded */
 };
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
@@ -180,7 +195,13 @@ static const preset_t *eng_preset(const engine_t *e, uint32_t k)
 /* the order the engines are shown in (PRESETS browsing and its ENG knob, the editor's list):
  * engine indices, never a retired one. The indices stay as they are (the
  * stores and the protocol hold them); only this table orders them */
+#if MELODEE_MODULES
+static uint8_t eng_nshown = NENG_SHOWN;             /* the built-in engines, then the loaded modules (mod_register) */
+static uint8_t ENGINE_ORDER[NENG_SHOWN_MAX] = {
+#else
+#define eng_nshown NENG_SHOWN
 static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
+#endif
     ENGI_PROPHET,                /* Prophet replaces ANALOG in new-sound browsing */
     12,                          /* FM6 */
 #if MELODEE_LEGACY_EXTRAS
@@ -201,6 +222,12 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
  * Never relabel retired records FM6. */
 static int eng_extra_retired(uint32_t e)
 {
+#if MELODEE_MODULES
+    if (e < NENGINES && mod_at[e])
+        return 0;                                   /* a module plays it */
+    if (e >= ENGI_MOD0 && e < NENGINES)
+        return 1;                                   /* a module's number with no module: its sounds keep it, silent */
+#endif
 #if !MELODEE_PROPHET_PROTOTYPE
     if (e == ENGI_ANALOG) return 1;
 #endif
@@ -216,19 +243,19 @@ static uint32_t eng_sound_idx(uint32_t e)
 {
     return eng_extra_retired(e) || eng_ok(e) ? e : ENGI_FM6;
 }
-static uint32_t eng_vis(uint32_t n) { return ENGINE_ORDER[n % NENG_SHOWN]; }
+static uint32_t eng_vis(uint32_t n) { return ENGINE_ORDER[n % eng_nshown]; }
 static uint32_t eng_rank(uint32_t e)
 {
     uint32_t n;
     if (!eng_ok(e))
         e = ENGI_FM6;                            /* (a retired or reserved engine: FM6's place) */
-    for (n = 0; n < NENG_SHOWN && ENGINE_ORDER[n] != e; n++)
+    for (n = 0; n < eng_nshown && ENGINE_ORDER[n] != e; n++)
         ;
-    return n < NENG_SHOWN ? n : 0u;
+    return n < eng_nshown ? n : 0u;
 }
 static uint32_t eng_step(uint32_t e, int32_t dir)
 {
-    return eng_vis((eng_rank(e % NENGINES) + (dir > 0 ? 1u : NENG_SHOWN - 1u)) % NENG_SHOWN);
+    return eng_vis((eng_rank(e % NENGINES) + (dir > 0 ? 1u : eng_nshown - 1u)) % eng_nshown);
 }
 
 /* the parts at power-on and in a new song (engine, preset; the steps empty): poly, bass, lead, drums. IT'S A
@@ -238,3 +265,6 @@ static const uint8_t TRK_DEF[NPART][2] = {{ENGI_PROPHET, 1}, {ENGI_FM6, 10}, {EN
 /* track k's power-on engine and preset: TRK_DEF's, a MIDI-only track the MIDI Track's */
 static uint32_t trk_def_engine(uint32_t k) { return k < NPART ? TRK_DEF[k][0] : ENGI_MIDI; }
 static uint32_t trk_def_preset(uint32_t k) { return k < NPART ? TRK_DEF[k][1] : 0u; }
+#if MELODEE_MODULES
+#include "eng_module.c"         /* synth modules: engines loaded into SRAM (module_store.c keeps them) */
+#endif

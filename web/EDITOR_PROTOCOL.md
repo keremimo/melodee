@@ -1430,6 +1430,7 @@ SMK-37's app tail (0x93000..0x9CFFF) has 30,200 B free after `.smkx`.
 | Branch / commit | Change | FM-1 | SMK |
 |---|---|---:|---:|
 | F0 `chore/editor-flash-room` | `editor_res.c` and `editor_wire.h` built for size (the other `editor*.c` already were); shared helpers: 7-bit writers (`ed_n7` / `ed_u14` / `ed_u35` / `ed_u35s`), request echo (`ed_arg` / `ed_echo`), names (`ed_text` / `ed_shown`), paging (`ed_page` / `ed_left`), nibbles, table-driven argument lengths (`ED_ARGN`), handler table, INFO from a constant table, STEP + TRACK_STEP and SONG + BANK_SONG share their code, FAV kind limits, backup object source. No command retired, every reply byte for byte as before | **−1,644 B** | **−1,604 B** |
+| `experiment/synth-modules` | command 84 (synth module slots: list, upload, delete; `editor_module.c`) with the module loader, glue, pool slots and the engine table in RAM it needs (NENGINES 22 → 30); not merged | **+3,980 B** | **+1,012 B** |
 
 After F0: FM-1 image 571,576 B, **5,672 B free**; SMK image 572,092 B, **5,156 B free**. Editor code 18,484 B
 (FM-1) / 18,462 B (SMK). RAM unchanged (the new tables are constants in flash).

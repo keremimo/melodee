@@ -238,7 +238,7 @@ static int bridge_test(void)
     ok = st_old == 1 && bridge_all();
     int left = st_convert(buf, 0);
     ok &= left == 0 && bridge_all() && bridge_guards();
-    for (uint32_t o = 0; o < ST_KFILE0 + ST_NKIT; o++) {
+    for (uint32_t o = 0; o < ST_OBJ_END; o++) {
         if (!(o < OBJ_COUNT ? st_listed(o) : st_pfile(o))) continue;
         c = st_current(o, &h);
         ok &= c < 0 || c >= (int)ST_LIN_C0;
