@@ -552,8 +552,10 @@ enum { SC_TRACK, SC_GLOBAL, SC_ENGINE, SC_STEP, SC_TRK,   /* SC_TRK: the TRACKS 
 enum { GR_NONE, GR_ADSR, GR_LFO, GR_STEPS, GR_ARP, GR_SCALE, GR_ROLL, GR_BROWSE, GR_SLOTS, GR_USER, GR_TRK,
        GR_MOD, GR_PATS, GR_SONG, GR_MOTION, GR_CHORD, GR_SLICES,
        GR_ENV8, GR_STORE, GR_TOOLS, GR_SCALE_PICKER, GR_PADHIT, GR_PATGRID,
-       GR_FXRACK, GR_WDRAW }; /* NOTES shares GR_ROLL for steps and recorded events; GR_ENV8, GR_STORE, GR_TOOLS,
-                               * GR_WDRAW: a synth's schema's widgets (MOD3_W_ENV8, STORE, TOOLS, DRAW) */
+       GR_FXRACK, GR_WDRAW,
+       GR_SYNTHS, GR_FLASH }; /* NOTES shares GR_ROLL for steps and recorded events; GR_ENV8, GR_STORE, GR_TOOLS,
+                               * GR_WDRAW: a synth's schema's widgets (MOD3_W_ENV8, STORE, TOOLS, DRAW); GR_SYNTHS,
+                               * GR_FLASH: GLO's synths and storage lists (ui_slots.c) */
 
 typedef struct {
     const char *title;
@@ -620,6 +622,8 @@ static const page_t PAGE_TAB[] = {
     {"SYSTEM", FAM_GLO, SC_GLOBAL, GR_NONE, {G_MIDI, G_DRUMCH, G_ROUTE, G_INFO}},
     {"WEIGHTS", FAM_GLO, SC_GLOBAL, GR_NONE, {G_WP5, G_WCZ, G_WFM6, G_WSID}},        /* budget points per voice */
     {"WEIGHTS 2", FAM_GLO, SC_GLOBAL, GR_NONE, {G_WDRUM, G_BUDGET, 0xFF, G_SAFETY}},  /* SAFETY: overload voice cuts */
+    {"SYNTHS", FAM_GLO, SC_GLOBAL, GR_SYNTHS, {0xFF, 0xFF, 0xFF, 0xFF}},   /* the synths installed, their RAM (ui_slots.c) */
+    {"STORAGE", FAM_GLO, SC_GLOBAL, GR_FLASH, {0xFF, 0xFF, 0xFF, 0xFF}},   /* everything the flash keeps (ui_slots.c) */
     {"PRESETS", FAM_SAVE, SC_GLOBAL, GR_BROWSE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* browser: KNOB 1 LIST, 2 / PRESETS the sounds */
     {"USER", FAM_SAVE, SC_GLOBAL, GR_USER, {0xFF, 0xFF, 0xFF, 0xFF}},       /* user presets: SLOT LOAD ERASE SAVE */
     {"PROJECT", FAM_SAVE, SC_GLOBAL, GR_SLOTS, {G_SLOT, G_BOOT, G_LOAD, G_SAVE}},

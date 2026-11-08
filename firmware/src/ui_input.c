@@ -1441,6 +1441,13 @@ static void edit_param(uint32_t slot, int32_t steps)
             ui.uslot = (uint16_t)clamp((int32_t)ui.uslot + list_accel(EN_K1, steps, UP_SLOTS, 0), 0, UP_SLOTS - 1);
         return;
     }
+    if (pg->graph == GR_SYNTHS || pg->graph == GR_FLASH) {   /* GLO's SYNTHS, STORAGE: KNOB 1 / 2 the row */
+        uint32_t k = pg->graph == GR_SYNTHS ? SK_SYNTH : SK_FLASH;
+        uint8_t *c = k == SK_SYNTH ? &slv.syn : &slv.fl;
+        if (slot == 0u)
+            *c = (uint8_t)clamp((int32_t)slot_cur(k) + steps, 0, (int32_t)slot_count(k) - 1);
+        return;
+    }
     if (pg->graph == GR_MOD && slot == 1u) {             /* MOD: KNOB 2 the route; 1 its SRC, 3 DST, 4 AMT */
         mod_ui_slot = (uint8_t)clamp((int32_t)mod_ui_slot + (steps > 0 ? 1 : -1), 0, 3);
         return;
@@ -2244,7 +2251,7 @@ static void page_knob(uint32_t k, int32_t s)
 static int bulk_context(void)
 {
     return !ui.home&&!ui.menu&&!ui.confirm&&!ui.layer&&!pop.on&&!name_on()&&!sx_import.count&&
-        ((slot_kind()&&slot_kind()!=SK_PROJECT)||(cur_page()->graph==GR_ROLL&&!grid_on()));
+        (slot_bulk(slot_kind())||(cur_page()->graph==GR_ROLL&&!grid_on()));
 }
 static int bulk_jog(int32_t delta)
 {
@@ -2393,6 +2400,8 @@ static void ui_confirm_accept(void)
         }
     } else if (kind == CF_DEL_TRACK) {
         track_remove(ui.confirm_trk % NTRK);
+    } else if (kind == CF_DEL_ITEM) {
+        sti_delete(ui.confirm_trk);
 #if REC_TAKES
     } else if (kind == CF_DEL_KIT) {
         kit_rec_delete(ui.confirm_trk % MOD3_NREC);
@@ -2583,7 +2592,7 @@ static void ui_input(void)
     }
     song_edit_sync();
     if (ui.home || cur_page()->graph != GR_SONG) se.pending = se.range = 0;
-    if(bulk.on && (ui.home || slot_kind()==SK_PROJECT || bulk.track!=song.sel || bulk.pattern!=TSEL->pattern || bulk.engine!=library_engine() ||
+    if(bulk.on && (ui.home || (slot_kind() && !slot_bulk(slot_kind())) || bulk.track!=song.sel || bulk.pattern!=TSEL->pattern || bulk.engine!=library_engine() ||
        (!slot_kind() && (cur_page()->graph!=GR_ROLL || (bulk.on==1u?bulk.generation!=TSEL->pattern_gen:bulk.generation!=recording_generation)))))bulk_clear();
     step_history_sync();                                /* (seq_undo.c: a change from elsewhere: a fresh history) */
     if (home == BT_HOLD) {                              /* HOME held: open the menu, or leave it */
