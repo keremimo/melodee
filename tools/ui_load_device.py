@@ -14,7 +14,7 @@ import statistics
 import time
 import zlib
 
-from prophet_device import Device, backup, inventory, pack, param_ids, u32, verify
+from prophet_device import Device, backup, inventory, pack, param_ids, u32, verify, patch_get, patch_put, param_set
 from usb_audio_stats import snapshot
 
 COUNTERS = ('audio_late', 'voices_shed', 'voices_given_up', 'core1_faults',
@@ -119,18 +119,17 @@ def prepare(d, directory):
                          14: 100, 15: 90, 17: 85, 18: 80, 20: 0,
                          32: 70, 33: 75, 34: 1, 35: 1, 36: 1,
                          44: 0, 48: 110, 50: 72, 51: 1}.items():
-        checked(d.request(95, [2, 0, field, value]), 1, 'Prophet field')
-    checked(d.request(95, [3, 0, *b'UI STRESS P5']), 1, 'Prophet name')
+        param_set(d, 0, field, value)
+    engine, p5 = patch_get(d, 0)
+    p5[65:85] = b'UI STRESS P5'.ljust(20)          # (the Prophet schema's name: 20 bytes at 65)
+    patch_put(d, 0, engine, p5)
     # Both CZ lines render, rather than a cheaper single-line preset.
-    reply = checked(d.request(75, [0, 2]), 2, 'CZ get')
-    raw = bytearray(reply[3 + 2*i] | reply[4 + 2*i] << 4
-                    for i in range((len(reply)-3)//2))
+    engine, raw = patch_get(d, 2)
     if len(raw) != 144:
         raise RuntimeError(f'Unexpected CZ tone length: {len(raw)}')
     raw[0] = (raw[0] & ~3) | 2
     raw[128:144] = b'UI STRESS CZ    '
-    nibbles = [v for byte in raw for v in (byte & 15, byte >> 4)]
-    checked(d.request(76, [0, 2, *nibbles]), 2, 'CZ put')
+    patch_put(d, 2, engine, raw)
     # 64 populated steps per track. Chords/release tails and dense drums
     # deliberately stress both rendering and the shared voice allocator.
     harmony = ((48, 55, 60), (53, 60, 65), (55, 62, 67), (51, 58, 63))

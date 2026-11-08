@@ -23,8 +23,9 @@ static int proj_image_valid(const project_t *q)
     for(uint32_t i=0;i<FX_SLOTS;i++)if(q->g[G_MFXTONE+i]<-FX_TONE_MAX||q->g[G_MFXTONE+i]>FX_TONE_MAX)return 0;
     for(uint32_t k=0;k<PROJ_TRK;k++){
         oct[k]=q->t[k].mpc_octave;
-        if(q->t[k].engine>=NENGINES||q->pattern[k]>=NPAT||!cz_patch_valid(q->cz[k].raw)||!p5_patch_valid(&q->p5[k])||!drum_patch_valid(&q->drum[k]))return 0;
-        for(uint32_t i=0;i<FM6_PACKED;i++)if(q->fm6[k][i]>127u)return 0;
+        if(q->t[k].engine>=NENGINES||q->pattern[k]>=NPAT||!patch_stored_ok(MOD_SCH_STORE_TONE,q->cz[k])||
+           !patch_stored_ok(MOD_SCH_STORE_PROGRAM,q->p5[k])||!patch_stored_ok(MOD_SCH_STORE_KIT,q->drum[k]))return 0;
+        if(!patch_stored_ok(MOD_SCH_STORE_VOICE,q->fm6[k]))return 0;
         for(uint32_t i=0;i<P_COUNT;i++)if(q->t[k].p[i]<-64||q->t[k].p[i]>127)return 0;
         for(uint32_t i=0;i<NSTEP;i++)if(!proj_step_pack(step,&q->t[k].step[i]))return 0;
     }
@@ -355,18 +356,22 @@ static int proj_stream_load(uint32_t obj,uint32_t copy,uint32_t len)
     if(bank_full(len)){
         uint32_t header[2]={pj.h.map[0],len};uint8_t *tail=proj_image_tail();
         pz_in_t in;memset(&in,0,sizeof in);in.obj=obj;in.copy=copy;in.at=PJ_HEAD;
-        if((pj.on!=2u&&pj_read(obj,copy,0,header,sizeof header))||(header[0]!=BANK_MAGIC&&header[0]!=BANKL_MAGIC&&header[0]!=BANKM_MAGIC&&header[0]!=BANKN_MAGIC&&header[0]!=BANKO_MAGIC&&header[0]!=BANKP_MAGIC&&header[0]!=BANKQ_MAGIC)||header[1]!=len)return 0;
+        if((pj.on!=2u&&pj_read(obj,copy,0,header,sizeof header))||(header[0]!=BANK_MAGIC&&header[0]!=BANKL_MAGIC&&header[0]!=BANKM_MAGIC&&header[0]!=BANKN_MAGIC&&header[0]!=BANKO_MAGIC&&header[0]!=BANKP_MAGIC&&header[0]!=BANKQ_MAGIC&&header[0]!=BANKR_MAGIC)||header[1]!=len)return 0;
+        uint32_t fbkr=header[0]==BANKR_MAGIC;
         bank_patterns=(uint8_t)(header[0]==BANKQ_MAGIC);
-        bank_p16=(uint8_t)(header[0]==BANKP_MAGIC || bank_patterns);
+        bank_p16=(uint8_t)(header[0]==BANKP_MAGIC || fbkr || bank_patterns);
         bank_sounds=(uint8_t)(header[0]==BANKO_MAGIC);
         bank_songfx=(uint8_t)(header[0]==BANKN_MAGIC || bank_sounds || bank_p16);
         bank_song64=(uint8_t)(header[0]==BANKM_MAGIC || bank_songfx);
         bank_wide=(uint8_t)(header[0]!=BANK_MAGIC);
         if(pj.on==2u){                                  /* the tail first: its directory of timed notes, then again */
             if(pz_block(&in,pj.h.map[2],tail,PZ_TAIL,0))return 0;
+            memcpy(tail+PZ_TAIL,&pj.h.map[1],4u);
+            if(!bank_ext_read(tail,(int)fbkr))return 0;  /* (FBKR: its end block, the engine numbers it names) */
             if(bank_wide)memcpy(proj_rec_ext,tail+BT(BL.rec),BL.recn);
             if(pz_block(&in,pj.h.map[3],(uint8_t *)proj_image_store(),sizeof(project_store_t),0))return 0;
         }else{
+            if(fbkr?pj_read(obj,copy,BANK_ACTIVE_OFF,tail,BANK_TAIL_SIZE)||!bank_ext_read(tail,1):!bank_ext_read(tail,0))return 0;
             if(bank_wide&&pj_read(obj,copy,BL.rec,proj_rec_ext,BL.recn))return 0;
             if(pj_read(obj,copy,8u,proj_image_store(),sizeof(project_store_t)))return 0;
         }
@@ -382,6 +387,7 @@ static int proj_stream_load(uint32_t obj,uint32_t copy,uint32_t len)
         if(sum!=hash||!bank_tail_valid(tail))return 0;
         proj_source_hash=fnv(hash,&sum,4u);return 1;
     }
+    eng_remap_reset();                                  /* (a FUN record alone: its numbers as they are) */
     if(len==sizeof(project_store_t)){
         if(st_read_range(obj,copy,0,proj_image_store(),len))return 0;
         return proj_import(q,proj_image_store(),(int)len);

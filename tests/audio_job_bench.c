@@ -73,7 +73,7 @@ int main(void)
     for(uint32_t v=0;v<2;v++)for(uint32_t f=0;f<2;f++)measure(3,v,f,60);
     for(uint32_t v=0;v<2;v++)for(uint32_t n=0;n<(v?D9_NUM:16u);n++){
         trk[0].p[P_E0]=(int16_t)(v?DK_909:DK_808);
-        measure(10,v,0,drum_sound_note(&trk[0],n));
+        measure(10,v,0,pads_note(&trk[0],n));
     }
     return 0;
 }

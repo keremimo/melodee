@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Slot pages (docs/design: mock/r6_popups PROJECT, README "Popups"): PROJECT, SAVE > USER, FM6 STORE and P5 STORE as
- * the list of their slots alone, no action chips. KNOB 1 / 2 the slot, OCT+ its sheet (the page's own actions: act_do
+/* Slot pages (docs/design: mock/r6_popups PROJECT, README "Popups"): PROJECT, SAVE > USER and a synth's STORE page (FM6's,
+ * the Prophet's: MOD3_W_STORE) as the list of their slots alone, no action chips. KNOB 1 / 2 the slot, OCT+ its sheet (the page's own actions: act_do
  * in ui_input.c does them, as the chips did), OCT- Stage. The slot picked is a card: its name larger, a line about it,
  * PROJECT's Boot chip on the one power-on loads. PROJECT's last row, New song: OCT+ starts it. Included by ui_draw.c */
-enum { SK_NONE, SK_PROJECT, SK_USER, SK_FM6, SK_P5 };
+enum { SK_NONE, SK_PROJECT, SK_USER, SK_STORE };
 #define SL_Y0 Y_LABEL                                   /* the rows from y 32 (large type): 34 px, the card 58 */
 #define SL_ROW 34
 #define SL_CARD 58
@@ -19,8 +19,8 @@ static uint32_t slot_kind(void)
     if (ui.home || ui.menu || ui.layer)
         return SK_NONE;
     pg = cur_page();
-    return pg->graph == GR_SLOTS ? SK_PROJECT : pg->graph == GR_USER ? SK_USER : pg->graph == GR_FMSTORE ? SK_FM6 :
-           pg->scope == SC_P5STORE ? SK_P5 : SK_NONE;
+    return pg->graph == GR_SLOTS ? SK_PROJECT : pg->graph == GR_USER ? SK_USER : pg->graph == GR_STORE ? SK_STORE :
+           SK_NONE;
 }
 static uint32_t slot_count(uint32_t k) { return k == SK_PROJECT ? (uint32_t)PROJ_TMPL + 1u : UP_SLOTS; }
 static uint32_t slot_cur(uint32_t k)                    /* the row picked */
@@ -28,8 +28,7 @@ static uint32_t slot_cur(uint32_t k)                    /* the row picked */
     switch (k) {
     case SK_PROJECT: return ui.proj_new ? (uint32_t)PROJ_TMPL : (uint32_t)song.g[G_SLOT] - 1u;
     case SK_USER: return ui.uslot % UP_SLOTS;
-    case SK_FM6: return fm6_bslot % UP_SLOTS;
-    default: return ((uint32_t)p5_store_slot - 1u) % UP_SLOTS;
+    default: return sch_store_slot[eng_idx(TSEL->eng_req)] % UP_SLOTS;   /* (a synth's STORE page) */
     }
 }
 static uint32_t slot_boot(void)                         /* the row power-on loads (+1), 0 none */
@@ -85,7 +84,7 @@ static void slot_detail(uint32_t k, uint32_t r, int used, char *b)   /* the card
     else if (!used)
         str_cpy(b, "Empty", 24);
     else
-        str_cpy(b, ENGINES[eng_idx(up_engine(r))]->name, 24);
+        str_cpy(b, eng_name(eng_idx(up_engine(r))), 24);
 }
 
 /* ------------------------------------------------------- the sheets --- */

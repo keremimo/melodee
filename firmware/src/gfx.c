@@ -1056,16 +1056,18 @@ static int text_has(const aafont_t *f, const char *s)
  * truest and no glyph is a whole step from its true place (tools/aa_raster.py, text_spacing_test.py).
  * A glyph with one phase (its phases share one bitmap: figures and .) sits at the rounded pen, as when it
  * is drawn alone at text_w of what precedes it (ui_draw.c roll_text). */
+#define TF_MEASURE 0x100u                        /* cv_text_flags: nothing drawn, the ink's columns into tf_ink */
+static int16_t tf_ink[2];
 static int32_t cv_text_flags(int32_t x, int32_t y, const aafont_t *f, const char *s, uint16_t fg, uint16_t bg,
                              uint32_t flags)
 {
-    const uint16_t *rv = ramp(fg, bg);
+    const uint16_t *rv = flags & TF_MEASURE ? 0 : ramp(fg, bg);
     const char *s0 = s;
     int32_t pen = 0, err = 0, x0 = 0x7FFF, y0 = 0x7FFF, x1 = -0x7FFF, y1 = -0x7FFF;
     const int32_t step = 16 >> f->psh;
     uint32_t prev = 0;
     uint16_t lut[1u << HC_LUT_BITS];                 /* (a coded face: its codes' table, for this string only) */
-    if (f->hc)
+    if (f->hc && rv)
         hc_lut(f->hc, lut);
     cv_over_fg = fg;                                 /* (cv_over: blended over the canvas, bg unused) */
     for (; *s; s++) {
@@ -1079,7 +1081,8 @@ static int32_t cv_text_flags(int32_t x, int32_t y, const aafont_t *f, const char
             pos = (pen + 8) & ~15;
             if (g->bw) {
                 int32_t gx = x + (pos >> 4) + g->bx * f->px, gy = y + f->asc - 9 * f->px + g->by * f->px;
-                cv_pix(gx, gy, g->bw, g->bh, f->px, f->data + g->off, rv[15]);
+                if (rv)
+                    cv_pix(gx, gy, g->bw, g->bh, f->px, f->data + g->off, rv[15]);
                 if (gx < x0) x0 = gx;
                 if (gy < y0) y0 = gy;
                 if (gx + g->bw * f->px > x1) x1 = gx + g->bw * f->px;
@@ -1103,7 +1106,9 @@ static int32_t cv_text_flags(int32_t x, int32_t y, const aafont_t *f, const char
         err = pos - pen;
         if (g->bw) {
             int32_t gx = x + (pos >> 4) + g->bx, gy = y + g->by;
-            if (f->hc)
+            if (!rv)
+                ;
+            else if (f->hc)
                 cv_alpha_hc(gx, gy, g->bw, g->bh, f->data + g->off, f->hc, lut, rv);
             else
                 cv_alpha(gx, gy, g->bw, g->bh, f->data + g->off, rv);
@@ -1114,6 +1119,11 @@ static int32_t cv_text_flags(int32_t x, int32_t y, const aafont_t *f, const char
         }
         pen += g->adv;
         prev = c;
+    }
+    if (!rv) {                                       /* (measured: from the pen's start) */
+        tf_ink[0] = (int16_t)(x0 - x);
+        tf_ink[1] = (int16_t)(x1 - x);
+        return 0;
     }
     if (x1 > x0) {
         if (x0 < 0 || x1 > (int32_t)cv_w || y0 + cv_oy < cv_cy0 || y1 + cv_oy > cv_cy1)
@@ -1145,6 +1155,13 @@ static int32_t cv_text_r(int32_t xr, int32_t y, const aafont_t *f, const char *s
     int32_t w = text_w(f, s);
     cv_text_on(xr - w, y, f, s, fg, bg);
     return xr - w;
+}
+/* s's ink in f as drawn, from the pen's start: its first column into *l, past its last into *r (none: *l >= *r) */
+static void text_ink(const aafont_t *f, const char *s, int32_t *l, int32_t *r)
+{
+    (void)cv_text_flags(0, 0, f, s, 0, 0, TF_MEASURE);
+    *l = tf_ink[0];
+    *r = tf_ink[1];
 }
 static int32_t cv_text_c(int32_t xc, int32_t y, const aafont_t *f, const char *s, uint16_t fg, uint16_t bg)
 {

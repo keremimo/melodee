@@ -47,7 +47,7 @@ static int view_notes(uint32_t *on, uint8_t *of, int *faded)
     fm1_irq_off();                                      /* (one coherent ISR snapshot) */
     for (k = 0; k < trk_n(); k++) {                     /* (the selected one last: its colour wins) */
         uint32_t t = k + 1u == trk_n() ? song.sel % NTRK : k < song.sel ? k : k + 1u;
-        if (drum_track(&trk[t]))
+        if (pads_on(&trk[t]))
             continue;
         for (i = 0; i < NVOICE; i++) {
             const voice_t *v = &trk[t].v[i];
@@ -273,10 +273,9 @@ static void view_pulse(uint32_t k)
 {
     static const uint8_t PX[NPART] = {6, 202, 6, 202}, PY[NPART] = {36, 36, 170, 170};
     track_t *t = &trk[k];
-    int32_t m = t->p[P_MUTE] ? 0 : meter_px(t->peak);
+    int32_t pk = trk_peak_take(k, 0), m = t->p[P_MUTE] ? 0 : meter_px(pk);
     uint32_t sig;
     uint16_t c = t->p[P_MUTE] ? T_DIM : T_TRK(k);
-    t->peak = 0;
     if (m < view.lvl[k] - 1)
         m = view.lvl[k] - 1;                            /* (falls ~2 dB a frame) */
     view.lvl[k] = (uint8_t)(m < 0 ? 0 : m);

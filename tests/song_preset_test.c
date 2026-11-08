@@ -58,7 +58,7 @@ static void playback(void)
     int16_t base[P_COUNT]; memcpy(base, TSEL->p, sizeof base); uint8_t engine = TSEL->eng_req;
     uint32_t tick = seq_div_samples(TSEL->p[P_SDIV]);
     assert(!chain_prepare_from(1)); events_block(1);
-    assert(chain.row == 1 && TSEL->eng_req == ENGI_PROPHET && !memcmp(p5_patch_of(TSEL), &song_sound_get(id)->patch.p5, sizeof(p5_patch_t)));
+    assert(chain.row == 1 && TSEL->eng_req == ENGI_PROPHET && !memcmp(p5_patch_of(TSEL), song_sound_get(id)->patch, sizeof(p5_patch_t)));
     units_block(tick);
     assert(chain.row == 2 && TSEL->eng_req == engine);
     for (uint32_t i = 0; i < P_COUNT; i++) assert(TSEL->p[i] == base[i]);

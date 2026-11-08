@@ -10,22 +10,23 @@
 #ifndef ED_BK_FLASH_PTR
 #define ED_BK_FLASH_PTR(off) fm1_xip_ptr(off)
 #endif
-/* 2..5: projects 1..4; 64..91: projects 5..32 (project.c PROJ_SLOTS); 92..99: the user's drum kits (kit_store.c) */
+/* 2..5: projects 1..4; 64..91: projects 5..32 (project.c PROJ_SLOTS); 92..99: the data records (rec_store.c: a
+ * pads synth's recorded kits) */
 static const uint8_t ED_BK_IDS[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91
-#ifdef KIT_STORE
+#ifdef REC_STORE
     , 92, 93, 94, 95, 96, 97, 98, 99
 #endif
 };
 #define ED_BK_KIT0 92u
-#ifdef KIT_STORE
-static int ed_bk_kit(uint32_t id) { return id >= ED_BK_KIT0 && id < ED_BK_KIT0 + ST_NKIT; }
+#ifdef REC_STORE
+static int ed_bk_kit(uint32_t id) { return id >= ED_BK_KIT0 && id < ED_BK_KIT0 + ST_NREC; }
 #else
 static int ed_bk_kit(uint32_t id) { (void)id; return 0; }
 #endif
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
 #define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a compact one (project_stream.c PJ_HEAD) */
-#ifdef KIT_STORE                            /* a user kit streams into its record (no staging): its own bound */
-#define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? DRK_KIT_MAX : ED_BK_MAX)
+#ifdef REC_STORE                            /* a data record streams into its record (no staging): its own bound */
+#define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? rec_max() : ED_BK_MAX)
 #else
 #define ED_BK_LEN_MAX(id) ED_BK_MAX
 #endif
@@ -96,6 +97,7 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
     if(bank<UP_BANKS){*len=sizeof(up_bank_t);return (const uint8_t *)up_cache_bank(bank);}
 #endif
     if (id == 0u) {
+        if(ed_bk_valid>1u)return ED_BK_RAW;   /* an inventory: no music captured (length 0) */
         *len=BANK_STORE_SIZE;
 #if MELODEE_FLASH
         if(!ed_bk_ram_only()){*len=ed_bk_stage.head.len;ed_bk_from(ed_bk_stage.obj,ed_bk_stage.head.slot,ed_bk_stage.head.crc);}   /* (compact) */
@@ -103,9 +105,9 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
         return ED_BK_RAW;
     }
     if (id == 1u) { *len = ed_bk_set_len; return (const uint8_t *)&ed_bk_set; }
-#ifdef KIT_STORE
-    if (ed_bk_kit(id)) {                    /* a user kit: GET reads its record range by range */
-        (void)ed_bk_stored(kit_obj(id - ED_BK_KIT0), len);
+#ifdef REC_STORE
+    if (ed_bk_kit(id)) {                    /* a data record: GET reads its record range by range */
+        (void)ed_bk_stored(rec_obj(id - ED_BK_KIT0), len);
         return ED_BK_RAW;
     }
 #endif
@@ -126,11 +128,15 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
     if(id==8u)return ED_BK_RAW;
     return 0;
 }
-static uint32_t ed_bk_capture(void)
+/* inv: an inventory (LIST 1): the stored objects and the settings, the music not captured: no stop, no flash write */
+static uint32_t ed_bk_capture(uint32_t inv)
 {
+    if(!inv){
     if (ed_flash_stop()) return 3;
     up_favorite_poll();
+    }
     ed_bk_valid=ed_bk_put=0;
+    if(!inv){
     ed_bk_gen=++proj_wire_gen;
 #if MELODEE_FLASH
 #if MELODEE_AUDIO_PROFILE
@@ -147,6 +153,7 @@ static uint32_t ed_bk_capture(void)
     project_capture(&proj_scratch);
     if(!bank_pack(ED_BK_RAW,&proj_scratch,1))return 2;
 #endif
+    }
 #if MELODEE_FLASH
     ed_bk_set.p = persist_saved;                    /* fields absent from this build survive */
 #else
@@ -154,7 +161,7 @@ static uint32_t ed_bk_capture(void)
 #endif
     settings_export(&ed_bk_set.p);                  /* the record as it is stored: the template (tmpl) after the settings */
     ed_bk_set_len = sizeof ed_bk_set.p + (template_used() ? sizeof ed_bk_set.t : 0u);
-    ed_bk_put = 0; ed_bk_valid = 1; ed_bk_usb = usb.resets;
+    ed_bk_valid = (uint8_t)(1u + inv); ed_bk_usb = usb.resets;
     return 0;
 }
 static int ed_bk_panel_valid(const panel_t *p)
@@ -175,10 +182,13 @@ static int ed_bk_panel_valid(const panel_t *p)
 static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
 {
     const up_bank_t *h=(const up_bank_t *)raw;
-    if(len==sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && h->rsize==sizeof(up_disk_rec_t) && h->nslot==UP_PER_BANK){
+    const uint8_t *m=raw+sizeof(up_disk_bank_t);         /* (its engine map entries after its records: upreset.c) */
+    if(len>sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && (len<sizeof(up_disk_bank_t)+8u ||
+       mod_le32(m)!=UP_MAP_MAGIC || len!=sizeof(up_disk_bank_t)+8u+m[4]*EMAP_ENTRY))return 0;
+    if(len>=sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && h->rsize==sizeof(up_disk_rec_t) && h->nslot==UP_PER_BANK){
         const up_disk_bank_t *d=(const up_disk_bank_t *)raw;
-        for(uint32_t j=0;j<UP_PER_BANK;j++){up_rec_t r;memset(&r,0,sizeof r);memcpy(&r,d->r[j].head,160u);memcpy(r.cz_extra,d->r[j].extra,46u);
-            if(r.used && (r.ver==UP_VER || r.ver==UP_VER_GRID || r.ver==UP_VER_CZ || r.ver==UP_VER_DRUM || r.ver==UP_VER_DRUM_GRID || r.ver==UP_VER_FM || r.ver==UP_VER_P5 || r.ver==UP_VER_NATIVE_CZ) && !up_valid(&r))return 0;
+        for(uint32_t j=0;j<UP_PER_BANK;j++){up_rec_t r;memset(&r,0,sizeof r);memcpy(&r,d->r[j].head,160u);memcpy(r.tone_extra,d->r[j].extra,46u);
+            if(r.used && (r.ver==UP_VER || r.ver==UP_VER_GRID || r.ver==UP_VER_CZ || r.ver==UP_VER_KIT || r.ver==UP_VER_KIT_GRID || r.ver==UP_VER_FM || r.ver==UP_VER_P5 || r.ver==UP_VER_NATIVE_CZ) && !up_valid(&r))return 0;
         }
         return 1;
     }
@@ -193,8 +203,8 @@ static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
     if(bank>=2u && bank<4u && len==3808u)return 1;
     if(bank<4u && len==3816u && h->magic==UP_BANK_MAGIC && h->rsize==238u && h->nslot==16u)return 1;
     if(bank>=4u && bank<8u)return len==sizeof(native_fm_t) && native_fm_valid((const native_fm_t *)raw);
-    if(bank>=8u && bank<16u)return len==sizeof(cz_bank_t) && cz_bank_valid((const cz_bank_t *)raw);
-    if(bank>=16u && bank<21u)return len==sizeof(p5_bank_t) && p5_bank_valid((const p5_bank_t *)raw,bank-16u);
+    if(bank>=8u && bank<16u)return len==sizeof(tone_bank_t) && tone_bank_valid((const tone_bank_t *)raw);
+    if(bank>=16u && bank<21u)return len==sizeof(program_bank_t) && program_bank_valid((const program_bank_t *)raw,bank-16u);
 #endif
     return 0;
 }
@@ -205,12 +215,12 @@ static uint32_t ed_bk_commit_inner(void)
 {
     uint8_t *raw = ED_BK_RAW;
     uint32_t obj;
-#ifdef KIT_STORE
-    if(ed_bk_kit(ed_bk_id)){                         /* a user kit: none in the archive empties the slot */
+#ifdef REC_STORE
+    if(ed_bk_kit(ed_bk_id)){                         /* a data record: none in the archive empties the slot */
         uint32_t u=ed_bk_id-ED_BK_KIT0;
-        if(!ed_bk_len)return kit_delete(u)?4u:0u;
+        if(!ed_bk_len)return rec_delete(u)?4u:0u;
         if(ed_bk_pos!=ed_bk_len || ~ed_bk_stage.crc!=ed_bk_crc)return 2;
-        int rc=kit_put_commit(&ed_bk_stage,u);
+        int rc=rec_put_commit(&ed_bk_stage,u);
         return rc==-2?2u:rc?4u:0u;
     }
 #endif
@@ -241,7 +251,7 @@ static uint32_t ed_bk_commit_inner(void)
 #if !MELODEE_FLASH || MELODEE_AUDIO_PROFILE
         int full = bank_full(ed_bk_len);
         bank_wide = bank_p16 = 0;
-        if (ed_bk_len && !(full ? bank_valid(raw, ed_bk_len) : proj_import(&proj_scratch, raw, (int)ed_bk_len))) return 2;
+        if (ed_bk_len && !(full ? bank_valid(raw, ed_bk_len) : (eng_remap_reset(), proj_import(&proj_scratch, raw, (int)ed_bk_len)))) return 2;
         if (ed_bk_id == 0u) {
             if (!ed_bk_len) return 2;
             up_boot();
@@ -316,6 +326,10 @@ static uint32_t ed_bk_commit_inner(void)
         settings_import(&ed_bk_set.p, (int)ns);
         tmpl_take(raw + ns, ed_bk_len - ns);            /* (none in the backup: none now) */
         tmpl_dirty = 0;
+#if MELODEE_FLASH
+        if (st_exists(ST_TPLX))
+            (void)st_project_delete(ST_TPLX);           /* (the template here before: its end block goes with it) */
+#endif
         settings_old_accept();
         panel_init(); settings_init(); palette_set(settings.palette);
 #if MELODEE_FLASH
@@ -340,16 +354,16 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
         uint32_t len = ed_bk_r32(a + 2);
         if (len > ED_BK_LEN_MAX(a[1]) || (a[1] == 0u && !len) ||
             (a[1] == 1u && len != sizeof(persist_t) && !tmpl_param_count(len - sizeof(persist_t))) ||
-            (!ed_bk_project(a[1]) && !ed_bk_kit(a[1]) && len > BANK_STORE_SIZE) ||   /* (a kit: DRK_KIT_MAX, above) */
+            (!ed_bk_project(a[1]) && !ed_bk_kit(a[1]) && len > BANK_STORE_SIZE) ||   /* (a record: rec_max, above) */
             (ed_bk_preset_bank(a[1])<UP_BANKS && len>3840u) ||
             (a[1]==8u && len)) return 1;
         ed_bk_valid=ed_bk_put=0;
         ed_bk_gen=++proj_wire_gen;
 #if MELODEE_FLASH
-#ifdef KIT_STORE
-        if(ed_bk_kit(a[1])){                         /* a user kit: streamed into its record, checked at commit */
+#ifdef REC_STORE
+        if(ed_bk_kit(a[1])){                         /* a data record: streamed into its record, checked at commit */
             if(ed_bk_ram_only())return 4;
-            if(len && (!flash_ok || kit_put_begin(&ed_bk_stage,a[1]-ED_BK_KIT0,len)))return len>DRK_KIT_MAX||len<DRK_KIT_BYTES?1:4;
+            if(len && (!flash_ok || rec_put_begin(&ed_bk_stage,a[1]-ED_BK_KIT0,len)))return rec_len_ok(len)?4:1;
         }else
 #endif
         if(ed_bk_project(a[1]) && len && !ed_bk_ram_only()){
@@ -387,7 +401,7 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
 static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 {
     if (cmd == ED_BACKUP_LIST) {
-        uint32_t rc = n ? 1u : ed_bk_capture();
+        uint32_t rc = n > 1u || (n && a[0] != 1u) ? 1u : ed_bk_capture(n);   /* (1: an inventory) */
         ed_b(1); ed_b(rc); ed_b(rc ? 0u : ED_BK_N);
         if (!rc) for (uint32_t i = 0; i < ED_BK_N; i++) {
             uint32_t len;
@@ -407,7 +421,7 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         uint32_t len = 0, off = n >= 6u ? ed_bk_r32(a + 1) : 0u;
         uint32_t count = n == 8u ? (uint32_t)a[6] | (uint32_t)a[7] << 7 : 0u;
         const uint8_t *p = n ? ed_bk_object(a[0], &len) : 0;
-        uint32_t rc = (!ed_bk_valid || ed_bk_usb != usb.resets || (n && !a[0] && ed_bk_gen != proj_wire_gen)) ? 5u : transport_busy() ? 3u :
+        uint32_t rc = (!ed_bk_valid || ed_bk_usb != usb.resets || (n && !a[0] && (ed_bk_gen != proj_wire_gen || ed_bk_valid > 1u))) ? 5u :   /* (playing: read too) */
             n != 8u || a[5] > 15u || !p || !count || count > 256u || off > len || count > len - off ? 1u : 0u;
         uint32_t data_off = off;
 #if MELODEE_FLASH

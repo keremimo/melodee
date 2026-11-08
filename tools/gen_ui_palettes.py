@@ -4,7 +4,7 @@
 # Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """The UI palettes (run by tools/build.py generate()).
 
-  gen_ui_palettes.py OUT.h [--report]
+  gen_ui_palettes.py [OUT.h] [--report] [--json OUT.json]
 
 Melodee's palettes: NIGHT (the default: warm ink), DAY (light) and CONTRAST (black and white). A palette is BG
 (background), SURF (surface: cards, dialogs, menu rows), TEXT, ACCENT (the one active thing: hot knob, cursor,
@@ -24,7 +24,10 @@ GRAY (pure grayscale, R = G = B in every colour and tint) is compiled into the h
 every screen drawn in it must stay gray, which proves the drawing takes every colour from the tokens.
 Saved settings name palettes by a tagged id (PAL_TAG + index); any other id reads as the default.
 --report prints the WCAG contrast of every pairing, with each track colour as THEME. The tool fails on any miss.
+--json writes the palettes as the firmware has them (RGB565, and the 8-bit colours they come from) with every derived
+colour per track (tools/studio_bundle.py: palettes.json); GRAY, a host-test palette, is left out.
 """
+import json
 import argparse
 import sys
 from pathlib import Path
@@ -189,10 +192,35 @@ CHECKS = [("text", "bg", 12.0, "body text"), ("text", "surf", 9.0, "body text on
          [(f"k{k}", b, 4.5, f"knob {k + 1}'s colour: labels, curves") for k in range(4) for b in ("bg", "surf")]
 
 
+def hexrgb(c):
+    return "#%02x%02x%02x" % tuple(c)
+
+
+def palettes_json():
+    """the shipped palettes: stored id, the five stored colours, the track colours and knob shades (8-bit as written
+    here, RGB565 as the firmware stores them), and per track every derived colour (RGB565 and as the screen shows it)"""
+    keys = ("bg", "surf", "text", "accent")
+    out = []
+    for i, p in enumerate(PALETTES):
+        derived = []
+        for t in range(4):
+            _, d = derive(p, t)
+            derived.append({("raise" if k == "raise_" else k): (v if k == "light" else {"rgb565": v, "hex": hexrgb(from565(v))})
+                            for k, v in d.items()})
+        out.append({"index": i, "id": PAL_TAG + i, "name": p[0],
+                    **{k: {"hex": hexrgb(c), "rgb565": to565(c)} for k, c in zip(keys, p[1:5])},
+                    "tracks": [{"hex": hexrgb(c), "rgb565": to565(c)} for c in p[5]],
+                    "knobs": [[{"hex": hexrgb(c), "rgb565": to565(c)} for c in ks] for ks in shades(p)],
+                    "derived": derived})
+    return {"tag": PAL_TAG, "default": 0, "pct": PCT, "raise_pct": RAISE_PCT, "line_pct": LINE_PCT,
+            "rec": {"dark": hexrgb(REC_DARK), "light": hexrgb(REC_LIGHT)}, "palettes": out}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out", nargs="?")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--json", help="also write the palettes and their derived colours as JSON here")
     a = ap.parse_args()
     fails = []
     assert PALETTES[0][0] == "NIGHT" and len(PALETTES) <= 31
@@ -241,6 +269,9 @@ def main():
                 f"#define UI_QR_LIGHT 0x{to565(QR_LIGHT):04x}u", f"#define UI_QR_DARK 0x{to565(QR_DARK):04x}u",
                 f"#define UI_CRASH_BG 0x{to565(CRASH_BG):04x}u", f"#define UI_CRASH_INK 0x{to565(CRASH_INK):04x}u", ""]
         Path(a.out).write_text("\n".join(out))
+    if a.json:
+        Path(a.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.json).write_text(json.dumps(palettes_json(), indent=1) + "\n")
     for f in fails:
         print("FAIL", f)
     if fails:

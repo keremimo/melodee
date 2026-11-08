@@ -163,6 +163,7 @@ static uint16_t fx_fam_col(uint32_t f)
 }
 static int sec_on(void);                                /* ui_sections.c */
 static uint32_t sec_of(uint32_t i);
+static int sec_inst(uint32_t i);
 static void sec_chip(uint32_t i, char *b, uint32_t n);
 static int sec_map_on(void);
 static void sound_name(const track_t *t, char *b);
@@ -185,15 +186,19 @@ static void head_chip_text(char *b)
         pat_num(b + str_len(b), ui.ptc_dst);
     } else if (ui.home) {                               /* Stage: the engine (a kit: its name, "909 KIT") */
         if (browse_pending()) { uint32_t kk, s = browse_shown(&kk); e = src_engine(s, kk); }
-        if (ENGINES[eng_idx(e)] == &ENG_DRUM && !browse_pending()) sound_name(TSEL, b);
-        else str_cpy(b, ENGINES[eng_idx(e)]->name, 16);
+        if (pads_eng(eng_idx(e)) && !browse_pending()) sound_name(TSEL, b);   /* (a kit: its name) */
+        else str_cpy(b, eng_name(eng_idx(e)), 16);
     } else if (sec_map_on()) {                          /* the map: the engine */
-        str_cpy(b, ENGINES[e]->name, 16);
+        str_cpy(b, eng_name(e), 16);
     } else if (pg->graph == GR_ROLL && grid_on()) {     /* the drum grid */
         str_cpy(b, "STEP", 16);
-    } else if (pg->graph == GR_FMEG) {                  /* FM6's EG RATE / LVL: "OP3 EG" */
-        str_cpy(b, "OP1 EG", 16);
-        b[2] = (char)('1' + fm6_opsel % 6u);
+    } else if (pg->graph == GR_ENV8 && sch_pg_ninst(pg)) {   /* an instance's envelope (FM6's EG RATE / LVL):
+                                                              * "OP3 EG", the instance and the title's first word */
+        uint32_t n = sch_inst_name(sch_inst, b, 12), k;
+        b[n++] = ' ';
+        for (k = 0; pg->title[k] && pg->title[k] != ' ' && n + 1u < 16u; k++)
+            b[n++] = pg->title[k];
+        b[n] = 0;
     } else if (pg->fam == FAM_FX && pg->graph == GR_NONE) {   /* an FX slot: its effect */
         str_cpy(b, N_FX[clamp((pg->scope == SC_GLOBAL ? song.g : TSEL->p)[pg->id[0] - 1u], 0, FX_COUNT - 1)], 16);
     } else if (pg->scope != SC_ENGINE && sec_on()) {   /* an engine in sections: the page's name in its section */
@@ -213,8 +218,8 @@ static void head_pages(int32_t x, int32_t x1)          /* (x: after the transpor
     if (designer_on() && !name_on())                    /* the designer: its stage's pages */
         designer_pages(&n, &k);
     else for (i = 0; i < NPAGES; i++)                   /* (an engine in sections: the section's pages) */
-        if (PAGES[i].fam == pg->fam && page_visible(i) &&
-            (!sc || (PAGES[i].scope == SC_FMOP ? PAGES[ui.page].scope == SC_FMOP : sec_of(i) + 1u == sc))) {
+        if (PG(i).fam == pg->fam && page_visible(i) &&
+            (!sc || (sec_inst(i) ? sec_inst(ui.page) : sec_of(i) + 1u == sc))) {
             if (i == ui.page)
                 k = n;
             n++;
@@ -494,6 +499,21 @@ static const struct { const char *k, *s; } CELL_SHORT[] = {
     {"SECTION", "SECT"}, {"LENGTH", "LEN"}, {"REPEAT", "REP"}, {"JITTER", "JITT"}, {"VIBRATO", "VIB"},
     {"TEMPO", "BPM"}, {"SNAPPY", "SNAP"}, {"SEND 1", "FX 1"}, {"SEND 2", "FX 2"}, {"SEND 3", "FX 3"},
     {"DIFFUSE", "DIFF"}};
+/* a name drawn whole in a knob's cell (draw_column: the text face, else the label face by its ink), 1; else 0 */
+static int cell_whole(const char *name)
+{
+    char lb[12], v[16], u[8];
+    int32_t l, r, w;
+    pv_words("", name, "", lb, v, u);
+    if ((w = text_w(TY_TX, v)) <= COL_W) {
+        text_ink(TY_TX, v, &l, &r);
+        return COL_W / 2 - w / 2 + l >= 0 && COL_W / 2 - w / 2 + r <= COL_W;
+    }
+    text_ink(TY_LB, v, &l, &r);
+    if ((w = text_w(TY_LB, v)) <= COL_W)
+        return COL_W / 2 - w / 2 + l >= 0 && COL_W / 2 - w / 2 + r <= COL_W;
+    return r - l <= COL_W;
+}
 static const char *cell_label(const char *label, int32_t room)
 {
     uint32_t i;
@@ -589,8 +609,16 @@ static void draw_column(uint32_t c, const char *label0, const char *val0, const 
             x = COL_W - 6;
         } else if (vf == TY_TX)                         /* the value rolls */
             x = roll_text(c, vx, ROLL_Y, val, vc);
-        else if (val[0] >= 'A' && val[0] <= 'Z' && val[1] >= 'a' && val[1] <= 'z')   /* a name ("Chorus"): free text */
-            x = cv_free_text(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
+        else if (val[0] >= 'A' && val[0] <= 'Z' && val[1] >= 'a' && val[1] <= 'z') {   /* a name ("Chorus"): free text;
+                                                                                        * its ink fitting, centred by it */
+            int32_t l = 0, r = 0x7FFF;
+            if (vw > room)
+                text_ink(vf, val, &l, &r);
+            if (r - l <= room - uw)
+                x = cv_text_on((COL_W - (r - l)) / 2 - l, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg);
+            else
+                x = cv_free_text(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
+        }
         else
             x = cv_text_fit(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
         if (unit[0])                                    /* the unit on the value's baseline */
@@ -630,14 +658,18 @@ static void sound_name(const track_t *t, char *b)
         const song_sound_t *s = song_sound_get(song_sounds.active[t - trk]);
         if (s) { str_cpy(b, s->name, 16); return; }
     }
-    const engine_t *e = ENGINES[t->eng_req % NENGINES];
+    uint32_t np = eng_npresets(t->eng_req % NENGINES);
     b[0] = 0;
-    if(t->eng_req==ENGI_PROPHET)p5_short_name(t,b,16);
+    if (sch_flag(eng_idx(t->eng_req), MOD_SCH_F_SNAME)) {   /* (a synth whose sound is its patch's own name: the Prophet) */
+        char full[MOD3_PATCH_MAX < 64u ? MOD3_PATCH_MAX : 64u];
+        patch_name_of(eng_idx(t->eng_req), patch_of(trk_ix(t)), full, sizeof full);
+        str_cpy(b, full, 16);
+    }
     else if(t->user_native && user_of(t)<USER_NONE)native_name(t->eng_req,user_of(t),b);
     else if (user_of(t) < UP_SLOTS)
         up_name(user_of(t), b);
-    else if (e->npresets)
-        str_cpy(b, eng_preset(e, t->preset % e->npresets)->name, 16);
+    else if (np)
+        eng_preset_name(t->eng_req, t->preset % np, b, 16);   /* (a synth module's: its file's) */
 }
 
 #if MELODEE_UART
@@ -777,18 +809,22 @@ static void draw_cards(void)
     if (ui.home)                                        /* Stage: its knobs drop in when turned (ui_stage.c stage_knobs);
                                                          * the page left (DRUM SOUND ..) draws none under them */
         return;
-    if(cur_page()->scope==SC_DRUM){
-        char v[12];uint32_t sound=ui.drum_sound%drum_sound_count(TSEL);const int8_t *c=drum_patch_of(song.sel)->c[sound];
-        draw_column(0,"DRUM",drum_sound_name(TSEL,sound),"",VAL(0u),-1,ICON_AUTO);
-        if(cur_page()->id[1]==4){fmt_int(v,127-c[3]);draw_column(1,"LEVEL",v,"",VAL(1u),-1,ICON_AUTO);draw_column(2,"","","",T_THEME,-1,ICON_NONE);draw_column(3,"","","",T_THEME,-1,ICON_NONE);return;}
-        fmt_int(v,c[0]);draw_column(1,"TUNE",v,"ST",VAL(1u),-1,ICON_PITCH);
-        fmt_int(v,c[1]+64);draw_column(2,"DECAY",v,"",VAL(2u),-1,ICON_GATE);
-        fmt_int(v,c[2]+64);draw_column(3,(drum_is909(TSEL)?drum_character(sound):drum_issid(TSEL)?"SNAP":sound==D9_SD?"SNAPPY":"TONE"),v,"",VAL(3u),-1,ICON_AUTO);return;
+    if(cur_page()->scope==SC_PADS){                     /* a kit's pads (pads.c): the pad, its parameters */
+        const pads_v_t *pd=pads_view(TSEL);
+        char v[12],lb[MOD_SCH_NAME+1u];uint32_t sound=ui.pad%pads_count(TSEL);
+        draw_column(0,pads_word(TSEL,MOD3_PW_PAD),pads_name(TSEL,sound),"",VAL(0u),-1,ICON_AUTO);
+        for(uint32_t c=1;c<4u;c++){
+            uint32_t id=cur_page()->id[c],k=id-1u;const int8_t *q=id!=255u?pads_par_at(song.sel,sound,k):0;
+            if(!pd || !q){draw_column(c,"","","",T_THEME,-1,ICON_NONE);continue;}
+            fmt_int(v,pads_par_shown(pd,k,q));
+            draw_column(c,pads_par_label(TSEL,sound,k,lb),v,pd->par[k].unit,VAL(c),-1,pd->par[k].icon[0]?icon_for_label(pd->par[k].icon):ICON_AUTO);
+        }
+        return;
     }
-    if(cur_page()->scope==SC_DRUMHIT){
-        char v[12];uint32_t i=drum_hit_selected();const recorded_note_t *r=i<RECORD_MAX?&recording[i]:0;
+    if(cur_page()->scope==SC_PADHIT){
+        char v[12];uint32_t i=pads_hit_selected();const recorded_note_t *r=i<RECORD_MAX?&recording[i]:0;
         fmt_int(v,ui.cursor+1);draw_column(0,"STEP",v,"",VAL(0u),-1,ICON_AUTO);
-        draw_column(1,"DRUM",drum_sound_name(TSEL,ui.drum_sound%drum_sound_count(TSEL)),"",VAL(1u),-1,ICON_AUTO);
+        draw_column(1,pads_word(TSEL,MOD3_PW_PAD),pads_name(TSEL,ui.pad%pads_count(TSEL)),"",VAL(1u),-1,ICON_AUTO);
         fmt_int(v,r?r->pitch:0);draw_column(2,"PITCH",v,"ST",VAL(2u),-1,ICON_PITCH);
         if(r && recorded_gate(r)){uint32_t x=((uint32_t)r->duration*(1u<<(recorded_exponent(r)))*100u+RECORD_UNIT/2)/RECORD_UNIT;fmt_int(v,x/100);str_cpy(v+str_len(v),".",2);if(x%100<10)str_cpy(v+str_len(v),"0",2);fmt_int(v+str_len(v),x%100);}
         else str_cpy(v,"FREE",sizeof v);
@@ -860,8 +896,8 @@ static void draw_cards(void)
         draw_column(0, ui.note_copy?"COPY":bulk.on||ui.note_move?"MOVE":"STEP", sn, bulk.on||ui.note_move?"":u, VAL(0u), -1, ICON_AUTO);
         uint32_t pitch = chosen < RECORD_MAX ? recorded_note(&recording[chosen]) : st && st->n ? st->note[notes_manual_slot(st)] : last_note;
         pl = note_card(sn, cents, pitch, "PITCH");
-        if(chosen<RECORD_MAX && drum_track(TSEL))fmt_int(sn,recording[chosen].pitch);
-        draw_column(1, pl, sn, chosen<RECORD_MAX && drum_track(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
+        if(chosen<RECORD_MAX && pads_on(TSEL))fmt_int(sn,recording[chosen].pitch);
+        draw_column(1, pl, sn, chosen<RECORD_MAX && pads_on(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
         if (chosen < RECORD_MAX) {
             uint32_t hundredths = ((uint32_t)recording[chosen].duration * (1u << (recorded_exponent(&recording[chosen]))) * 100u + RECORD_UNIT / 2u) / RECORD_UNIT;
             if (!hundredths) str_cpy(sn, "<.01", sizeof sn);
@@ -886,15 +922,15 @@ static void draw_cards(void)
         draw_column(3, "VEL", sn, chosen >= RECORD_MAX && st && st->n > 1u ? "ALL" : "", selected ? VAL(3u) : T_DIM, -1, ICON_ACCENT);
         return;
     }
-    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* the grid: STEP LANE HIT ACC */
+    if (cur_page()->scope == SC_STEP && pads_on(TSEL)) {   /* the grid: STEP LANE HIT ACC */
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        uint32_t b = 1u << ui.lane, on = (step_lanes(st) & b) != 0u, ac = (step_accents(st) & b) != 0u;
+        uint32_t b = 1u << ui.lane, on = (step_lanes(TSEL, st) & b) != 0u, ac = (step_accents(TSEL, st) & b) != 0u;
         char sn[8], sl[8];
         fmt_int(sn, (int32_t)ui.cursor + 1);
         str_cpy(sl, "/", 8);
         fmt_int(sl + 1, TSEL->p[P_SLEN]);
         draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-        draw_column(1, "", drum_lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);   /* (its chip: "Snare") */
+        draw_column(1, "", lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);   /* (its chip: "Snare") */
         draw_column(2, "HIT", on ? "ON" : "--", "", on ? VAL(2u) : T_DIM, -1, ICON_AUTO);
         draw_column(3, "ACC", ac ? "ON" : "--", "", ac ? VAL(3u) : T_DIM, -1, ICON_AUTO);
         return;
@@ -909,7 +945,7 @@ static void draw_cards(void)
             if ((st->hit >> l) & 1u) {
                 cnt++;
                 if (!st->n)
-                    first = DRUM_LANE_NOTE[l];
+                    first = lane_note(TSEL, l);
             }
         if (cnt) {
             nl = note_card(val, cents, first, nl);
@@ -984,18 +1020,19 @@ static void draw_cards(void)
             param_format(d, *vp, val, &unit);
             /* Rows have room for enum names that the compact parameter formatter abbreviates. */
             if (d->fmt == F_ENUM && col_style == CS_CAPTURE
-#if MELODEE_USER_KITS
-                && !(d->names == N_DRUM_KIT && *vp >= DK_USER0)   /* (a user kit: its own name, as formatted) */
+#if MELODEE_RECORDS
+                && !(pads_rec_names(d) >= 0 && *vp >= pads_rec_names(d))   /* (a kit's record: its own name, as formatted) */
 #endif
                 )
                 str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);
+            else if (d->fmt == F_ENUM && d->names && sch_whole(d) && cell_whole(d->names[clamp(*vp, d->min, d->max)]))
+                str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);   /* (a synth's name whole where it fits:
+                                                                                  * the CZ-1's waves) */
             else if (fx_names(d))                       /* a rack's KNOB 1: the effect's family (its row names it) */
                 str_cpy(val, FX_FAM_NAME[fx_family(*vp)], sizeof val);
         }
         draw_column(c, d->names == N_NOTE_FX ? "NOTE" : d->label, val, unit, fx_names(d) && col_style != CS_CAPTURE ? fx_fam_col(fx_family(*vp)) :
-                    (cur_page()->scope == SC_CZ1 &&   /* CZ-1: no effect on the tone as it is */
-                    !cz_ed_active(cz_patch_of(song.sel % NTRK)->raw, cur_page()->id[c])) ||
-                    (cur_page()->scope == SC_P5 && !p5_ed_active(TSEL, cur_page()->id[c])) ||
+                    sch_col_dim(cur_page(), c) ||     /* a synth's: no effect on its patch as it is */
                     (vp == &TSEL->p[P_LRATE] && TSEL->p[P_LSYNC]) ? T_DIM : VAL(c),   /* LFO 2 SYNC on: RATE does nothing */
                     d->fmt == F_ENUM && d->max < 2 ? -1 : RATIO(d, *vp), param_icon(d, *vp));
     }
@@ -1165,10 +1202,10 @@ static void confirm_text(char *a, char *b)
         str_cpy(b, "Again: delete \xB7 other: copy\n" PAT_DLG_WORD ": half \xB7 double", CF_DETAIL);
         break;
     }
-#if KIT_REC
-    case CF_DEL_KIT:                                    /* Record kit's sheet: a user kit, all its takes */
+#if REC_TAKES
+    case CF_DEL_KIT:                                    /* Record kit's sheet: a recorded kit, all its takes */
         str_cpy(a, "DELETE KIT 1?", 24);
-        a[11] = (char)('1' + k % DK_NUSER);
+        a[11] = (char)('1' + k % MOD3_NREC);
         str_cpy(b, "Every pad's recording", 32);
         break;
 #endif
@@ -1352,7 +1389,8 @@ static void ui_draw(void)                               /* (gfx.c: the fills wai
 }
 static void ui_draw_frame(void)
 {
-    if (boot_work.state == 4u && RES_OK()) { boot_work.state = 0; ui.force = 1; }   /* (Finish setup meanwhile) */
+    if (boot_work.state == 4u && RES_OK() && SHIPPED_OK()) { boot_work.state = 0; ui.force = 1; }   /* (Finish setup
+                                                                                                   * meanwhile) */
     if (boot_work.state) {
         scrn.idle = fm1_ms;                          /* maintenance/errors never sleep or get covered */
         if (ui.force) { boot_work_draw(); ui.force = 0; }

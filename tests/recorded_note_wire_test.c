@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Frozen serialized bytes from 53f05c4, before changing the RAM note layout: FBKK, the dense four-part record a
- * project of eight banks a part still saves as when FBKP cannot hold it (bank_force_v1). */
+ * project of eight banks a part still saves as when FBKP cannot hold it (bank_force_v1). Re-frozen when the synths'
+ * patches became one per part (patch.c): the areas of a synth a track does not play hold that synth's starting patch,
+ * not a voice the harness's default tracks left there (a894c6f7, given its boot fm6_init / cz_init, writes the mixed
+ * assignment's bytes the same) */
 #define AUDIO_CPU_FIXTURE_NO_MAIN 1
 #include "audio_cpu_fixture.c"
 int main(void)
@@ -15,5 +18,5 @@ int main(void)
             hash=fnv(hash,fixture_raw,sizeof fixture_raw);cases++;
         }
     printf("Frozen FBKK/FUN22 bytes: %u cases, hash %08x\n",cases,hash);
-    assert(hash==0x519392b4u);return 0;
+    assert(hash==0xac449d74u);return 0;
 }

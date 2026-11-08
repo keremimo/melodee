@@ -856,8 +856,7 @@ static int chk_hang(char *msg, uint32_t n)
             /* DX7 L4 may deliberately sustain after key-up (legacy DIGITAL conversions too).
              * This routing test needs terminating envelopes; sound/parity tests retain native L4. */
             if(trk[k].eng_req==ENGI_FM6) {
-                for(uint32_t op=0;op<6;op++)fm6_patch_of(k)[op*FP_OP+FP_L1+3]=0;
-                fm6_pgen[k]++;
+                for(uint32_t op=0;op<6;op++)sch_set_t(k,op*FP_OP+FP_L1+3,0);
             }
             trk[k].p[P_VOICE] = (int16_t)rnd(4);
             trk[k].p[P_AMODE] = rnd(3) == 0 ? (int16_t)(1 + rnd(4)) : 0;

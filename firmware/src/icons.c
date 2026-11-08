@@ -12,6 +12,11 @@
 #ifndef SMKX_OK
 #define SMKX_OK() 1                       /* melodee.c: the SMK-37 keeps AI*_DATA in its app area tail (smkx.c) */
 #endif
+#ifndef ICON_BIG_OK
+#define ICON_BIG_OK() 1                   /* melodee.c: the FM-1 keeps the 16 and 24 px cells in the resource region */
+#endif
+/* the cells of that size can be read: not another build's tail (SMK-37), not a missing resource region (FM-1, 16, 24) */
+#define ICON_INK(size) (SMKX_OK() && ((size) == 12u || ICON_BIG_OK()))
 #define ICON_CELL 12
 
 /* the circled numeral of track k (filled: the selected one), 12 or 16 px: tracks have no colours */
@@ -32,7 +37,7 @@ static int32_t cv_icon_on(int32_t x, int32_t y, uint32_t size, uint32_t id, uint
         idx = AI12_IDX;
         dat = AI12_DATA;
     }
-    if (!SMKX_OK())                       /* (the tail is another build's: its place, no ink) */
+    if (!ICON_INK(size))                  /* (the tail is another build's, the region missing: its place, no ink) */
         return (int32_t)size;
     cv_alpha(x, y, size, size, dat + (uint32_t)idx[id] * (size * size / 2u), ramp(fg, bg));
     GFX_HOOK_TEXT(x, y + cv_oy, x + (int32_t)size, y + cv_oy + (int32_t)size, "icon", 4u | (cv_dim || cv_under ? 16u : 0u));
@@ -44,7 +49,7 @@ static int32_t cv_icon_mid(int32_t x, int32_t cy, uint32_t size, uint32_t id, ui
     const uint8_t *idx = size == 24u ? AI24_IDX : size == 16u ? AI16_IDX : AI12_IDX;
     const uint8_t *dat = size == 24u ? AI24_DATA : size == 16u ? AI16_DATA : AI12_DATA;
     int32_t top = -1, bot = 0, r, k;
-    if (SMKX_OK() && id < ICON_COUNT && idx[id] != 0xFFu) {
+    if (ICON_INK(size) && id < ICON_COUNT && idx[id] != 0xFFu) {
         const uint8_t *c = dat + (uint32_t)idx[id] * (size * size / 2u);
         for (r = 0; r < (int32_t)size; r++)
             for (k = 0; k < (int32_t)size / 2; k++)
@@ -111,7 +116,7 @@ static const icon_map_t ICON_MAP[] = {
     {"BUZZ", ICON_PULSE}, {"BRTH", ICON_NOISE}, {"Q", ICON_RESO}, {"RAND", ICON_PROB},
     {"FREQ", ICON_CUTOFF}, {"TRK", ICON_KEYTRACK}, {"DRFT", ICON_SWEEP},   /* NOISE (COLR, DENS, CRSH: above) */
     {"MLVL", ICON_MOD}, {"MRAT", ICON_RATIO}, {"MEG", ICON_DECAY}, {"VMOD", ICON_ACCENT}, {"DTUN", ICON_DETUNE},
-    {"PTCH", ICON_LOAD}, {"STORE", ICON_SAVE}, {"SEND", ICON_MIDI}, {"BOOT", ICON_LOAD}, {"DRUM", ICON_DRUM},           /* FM6 (ALG, FB: above; its pages: fm6_icon) */
+    {"PTCH", ICON_LOAD}, {"STORE", ICON_SAVE}, {"SEND", ICON_MIDI}, {"BOOT", ICON_LOAD}, {"DRUM", ICON_DRUM},           /* FM6 (ALG, FB: above; a synth's pages: its schema's icon keys) */
     /* fixed columns drawn by ui_draw.c (STEP page, preset browser, SYSTEM) */
     {"NOTE", ICON_PITCH}, {"STEP", ICON_STEPS}, {"FLAG", ICON_ACCENT}, {"ACC", ICON_ACCENT}, {"LANE", ICON_DRUM}, {"HIT", ICON_GATE}, {"SLD", ICON_SLIDE}, {"USB", ICON_MIDI},
     {"TRACK", ICON_MIX},                  /* TRACKS page (LEVEL, LEN, PAN: above) */
@@ -137,37 +142,11 @@ static const icon_map_t WAVE_ICON[] = {
     {"RTRP", ICON_W_RTRP},
 };
 
-/* FM6's pages (params.c FM6_OPD / FM6_GD / FM6_FD / FM6_SD): labels of their own (R1 is no ratio here) */
-static uint32_t fm6_icon(const param_desc_t *d)
-{
-    static const uint8_t OP[FP_OP + 1] = {
-        [FP_R1] = ICON_RATE, ICON_RATE, ICON_RATE, ICON_RATE, [FP_L1] = ICON_LEVEL, ICON_LEVEL, ICON_LEVEL, ICON_LEVEL,
-        [FP_BP] = ICON_PITCH, [FP_LD] = ICON_KEYTRACK, [FP_RD] = ICON_KEYTRACK, [FP_LC] = ICON_SHAPE,
-        [FP_RC] = ICON_SHAPE, [FP_RS] = ICON_KEYTRACK, [FP_AMS] = ICON_MOD, [FP_KVS] = ICON_ACCENT,
-        [FP_OL] = ICON_LEVEL, [FP_MODE] = ICON_RATIO, [FP_FC] = ICON_RATIO, [FP_FF] = ICON_TUNE,
-        [FP_DET] = ICON_DETUNE, [FP_OP] = ICON_MUTE};
-    static const uint8_t GV[FP_NAME - FP_PR1] = {   /* FP_PR1 .. FP_TRNSP */
-        ICON_RATE, ICON_RATE, ICON_RATE, ICON_RATE, ICON_PITCH, ICON_PITCH, ICON_PITCH, ICON_PITCH,
-        ICON_ALGORITHM, ICON_FEEDBACK, ICON_PHASE, ICON_RATE, ICON_FADE, ICON_VIBRATO, ICON_MOD, ICON_PHASE,
-        ICON_LFO_WAVE, ICON_VIBRATO, ICON_TRANSPOSE};
-    static const uint8_t FN[FM6_NFN] = {            /* FN_PBUP .. FN_ENGINE */
-        ICON_SWEEP, ICON_SWEEP, ICON_SCALE, ICON_GLIDE, ICON_TIME, ICON_SCALE, ICON_MOD, ICON_MIX,
-        ICON_MOD, ICON_MIX, ICON_MOUTH, ICON_MIX, ICON_ACCENT, ICON_MIX, ICON_ACCENT, ICON_CHIP};
-    static const uint8_t ST[4] = {ICON_SAVE, ICON_SAVE, ICON_MIDI, ICON_CLEAR};   /* SLOT STORE SEND INIT */
-    if (d >= FM6_OPD && d < FM6_OPD + FP_OP + 1) return OP[d - FM6_OPD];
-    if (d >= FM6_GD && d < FM6_GD + (FP_NAME - FP_PR1)) return GV[d - FM6_GD];
-    if (d >= FM6_FD && d < FM6_FD + FM6_NFN) return FN[d - FM6_FD];
-    if (d >= FM6_SD && d < FM6_SD + 4) return ST[d - FM6_SD];
-    return ICON_NONE;
-}
-
 static uint32_t param_icon(const param_desc_t *d, int32_t v)
 {
     uint32_t i;
     if (!d)
         return ICON_NONE;
-    if ((i = fm6_icon(d)) != ICON_NONE)
-        return i;
     if (d->fmt == F_ENUM && d->names && v >= d->min && v <= d->max &&
         (str_eq(d->label, "WAVE") || str_eq(d->label, "WAVE2")))
         for (i = 0; i < sizeof(WAVE_ICON) / sizeof(WAVE_ICON[0]); i++)
@@ -215,25 +194,6 @@ static uint32_t mod_dst_icon(const track_t *t, int32_t d)
     return param_icon(track_desc(t, id), t->p[id]);
 }
 
-/* engine name (ENGINES[]->name) -> icon */
-static uint32_t engine_icon(const char *name)
-{
-    static const icon_map_t M[] = {
-        {"PHASE", ICON_PHASE}, {"SID", ICON_BITS},
-        {"SAMPLE", ICON_SAMPLE}, {"VOICE", ICON_MOUTH}, {"TRIO", ICON_TRIO}, {"WHEEL", ICON_DRAWBAR},
-        {"SLICE", ICON_SLICE},
-        {"GRAIN", ICON_GRAIN},
-        {"PHYS", ICON_PHYS},
-        {"DRUM", ICON_DRUM},
-        {"NOISE", ICON_NOISE},
-        {"FM6", ICON_MOD},                    /* (symbol_modular: six operators patched; a glyph of its own wanted) */
-    };
-    uint32_t i;
-    for (i = 0; i < sizeof M / sizeof M[0]; i++)
-        if (str_eq(name, M[i].label))
-            return M[i].icon;
-    return ICON_GENERIC;
-}
 
 /* MOTION: the knob and its trace; recording into it (REC armed on the selected track, playing): its REC form */
 static uint32_t motion_icon(void) { return rec_on(TSEL) ? ICON_X_MOTION_REC : ICON_X_MOTION; }
@@ -252,7 +212,6 @@ static uint32_t page_icon(const page_t *pg)
 #else
 static uint32_t icon_for_label(const char *l) { (void)l; return ICON_NONE; }
 static uint32_t param_icon(const param_desc_t *d, int32_t v) { (void)d; (void)v; return ICON_NONE; }
-static uint32_t engine_icon(const char *name) { (void)name; return ICON_NONE; }
 static uint32_t mod_src_icon(int32_t s) { (void)s; return ICON_NONE; }
 static uint32_t mod_dst_icon(const track_t *t, int32_t d) { (void)t; (void)d; return ICON_NONE; }
 static uint32_t motion_icon(void) { return ICON_NONE; }

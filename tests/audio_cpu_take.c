@@ -80,7 +80,7 @@ static void take_plan(const take_spec_t *s)
         x->track = (uint8_t)tracks[j]; x->step = (uint8_t)step;
         x->on = step * take_step + (first ? 0u : take_step / 4u);
         /* Distinct from each other in a cell and from the overdub bases. */
-        x->note = take_drum(s, tracks[j]) ? DRUM_LANE_NOTE[(step + 4u + (k & 1u)) % NLANE] : (uint8_t)(60u + (k * 5u + j * 7u) % 24u);
+        x->note = take_drum(s, tracks[j]) ? STEP_LANE_NOTE[(step + 4u + (k & 1u)) % NLANE] : (uint8_t)(60u + (k * 5u + j * 7u) % 24u);
         x->vel = (uint8_t)(64u + (n * 37u) % 60u);
     }
     for (uint32_t i = 0; i < n; i++) {

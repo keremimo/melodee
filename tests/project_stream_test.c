@@ -128,7 +128,7 @@ static void song_sounds_stream(int patterns)
     for (uint32_t k = NPART; k < NTRK; k++) trk[k].p[P_E0] = (int16_t)(k + 1u);
     song_sound_t sound;
     song_sound_capture(&sound, &trk[0], "LOCAL SONG");
-    assert(song_sound_valid(&sound));
+    assert(song_sound_valid(&sound, 0));
     uint32_t id = song_sound_store(&sound); assert(id);
     chain_config.sound[1][0] = chain_config.sound[2][1] = (uint8_t)id;
     if (patterns) pattern_sound[1][15] = (uint8_t)id;

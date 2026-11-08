@@ -17,7 +17,7 @@
  * plays are recorded, not the keys held (what plays back is what was heard). A key or MIDI note plays a
  * chord when the track's CHRD is on (chord.c): its notes go through the same input as so many keys. */
 #define KB_SILENT 255u
-_Static_assert(DRUM_SILENT == KB_SILENT, "a user kit's silent key (eng_drum.c drum_user_key)");
+_Static_assert(KB_SILENT == 255u, "a silent key: an engine's keys() 255 (mod_abi3.h)");
 static volatile uint8_t kb_asleep;
 static uint32_t kb_prev;
 static uint8_t kb_note[27], kb_trk[27];  /* per key: the note it started and on which track */
@@ -62,12 +62,10 @@ static int midi_track_accept(const track_t *t)
            midi_event_source == (uint32_t)song.g[G_MIDI] + 1u || (midi_event_source == 2u && t->p[P_E1]);
 }
 
-static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
-
 static void live_note_on(const track_t *t, uint32_t note, uint32_t vel)
 {
     uint32_t i, k = trk_index(t);
-    if (drum_track(t))
+    if (pads_flag(t, MOD3_PD_HITS))
         return;
     live_held[k][note >> 5] |= 1u << (note & 31u);
     live_velocity[k][note] = (uint8_t)vel;
@@ -189,8 +187,8 @@ static uint32_t midi_map(const track_t *t, uint32_t note)
     uint32_t pad = mpc_pad(note);
     if (t->p[P_QUANT] == Q_MPC && pad / 16u != trk_index(t))
         return KB_SILENT;
-    if (t->p[P_QUANT] == Q_MPC && drum_track(t))
-        return drum_mpc_note(t, pad);
+    if (t->p[P_QUANT] == Q_MPC && pads_on(t))
+        return pads_mpc_note(t, pad);
     if (e->keys && e->keys(t, 0) >= 0)
         return note;
     if (t->p[P_QUANT] == Q_MPC)
@@ -531,15 +529,15 @@ static void rec_note(track_t *t, uint32_t note, uint32_t vel)
         rec_finish(t);
     s = &t->step[idx];
     if (!recording_note(t, note, vel, idx)) return;
-    if (drum_track(t)) {                            /* DRUM: into the grid, no holds (hits) */
-        uint32_t l = drum_lane(note);
+    if (pads_on(t)) {                            /* DRUM: into the grid, no holds (hits) */
+        uint32_t l = pads_lane(t, note);
         if (s->time != ST_NOTE || (!s->n && !s->hit)) {
             s->n = s->hit = s->acc = 0;
             s->flags = 0;
             s->vel = 0;
         }
         s->time = ST_NOTE;
-        if (note == DRUM_LANE_NOTE[l]) {            /* a lane's note: its hit */
+        if (note == lane_note(t, l)) {              /* a lane's note: its hit */
             s->hit |= (uint8_t)(1u << l);
             if (vel > 110)
                 s->acc |= (uint8_t)(1u << l);
@@ -741,7 +739,7 @@ static void rec_begin_held(track_t *t)
 static void countin_note(track_t *t,uint32_t note,uint32_t vel);
 static int rec_note_start(track_t *t);
 static void seq_advance(uint32_t n);
-#if KIT_REC
+#if REC_TAKES
 static void kit_rec_hear(const track_t *t, uint32_t note, uint32_t vel);   /* Record kit's sheet: the pad struck */
 #else
 #define kit_rec_hear(t, note, vel) ((void)0)
@@ -852,7 +850,7 @@ static void midi_chord_tone(mchord_t *m)
     uint32_t held = midi_note_held(t, note) || midi_local_held(t, note);
     m->n++;
     /* MPC's duplicate drum pads are separate strikes, even while another pad holds that sound. */
-    if (!held || (t->p[P_QUANT] == Q_MPC && drum_track(t))) input_on(t, note, m->strum.vel);
+    if (!held || (t->p[P_QUANT] == Q_MPC && pads_on(t))) input_on(t, note, m->strum.vel);
 }
 
 /* Return the next string boundary, bounded by this clock advance. Splitting the
@@ -968,8 +966,8 @@ static uint32_t smk_ext_map(const track_t *t, int32_t ks)     /* ks: -5..-1 belo
 {
     const engine_t *e = ENGINES[eng_idx(t->eng_req)];
     int32_t n, b;
-    if (e->keys == drum_keys && drum_isuser(t))         /* a user kit: its first sixteen white keys from C3 */
-        return drum_user_key(t, ks);
+    if (pads_keymap(t) && e->keys)               /* a kit whose keys are its own map (a user kit's white keys): every key */
+        return (uint32_t)e->keys(t, (uint32_t)ks) & 255u;
     if (e->keys && (b = e->keys(t, 0)) >= 0)
         return (uint32_t)clamp(b + ks, 0, 127);
     n = 53 + ks;
@@ -996,7 +994,7 @@ static void ext_keys_block(void)
             continue;
         if (!v) {                                     /* up: the notes it started, on its track (under the pedal: they
                                                        * wait, unless a drum's) */
-            if (sus_down && ext_chn[k] && !drum_track(&trk[ext_trk[k] % NTRK]))
+            if (sus_down && ext_chn[k] && !pads_flag(&trk[ext_trk[k] % NTRK], MOD3_PD_NOSUS))
                 ext_chn[k] |= EXT_SUS;
             else
                 ext_key_release(k);
@@ -1038,7 +1036,7 @@ static void keyboard_block(void)
                                                        * drum's); one struck again sounds again, as the retrigger */
         uint32_t gone = kb_prev & ~cur & ~kb_layer & ~punch_claimed, again = cur & ~kb_phys & kb_sus;
         for (k = 0; gone >> k; k++)
-            if (((gone >> k) & 1u) && kb_note[k] != KB_SILENT && !drum_track(&trk[kb_trk[k] % NTRK]))
+            if (((gone >> k) & 1u) && kb_note[k] != KB_SILENT && !pads_flag(&trk[kb_trk[k] % NTRK], MOD3_PD_NOSUS))
                 kb_sus |= 1u << k;
         kb_sus &= ~again;
         rt |= again;
@@ -1079,7 +1077,7 @@ static void keyboard_block(void)
             if (song.grid == 2u)                  /* NAME / pattern selection: keys belong to the UI */
                 kb_note[k] = KB_SILENT;
             else if (song.grid)                   /* the DRUM grid: a lane key plays its lane, the rest are the UI's */
-                kb_note[k] = key_black(k) && key_place(k) < NLANE ? DRUM_LANE_NOTE[key_place(k)] : KB_SILENT;
+                kb_note[k] = key_black(k) && key_place(k) < NLANE ? (uint8_t)lane_note(&trk[kb_trk[k]], key_place(k)) : KB_SILENT;
             else
                 kb_note[k] = (uint8_t)kb_map(&trk[kb_trk[k]], k);
             if (kb_note[k] == KB_SILENT)
@@ -1138,7 +1136,7 @@ static __attribute__((noinline)) void audition_tick(uint32_t n)
     if (audition_request) {
         audition_stop(); audition_owner=audition_track; audition_left=FS/6u;
         track_t *t=&trk[audition_owner % NTRK];
-        drum_event_pitch=audition_pitch;drum_event_length=audition_gate;
+        note_hit_pitch=audition_pitch;note_hit_len=audition_gate;
         /* Only notes_preview publishes this count, with audio IRQs masked.
          * Engine note-on callbacks cannot change it during this dispatch. */
         uint32_t count=audition_count;
@@ -1147,7 +1145,7 @@ static __attribute__((noinline)) void audition_tick(uint32_t n)
             if ((live_held[trk_index(t)][note>>5] & (1u<<(note&31u))) || t->arp_note==note) continue;
             audition_played[audition_n++]=(uint8_t)note; trk_note_on(t,note,audition_vel[i]);
         }
-        drum_event_pitch=0;drum_event_length=0;
+        note_hit_pitch=0;note_hit_len=0;
         audition_active=1; audition_request=0;
     }
     if(audition_active) { if(n>=audition_left)audition_stop(); else audition_left-=n; }
@@ -1319,8 +1317,8 @@ static void seq_stop(void)
     motion_end();
 }
 
-/* play one step: TIE extends, REST releases, NOTE (re)triggers its notes, then its lane hits (their GM
- * notes, DRUM_LANE_NOTE; an accented hit at 127); a SLIDE on the previous step makes this one legato with a
+/* play one step: TIE extends, REST releases, NOTE (re)triggers its notes, then its lane hits (their lanes'
+ * notes, pads.c lane_note; an accented hit at 127); a SLIDE on the previous step makes this one legato with a
  * glide (acid style). skip: bit k = note k, bit 8 + l = the hit of lane l already sounds from live
  * recording (not triggered, not released here). */
 static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint32_t period, uint32_t skip)
@@ -1355,7 +1353,7 @@ static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint
     }
     for (i = 0; i < NLANE; i++)
         if ((s->hit >> i) & 1u) {
-            nn[m] = DRUM_LANE_NOTE[i];
+            nn[m] = (uint8_t)lane_note(t, i);
             vv[m] = (uint8_t)((s->acc >> i) & 1u ? 127u : vel);
             sk |= ((skip >> (8u + i)) & 1u) << m;
             m++;
@@ -1453,7 +1451,7 @@ static void seq_grid_tick(track_t *t, uint32_t n)
                         if (s->note[i] == t->rskip[k])
                             skip |= 1u << i;
                     for (i = 0; i < NLANE; i++)
-                        if (((s->hit >> i) & 1u) && DRUM_LANE_NOTE[i] == t->rskip[k])
+                        if (((s->hit >> i) & 1u) && lane_note(t, i) == t->rskip[k])
                             skip |= 1u << (8u + i);
                 }
                 t->rskip_n = 0;
@@ -1498,7 +1496,7 @@ static void seq_tick(track_t *t, uint32_t n)
     }
 }
 
-/* A range is a strict input filter, including the DRUM override. SEL keeps its stored value 1.
+/* A range is a strict input filter, including the DRUM channel (the first track with pads). SEL keeps its stored value 1.
  * Return 0 for channels outside the range or tracks not in use; releases keep their original owner. */
 static track_t *midi_track(uint32_t ch)
 {
@@ -1508,7 +1506,7 @@ static track_t *midi_track(uint32_t ch)
         return 0;
     if (settings_drumch && ch + 1u == settings_drumch) {
         for (k = 0; k < trk_n(); k++)
-            if (drum_track(&trk[k]))
+            if (pads_on(&trk[k]))
                 return &trk[k];
     }
     if (route == 1u)

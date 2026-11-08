@@ -30,7 +30,7 @@ static __attribute__((noinline)) uint32_t scanner(track_t *t,const step_t *s,uin
            (r->step&63u)>=(uint32_t)t->p[P_SLEN] || view!=t->seq_idx ||
            t->step[view].time!=ST_NOTE || !(t->step[view].flags&SF_RECORDED))continue;
         for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recorded_note(r))skip|=1u<<k;
-        for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recorded_note(r))skip|=1u<<(8u+k);
+        for(uint32_t k=0;k<NLANE;k++)if(STEP_LANE_NOTE[k]==recorded_note(r))skip|=1u<<(8u+k);
     }
     return skip;
 }
@@ -40,7 +40,7 @@ static __attribute__((noinline)) uint32_t reference(track_t *t,const step_t *s,u
     if(s->flags&SF_RECORDED)
         for(uint32_t r=recording_head[recording_owner(t)];r<RECORD_MAX;r=recording_next[r])if(recording_active(t,r) && recording_view(t,&recording[r])==t->seq_idx){
             for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recorded_note(&recording[r]))skip|=1u<<k;
-            for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recorded_note(&recording[r]))skip|=1u<<(8u+k);
+            for(uint32_t k=0;k<NLANE;k++)if(STEP_LANE_NOTE[k]==recorded_note(&recording[r]))skip|=1u<<(8u+k);
         }
     return skip;
 }
@@ -62,7 +62,7 @@ static void fixture(uint32_t count,uint32_t dense)
         trk[tr].pattern=0;trk[tr].p[P_SLEN]=64;
         for(uint32_t v=0;v<NSTEP;v++){
             step_t *s=&trk[tr].step[v];memset(s,0,sizeof *s);s->time=ST_NOTE;s->flags=SF_RECORDED;
-            s->n=4;s->note[0]=0;s->note[1]=60;s->note[2]=127;s->note[3]=DRUM_LANE_NOTE[v%NLANE];
+            s->n=4;s->note[0]=0;s->note[1]=60;s->note[2]=127;s->note[3]=STEP_LANE_NOTE[v%NLANE];
         }
     }
     for(uint32_t i=0;i<count;i++){
@@ -105,7 +105,7 @@ static void parity(void)
     for(uint32_t note=0;note<128u;note++)for(uint32_t value=0;value<256u;value++){
         uint32_t key=value|((value^255u)<<8)|(((value+1u)&255u)<<16)|(((value+127u)&255u)<<24),expected=0;
         for(uint32_t k=0;k<4u;k++)if(((key>>(8u*k))&255u)==note)expected|=1u<<k;
-        for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==note)expected|=1u<<(8u+k);
+        for(uint32_t k=0;k<NLANE;k++)if(STEP_LANE_NOTE[k]==note)expected|=1u<<(8u+k);
         assert(recording_pitch_mask(note,key)==expected);
     }
     fixture(RECORD_MAX,0);all_queries();

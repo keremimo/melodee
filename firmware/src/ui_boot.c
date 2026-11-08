@@ -7,7 +7,8 @@ static struct {
     const char *title;
     uint16_t done, total;
     uint8_t state;                             /* 0 idle, 1 working, 2 failed, 3 wipe confirmation, 4 the resource
-                                                * region missing (res.c): install again */
+                                                * region missing (res.c): install again, 5 a synth module left out
+                                                * (module_store.c mod_blamed: the last run crashed in its code) */
     uint8_t presets;                           /* 0 other maintenance, 1 migration, 2 wiping */
 } boot_work;
 
@@ -34,13 +35,27 @@ static void boot_work_draw(void)
     lcd_fill(0, 0, 240, 240, T_BG);
     if (boot_work.state == 4u) {                /* (the words of the web installer's Finish setup) */
         draw_text_box(12, 12, 216, TY_LB, "Setup unfinished", T_MID, 1);
-        y = boot_lines(40, TY_TX, "Factory sounds missing", T_TEXT, 26);
+        y = boot_lines(40, TY_TX, RES_OK() ? "Synths missing" : "Factory sounds missing", T_TEXT, 26);
         y = boot_lines(y + 12, TY_TX, "Install the update again", T_THEME, 26);
         boot_lines(y + 8, TY_LB, "Your own sounds stay.", T_MID, 20);
         boot_keys(0, "CONTINUE");
         lcd_sync();
         return;
     }
+#if MELODEE_MODULES
+    if (boot_work.state == 5u) {                /* (one module's code crashed the last run: this start goes without it) */
+        char l[MOD3_NAME_MAX + 24u];
+        str_cpy(l, mods[(mod_blamed - 1u) % NMOD].name, MOD3_NAME_MAX + 1u);
+        str_cpy(l + str_len(l), " stopped Melodee", 17);
+        draw_text_box(12, 12, 216, TY_LB, "Synth left out", T_MID, 1);
+        y = boot_lines(40, TY_TX, l, T_TEXT, 26);
+        y = boot_lines(y + 12, TY_TX, "Started without it", T_THEME, 26);
+        boot_lines(y + 8, TY_LB, "Its sounds stay. It loads again at the next start.", T_MID, 20);
+        boot_keys(0, "CONTINUE");
+        lcd_sync();
+        return;
+    }
+#endif
     draw_text_box(12, 12, 216, TY_LB, "Startup maintenance", T_MID, 1);
     y = boot_lines(40, TY_TX, boot_work.title, T_TEXT, 26);
     if (boot_work.state == 3u) {
@@ -106,6 +121,8 @@ static void boot_work_input(uint32_t pressed)
         else if (keys == up) (void)shared_wipe();
     } else if (boot_work.state == 4u && keys == up) {
         boot_work.state = 0; ui.force = 1;
+    } else if (boot_work.state == 5u && keys == up) {   /* (then the setup screen, if a module is missing too) */
+        boot_work.state = !RES_OK() || !SHIPPED_OK() ? 4u : 0u; ui.force = 1;
     }
 }
 #define BOOT_WORK_BEGIN(title, total) boot_work_begin(title, total, 0)

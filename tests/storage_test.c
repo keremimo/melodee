@@ -183,7 +183,7 @@ static int bridge_guards(void)                      /* every current list record
         for (uint32_t j = ST_GUARD_OFF; j < ST_GUARD_OFF + ST_GUARD_LEN; j++) ok &= nor[st_lin_at(i) + j] == 0xFFu;
     return ok;
 }
-#define B_KIT (ST_KFILE0 + 0u)
+#define B_KIT (ST_RFILE0 + 0u)
 #define B_P6 (ST_PFILE0 + 6u)
 static void bridge_fixture(void)                   /* one of every old form */
 {
@@ -238,7 +238,7 @@ static int bridge_test(void)
     ok = st_old == 1 && bridge_all();
     int left = st_convert(buf, 0);
     ok &= left == 0 && bridge_all() && bridge_guards();
-    for (uint32_t o = 0; o < ST_KFILE0 + ST_NKIT; o++) {
+    for (uint32_t o = 0; o < ST_OBJ_END; o++) {
         if (!(o < OBJ_COUNT ? st_listed(o) : st_pfile(o))) continue;
         c = st_current(o, &h);
         ok &= c < 0 || c >= (int)ST_LIN_C0;

@@ -7,13 +7,6 @@ _Static_assert(MLEARN_KNOBS == NE && MLEARN_BUTTONS == NB, "mlearn_row: a byte p
 static uint8_t mlearn_sel, mlearn_wait;                 /* the row; it waits for a message */
 static uint32_t mlearn_sig;
 
-static uint32_t mlearn_count(void)
-{
-    uint32_t n = 0;
-    if (mlearn_valid())
-        for (uint32_t k = 0; k < MLEARN_N; k++) n += mlearn_row[k] != 0u;
-    return n;
-}
 static void mlearn_page_open(void)
 {
     ui.menu = 4;
@@ -25,34 +18,7 @@ static void mlearn_page_open(void)
     mlearn_sel = mlearn_wait = 0;
     ui.force = 1;
 }
-static void mlearn_forget(void)
-{
-    fm1_irq_off();
-    memset(mlearn_row, 0, sizeof mlearn_row);
-    fm1_in.remote = 0;
-    fm1_irq_on();
-    settings_save();
-}
-static void mlearn_bind(uint32_t k, uint32_t src, uint32_t ch)
-{
-    fm1_irq_off();
-    if (!mlearn_valid()) {                              /* (Felucca 1.0's stars of a retired engine, if any, go) */
-        memset(mlearn_row, 0, sizeof mlearn_row);
-        mlearn_row[28] = 'M'; mlearn_row[29] = 'L'; mlearn_row[30] = 1u;
-    }
-    for (uint32_t i = 0; i < MLEARN_N; i++)             /* the message leaves the control it had */
-        if (mlearn_row[i] == src && (!(src & MLEARN_NOTE) || (i >= NE && mlearn_note_ch(i - NE) == ch)))
-            mlearn_row[i] = 0;
-    mlearn_row[k] = (uint8_t)src;
-    if (k >= NE) {
-        uint32_t b = k - NE, shift = b & 1u ? 4u : 0u;
-        uint8_t *c = &mlearn_row[MLEARN_N + b / 2u];
-        *c = (uint8_t)((*c & ~(15u << shift)) | ch << shift);
-    }
-    fm1_irq_on();
-    mlearn_wait = 0;
-    settings_save();
-}
+/* (mlearn_count, mlearn_forget, mlearn_bind: menu_rows.c, the editor's MLEARN too) */
 static void mlearn_page_input(uint32_t pressed)
 {
     int32_t seen = mlearn_seen;
@@ -60,8 +26,10 @@ static void mlearn_page_input(uint32_t pressed)
         uint32_t src = (uint32_t)seen & 255u, ch = (uint32_t)seen >> 8;
         mlearn_seen = -1;
         if (mlearn_wait) {
-            if (mlearn_sel >= NE || !(src & MLEARN_NOTE))   /* (a knob: a CC only) */
+            if (mlearn_sel >= NE || !(src & MLEARN_NOTE)) {   /* (a knob: a CC only) */
                 mlearn_bind(mlearn_sel, src, ch);
+                mlearn_wait = 0;
+            }
         } else if (mlearn_valid()) {
             for (uint32_t k = 0; k < MLEARN_N; k++)
                 if (mlearn_row[k] == src && (!(src & MLEARN_NOTE) || (k >= NE && mlearn_note_ch(k - NE) == ch)))

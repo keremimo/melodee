@@ -3,12 +3,18 @@
 /* Immutable Song/Pattern-local sounds. Allocation belongs to stopped foreground edits;
  * section boundaries only copy bounded RAM, without loading the preset library.
  * The byte representation is also the versioned project payload. */
+#define SS_PATCH 156u                            /* (Melodee 1.x's: the largest of its four synths' forms) */
+#define SS_VOICE_IDS 155u                        /* VOICE: its bytes are the parameters 0..154 */
+#define SS_VOICE_ON 144u                         /* .. the patch's switches (VOICE: fm_on) */
 typedef struct {
     uint8_t p[P_COUNT], engine, preset, user[2], user_native, fm_on;
     char name[16];
-    union { uint8_t fm[FP_SIZE + 1u]; cz_patch_t cz; p5_patch_t p5; drum_patch_t drum; } patch;
+    uint8_t patch[SS_PATCH];                     /* the synth's patch: in RAM its own bytes (at most SS_PATCH), stored
+                                                  * in its store format's form (song_sound_stored / song_sound_ram):
+                                                  * VOICE its voice's bytes by the parameter ids 0..154 (the 155-byte
+                                                  * voice), fm_on its switches; TONE, PROGRAM, KIT the patch's bytes */
 } song_sound_t;
-_Static_assert(sizeof(song_sound_t) == P_COUNT + 22u + FP_SIZE + 1u, "song sound byte layout");
+_Static_assert(sizeof(song_sound_t) == P_COUNT + 22u + SS_PATCH, "song sound byte layout");
 static uint8_t song_sound_count, song_base_reserved;
 /* Pattern assignments share immutable snapshots with Song, but own their IDs. */
 static uint8_t pattern_sound[NTRK][NPAT];
@@ -42,6 +48,28 @@ static void song_sound_reset(void)
     if (!song_base_reserved) resource_release(RES_SONG_BASE);
     resource_release(RES_SONG_PREVIEW);
 }
+/* a song sound as a bank record stores it (main loop): VOICE by its voice's parameter ids and the switches in fm_on
+ * (Melodee 1.x's form), the others as in RAM; and back */
+static void song_sound_stored(song_sound_t *d, const song_sound_t *s)
+{
+    *d = *s;
+    if (patch_store_tag(s->engine) == MOD_SCH_STORE_VOICE) {
+        patch_ids_get(s->engine, s->patch, d->patch, SS_VOICE_IDS);
+        d->patch[SS_VOICE_IDS] = 0;
+        d->fm_on = s->patch[SS_VOICE_ON];
+    }
+}
+static void song_sound_ram(song_sound_t *s)
+{
+    if (patch_store_tag(s->engine) == MOD_SCH_STORE_VOICE) {
+        uint8_t b[MOD3_PATCH_MAX];
+        patch_default(s->engine, b);
+        patch_ids_set(s->engine, b, s->patch, SS_VOICE_IDS);
+        b[SS_VOICE_ON] = s->fm_on;
+        memcpy(s->patch, b, SS_PATCH);
+        s->fm_on = 0;
+    }
+}
 static void song_sound_capture(song_sound_t *s, const track_t *t, const char *name)
 {
     uint32_t k = (uint32_t)(t - trk);
@@ -50,28 +78,34 @@ static void song_sound_capture(song_sound_t *s, const track_t *t, const char *na
     s->engine = t->eng_req; s->preset = t->preset;
     s->user[0] = (uint8_t)t->user; s->user[1] = (uint8_t)(t->user >> 8); s->user_native = t->user_native;
     str_cpy(s->name, name ? name : "", sizeof s->name);
-    if (s->engine == ENGI_FM6) { memcpy(s->patch.fm, fm6_patch_of(k), FP_SIZE); s->fm_on = fm6_on[k]; }
-    else if (s->engine == ENGI_CZ) s->patch.cz = *cz_patch_of(k);
-    else if (s->engine == ENGI_PROPHET) s->patch.p5 = *p5_patch_of(t);
-    else if (s->engine == ENGI_DRUM) s->patch.drum = *drum_patch_of(k);
+    {
+        uint32_t n = patch_len(s->engine);
+        memcpy(s->patch, patch_of(k), n < SS_PATCH ? n : SS_PATCH);
+    }
 }
-static int song_sound_valid(const song_sound_t *s)
+/* stored: the bank record's form (song_sound_stored), else RAM's */
+static int song_sound_valid(const song_sound_t *s, int stored)
 {
-    if (!eng_ok(s->engine) || !s->name[0] || s->name[15] || s->user_native > 1u || s->fm_on > FM6_ON_ALL) return 0;
+    uint32_t e = stored ? eng_in(s->engine) : s->engine;   /* (a stored sound: its number here, eng_map.c) */
+    uint32_t tag = patch_store_tag(e);
+    if (eng_sound_idx(e) != e || !s->name[0] || s->name[15] || s->user_native > 1u) return 0;
     for (uint32_t i = 0; i < P_COUNT; i++) {
         int32_t v = (int32_t)s->p[i] - 64;
-        const param_desc_t *d = param_desc_of(s->engine, i);
+        const param_desc_t *d = param_desc_of(e, i);
+        if (i >= P_E0 && eng_extra_retired(e)) continue;   /* (a synth module not in SRAM: kept as it is) */
         if (v < d->min || v > d->max) return 0;
     }
     for (uint32_t i = 0; s->name[i]; i++) if ((uint8_t)s->name[i] < 32u || (uint8_t)s->name[i] > 126u) return 0;
-    if (s->engine == ENGI_CZ && !cz_patch_valid(s->patch.cz.raw)) return 0;
-    if (s->engine == ENGI_PROPHET && !p5_patch_valid(&s->patch.p5)) return 0;
-    if (s->engine == ENGI_DRUM && !drum_patch_valid(&s->patch.drum)) return 0;
-    if (s->engine == ENGI_FM6) {
-        uint8_t sanitized[FP_SIZE + 1u]; memcpy(sanitized, s->patch.fm, sizeof sanitized); fm6_sanitize(sanitized);
-        if (memcmp(sanitized, s->patch.fm, FP_SIZE)) return 0;
+    if (tag == MOD_SCH_STORE_VOICE) {             /* (as 1.x checked it: every value by its id in its parameter's range,
+                                                   * the switches by the synth's checks) */
+        uint8_t v[SS_PATCH], on = stored ? s->fm_on : s->patch[SS_VOICE_ON];
+        if (stored)
+            memcpy(v, s->patch, SS_VOICE_IDS);
+        else
+            patch_ids_get(e, s->patch, v, SS_VOICE_IDS);
+        return patch_ids_ok(e, v, SS_VOICE_IDS) && patch_check(e, &on, SS_VOICE_ON, 1);
     }
-    return 1;
+    return patch_stored_ok(tag, s->patch);         /* (another layout: the synth's checks; no synth: as it is) */
 }
 static void song_sound_apply(uint32_t k, const song_sound_t *s)
 {
@@ -79,10 +113,20 @@ static void song_sound_apply(uint32_t k, const song_sound_t *s)
     for (uint32_t i = 0; i < P_COUNT; i++) if (!param_kept(i)) t->p[i] = (int16_t)s->p[i] - 64;
     t->eng_req = s->engine; t->preset = s->preset;
     t->user = s->user[0] | (uint16_t)s->user[1] << 8; t->user_native = s->user_native;
-    if (s->engine == ENGI_FM6) { fm6_put_patch(k, s->patch.fm, 1); fm6_on[k] = s->fm_on; }
-    else if (s->engine == ENGI_CZ) { *cz_patch_of(k) = s->patch.cz; cz_track_accept(t); }
-    else if (s->engine == ENGI_PROPHET) { *p5_patch_of(t) = s->patch.p5; p5_ready[k] = 1; }
-    else if (s->engine == ENGI_DRUM) *drum_patch_of(k) = s->patch.drum;
+    {
+        uint32_t e = s->engine, n = patch_len(e), sl = patch_sound_len(e);   /* (the audio: a song section; from RAM,
+                                                                           * no flash read) */
+        if (n > SS_PATCH) n = SS_PATCH;
+        if (patch_eng_of(k) == e && sl < n)      /* the same synth: its settings past the sound stay (FM6's
+                                                  * functions) */
+            patch_set(k, e, s->patch, sl, MOD3_PATCH_SET);
+        else
+            patch_set(k, e, s->patch, n, MOD3_PATCH_SET);   /* (a whole patch: the settings its RAM form starts with) */
+        if (patch_store_tag(e) == MOD_SCH_STORE_VOICE && patch_of(k)[SS_VOICE_ON] != s->patch[SS_VOICE_ON]) {
+            patch_of(k)[SS_VOICE_ON] = s->patch[SS_VOICE_ON];   /* (a VOICE's switches: the sound's, as 1.x put them) */
+            patch_note(k, MOD3_PATCH_EDIT, 0xFFFFu);
+        }
+    }
     motion_rebase(t);
 }
 static int song_sound_prepare(void)

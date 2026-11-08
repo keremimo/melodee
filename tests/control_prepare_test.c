@@ -25,7 +25,7 @@ static __attribute__((noinline)) void reference(track_t *t)
     int32_t range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
     midi_bend_target[ti]=t->bend_raw*range/(t->bend_raw<0?8192:8191);
 }
-static __attribute__((noinline)) void candidate(track_t *t) { p5_update_bend(t); }
+static __attribute__((noinline)) void candidate(track_t *t) { trk_bend_own(t, eng_of(t->engine)); }   /* (bend_range) */
 static void parity(void)
 {
     host_tracks_init();
@@ -34,7 +34,7 @@ static void parity(void)
         for(uint32_t range=0;range<128;range++)for(int32_t raw=-8192;raw<=8191;raw++){
             p5_patch_of(t)->raw[P5_BEND]=(uint8_t)range;t->bend_raw=(int16_t)raw;
             int32_t expected=raw*((clamp((int32_t)range,0,11)+1)*256)/(raw<0?8192:8191);
-            midi_bend_target[ti]=123456;p5_update_bend(t);assert(midi_bend_target[ti]==expected);
+            midi_bend_target[ti]=123456;trk_bend_own(t,eng_of(t->engine));assert(midi_bend_target[ti]==expected);
         }
     }
     puts("control preparation: exact 14-bit bend at every native byte range, all tracks");

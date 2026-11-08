@@ -76,10 +76,8 @@ _Static_assert(LDR_RES_LO >= LDR_REC_LO && LDR_RES_HI <= LDR_REC_HI, "the resour
  * inside it, and below this floor when no valid header tells (torn, or a unit from before 1.6) */
 #ifdef FL_RES_RESERVE
 #define LDR_RES_FLOOR FL_RES_RESERVE
-#elif BOARD_SMK37
-#define LDR_RES_FLOOR 16u
 #else
-#define LDR_RES_FLOOR 15u
+#define LDR_RES_FLOOR 9u
 #endif
 _Static_assert(LDR_RES_FLOOR >= 1u && LDR_RES_FLOOR <= LDR_RES_N, "the resource floor lies in the region");
 #define LDR_RES_MAGIC 0x3153524Du               /* res.c RES_MAGIC "MRS1": its commit record */

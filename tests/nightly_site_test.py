@@ -101,6 +101,8 @@ class NightlySite(unittest.TestCase):
         candidate = package(assets / f"melodee-{version}.fwsc", "FM-1_91040", 5)
         (assets / f"melodee-{version}-res.bin").write_bytes(b"candidate resources")
         (self.root / "next-res.bin").write_bytes(b"nightly resources")
+        (assets / f"melodee-{version}-mods.bin").write_bytes(b"candidate synth modules")
+        (self.root / "next-mods.bin").write_bytes(b"nightly synth modules")
         builds = {candidate.name: {"MELODEE_DUAL_CORE": 1, "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest()}}
         info = {"version": version, "product": "FM-1_91040", "commit": "a" * 40,
                 "builtAt": "2026-10-15T16:40:00Z", "core_builds": builds}
@@ -117,6 +119,9 @@ class NightlySite(unittest.TestCase):
         # channels re-read from the site keep their resource files (no copy onto themselves)
         self.assertEqual((self.site / "firmware" / f"melodee-{version}-res.bin").read_bytes(), b"candidate resources")
         self.assertEqual((self.site / "firmware/melodee-nightly-res.bin").read_bytes(), b"nightly resources")
+        # .. and their synth modules (web/fm1mods.js: the installer writes them after the resources)
+        self.assertEqual((self.site / "firmware" / f"melodee-{version}-mods.bin").read_bytes(), b"candidate synth modules")
+        self.assertEqual((self.site / "firmware/melodee-nightly-mods.bin").read_bytes(), b"nightly synth modules")
         rc = json.loads((self.site / "firmware/rc.json").read_text())
         self.assertEqual((rc["version"], rc["product"], rc["commit"]), (version, "FM-1_91040", "a" * 40))
         self.assertEqual(set(rc["pkg"]), {"dual"})

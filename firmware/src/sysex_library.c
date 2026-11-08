@@ -24,32 +24,36 @@ static int bulk_has(uint32_t k)
     uint32_t b = bulk.anchor > bulk.end ? bulk.anchor : bulk.end;
     return bulk.on && k >= a && k <= b;
 }
+/* the first patch's name (the synth's schema says where its patch keeps it; a general record's: its own), 12 at most */
 static void sysex_import_name(char *nm)
 {
-    uint32_t e=sx_import.engine,offset=sx_import.general?4u:e==ENGI_FM6?118u:e==ENGI_CZ?128u:P5_NAME;
-    uint32_t n=!sx_import.general&&e==ENGI_FM6?10u:12u;
-    for(uint32_t i=0;i<n;i++){uint8_t c=sx_import.data[offset+i];nm[i]=c>=32u&&c<=126u?(char)c:' ';}nm[n]=0;
+    uint32_t off=4u,n=12u;
+    if(!sx_import.general){n=patch_name_place(sx_import.engine,&off);if(n>12u)n=12u;}
+    for(uint32_t i=0;i<n;i++){uint8_t c=sx_import.data[off+i];nm[i]=c>=32u&&c<=126u?(char)c:' ';}nm[n]=0;
 }
+/* count patches of synth e (size bytes each) offered for user slots: more than fit here stay where they are, in the
+ * frame being served (a synth's bank: sysex_route.c holds the scratch until they are chosen); 1 staged */
 static int sysex_stage(uint32_t e, const uint8_t *raw, uint32_t count, uint32_t size)
 {
-    if(!count || (count*size>sizeof sx_import.raw && !(e==ENGI_FM6&&count==32u&&size==FM6_PACKED)))return 0;
+    int held=count*size>sizeof sx_import.raw;
+    if(!count || (held && !(msx_serving && raw>=proj_wire_u.raw && raw+count*size<=proj_wire_u.raw+sizeof proj_wire_u.raw)))return 0;
     if (sx_import.count || ui.confirm || ui.name_active || ui.new_active || ui.layer || ui.ly || designer_on()) { ui_message("FINISH CURRENT IMPORT"); return 0; }
-    if(count*size>sizeof sx_import.raw){sx_import.data=raw;fm6_rx_ready=2;}
+    if(held){sx_import.data=raw;msx.ready=2;}
     else {memcpy(sx_import.raw,raw,count*size);sx_import.data=sx_import.raw;}
     sx_import.general=size==238u;
     sx_import.engine = (uint8_t)e; sx_import.count = (uint8_t)count; sx_import.size = (uint16_t)size;
     sx_import.first = 0;
     bulk_clear();
     ui.menu = ui.layer = ui.ly = 0;
-    for(uint32_t p=0;p<NPAGES;p++)if(PAGES[p].graph==GR_USER){ui.page=(uint8_t)p;break;}
+    for(uint32_t p=0;p<NPAGES;p++)if(PG(p).graph==GR_USER){ui.page=(uint8_t)p;break;}
     ui.import_refresh=1;ui.home=0;ui.fam_last[FAM_SAVE]=ui.page;ui.uslot=0;song.seq_mode=0;ui.entry_open=0;ui.note_pick=0;ui.act=0;seq_midi_reset();
     char nm[16];sysex_import_name(nm);
     ui_say("IMPORT ", nm); str_cpy(ui.msg2, "CHOOSE USER SLOTS", sizeof ui.msg2); ui.force = 1;
     return 1;
 }
-static void sysex_cancel(void) { if(fm6_rx_ready==2u)fm6_rx_ready=0;sx_import.count = 0; bulk_clear(); ui_message("IMPORT CANCELLED"); }
-/* project.c wire_take: a job needs the scratch a staged 32-voice frame lives in */
-static int sysex_cancel_staged(void) { if (fm6_rx_ready != 2u) return 0; sysex_cancel(); return 1; }
+static void sysex_cancel(void) { if(msx.ready==2u)msx.ready=0;sx_import.count = 0; bulk_clear(); ui_message("IMPORT CANCELLED"); }
+/* project.c wire_take: a job needs the scratch a staged bank lives in */
+static int sysex_cancel_staged(void) { if (msx.ready != 2u) return 0; sysex_cancel(); return 1; }
 static void sysex_commit(void)
 {
     if (!sx_import.count) return;
@@ -62,7 +66,7 @@ static void sysex_commit(void)
         if(saved){sx_import.data+=saved*sx_import.size;sx_import.count-=saved;sx_import.first+=saved;ui.uslot=sx_import.first;}
         ui_message("IMPORT SAVE ERROR");return;
     }
-    sx_import.count=0;if(fm6_rx_ready==2u)fm6_rx_ready=0;bulk_clear();ui_message("PATCHES IMPORTED");
+    sx_import.count=0;if(msx.ready==2u)msx.ready=0;bulk_clear();ui_message("PATCHES IMPORTED");
 }
 static void sysex_choose(void)
 {
@@ -73,7 +77,9 @@ static void sysex_choose(void)
     for(uint32_t k=first;k<first+sx_import.count;k++)if((up_used(k)||up_old(k))){confirm_open(CF_IMPORT,0);return;}
     sysex_commit();
 }
-/* Native single-voice frames preserve each selected slot's name on USB. */
+/* A synth's own patch goes as its synth's SysEx (its module's sysex_dump: the slot's name kept), any other sound as
+ * Melodee's general record */
+static uint32_t msx_dump(uint32_t e, const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
 static int library_send(uint32_t e, uint32_t k)
 {
 #if MELODEE_OTA
@@ -81,12 +87,9 @@ static int library_send(uint32_t e, uint32_t k)
     e=up_engine(k);
     if(!native_limit(e) || !native_used(e,k))return general_sysex_send(k);
     if (!usb.config || !native_used(e,k)) return 1;
-    uint8_t raw[CZ_BYTES], frame[320]; uint32_t n;
-    memcpy(raw,native_raw(e,k),native_size(e));
-    if(e==ENGI_FM6){memcpy(frame,(uint8_t[]){0xf0,0x43,0,0,1,0x1b},6);uint8_t voice[FP_SIZE+1u];fm6_unpack(raw,voice);memcpy(frame+6,voice,FP_SIZE);frame[161]=sx_checksum(frame+6,FP_SIZE);frame[162]=0xf7;n=163;}
-    else if(e==ENGI_CZ){memcpy(frame,(uint8_t[]){0xf0,0x44,0,0,0x70,0x30},6);for(uint32_t i=0;i<CZ_BYTES;i++){frame[6+2*i]=raw[i]&15;frame[7+2*i]=raw[i]>>4;}frame[6+2*CZ_BYTES]=0xf7;n=7+2*CZ_BYTES;}
-    else if(e==ENGI_PROPHET){p5_patch_t p;memcpy(&p,raw,sizeof p);n=p5_patch_encode(&p,frame,sizeof frame);}
-    else return 1;
+    static uint8_t raw[MOD3_PATCH_MAX], frame[320] __attribute__((section(".pool"))); uint32_t n;
+    memset(raw,0,sizeof raw);memcpy(raw,native_raw(e,k),native_size(e));
+    n=msx_dump(e,raw,MOD3_DUMP_STORED,0,frame,sizeof frame);
     return !n || ota_wire_send(frame,n);
 #else
     (void)e; (void)k; return 1;

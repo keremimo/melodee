@@ -145,7 +145,7 @@ static int page_and_local_controls(void)
     bad += check("native CZ absolute parameter reaches minimum", d && *vp == d->min);
     knob_reset(MK_MINILAB, MK_ABSOLUTE);
     set_engine_of(TSEL, ENGI_FM6); apply_preset_to(TSEL, 0);
-    for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].scope == SC_FMOP) { ui.home = 0; ui.page = p; break; }
+    for (uint32_t p = 0; p < NPAGES; p++) if (sec_inst(p)) { ui.home = 0; ui.page = p; break; }
     knob_cc(1, 93, 64); knob_cc(1, 93, 127);
     d = page_desc(cur_page(), 0, &vp);
     bad += check("absolute MIDI follows the current FM6 operator page", d && *vp == d->max);
@@ -322,9 +322,94 @@ static int learn_test(void)
     return bad;
 }
 
+/* MIDI LEARN's parameters (Studio arms them: MLEARN 5, editor_test.c): through the whole MIDI path, on any page, what a
+ * learned CC no longer does, the panel's learn taking the CC back, FORGET LEARNED, the record */
+static int param_learn_test(void)
+{
+    int bad = 0;
+    int16_t was[P_COUNT];
+    knob_reset(MK_OFF, MK_ABSOLUTE);
+    memset(mlearn_row, 0, sizeof mlearn_row); memset(mparam_row, 0, sizeof mparam_row);
+    fm1_in.remote = fm1_in.remote_tap = fm1_in.buttons = 0;
+    set_engine_of(&trk[2], HOST_SYNTH); events_block(CTL);
+    const param_desc_t *dec = param_desc_of(trk[2].eng_req, P_DEC);
+    ui.home = 1; ui.menu = 0;
+    mparam_bind(2, P_DEC, 74, 0);
+    mparam_bind(2, P_FXTYPE, 75, MPARAM_ANY);
+    mparam_bind(1, P_VOICE, 76, 0);
+    memcpy(was, trk[0].p, sizeof was);
+    route_input(1, 0xB0, 74, 127);
+    bad += check("a learned CC sets track 3's DECAY through the MIDI path (the panel on track 1)", trk[2].p[P_DEC] == dec->max);
+    route_input(1, 0xB0, 74, 0);
+    bad += check("... over its range, and track 1's own CC 74 (its filter) no longer moves", trk[2].p[P_DEC] == dec->min &&
+                 !memcmp(was, trk[0].p, sizeof was) && !midi_knob_w);
+    route_input(1, 0xB1, 74, 127);
+    bad += check("on another channel CC 74 is not the learned one", trk[2].p[P_DEC] == dec->min);
+    ui.menu = 1; ui.menu_sel = MI_LIGHTS;
+    route_input(1, 0xB0, 74, 64);
+    bad += check("with the menu up it still acts", trk[2].p[P_DEC] == dec->min + (64 * (dec->max - dec->min) + 63) / 127);
+    menu_close(); ui.home = 1;
+    route_input(1, 0xB5, 75, 64);
+    bad += check("a NOTE FX list over its names (any channel): the middle is NOTE TAIL", !strcmp(N_NOTE_FX[trk[2].p[P_FXTYPE]], "NOTE TAIL"));
+    route_input(1, 0xBF, 75, 127); route_input(1, 0xB0, 76, 127);
+    bad += check("... its end NOTE ECHO; VOICE of track 2 at its last (UNI)", !strcmp(N_NOTE_FX[trk[2].p[P_FXTYPE]], "NOTE ECHO") &&
+                 trk[1].p[P_VOICE] == V_UNISON);
+    settings_midi_knob_mode = MK_REL2;
+    route_input(1, 0xB0, 76, 127); route_input(1, 0xB0, 76, 127);
+    bad += check("MIDI MODE relative: two steps down a list (UNI to MONO)", trk[1].p[P_VOICE] == V_MONO);
+    settings_midi_knob_mode = MK_ABSOLUTE;
+    route_input(1, 0x90, 60, 100);
+    bad += check("notes on the channel still play", gate_note(&trk[0], 60));
+    route_input(1, 0x80, 60, 0);
+    bad += check("the MIDI LEARN row counts the parameters", menu_get(MI_MIDI_LEARN) == 3);
+
+    /* kept with the settings, as rows 5..7 of the favorites */
+    persist_t p;
+    uint32_t kept[MPARAM_N + 1u];
+    memset(&p, 0, sizeof p);
+    memcpy(kept, mparam_row, sizeof kept);
+    settings_export(&p);
+    bad += check("the settings record holds the parameters in rows 5..7", !memcmp(p.favorites.factory[MPARAM_ROW0], kept, sizeof kept));
+    memset(mparam_row, 0, sizeof mparam_row);
+    settings_import(&p, sizeof p);
+    bad += check("... and power-on restores them", !memcmp(mparam_row, kept, sizeof kept));
+    memset(p.favorites.factory[MPARAM_ROW0], 0x5A, 96u);  /* (a retired engine's stars: no table) */
+    settings_import(&p, sizeof p);
+    memset(&p.favorites.factory[MPARAM_ROW0][0], 0, 4);
+    settings_export(&p);
+    route_input(1, 0xB0, 74, 127);
+    bad += check("old stars in the rows are no table, and stay as they were", !mlearn_count() && p.favorites.factory[MPARAM_ROW0 + 2u][31] == 0x5A &&
+                 p.favorites.factory[MPARAM_ROW0][4] == 0x5A && trk[2].p[P_DEC] == dec->min + (64 * (dec->max - dec->min) + 63) / 127);
+    memcpy(mparam_row, kept, sizeof kept);
+
+    /* one job per CC: the panel's learn takes it back; a hand-made record with both: the parameter */
+    ui.menu = 1; ui.menu_sel = MI_MIDI_LEARN; menu_input(2);
+    learn_knob(EN_K2, 74);
+    hold(B_HOME);
+    bad += check("KNOB 2 learned from CC 74 on the device's page: DECAY lets it go", mlearn_row[EN_K2] == 74 && mlearn_count() == 3 &&
+                 !(route_input(1, 0xB0, 74, 0), 0) && trk[2].p[P_DEC] != dec->min && midi_knob_w != midi_knob_r);
+    midi_knob_r = midi_knob_w;
+    mlearn_row[EN_K3] = 76;
+    route_input(1, 0xB0, 76, 0);
+    bad += check("a CC with both (a hand-made record): the parameter wins", trk[1].p[P_VOICE] == V_POLY && midi_knob_w == midi_knob_r);
+    mlearn_row[EN_K3] = 0;
+
+    /* FORGET LEARNED: the parameters too */
+    memset(mlearn_row, 0, sizeof mlearn_row);
+    ui.home = 1; ui.menu = 1; ui.menu_sel = MI_MIDI_FORGET; menu_input(2);
+    bad += check("FORGET LEARNED asks when only parameters are learned", ui.confirm == CF_MLEARN_FORGET);
+    press(B_OCTUP);
+    route_input(1, 0xB0, 76, 127);
+    bad += check("OCT+ forgets them: CC 76 is no parameter now", !ui.confirm && !mlearn_count() && !mparam_valid() &&
+                 trk[1].p[P_VOICE] == V_POLY);
+    memset(mparam_row, 0, sizeof mparam_row);
+    return bad;
+}
+
 int main(void)
 {
-    int bad = panel_controls() + encoder_modes() + isolation_and_overflow() + page_and_local_controls() + learn_test();
+    int bad = panel_controls() + encoder_modes() + isolation_and_overflow() + page_and_local_controls() + learn_test() +
+              param_learn_test();
     printf("%s\n", bad ? "MIDI KNOB TEST FAILED" : "MIDI knob integration tests passed");
     return bad != 0;
 }

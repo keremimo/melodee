@@ -10,7 +10,7 @@ static uint64_t matrix_hash;
 static void matrix_setup(const uint32_t cat[4],uint32_t variant)
 {
     memset(trk,0,sizeof trk);trk_voices_bind();memset(&song,0,sizeof song);eng_state_reset();
-    memset(fm6_eff,0,sizeof fm6_eff);memset(p5_ready,0,sizeof p5_ready);cz_init();
+    memset(fm6_eff,0,sizeof fm6_eff);p5_parts_init();cz_init();
     memset(mix_cache,0,sizeof mix_cache);memset(&mod,0,sizeof mod);memset(fx_state,0,sizeof fx_state);
     memset(midi_bend_q8,0,sizeof midi_bend_q8);memset(midi_bend_target,0,sizeof midi_bend_target);
     fx_bus_mix=fx_bus_target=fx_bus_pending=fx_bus_result=0;fx_epoch++;

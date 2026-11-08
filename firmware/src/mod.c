@@ -375,7 +375,7 @@ static __attribute__((noinline)) void mod_midi(track_t *t, uint32_t st, uint32_t
         else if (d1 == 65u)
             t->porta = (uint8_t)(d2 >= 64u);
         else if (d1 == 5u)
-            fm6_fn_set((uint32_t)(t - trk), FN_PTIME, (int32_t)d2);   /* FM6's portamento time (the track's) */
+            sch_cc_role(t, MOD3_R_CC_GLIDE, d2);   /* a synth's portamento time (its role: FM6's PORTA TIME) */
         else if (d1 == 121u)
             t->mw = t->at = t->ex_off = t->breath = t->foot = t->porta = 0;
     }

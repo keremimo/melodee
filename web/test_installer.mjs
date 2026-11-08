@@ -9,10 +9,10 @@ const meta={...releases[0],releases,rc:{version:'1.4.0-rc.1',product:'rc',pkg:{d
 const pending=[];
 Object.assign(w,{
  meta,describeDevice,planFor,progressModel,remaining,logicalImage:b=>b,productOf:b=>['new','old','rc'][b[0]],
- fetch:url=>url.includes('-res.bin')?Promise.resolve({ok:false,status:404}):new Promise(resolve=>pending.push({url,resolve})),
+ fetch:url=>/-(res|mods)\.bin/.test(url)?Promise.resolve({ok:false,status:404}):new Promise(resolve=>pending.push({url,resolve})),
  setupLeaving:()=>({lock(){},applyLang(){}}),hold:async()=>()=>{},busyElsewhere:async()=>false,
 });
-w.eval(controllerSource+'\nwindow.controller={st,render,log,loadRelease,resRegion};');
+w.eval(controllerSource+'\nwindow.controller={st,render,log,loadRelease,resRegion,modBundleFile};');
 const tick=()=>new Promise(r=>setImmediate(r));
 async function finish(req,product,marker){req.resolve({ok:true,arrayBuffer:async()=>Uint8Array.of(product,marker).buffer});await tick();}
 function change(id){$(id).dispatchEvent(new w.Event('change'));}
@@ -39,7 +39,8 @@ try{
  const urls=[];w.fetch=url=>{urls.push(url);return Promise.resolve({ok:false,status:404});};
  w.controller.st.meta={version:'n',product:'p',commit:'abc',pkg:{dual:'../../firmware/melodee-nightly.fwsc'}};
  assert.equal(await w.controller.resRegion(),null);
- assert.deepEqual(urls,['../../firmware/melodee-nightly-res.bin?commit=abc']);
+ assert.equal(await w.controller.modBundleFile(),null);   /* (and its synth modules, beside it) */
+ assert.deepEqual(urls,['../../firmware/melodee-nightly-res.bin?commit=abc','../../firmware/melodee-nightly-mods.bin?commit=abc']);
  assert.deepEqual(planFor('this',true),{firmware:false,resume:false,boot:true});
  assert.deepEqual(planFor('loader',true),{firmware:true,resume:true,boot:true});
  assert.equal(planFor('open',true),null);

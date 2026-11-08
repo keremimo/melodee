@@ -14,4 +14,17 @@ static volatile uint8_t settings_midi_knobs, settings_midi_knob_mode;
 #define MLEARN_BUTTONS 14u
 #define MLEARN_N (MLEARN_KNOBS + MLEARN_BUTTONS)
 static uint8_t mlearn_row[32];
+/* MIDI LEARN's parameters: a CC (on its channel, or any) to a track's parameter, on every page. Saved as the retired rows
+ * 5..7 of the favorites (VOICE, TRIO, WHEEL: settings_persist.c), one table: 23 x (CC (0: none), channel (0..15, 127
+ * any), track, parameter (P_*)), each byte 7 bits, then the tag 'M', 'P', 1, 0 (else the rows' old stars, kept as they
+ * are). In the audio pool (zeroed at boot, before the settings load). midi_knobs.c mparam_receive, menu_rows.c */
+#define MPARAM_ROW0 5u
+#define MPARAM_N 23u
+#define MPARAM_ANY 127u
+#define MPARAM_TAG 0x0001504Du                          /* 'M', 'P', 1, 0 (little-endian) */
+static uint32_t mparam_row[MPARAM_N + 1u] __attribute__((section(".pool")));
+/* a parameter learnable: a track's own (not reserved, not the project's scale: ROOT, SCL, TUNING, scale QNT, the MPC
+ * degree, recording QNT) */
+#define MPARAM_TARGET(id) ((id) < P_COUNT && !param_reserved(id) && (id) != P_ROOT && (id) != P_SCALE && (id) != P_TUNING && \
+                           (id) != P_QUANT && (id) != P_MPCDEG && (id) != P_RECQ)
 #endif

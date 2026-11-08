@@ -18,7 +18,7 @@ static int st_stream_begin(st_stream_t *w,uint32_t obj,uint32_t len)
 #endif
     if(!st_listed(obj)||len>st_capacity(obj))return -1;
     w->obj=obj; w->crc=0xffffffffu;
-    w->generation=++st_stream_generation;
+    w->generation=++st_stream_generation;st_stream_open=w->generation;st_stream_activity++;
     int rc=st_project_allocate(obj,len,&w->head);
     if(rc)return w->error=rc;
     w->error=0;return 0;
@@ -34,7 +34,7 @@ static int st_stream_begin_lazy(st_stream_t *w,uint32_t obj)
     if(AUDIO_LAB_GUARDED())return -9;
 #endif
     if(!st_banked(obj))return -1;
-    w->obj=obj;w->crc=0xffffffffu;w->generation=++st_stream_generation;
+    w->obj=obj;w->crc=0xffffffffu;w->generation=++st_stream_generation;st_stream_open=w->generation;st_stream_activity++;
     memset(&w->head,0xFF,sizeof w->head);
     w->head.type=(uint16_t)obj;w->head.len=0;
     if(st_pool_used(used,obj,&w->head.seq))return w->error=-7;
@@ -80,6 +80,7 @@ static int st_stream_write_at(st_stream_t *w,uint32_t off,const void *data,uint3
 {
     if(w->generation!=st_stream_generation)return w->error=-6;
     if(w->error)return w->error;
+    st_stream_activity++;
     if(w->lazy){if(off>ST_PROJECT_MAX||n>ST_PROJECT_MAX-off||st_stream_room(w,off+n))return w->error?w->error:(w->error=-1);}
     else if(off>w->head.len||n>w->head.len-off)return w->error=-1;
     const uint8_t *p=data;
@@ -125,6 +126,7 @@ static int st_stream_check(st_stream_t *w)
  * can stream/read their payload with st_read_range using this exact copy. */
 static int st_stream_publish(st_stream_t *w)
 {
+    if(st_stream_open==w->generation)st_stream_open=0;   /* (done, published or not) */
     int rc=st_stream_check(w);if(rc)return rc;
     st_hdr_t current;int copy=st_current(w->obj,&current);
     if(copy>=0?(copy==w->head.slot||current.seq+1u!=w->head.seq):w->head.seq!=1u)return -6;

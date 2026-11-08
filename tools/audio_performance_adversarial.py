@@ -5,6 +5,7 @@
 import argparse,contextlib,itertools,json,time
 from pathlib import Path
 import mido
+from prophet_device import patch_get,patch_put,param_set
 from audio_performance_device import (ReliableDevice,run,usb_streams,restore_settings,restore_runtime,verify,inventory,param_ids,metadata)
 
 def corners(d,cat,variant,notes):
@@ -16,11 +17,10 @@ def corners(d,cat,variant,notes):
             values={8:127,9:127,17:case['cut'],18:127,20:case['model'],21:127,22:127,
                     23:1,24:1,25:1,26:64,27:1,28:1,29:1,30:1,31:1,32:127,33:127}
             for field,value in values.items():
-                r=d.request(95,[2,p,field,value])
-                if r[1]:raise RuntimeError('Prophet corner rejected')
+                param_set(d,p,field,value)
     elif cat[0]==2:
         for p in range(4):
-            r=d.request(75,[0,p]);raw=bytearray(r[3+2*i]|r[4+2*i]<<4 for i in range(144))
+            e,raw=patch_get(d,p)
             raw[0]=3|(case['noise']<<2)
             word=case['wave']<<13|((case['wave']+1)%8)<<10|512|case['window']<<6|case['modulation']<<3
             for off in (0,57):raw[14+off]=word>>8;raw[15+off]=word&255
@@ -31,7 +31,7 @@ def corners(d,cat,variant,notes):
                     for end,base in ((54,55),(37,38),(20,21)):
                         raw[end+off]=(raw[end+off]&0xf0)|7
                         for k in range(8):raw[base+off+2*k]=127;raw[base+off+2*k+1]=(127-k%2)|(128 if k==6 else 0)
-            if d.request(76,[0,p,*[n for v in raw for n in (v&15,v>>4)]])!=[0,p,0]:raise RuntimeError('CZ corner rejected')
+            patch_put(d,p,e,raw)
     elif cat[0]==3:
         for p in range(4):d.params(p,dict(P_E0=case['model'],P_E1=case['wave'],P_E2=case['stack'],P_E3=127 if variant&1 else 1,
                                         P_E6=6,P_E5=15,P_E4=case['cut']))

@@ -19,8 +19,10 @@ enum { ED_INFO = 1, ED_GET, ED_SET, ED_DUMP, ED_DESC, ED_STEP_GET, ED_STEP_SET, 
        ED_TRACK, ED_TRACK_MIX, ED_TRACK_DUMP, ED_TRACK_STEP,                    /* v3: tracks */
        ED_TRACK_PARAM, ED_TRACK_CHANGED, ED_SONG,
        ED_UI_STATE, ED_UI_SET, ED_UI_PALETTES, ED_FAV_GET, ED_FAV_SET,
+       ED_CAPS, ED_TRACKS, ED_TRANSPORT,                                       /* Studio (editor_session.c; 42, 43: editor_projects.c) */
+       ED_METERS = 55, ED_TRACKS_CHANGED, ED_TRANSPORT_CHANGED,                /* .. its pushes */
        ED_MOTION = 64, ED_BACKUP_LIST, ED_BACKUP_GET, ED_BACKUP_PUT,                               /* v6: song chain */
-       ED_AUDIO_STATS = 72, ED_PATTERN, ED_BANK_SONG };                                       /* USB audio diagnostics (68..71: FM6, editor_fm6.c) */
+       ED_AUDIO_STATS = 72, ED_PATTERN, ED_BANK_SONG };                                       /* USB audio diagnostics (85..88: the synths, editor_synth.c) */
 #if MELODEE_CORE1_TEST && MELODEE_DUAL_CORE
 enum { ED_CORE1_TEST = 79 };                         /* test builds only: CPU1 failure injection */
 static void core1_test_stall(void *unused) { (void)unused; for (;;) ; }
@@ -51,13 +53,6 @@ static void ed_v(int32_t v)
 {
     ed_u14(clamp(v, -8192, 8191) + 8192);
 }
-static void ed_str(const char *s, uint32_t max)   /* ASCII, 0-terminated */
-{
-    uint32_t i;
-    for (i = 0; s && s[i] && i < max; i++)
-        ed_b((uint8_t)s[i] & 0x7Fu);
-    ed_b(0);
-}
 static void ed_xyv(uint32_t x, uint32_t y, int32_t v)  /* two bytes and a value: GET / SET / CHANGED / TRACK_PARAM */
 {
     ed_b(x);
@@ -65,9 +60,46 @@ static void ed_xyv(uint32_t x, uint32_t y, int32_t v)  /* two bytes and a value:
     ed_v(v);
 }
 static uint32_t ed_left(void) { return sizeof ed_out - 1u - ed_n; }   /* paged replies: payload bytes before the F7 */
+#if MELODEE_BLE_EDITOR
+/* Melodee Studio over Bluetooth (EDITOR_PROTOCOL.md "Studio over Bluetooth"; the link's side: midi_ble.c mbe). ed_link: the
+ * link of the request in hand, or (ed_sync) of the pushes: 0 USB, 1 the computer's Bluetooth link. A reply over Bluetooth
+ * goes out from ed_out as the link takes it: ed_service does nothing more until it is out (ed_ble_busy) */
+static uint8_t ed_link;
+static int ed_ble_busy(void)                       /* (no lock: the IRQ only adds to out_at, and only while busy) */
+{
+    if (mbe.out_at < mbe.out_n && !MB_ED_UP())
+        mbe.out_n = 0;                             /* (the link gone: its rest dropped) */
+    return mbe.out_at < mbe.out_n;
+}
+/* the commands Bluetooth takes (bit c: command c), each a request with one reply of at most 1024 bytes: the session,
+ * sounds, patterns, song and device. Not the samples (11..15), the backups and kits (65..67), the audio and CPU1
+ * diagnostics (72, 79, 100, 101), the radio calibration (81), the resources (82) nor the pushes' numbers: no reply */
+static const uint8_t ED_BLE_OK[12] = {0xFE, 0x07, 0x7F, 0xFA, 0xFE, 0xBF, 0x3F, 0x00, 0x01, 0x06, 0xE1, 0x01};
+static void ed_frame_done(void)
+{
+    if (!ed_link) { ota_frame_done(); return; }
+    RING_PUBLISH(); mbe.ready = 0;                 /* (the IRQ may gather the next one) */
+}
+#define ED_FRAME_DONE() ed_frame_done()
+#define ED_GONE() (ed_w.link ? !MB_ED_UP() || mbe.epoch != ed_w.resets : !usb.config || usb.resets != ed_w.resets)
+#define ED_EPOCH() (ed_link ? mbe.epoch : usb.resets)
+#else
+#define ED_FRAME_DONE() ota_frame_done()
+#define ED_GONE() (!usb.config || usb.resets != ed_w.resets)
+#define ED_EPOCH() usb.resets
+#endif
 static void ed_send(void)
 {
     ed_out[ed_n++] = 0xF7;
+#if MELODEE_BLE_EDITOR
+    if (ed_link) {                                 /* (the link gone: nothing goes) */
+        if (MB_ED_UP()) {                          /* (out_n last: the IRQ starts on it; first 0, so out_at can be reset) */
+            mbe.out_n = 0; mbe.out = ed_out; mbe.out_ms = fm1_ms; mbe.out_at = 0;
+            RING_PUBLISH(); mbe.out_n = ed_n;
+        }
+        return;
+    }
+#endif
     ota_wire_send(ed_out, ed_n);
 }
 static int32_t ed_rv(const uint8_t *p) { return (int32_t)(p[0] | p[1] << 7) - 8192; }
@@ -110,12 +142,15 @@ static void ed_sound(const track_t *t)                   /* a track's engine and
 /* v4: the parameters of the tracks that are not selected which TRACK_CHANGED follows (the mixer) */
 static const uint8_t ED_TIDS[3] = {P_LEVEL, P_PAN, P_MUTE};
 #define ED_TRK NPART                                   /* the tracks the protocol lists (the web editor's four) */
-#define ED_NT (ED_TRK * 3u)
-/* the selected track as the protocol lists the tracks: one of the MIDI-only ones (5..8) in the last place */
-static uint32_t ed_sel(void) { return song.sel < ED_TRK ? song.sel : ED_TRK - 1u; }
+#define ED_NT (NTRK * 3u)                              /* (TRACK_MIX / TRACK_PARAM reach all eight) */
 static struct {
     uint8_t on, eng, preset, sel;
     uint8_t v4;                                          /* WATCH bit 1: TRACK_CHANGED pushes too */
+    uint8_t bits;                                        /* the WATCH bits known (2: eight tracks, 3: TRACKS / TRANSPORT
+                                                          * pushes, 4: METERS), 0 when not watching */
+    uint32_t psig[8], m_ms;                              /* (editor_session.c: what TRACKS_CHANGED, TRANSPORT_CHANGED,
+                                                          * SONG_CHANGED and PATTERN_CHANGED last said, editor_device.c
+                                                          * DEVICE_CHANGED's four: signatures) */
     uint32_t pos, last_ms, run_ms, resets;
     int16_t v[ED_NV];                                    /* TSEL->p[], then song.g[] */
     uint16_t t[ED_NV];                                   /* ms (low 16 bits) of the last push */
@@ -123,7 +158,14 @@ static struct {
     int16_t tv[ED_NT];                                   /* v4: trk[k].p[ED_TIDS[j]] at k * 3 + j */
     uint16_t tt[ED_NT];
     uint32_t tpos, pattern_gen;
+#if MELODEE_BLE_EDITOR
+    uint8_t link;                                        /* the link that sent WATCH: the pushes go there (0 USB) */
+#endif
 } ed_w;
+/* the selected track as the protocol lists the tracks: one of the MIDI-only ones (5..8) in the last place, unless the
+ * editor watches all eight (WATCH bit 2) */
+static uint32_t ed_sel(void) { return song.sel < ED_TRK || (ed_w.bits & 4u) ? song.sel : ED_TRK - 1u; }
+static uint32_t ed_session_push(uint32_t n, uint32_t now);   /* editor_session.c */
 
 static int16_t *ed_val(uint32_t i)
 {
@@ -149,7 +191,11 @@ static void ed_shadow(void)                              /* the editor is in syn
     ed_w.sel = song.sel; ed_w.pattern_gen = TSEL->pattern_gen;
     sync_reload = 0;
 }
+#if MELODEE_BLE_EDITOR
+static int ed_room(void) { return ed_link ? !ed_ble_busy() : so_w - so_r + 8u <= SXQ / 2u; }   /* (Bluetooth: one at a time) */
+#else
 static int ed_room(void) { return so_w - so_r + 8u <= SXQ / 2u; }
+#endif
 static void ed_known(uint32_t k, uint32_t id)            /* the editor's own change of trk[k].p[id]: no push */
 {
     uint32_t j;
@@ -168,8 +214,8 @@ static void ed_sync(void)                                /* main loop */
     if (!ed_w.on || now - ed_w.run_ms < 5u)
         return;
     ed_w.run_ms = now;
-    if (!usb.config || usb.resets != ed_w.resets || now - ed_w.last_ms > 3000u) {
-        ed_w.on = 0;                                     /* no host, USB reset, or 3 s without a request */
+    if (ED_GONE() || now - ed_w.last_ms > 3000u) {
+        ed_w.on = 0;                                     /* no host, USB reset (Bluetooth: link gone), or 3 s without a request */
         return;
     }
     if (sync_reload || TSEL->pattern_gen != ed_w.pattern_gen || ed_eng(TSEL) != ed_w.eng || TSEL->preset != ed_w.preset || song.sel != ed_w.sel) {
@@ -211,8 +257,9 @@ static void ed_sync(void)                                /* main loop */
         n++;
         ed_w.pos = k + 1u;
     }
-    for (i = 0; ed_w.v4 && i < ED_NT && n < ED_PUSH_MAX; i++) {   /* v4: the other tracks' mix */
-        uint32_t k = (ed_w.tpos + i) % ED_NT, tr = k / 3u, id = ED_TIDS[k % 3u];
+    uint32_t nt = (ed_w.bits & 4u ? NTRK : ED_TRK) * 3u;
+    for (i = 0; ed_w.v4 && i < nt && n < ED_PUSH_MAX; i++) {   /* v4: the other tracks' mix */
+        uint32_t k = (ed_w.tpos + i) % nt, tr = k / 3u, id = ED_TIDS[k % 3u];
         int16_t v = trk[tr].p[id];
         if (tr == song.sel || v == ed_w.tv[k] || (uint16_t)(now - ed_w.tt[k]) < 20u)
             continue;                                    /* (the selected track: CHANGED above) */
@@ -226,6 +273,7 @@ static void ed_sync(void)                                /* main loop */
         n++;
         ed_w.tpos = k + 1u;
     }
+    ed_session_push(n, now);
 }
 
 /* descriptor of parameter id of track t: the engine parameters of the engine it asked for
@@ -315,23 +363,30 @@ static int ed_flash_stop(void)
 #ifdef RES_BASE                          /* (the firmware: res.c) */
 #include "editor_res.c"
 #endif
+#ifdef MODULE_STORE                      /* (the firmware: module_store.c) */
+#include "editor_module.c"
+#endif
 #include "editor_backup.c"
-#include "editor_fm6.c"
-#include "editor_cz.c"
-#include "editor_native.c"
 #include "editor_library.c"
-#include "editor_prophet.c"
+#include "editor_synth.c"                    /* the synths: schemas, patches, SysEx, parameters by id */
 #include "editor_cpu_lab.h"
+#include "editor_song.c"
+#include "editor_patterns.c"
+#include "editor_device.c"
+#include "editor_session.c"
+#include "editor_projects.c"
 
-static void ed_motion_reply(uint32_t k, uint32_t rc)
+static void ed_motion_reply(uint32_t k, uint32_t bank, uint32_t rc)   /* (the count: of the bank's, after them) */
 {
-    track_t *t = &trk[k];
-    ed_b(k); ed_b(rc); ed_b(motion_enabled(t)); ed_b(motion_count(t)); ed_b(MOTION_MAX);
+    uint32_t at, c = 0;
+    ed_b(k); ed_b(rc); ed_b(motion_enabled(&trk[k])); at = ed_n; ed_b(0); ed_b(MOTION_MAX);
     for (uint32_t i = 0; i < motion.count; i++) {
         const motion_event_t *e = &motion.event[i];
-        if ((e->place >> 6) != k || motion_pattern[i] != t->pattern) continue;
+        if ((e->place >> 6) != k || motion_pattern[i] != bank) continue;
         ed_b((e->place & 63u) | ((e->param & 128u) >> 1)); ed_b(e->param); ed_v(e->value);
+        c++;
     }
+    ed_out[at] = (uint8_t)c;
 }
 /* argument lengths: bit n set = n argument bytes accepted (n <= 15); 0 = the handler checks its own (variable
  * payloads, sub-operations). Commands past the table check their own too. */
@@ -339,10 +394,10 @@ static void ed_motion_reply(uint32_t k, uint32_t rc)
 static const uint16_t ED_ARGN[ED_FAV_SET + 1] = {
     [ED_INFO] = ED_N(0), [ED_DUMP] = ED_N(0), [ED_SMP_INFO] = ED_N(0), [ED_PING] = ED_N(0),
     [ED_UI_STATE] = ED_N(0), [ED_UI_PALETTES] = ED_N(0),
-    [ED_GET] = ED_N(2), [ED_DESC] = ED_N(2), [ED_PROJECT] = ED_N(2), [ED_UP_LIST] = ED_N(2),
+    [ED_GET] = ED_N(2), [ED_DESC] = ED_N(2) | ED_N(3), [ED_PROJECT] = ED_N(2), [ED_UP_LIST] = ED_N(2),
     [ED_PRESET] = ED_N(2) | ED_N(3), [ED_TRACK_PARAM] = ED_N(2) | ED_N(4), [ED_SET] = ED_N(4),
     [ED_STEP_GET] = ED_N(1), [ED_SMP_BEGIN] = ED_N(1), [ED_SMP_ERASE] = ED_N(1), [ED_UP_GET] = ED_N(1),
-    [ED_UP_LOAD] = ED_N(1), [ED_UP_ERASE] = ED_N(1), [ED_WATCH] = ED_N(1), [ED_TRACK_DUMP] = ED_N(1),
+    [ED_UP_LOAD] = ED_N(1), [ED_UP_ERASE] = ED_N(1), [ED_WATCH] = ED_N(1) | ED_N(2), [ED_TRACK_DUMP] = ED_N(1),
     [ED_NAMES] = ED_N(1) | ED_N(3),
     [ED_STEP_SET] = ED_N(9) | ED_N(12) | ED_N(13),      /* notes only, or the complete grid extension */
     [ED_TRACK] = ED_N(0) | ED_N(1), [ED_TRACK_MIX] = ED_N(1) | ED_N(4),
@@ -358,9 +413,15 @@ static int ed_args_ok(uint32_t cmd, const uint8_t *a, uint32_t n)
         return n != 13u || a[12] <= 100u;           /* the chance */
     case ED_TRACK_STEP:
         return n != 14u || a[13] <= 100u;
-    case ED_MOTION:
+    case ED_MOTION: {
+        uint32_t k = a[0];
+        if (n > 2u && a[1] == 5u) {                   /* (Studio: track, 5, bank, then as for the bank playing) */
+            if (a[2] >= NPAT) return 0;
+            a += 2; n -= 2;
+        }
         return (n == 1u || (n == 2u && a[1] == 2u) || (n == 3u && a[1] == 1u && a[2] <= 1u) ||
-                (n == 6u && a[1] == 3u) || ((n == 4u || n == 6u) && a[1] == 4u)) && a[0] < NPART;
+                (n == 6u && a[1] == 3u) || ((n == 4u || n == 6u) && a[1] == 4u)) && k < NPART;
+    }
     case ED_BANK_SONG:
         if (n && a[0] == 4u) return n == 2u;
         /* fall through */
@@ -374,14 +435,18 @@ static int ed_args_ok(uint32_t cmd, const uint8_t *a, uint32_t n)
 /* the command families with their own files, asked in turn: each answers 1 when the command is its own (the reply
  * is then sent), else 0 (new families: one more entry) */
 static int (*const ED_HANDLERS[])(uint32_t cmd, const uint8_t *a, uint32_t n) = {
-    ed_prophet_handle,
+    ed_synth_handle,
 #if MELODEE_BLE
     ed_ble_handle,
 #endif
 #ifdef RES_BASE
     ed_res_handle,
 #endif
-    ed_ui_handle, ed_backup_handle, ed_fm6_handle, ed_cz_handle, ed_library_handle, ed_native_handle,
+#ifdef MODULE_STORE
+    ed_module_handle,
+#endif
+    ed_ui_handle, ed_backup_handle, ed_library_handle,
+    ed_session_handle, ed_projects_handle, ed_song_handle, ed_patterns_handle, ed_device_handle,
 };
 static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0 and F7 */
 {
@@ -394,7 +459,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
     const param_desc_t *d;
     if (!ed_args_ok(cmd, a, na))
         return;
-    if(cmd==ED_SET || (cmd==ED_TRACK_PARAM && na==4u) || cmd==ED_FM6_PUT || cmd==ED_CZ_PUT || (cmd==95u && na && a[0]>=1u && a[0]<=3u))momentary_restore();
+    if(cmd==ED_SET || (cmd==ED_TRACK_PARAM && na==4u) || ((cmd==ED_PATCH || cmd==ED_PARAM) && na && a[0]==1u))momentary_restore();
     ed_begin(cmd);
     for (i = 0; i < sizeof ED_HANDLERS / sizeof *ED_HANDLERS; i++)
         if (ED_HANDLERS[i](cmd, a, na)) {
@@ -506,9 +571,6 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
     }
 #if MELODEE_AUDIO_BENCH
     case 99: {
-        if(na==3u && a[0]==2u && a[1]<NTRK && a[2]<=FM6_OPL){
-            fm1_irq_off();fm6_fn_set(a[1],FN_ENGINE,a[2]);fm1_irq_on();ed_b(0);break;
-        }
         if(na!=1u || a[0]>1u){ed_b(1);break;}
         fm1_irq_off();audio_bench_until=a[0]?fm1_ticks()+30u*24000000u:0;fm1_irq_on();
         ed_b(0);break;
@@ -574,7 +636,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             snapshot[28] = audio_worker.max_job_ticks / FM1_TICKS_PER_US;
             snapshot[29] = audio_worker.max_wait_ticks / FM1_TICKS_PER_US;
             snapshot[30] = audio_worker.timeouts;
-            snapshot[31] = fm6_pairs;
+            snapshot[31] = eng_paired;
             snapshot[22] = audio_worker.rejected;    /* (22, 23: OBXF's, retired) misread requests, */
             snapshot[23] = fm1_core1_fault.count;     /* CPU1 faults: either retires the worker */
         }
@@ -717,23 +779,25 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         break;
     }
 #endif
-    case ED_MOTION: {
-        track_t *t = &trk[a[0]]; uint32_t rc = 0;
+    case ED_MOTION: {                                      /* (track, 5, bank, ..: another bank, ed_args_ok) */
+        track_t *t = &trk[a[0]]; uint32_t rc = 0, k = a[0], bk = t->pattern;
+        if (na > 2u && a[1] == 5u) { bk = a[2]; a += 2; na -= 2; }
         if (na > 1u && chain_busy()) rc = 3;
         else if (na > 1u) {
             if (a[1] == 1u) motion_set_enabled(t, a[2]);
-            else if (a[1] == 2u) { load_begin(t, UNDO_PAT); motion_clear(t); load_end(t); }
-            else if (a[1] == 3u) rc = motion_set_event(t, a[2] & 63u, a[3] | ((a[2] & 64u) << 1), (int16_t)ed_rv(a + 4));
+            else if (a[1] == 2u) { load_begin(t, UNDO_PAT); motion_clear_bank(t, bk); load_end(t); }
+            else if (a[1] == 3u) rc = motion_set_event_at(t, bk, a[2] & 63u, a[3] | ((a[2] & 64u) << 1), (int16_t)ed_rv(a + 4));
             else if (a[1] == 4u) {
                 uint32_t id = a[3] | ((a[2] & 64u) << 1);
                 if (motion_param(id) || (id >= MO_NATIVE && id < MO_NATIVE + MO_NATIVE_N))
-                    motion_delete_event(t, a[2] & 63u, na==6u ? id|(motion_native_event(id,ed_rv(a+4))?256u:0u) : id|512u);
+                    motion_delete_event_at(t, bk, a[2] & 63u, na==6u ? id|(motion_native_event(id,ed_rv(a+4))?256u:0u) : id|512u);
                 else rc = 1;
             }
             else rc = 1;
             ui.force = 1;
+            ed_pat_own();
         }
-        ed_motion_reply(a[0], rc);
+        ed_motion_reply(k, bk, rc);
         break;
     }
     case ED_INFO: {
@@ -745,15 +809,13 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             0x4d, 2, MOTION_MAX, 1,                                 /* [9] motion v2: native ids, chance v1 */
             0x42, 1, 3,                                             /* bounded full-backup read + restore */
             0x50, 4, NPAT, CHAIN_ROWS,                              /* bank controls: 73/74 */
-            0x46, 1, FM6_NFAC, 0,                                   /* FM6 patches: cmds 68..71 */
-            0x43, 1, CZ_BYTES & 127u, CZ_BYTES >> 7, 0, 0,          /* old CZ bank controls retired */
-            0x35, 1, ENGI_PROPHET, USER_GENERAL, USER_NATIVE_FM, USER_NATIVE_CZ, USER_NATIVE_P5, 0, 1, /* legacy native clients see their addressable prefix */
-            0x4e, 1, 64, 0, 0, 1,                                   /* legacy command 78 addressable prefixes */
-            0x55, 1, UP_SLOTS & 127u, UP_SLOTS >> 7 };              /* shared library, command 80 */
+            0x55, 1, UP_SLOTS & 127u, UP_SLOTS >> 7,                /* shared library, command 80 */
+            0x53, 1, ED_CAPS,                                       /* Studio: CAPS (39) says what else */
+            0x59, 1, ED_SCHEMA };                                   /* the synths: SCHEMA, PATCH, SYSEX, PARAM (85..88) */
         ed_str("MELODEE " MELODEE_VERSION, 24);
         ed_bytes(info, 5u);
         for (i = 0; i < NENGINES; i++)
-            ed_str(ENGINES[i]->name, 8);
+            ed_str(eng_name(i), 8);
         ed_bytes(info + 5, 4u);
         ed_b(ed_ui_caps());
         ed_bytes(info + 9, sizeof info - 9u);
@@ -797,20 +859,39 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             ed_v(*ed_val(P_COUNT + i));
         ed_b(TSEL->preset >> 7);
         break;
-    case ED_DESC:
-        if (!(d = ed_desc(a[0], a[1], &vp)))
-            return;
+    case ED_DESC: {                       /* scope, id [, count (CAPS R)]: with a count, from id on, each as its length (14
+                                           * bits) and the one-id body, as many whole ones as fit (one at least): a Bluetooth
+                                           * read is a round trip a request */
+        uint32_t k = 0, at;
         ed_bytes(a, 2u);
-        ed_b(d->fmt);
-        ed_v(d->min);
-        ed_v(d->max);
-        ed_v(d->def);
-        ed_str(d->label, 8);
-        ed_str(d->unit, 8);
-        if (d->fmt == F_ENUM && d->names)                  /* the full SCL catalogue fits the 1024-byte reply */
-            for (i = 0; i <= (uint32_t)(d->max - d->min) && i < 96u; i++)
-                ed_str(d->names[i+d->min], 8);
+        do {
+            if (!(d = ed_desc(a[0], a[1] + k, &vp)))
+                break;
+            at = ed_n;
+            if (na > 2u)
+                ed_n += 2u;
+            ed_b(d->fmt);
+            ed_v(d->min);
+            ed_v(d->max);
+            ed_v(d->def);
+            ed_str(d->label, 8);
+            ed_str(d->unit, 8);
+            if (d->fmt == F_ENUM && d->names)              /* the full SCL catalogue fits the 1024-byte reply */
+                for (i = 0; i <= (uint32_t)(d->max - d->min) && i < 96u; i++)
+                    ed_str(d->names[i+d->min], 8);
+            if (k && ed_n >= sizeof ed_out - 1u) {         /* (cut: the next request starts with it) */
+                ed_n = at;
+                break;
+            }
+            if (na > 2u) {
+                ed_out[at] = (uint8_t)((ed_n - at - 2u) & 127u);
+                ed_out[at + 1u] = (uint8_t)((ed_n - at - 2u) >> 7);
+            }
+        } while (++k < (na > 2u ? a[2] : 1u));
+        if (!k)
+            return;
         break;
+    }
     case ED_STEP_GET:
     case ED_STEP_SET:
     case ED_TRACK_STEP: {                                  /* [track,] index [, step] -> [track,] index, step (11 bytes) */
@@ -851,16 +932,18 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         break;
     case ED_NAMES: {                                       /* engine [, first lo, hi] -> preset names of an engine */
         const engine_t *en;
-        uint32_t s0, n = 0, room;
+        uint32_t s0, n = 0, room, np;
+        char nm[MOD_PST_NAME + 1u];                        /* (a synth module's names: its file's, not loaded) */
         if (a[0] >= NENGINES)
             return;
         en = ENGINES[a[0]];
+        np = eng_npresets(a[0]);
         s0 = na >= 3u ? a[1] | (uint32_t)a[2] << 7 : 0u;
         /* the names that fit (at most 127): engine, count, names, titles (2 x 9), total and first (4) */
         room = ed_left() - 2u - 18u - 4u;
-        for (i = s0; i < en->npresets && n < 127u; i++, n++) {
+        for (i = s0; i < np && n < 127u; i++, n++) {
             uint32_t len = 0;
-            const char *nm = eng_preset(en, i)->name;
+            eng_preset_name(a[0], i, nm, sizeof nm);
             while (len < 20u && nm[len])
                 len++;
             if (len + 1u > room)
@@ -869,11 +952,13 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         }
         ed_b(a[0]);
         ed_b(n);
-        for (i = 0; i < n; i++)
-            ed_str(eng_preset(en, s0 + i)->name, 20);
+        for (i = 0; i < n; i++) {
+            eng_preset_name(a[0], s0 + i, nm, sizeof nm);
+            ed_str(nm, 20);
+        }
         for (i = 0; i < 2u; i++)                           /* then the two edit-page titles */
             ed_str(en->page_title[i], 8);
-        ed_u14(en->npresets);                              /* then all presets and this page's first: the */
+        ed_u14(np);                                        /* then all presets and this page's first: the */
         ed_u14(s0);                                        /* editor asks again from s0 + n until it has them */
         break;
     }
@@ -973,14 +1058,33 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_b(a[0]);
         ed_b(a[0] >= 128u ? 1u : ed_flash_stop() || up_put(a[0], 0) ? 2u : 0u);
         break;
-    case ED_WATCH:                                         /* on -> on */
+    case ED_WATCH: {                                       /* on [, bits 7..] -> on [, bits 7..] */
+        uint32_t was = ed_w.on ? ed_w.bits : 0u, bits = a[0] | (na > 1u ? (a[1] & 1u) << 7 : 0u);   /* (3 s without a
+                                                                                             * request: not watching) */
         ed_w.on = a[0] & 1u;
         ed_w.v4 = (uint8_t)(ed_w.on && (a[0] & 2u));     /* v4: also TRACK_CHANGED; the reply says it is known */
-        ed_w.resets = usb.resets;
-        if (ed_w.on)
+        ed_w.bits = (uint8_t)(ed_w.on ? bits : 0u);       /* Studio: bits 2..4 (editor_session.c), 5 (editor_song.c),
+                                                           * 6 (editor_patterns.c), 7 (editor_device.c: a second byte) */
+        ed_w.resets = ED_EPOCH();
+#if MELODEE_BLE_EDITOR
+        ed_w.link = ed_link;                             /* (the pushes go where WATCH came from) */
+#endif
+        if (ed_w.on && (!(was & 1u) || bits < 4u)) {     /* (Studio's WATCH while watching: no push is lost) */
             ed_shadow();
-        ed_b(ed_w.on | ed_w.v4 << 1);
+            ed_w.psig[0] = ed_tracks_body(0);              /* (what the pushes compare with; then the reply) */
+            ed_w.psig[1] = ed_tp_body();
+            ed_w.psig[2] = se.signature;
+            ed_w.psig[3] = ed_pat_sig();
+            ed_dev_known();
+            ed_begin(ED_WATCH);
+        }
+        if (ed_w.bits & ~was & 16u)
+            memset(peak_seen[1], 0, sizeof peak_seen[1]);   /* METERS from now on */
+        ed_b(ed_w.bits);
+        if (na > 1u)
+            ed_b(ed_w.bits >> 7);
         break;
+    }
     case ED_PING:
         ed_b(0);
         break;
@@ -1049,11 +1153,16 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_xyv(a[0], a[1], t->p[a[1]]);
         break;
     }
-    case ED_PATTERN: {
-        if (na < 2u || a[0] >= NTRK || a[1] > 2u || na != (a[1] == 0u ? 2u : a[1] == 1u ? 3u : 4u)) return;
+    case ED_PATTERN: {          /* (Studio: 2 with a 5th byte copies to that track, as PATTERNS' Copy to; 3 clears bank a[2],
+                                 * 4 halves it, 5 doubles it, as SEQ's dialog: pattern_dialog.c) */
+        uint32_t to = a[1] == 2u && na == 5u ? a[4] : NTRK;
+        if (na < 2u || a[0] >= NTRK || a[1] > 5u || na != (a[1] == 0u ? 2u : a[1] == 2u ? (to < NTRK ? 5u : 4u) : 3u)) return;
         track_t *t = &trk[a[0]]; uint32_t rc = 0;
         if (a[1] == 1u) rc = pattern_request(t, a[2]);
-        if (a[1] == 2u) rc = pattern_copy(t, a[2], a[3]);
+        if (a[1] == 2u) rc = (uint32_t)pattern_copy_to(t, a[2], &trk[to < NTRK ? to : a[0]], a[3], 0);
+        if (a[1] > 2u)
+            rc = a[2] >= trk_npat(a[0]) ? 1u : (uint32_t)(a[1] == 3u ? pattern_key_delete(a[0], a[2]) : pattern_key_len(a[0], a[2], a[1] == 5u));
+        ed_pat_own();
         ed_bytes(a, 2u); ed_b(rc); ed_b(t->pattern); ed_b(t->pattern_next < NPAT ? t->pattern_next : 127u); ed_b(trk_npat(a[0]));
         ui.force = 1;
         break;
@@ -1134,19 +1243,44 @@ static void ed_service(void)
 {
     const uint8_t *p;
     uint32_t n;
+#if MELODEE_BLE_EDITOR
+    if (ed_ble_busy())
+        return;                                            /* (a reply still going out over Bluetooth: ed_out is its) */
+    ed_link = ed_w.link;
+#endif
     ed_sync();                                             /* v2 pushes (while watched) */
+    if (fm1_ms - ed_w.last_ms > 3000u)
+        ed_punch_release();                                /* (PUNCH: 3 s without a request, the editor's effect stops) */
+    ed_device_poll();                                      /* (MLEARN's wait, BLE's scan) */
+#if MELODEE_BLE_EDITOR
+    ed_link = 0;
+    if (!ota_frame_get(&p, &n)) {
+        if (!mbe.ready)
+            return;
+        RING_PUBLISH();                                    /* (the frame after its length) */
+        p = mbe.in; n = mbe.ready; ed_link = 1;
+        if (n < 4u || p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2 || p[3] >= 96u || !(ED_BLE_OK[p[3] >> 3] >> (p[3] & 7u) & 1u)) {
+            ed_frame_done();                               /* (not Studio's, or USB only: no reply) */
+            return;
+        }
+        goto editor;
+    }
+#else
     if(!ota_frame_get(&p,&n))return;
+#endif
 #ifdef INSTALLER_REPORT_FRAME
     if (INSTALLER_REPORT_FRAME(p,n)) { ota_frame_done();return; }
 #endif
     if(general_sysex_frame(p,n)){ota_frame_done();return;}
-    if(p5_native_frame(p,n)){ota_frame_done();return;}
     if (n < 4u || p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
         return;
+#if MELODEE_BLE_EDITOR
+editor:
+#endif
     ed_w.last_ms = fm1_ms;                                 /* any request keeps WATCH alive */
     if (p[3] >= ED_SMP_BEGIN) {                            /* large frames: handled in place, then freed */
         ed_handle(p, n);
-        ota_frame_done();
+        ED_FRAME_DONE();
         return;
     }
     {
@@ -1154,7 +1288,7 @@ static void ed_service(void)
         uint32_t k = n > sizeof f ? sizeof f : n, i;
         for (i = 0; i < k; i++)
             f[i] = p[i];
-        ota_frame_done();                                  /* free the frame buffer before replying */
+        ED_FRAME_DONE();                                   /* free the frame buffer before replying */
         ed_handle(f, k);
     }
 }

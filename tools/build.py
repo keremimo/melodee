@@ -139,7 +139,7 @@ def generate():
             [tools / "gen_tables.py", GEN / "melodee_tables.h"],
             [tools / "gen_fm6_patches.py", GEN / "melodee_fm6.h"],
             [tools / "gen_cz1_factory.py", GEN / "melodee_cz1.h"],
-            [tools / "gen_prophet_factory.py", GEN / "melodee_prophet_factory.h", "--web", "check"]]
+            [tools / "gen_prophet_factory.py", GEN / "melodee_prophet_factory.h"]]
     procs = [subprocess.Popen([sys.executable, *map(str, c)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True) for c in cmds]
     failed = []
@@ -271,7 +271,7 @@ def build_app(stub):
     subprocess.run([sys.executable, SRC / "tools/gen_909_tables.py", GEN / "x0x_drum_tables.h"], check=True)
     flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("MELODEE_FLASH", "MELODEE_OTA", "MELODEE_OTA_DRYRUN", "MELODEE_OTA_RAMONLY", "MELODEE_CDC",
-                 "MELODEE_UART", "MELODEE_BLE", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
+                 "MELODEE_UART", "MELODEE_BLE", "MELODEE_BLE_EDITOR", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
                  "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ", "MELODEE_MOD_CACHE", "MELODEE_CONTROL_FAST", "MELODEE_MIX_FAST", "MELODEE_FX_DORMANT", "MELODEE_RECORD_INDEX", "MELODEE_PROPHET_FAST", "MELODEE_PANEL_FAST", "MELODEE_FM6_FAST", "MELODEE_CZ_FAST", "MELODEE_DRUM_FAST", "MELODEE_SID_FAST", "MELODEE_CAPTURE_FAST",
                  *(("FELUCCA_DATA_UNTAGGED_OK",) if BOARD == "smk37" else ())):
         v = os.environ.get(flag)    # unset: the default in firmware/src/melodee.c
@@ -292,9 +292,18 @@ def build_app(stub):
         if os.environ.get("MELODEE_BLE") == "0":
             raise SystemExit("MELODEE_BLE_LINKS=2 needs Bluetooth (MELODEE_BLE=1)")
         flags.append("-DBLE_LINKS=2")
+    # Melodee's release key here (tools/mod_build.py signs the shipped synths with it): the image takes no other key for
+    # Melodee's synths. Without it they are signed with the test key, and the image takes that one (mod_sign_keys.h)
+    sys.path.insert(0, str(SRC / "firmware" / "modules" / "sdk"))
+    import mod_sign
+    rk = os.environ.get("MELODEE_SIGN_KEY", os.path.expanduser("~/.config/melodee/module-sign.key"))
+    if rk and os.path.isfile(rk) and mod_sign.public(mod_sign.load(rk)).hex().startswith("45442ab682efbecc"):
+        flags.append("-DMELODEE_RELEASE_KEY=1")
     flags.append(f'-DMELODEE_ID="{PRODUCT}"')
     if VERSION:
         flags.append(f'-DMELODEE_VERSION="{VERSION}"')
+    global APP_DEFS                 # (the engine-source synth modules build with the image's options: tools/mod_build.py)
+    APP_DEFS = [f for f in flags if f.startswith("-D") and not f.startswith(("-DMELODEE_ID=", "-DMELODEE_VERSION="))]
     # melodee.c goes to LLVM IR without the optimizer, the main-loop functions (UI, stores, editor) are
     # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. MELODEE_SIZE=0: -Os everywhere
     size = os.environ.get("MELODEE_SIZE") != "0"
@@ -378,8 +387,8 @@ def build_app(stub):
 
 # the resource region per board (hal/fm1_flash_map.h FL_RES, FL_RES_RESERVE): base, sectors, the window every build
 # keeps (written into the header: the update loader writes and blanks only inside it, the store takes the rest)
-BOARD_RES = {"fm1": (0xCB000, 21, 15), "smk37": (0x9F000, 16, 16)}
-RES_BASE, RES_SECTORS, RES_RESERVE, RES_HEAD = 0xCB000, 21, 15, 32   # firmware/src/res.c (set per board in main)
+BOARD_RES = {"fm1": (0xCB000, 21, 9), "smk37": (0x9F000, 16, 9)}   # (hal/fm1_flash_map.h FL_RES_RESERVE)
+RES_BASE, RES_SECTORS, RES_RESERVE, RES_HEAD = 0xCB000, 21, 9, 32    # firmware/src/res.c (set per board in main)
 
 
 # the SMK-37's app area tail (firmware/src/smkx.c): flash 0x93000 (the FM-1's PRCT end) up to the SMK's (0x9D000)
@@ -723,6 +732,19 @@ def main():
     print(f"app      {OUT / 'melodee.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
+    # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py);
+    # (ABI 3; the engine-source ones, SID DRUM CZ-1 FM6 and the Prophet, with the image's options: per board)
+    shipped = []
+    for src in sorted((FW / "modules").glob("*/*.c")):
+        if src.parent.name != "sdk" and src.stem == src.parent.name:
+            subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src, *APP_DEFS], check=True)
+            if 'mod_engine.h"' in src.read_text():   # (the engines the image left to modules)
+                shipped.append(OUT / "modules" / (src.stem + ".mmod"))
+    # the engines the image left to modules, as the installers write them after it (web/fm1mods.js): one file, the
+    # .mmod files one after another (build/melodee-mods.bin; web/make_site.py publishes it as <package>-mods.bin)
+    mods = b"".join(p.read_bytes() for p in shipped)
+    (OUT / "melodee-mods.bin").write_bytes(mods)
+    print(f"modules  {OUT / 'melodee-mods.bin'}  {len(mods)} B: " + ", ".join(p.stem for p in shipped))
     if a.cpu_manifest:
         if any(hashlib.sha256((SRC / p).read_bytes()).hexdigest() != digest for p, digest in cpu_sources.items()):
             raise SystemExit("Firmware source changed during CPU experiment build; rebuild before measuring")
@@ -740,10 +762,12 @@ def main():
         shutil.rmtree(rel, ignore_errors=True)
         (rel / "LICENSES").mkdir(parents=True)
         app = f"{stem}-{a.release}-app.bin"
+        modsname = f"{stem}-{a.release}-mods.bin"     # (the synth modules this build needs: <package>-mods.bin)
         (rel / name).write_bytes(pkg)
         (rel / app).write_bytes(img)
+        (rel / modsname).write_bytes(mods)
         (rel / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n"
-                                                for n, b in ((name, pkg), (app, bytes(img)))))
+                                                for n, b in ((name, pkg), (app, bytes(img)), (modsname, mods))))
         for f in sorted((SRC / "LICENSES").glob("*.txt")):
             shutil.copy(f, rel / "LICENSES" / f.name)
         for doc in ("LICENSE", "LICENSING.md"):

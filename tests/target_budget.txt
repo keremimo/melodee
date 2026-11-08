@@ -14,9 +14,11 @@ trio_pass 175
 wheel_render 267
 wheel_block 102
 phys_render 61
-drum_render 72
-# SID-kit renderer baseline before the 2026-10-25 channel/filter split.
-dsk_render 629
+# DRUM as a synth module (build/modules/drum.dis): the firmware's data through the host table.
+drum_render 85
+# SID-kit renderer baseline before the 2026-10-25 channel/filter split (629); in the DRUM module the SID chip's
+# helpers inline (the image shared them with SID: two calls in its loops there, none now).
+dsk_render 796
 noise_render 247
 # Native fp32 serial FM6, decoded r3/fprev1 and counted with natural loops.
 # Includes extracted operator/output helpers; dual-core profile measures 3439.

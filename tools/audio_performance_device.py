@@ -12,7 +12,7 @@ and records emergency-shedding requests without reducing its own workload.
 import argparse,csv,itertools,json,time,contextlib,wave,zlib
 from pathlib import Path
 import mido
-from prophet_device import Device,param_ids,verify,inventory,u32,pack
+from prophet_device import Device,param_ids,verify,inventory,u32,pack,patch_get,patch_put,param_set
 from usb_audio_stats import snapshot
 NAMES=('PROPHET','FM6','CZ1','SID','808','909')
 ENGINES=(19,12,15,3,10,10)
@@ -34,7 +34,7 @@ class ReliableDevice(Device):
         for attempt in range(3):
             try:return super().request(cmd,args)
             except TimeoutError:
-                safe=cmd in (66,98,99,100,68,75,27,31,3,8) or (cmd in (69,76) and args and args[0]==0) or (cmd==95 and args and args[0]==2)
+                safe=cmd in (66,98,99,100,27,31,3,8,88) or (cmd==86 and args and args[0] in (0,1) and args[1]==0)
                 if not safe or attempt==2:raise
                 self.diagnostic_retries+=1
                 print(f'Retrying idempotent diagnostic {cmd}',flush=True)
@@ -102,12 +102,10 @@ def setup(d,categories,voices,variant):
     for p,c in enumerate(categories):
         if previous[p]==c:
             if c==0:
-                r=d.request(95,[2,p,20,variant&1])
-                if r[1]:raise RuntimeError('Prophet filter mode rejected')
+                param_set(d,p,20,variant&1)
             elif c==1:
-                if not getattr(d,'performance_production',False) and d.request(99,[2,p,variant%3])!=[0]:raise RuntimeError('FM6 mode rejected')
-                r=d.request(68,[0,p]);pk=r[3:];pk[110]=variant%32
-                if d.request(69,[0,p,*pk])!=[0,p,0]:raise RuntimeError('FM6 algorithm rejected')
+                e,pk=patch_get(d,p);pk[110]=variant%32
+                patch_put(d,p,e,pk)
             elif c==3:d.params(p,dict(P_E0=variant&1,P_E2=(1,5,6)[variant%3]))
             continue
         # Track selection ignores tracks not in use; never load into another track.
@@ -124,20 +122,17 @@ def setup(d,categories,voices,variant):
         if c==0:
             for field,value in {3:1,4:1,5:1,6:1,7:1,10:1,14:100,15:90,17:85,18:80,20:variant&1,
                                 32:70,33:75,34:1,35:1,36:1,44:0,48:127,50:72,51:1}.items():
-                r=d.request(95,[2,p,field,value])
-                if len(r)<2 or r[1]:raise RuntimeError(f'Prophet field rejected: {field}')
+                param_set(d,p,field,value)
         elif c==1:
-            if not getattr(d,'performance_production',False) and d.request(99,[2,p,variant%3])!=[0]:raise RuntimeError("FM6 benchmark mode rejected")
-            r=d.request(68,[0,p]);pk=r[3:]
-            if r[:3]!=[0,p,0] or len(pk)!=128:raise RuntimeError('FM6 patch read')
+            e,pk=patch_get(d,p)
+            if len(pk)<128:raise RuntimeError('FM6 patch read')
             pk[110]=variant%32;pk[111]=(pk[111]&~7)|7
             # All operators audible, while retaining the native PAD envelopes.
             for op in range(6):pk[op*17+14]=90
-            if d.request(69,[0,p,*pk])!=[0,p,0]:raise RuntimeError('FM6 patch write')
+            patch_put(d,p,e,pk)
         elif c==2:
-            r=d.request(75,[0,p]);raw=bytearray(r[3+2*i]|r[4+2*i]<<4 for i in range(144));raw[0]=3
-            nibbles=[n for v in raw for n in (v&15,v>>4)]
-            if d.request(76,[0,p,*nibbles])!=[0,p,0]:raise RuntimeError('CZ tone write')
+            e,raw=patch_get(d,p);raw[0]=3
+            patch_put(d,p,e,raw)
         elif c==3:common.update(P_E0=variant&1,P_E2=(1,5,6)[variant%3],P_SUS=127)
         else:common['P_E0']=4+(c==5)
         d.params(p,common)

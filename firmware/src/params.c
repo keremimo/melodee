@@ -101,82 +101,24 @@ static int16_t boot_cell;
 static const char *const N_MSRC[] = {"OFF", "LFO", "ENV", "VEL", "KEY", "RAND", "MODW", "AT", "EXPR", "S&H", "SLEW"};
 static const char *const N_MDST[] = {"OFF", "PITCH", "CUT", "SHP", "AMP", "PAN", "", "", "", "", "RATE",
                                      "VIB", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "DEPTH"};
-static const char *const N_ENGNAME[] = {"-", "-", MELODEE_LEGACY_EXTRAS ? "PHASE" : "-", "SID", "-", MELODEE_LEGACY_EXTRAS ? "VOICE" : "-", MELODEE_LEGACY_EXTRAS ? "TRIO" : "-", MELODEE_LEGACY_EXTRAS ? "WHEEL" : "-", "-", MELODEE_LEGACY_EXTRAS ? "PHYS" : "-",
-                                             "DRUM", MELODEE_LEGACY_EXTRAS ? "NOISE" : "-", "FM6", MELODEE_SLICE ? "SLICE" : "-", "-", "CZ-1", "-", "-", "-", "PROPHET", "-", "MIDI Track"};
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
+#define SHIP_NAME(n, u, nm, tg, wc, st, ns, f) [n] = (f) & SHIP_F_MODS ? nm : "-",
+static const char *const N_ENGNAME[] = {[0 ... NENGINES - 1] = "-",   /* (retired and reserved numbers; 22..: synth
+                                                                       * modules, INFO names them) */
+    SHIP_ROWS(SHIP_NAME)                                               /* the shipped synths (../modules/shipped.h) */
+    [5] = MELODEE_LEGACY_EXTRAS ? "VOICE" : "-", [ENGI_PHYS] = MELODEE_LEGACY_EXTRAS ? "PHYS" : "-",
+    [11] = MELODEE_LEGACY_EXTRAS ? "NOISE" : "-", [ENGI_SLICE] = MELODEE_SLICE ? "SLICE" : "-", [ENGI_MIDI] = "MIDI Track",
+#if MELODEE_HOST_ENGINES
+    HOST_ENGNAMES                                                      /* (reference builds: PHASE TRIO WHEEL) */
+#endif
+};
+#undef SHIP_NAME
+#pragma clang diagnostic pop
+_Static_assert(sizeof N_ENGNAME / sizeof *N_ENGNAME == NENGINES, "G_ENGSEL: one name per engine number");
 
 #define PD(l, f, mn, mx, df) {l, f, mn, mx, df, 0, 0}
 #define PE(l, n, df) {l, F_ENUM, 0, (int16_t)(sizeof(n) / sizeof(n[0]) - 1), df, n, 0}
-
-/* FM6's pages (an FM6 track only): the selected track's patch (fm6_patch), its operator switches and the FM6 function
- * settings, in the DX7's ranges. The operator pages show operator fm6_opsel (the PRESETS knob picks it); the STORE
- * page saves the whole sound into user preset slot fm6_bslot (fm6_store.c). The values are not track parameters: page_desc gives a copy
- * (fm6_cell), fm6_page_put writes it back */
-static const char *const N_FM6ALG[32] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
-                                        "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28",
-                                        "29", "30", "31", "32"};
-static const char *const N_FMCRV[] = {"-LIN", "-EXP", "+EXP", "+LIN"};
-static const char *const N_FMMODE[] = {"RATIO", "FIXED"};
-static const char *const N_FMLFW[] = {"TRI", "SAWDN", "SAWUP", "SQR", "SIN", "S&H"};
-static const char *const N_FMPM[] = {"PEDAL", "ON"};   /* portamento: while CC 65 is down (Dexed), always */
-static const char *const N_FMDEST[] = {"-", "P", "A", "PA", "E", "PE", "AE", "PAE"};   /* pitch, amp, EG bias */
-static const char *const N_FMENG[] = {"MODRN", "MARK I", "OPL"};                  /* Dexed's engine resolutions */
-static const char *const N_FMONOFF[] = {"OFF", "ON"};
-static uint8_t fm6_opsel;
-static uint16_t fm6_bslot;                    /* OP1..OP6 = 0..5; user preset slot 0..63 (U01..U64) */
-static int16_t fm6_cell[4];
-static const param_desc_t FM6_OPD[FP_OP + 1] = {        /* an operator; FP_OP: its switch */
-    [FP_R1] = PD("R1", F_INT, 0, 99, 99), [FP_R1 + 1] = PD("R2", F_INT, 0, 99, 99),
-    [FP_R1 + 2] = PD("R3", F_INT, 0, 99, 99), [FP_R1 + 3] = PD("R4", F_INT, 0, 99, 99),
-    [FP_L1] = PD("L1", F_INT, 0, 99, 99), [FP_L1 + 1] = PD("L2", F_INT, 0, 99, 99),
-    [FP_L1 + 2] = PD("L3", F_INT, 0, 99, 99), [FP_L1 + 3] = PD("L4", F_INT, 0, 99, 0),
-    [FP_BP] = PD("BRK", F_FMNOTE, 0, 99, 39), [FP_LD] = PD("LDEP", F_INT, 0, 99, 0),
-    [FP_RD] = PD("RDEP", F_INT, 0, 99, 0), [FP_LC] = PE("LCRV", N_FMCRV, 0), [FP_RC] = PE("RCRV", N_FMCRV, 0),
-    [FP_RS] = PD("RSCL", F_INT, 0, 7, 0), [FP_AMS] = PD("AMS", F_INT, 0, 3, 0), [FP_KVS] = PD("VEL", F_INT, 0, 7, 0),
-    [FP_OL] = PD("OUT", F_INT, 0, 99, 99), [FP_MODE] = PE("MODE", N_FMMODE, 0),
-    [FP_FC] = PD("CRS", F_FMFRQ, 0, 31, 1), [FP_FF] = PD("FINE", F_FMFRQ, 0, 99, 0),
-    [FP_DET] = PD("DTN", F_OFS, 0, 14, 7), [FP_OP] = PE("ON", N_FMONOFF, 1),
-};
-static const param_desc_t FM6_GD[FP_NAME - FP_PR1] = {  /* the voice: FP_PR1 .. FP_TRNSP */
-    PD("R1", F_INT, 0, 99, 99), PD("R2", F_INT, 0, 99, 99), PD("R3", F_INT, 0, 99, 99), PD("R4", F_INT, 0, 99, 99),
-    PD("L1", F_INT, 0, 99, 50), PD("L2", F_INT, 0, 99, 50), PD("L3", F_INT, 0, 99, 50), PD("L4", F_INT, 0, 99, 50),
-    PE("ALG", N_FM6ALG, 0), PD("FB", F_INT, 0, 7, 0), PE("SYNC", N_FMONOFF, 1),
-    PD("SPEED", F_INT, 0, 99, 35), PD("DELAY", F_INT, 0, 99, 0), PD("PMD", F_INT, 0, 99, 0), PD("AMD", F_INT, 0, 99, 0),
-    PE("KSYNC", N_FMONOFF, 1), PE("WAVE", N_FMLFW, 0), PD("PMS", F_INT, 0, 7, 3), {"TRNS", F_OFS, 0, 48, 24, 0, "st"},
-};
-static const param_desc_t FM6_FD[FM6_NFN] = {           /* the FM6 function settings: FN_PBUP .. FN_ENGINE */
-    {"BEND+", F_INT, 0, 12, 3, 0, "st"}, {"BEND-", F_INT, 0, 12, 3, 0, "st"}, PD("STEP", F_INT, 0, 12, 0),
-    PE("PORTA", N_FMPM, 0), PD("TIME", F_INT, 0, 127, 0), PE("GLISS", N_FMONOFF, 0),
-    PD("WHEEL", F_INT, 0, 99, 99), PE("W.DST", N_FMDEST, 1), PD("FOOT", F_INT, 0, 99, 0), PE("F.DST", N_FMDEST, 0),
-    PD("BRTH", F_INT, 0, 99, 0), PE("B.DST", N_FMDEST, 0), PD("AFTER", F_INT, 0, 99, 0), PE("A.DST", N_FMDEST, 0),
-    PE("DXVEL", N_FMONOFF, 0), PE("ENGIN", N_FMENG, FM6_MARK1),
-};
-static const param_desc_t FM6_SD[4] = {                 /* the STORE page: the slot, then its actions (OCT+) */
-    PD("SLOT", F_INT, 1, UP_SLOTS, 1), PD("STORE", F_INT, 0, 1, 0), PD("SEND", F_INT, 0, 1, 0), PD("INIT", F_INT, 0, 1, 0),
-};
-
-/* the frequency of operator fm6_opsel for its CRS and FINE columns: a ratio (CRS: its step 0.5, 1, 2 ..; FINE: the
- * whole ratio) or, FIXED, Hz (CRS: 1, 10, 100, 1000) */
-static void fm6_freq_text(char *val, const char **unit, int coarse)
-{
-    const uint8_t *op = &fm6_patch_of(song.sel % NTRK)[(5u - fm6_opsel % 6u) * FP_OP];
-    int32_t c = op[FP_FC], f = coarse ? 0 : op[FP_FF];
-    if (!op[FP_MODE]) {
-        if (coarse && c)
-            fmt_int(val, c);
-        else
-            fmt_fix(val, (c ? c * 100 : 50) * (100 + f) / 100, 2);
-        *unit = "";
-    } else {                                          /* Hz x 100 = 2^(log2(10) (COARSE % 4 + FINE / 100) + log2(100)) */
-        uint32_t h = fm6_pow2(217706 * ((c & 3) * 100 + f) / 100 + 435412 - (16 << 16));
-        if (h < 1000u)
-            fmt_fix(val, (int32_t)h, 2);
-        else if (h < 100000u)
-            fmt_fix(val, (int32_t)(h / 10u), 1);
-        else
-            fmt_int(val, (int32_t)(h / 100u));
-        *unit = "Hz";
-    }
-}
 
 static const param_desc_t TP[P_COUNT] = {
     [P_FXTYPE] = PE("NOTE FX", N_NOTE_FX, 0),
@@ -349,6 +291,14 @@ static const param_desc_t *global_desc(uint32_t id)
     return &GP[id];
 }
 static uint32_t scale_count(const track_t *t);          /* seq.c */
+/* PHASE's split envelopes (engine 2, eng_phase.c): the retired FM4 parameter storage. The
+ * ids, ranges and defaults remain compatible with existing projects/presets. */
+static const param_desc_t PH_ED[20] = {
+#define PH_ROW(n) {"A" n, F_TIME, 0,127,0,0,0}, {"D" n, F_TIME,0,127,0,0,0}, \
+    {"S" n,F_PCT,0,127,127,0,0}, {"R" n,F_TIME,0,127,0,0,0}, {"LV" n,F_PCT,0,127,127,0,0}
+    PH_ROW("W1"), PH_ROW("W2"), PH_ROW("A2"), PH_ROW("P"),
+#undef PH_ROW
+};
 static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 {
     if (midi_track_audio_disabled(t->eng_req, id)) {
@@ -380,7 +330,7 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
         return &fx_desc;
     }
     if (t->eng_req == 2u && id >= P_FM1_ATK && id <= P_FM4_LEVEL)
-        return &CZ_ED[id - P_FM1_ATK];
+        return &PH_ED[id - P_FM1_ATK];
     if (id == P_MPCDEG) {                             /* a degree of the track's scale */
         static param_desc_t degree;
         degree = TP[P_MPCDEG];
@@ -400,7 +350,7 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 static const param_desc_t *param_desc_of(uint32_t e, uint32_t id)
 {
     if (e == 2u && id >= P_FM1_ATK && id <= P_FM4_LEVEL)
-        return &CZ_ED[id - P_FM1_ATK];
+        return &PH_ED[id - P_FM1_ATK];
     return id >= P_E0 ? &ENGINES[e]->edit[id - P_E0] : &TP[id];
 }
 
@@ -428,10 +378,14 @@ static const uint8_t CRUSH_HOLD[16] = {64, 48, 40, 32, 24, 20, 16, 12, 10, 8, 6,
 static uint8_t fmt_named;        /* the last param_format was a name (F_ENUM, even "4"): ui_draw.c's digits do not roll it */
 
 /* value string (<= 5 chars) and unit for a parameter value */
+static int sch_format(const param_desc_t *d, int32_t v, char *val, const char **unit);   /* (below: a synth's) */
+static const char *eng_abbr_of(uint32_t e);
 static void param_format(const param_desc_t *d, int32_t v, char *val, const char **unit)
 {
     *unit = "";
     fmt_named = d->fmt == F_ENUM;
+    if (sch_format(d, v, val, unit))                /* (a synth's own text: its module's) */
+        return;
     if (d == &GP[G_SLOT] && v == PROJ_TMPL) {
         str_cpy(val, "TMPL", 8);
         fmt_named = 1;
@@ -530,12 +484,14 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
             /* The panel's compact card fits "13-16"; editor/picker names retain the CH prefix. */
             str_cpy(val, d->names[v] + (v == 1 ? 0 : 2), 6);
         }
-#if MELODEE_USER_KITS
-        else if (d->names == N_DRUM_KIT && v >= DK_USER0 && v <= DK_KIT_MAX)
-            drk_user_name((uint32_t)(v - DK_USER0), val);   /* a user kit: its own name */
+#if MELODEE_RECORDS
+        else if (pads_rec_value(d, v) >= 0) {        /* a kit's record: its own name (none: EMPTY) */
+            if (!rec_name((uint32_t)pads_rec_value(d, v), val, 6))
+                str_cpy(val, "EMPTY", 6);
+        }
 #endif
         else
-            str_cpy(val, d->names==N_ENGNAME && v==ENGI_PROPHET ? "P5" : d->names[v < d->min ? d->min : v > d->max ? d->max : v], 6);
+            str_cpy(val, d->names==N_ENGNAME ? eng_abbr_of((uint32_t)clamp(v, d->min, d->max)) : d->names[v < d->min ? d->min : v > d->max ? d->max : v], 6);
         if (d->unit)
             *unit = d->unit;
         break;
@@ -569,8 +525,8 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
         str_cpy(val, N_NOTE[(v + 21) % 12], 6);
         fmt_int(val + str_len(val), (v + 21) / 12 - 1);
         break;
-    case F_FMFRQ:                                     /* an operator's frequency: CRS its step, FINE the result */
-        fm6_freq_text(val, unit, d == &FM6_OPD[FP_FC]);
+    case F_FMFRQ:                                     /* (a synth's own text: its schema's, sch_format above) */
+        fmt_int(val, v);
         break;
     default:
         if (d->names) {                               /* F_INT with a 0-terminated name list: the range */
@@ -591,12 +547,13 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
 enum { FAM_HOME, FAM_ENV, FAM_LFO, FAM_SCL, FAM_EDIT, FAM_GLO, FAM_SAVE, FAM_ARP, FAM_SEQ, FAM_TRK,
        FAM_FX, FAM_COUNT };
 enum { SC_TRACK, SC_GLOBAL, SC_ENGINE, SC_STEP, SC_TRK,   /* SC_TRK: the TRACKS page (ui_input.c tracks_edit) */
-       SC_FM6, SC_FMOP, SC_CZ, SC_CZ1, SC_P5, SC_P5STORE, SC_DRUM, SC_DRUMHIT };                         /* FM6: its patch, functions; operator fm6_opsel;
-                                                                  * CZ1: a native CZ-1 tone (cz_edit.h) */
+       SC_MOD,                                   /* a page of the selected track's synth's schema (sch_page_at) */
+       SC_CZ, SC_PADS, SC_PADHIT };   /* SC_PADS / SC_PADHIT: a kit's pads and hits (pads.c, sch_pages.c page_at) */
 enum { GR_NONE, GR_ADSR, GR_LFO, GR_STEPS, GR_ARP, GR_SCALE, GR_ROLL, GR_BROWSE, GR_SLOTS, GR_USER, GR_TRK,
        GR_MOD, GR_PATS, GR_SONG, GR_MOTION, GR_CHORD, GR_SLICES,
-       GR_FMEG, GR_FMPEG, GR_FMSTORE, GR_CZTOOLS, GR_SCALE_PICKER, GR_DRUMHIT, GR_PATGRID,
-       GR_FXRACK }; /* NOTES shares GR_ROLL for steps and recorded events */
+       GR_ENV8, GR_STORE, GR_TOOLS, GR_SCALE_PICKER, GR_PADHIT, GR_PATGRID,
+       GR_FXRACK, GR_WDRAW }; /* NOTES shares GR_ROLL for steps and recorded events; GR_ENV8, GR_STORE, GR_TOOLS,
+                               * GR_WDRAW: a synth's schema's widgets (MOD3_W_ENV8, STORE, TOOLS, DRAW) */
 
 typedef struct {
     const char *title;
@@ -604,17 +561,16 @@ typedef struct {
     uint8_t id[4];               /* param ids; 0xFF = empty slot */
 } page_t;
 
-#include "cz_edit.h"
-#include "prophet_edit.h"
-#define CZ_ENV_PAGES(t, l, e) \
-    {t " R1-4", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_EBASE(l, e), LCZ_EBASE(l, e) + 1, LCZ_EBASE(l, e) + 2, LCZ_EBASE(l, e) + 3}}, \
-    {t " R5-8", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_EBASE(l, e) + 4, LCZ_EBASE(l, e) + 5, LCZ_EBASE(l, e) + 6, LCZ_EBASE(l, e) + 7}}, \
-    {t " L1-4", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_EBASE(l, e) + 8, LCZ_EBASE(l, e) + 9, LCZ_EBASE(l, e) + 10, LCZ_EBASE(l, e) + 11}}, \
-    {t " L5-8", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_EBASE(l, e) + 12, LCZ_EBASE(l, e) + 13, LCZ_EBASE(l, e) + 14, LCZ_EBASE(l, e) + 15}}, \
-    {t " POINT", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_EBASE(l, e) + 16, LCZ_EBASE(l, e) + 17, 0xFF, 0xFF}}
+/* a synth's schema pages take these places in PAGES (their index in its schema: id[0]): the selected track's synth's
+ * (sch_page_at) where the shipped synths' pages were, after EDIT 1 / 2 and the DRUM pages */
+#define SCH_PG_MAX 48u
+#define SCH_PG8(k) {0, FAM_EDIT, SC_MOD, GR_NONE, {k, 0xFF, 0xFF, 0xFF}}, {0, FAM_EDIT, SC_MOD, GR_NONE, {k + 1, 0xFF, 0xFF, 0xFF}}, \
+    {0, FAM_EDIT, SC_MOD, GR_NONE, {k + 2, 0xFF, 0xFF, 0xFF}}, {0, FAM_EDIT, SC_MOD, GR_NONE, {k + 3, 0xFF, 0xFF, 0xFF}}, \
+    {0, FAM_EDIT, SC_MOD, GR_NONE, {k + 4, 0xFF, 0xFF, 0xFF}}, {0, FAM_EDIT, SC_MOD, GR_NONE, {k + 5, 0xFF, 0xFF, 0xFF}}, \
+    {0, FAM_EDIT, SC_MOD, GR_NONE, {k + 6, 0xFF, 0xFF, 0xFF}}, {0, FAM_EDIT, SC_MOD, GR_NONE, {k + 7, 0xFF, 0xFF, 0xFF}}
 
 #define G_PROJECT_RECQ 0xFEu                            /* shared recording QNT, mirrored in track slots for storage/protocol compatibility */
-static const page_t PAGES[] = {
+static const page_t PAGE_TAB[] = {
     /* FX (docs/design README "FX rack"): the track's rack, its three slots (shown while they hold an effect), the
      * shared rack, its three slots. A rack: KNOB 2 the row (fx_rack_row), 1 its effect, 4 its amount, SHARED's 3 ROUTE
      * (page_desc) */
@@ -639,60 +595,17 @@ static const page_t PAGES[] = {
                                                                           * (QNT MPC only), not a page of its own */
     {"EDIT 1", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E0, P_E1, P_E2, P_E3}},
     {"EDIT 2", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E4, P_E5, P_E6, P_E7}},
-    {"DRUM SOUND",FAM_EDIT,SC_DRUM,GR_NONE,{0,1,2,3}},
-    {"DRUM MIX",FAM_EDIT,SC_DRUM,GR_NONE,{0,4,255,255}},
-    /* FM6 only (page_visible): the patch as the DX7 has it, its operators (PRESETS picks one), the functions */
-    {"P5 STORE",FAM_EDIT,SC_P5STORE,GR_NONE,{0,1,2,3}},
-    {"P5 OSC A",FAM_EDIT,SC_P5,GR_NONE,{0,3,4,8}},
-    {"P5 OSC B",FAM_EDIT,SC_P5,GR_NONE,{1,2,9,12}},
-    {"P5 B WAVES",FAM_EDIT,SC_P5,GR_NONE,{5,6,7,11}},
-    {"P5 MIXER",FAM_EDIT,SC_P5,GR_NONE,{14,15,16,10}},
-    {"P5 FILTER",FAM_EDIT,SC_P5,GR_NONE,{17,18,19,20}},
-    {"P5 FLT ENV",FAM_EDIT,SC_P5,GR_NONE,{43,45,47,49}},
-    {"P5 AMP ENV",FAM_EDIT,SC_P5,GR_NONE,{44,46,48,50}},
-    {"P5 ENV MOD",FAM_EDIT,SC_P5,GR_NONE,{40,41,42,51}},
-    {"P5 POLYMOD",FAM_EDIT,SC_P5,GR_NONE,{32,33,34,35}},
-    {"P5 MOD FLT",FAM_EDIT,SC_P5,GR_NONE,{36,37,38,39}},
-    {"P5 LFO",FAM_EDIT,SC_P5,GR_NONE,{21,23,24,25}},
-    {"P5 WHEEL",FAM_EDIT,SC_P5,GR_NONE,{22,26,27,28}},
-    {"P5 WHEEL 2",FAM_EDIT,SC_P5,GR_NONE,{29,30,31,13}},
-    {"P5 UNISON",FAM_EDIT,SC_P5,GR_NONE,{52,53,54,87}},
-    {"P5 BEND",FAM_EDIT,SC_P5,GR_NONE,{86,255,255,255}},
-    {"STORE", FAM_EDIT, SC_FM6, GR_FMSTORE, {0, 1, 2, 3}},   /* SLOT STORE SEND INIT (ui_input.c act_do) */
-    {"ALGO", FAM_EDIT, SC_FM6, GR_NONE, {FP_ALG, FP_FB, FP_OKS, FP_TRNSP}},
-    {"FREQ", FAM_EDIT, SC_FMOP, GR_NONE, {FP_FC, FP_FF, FP_DET, FP_MODE}},
-    {"OUT", FAM_EDIT, SC_FMOP, GR_NONE, {FP_OL, FP_KVS, FP_AMS, FP_OP}},
-    {"EG RATE", FAM_EDIT, SC_FMOP, GR_FMEG, {FP_R1, FP_R1 + 1, FP_R1 + 2, FP_R1 + 3}},
-    {"EG LVL", FAM_EDIT, SC_FMOP, GR_FMEG, {FP_L1, FP_L1 + 1, FP_L1 + 2, FP_L1 + 3}},
-    {"SCALE", FAM_EDIT, SC_FMOP, GR_NONE, {FP_BP, FP_LD, FP_RD, FP_RS}},
-    {"CURVE", FAM_EDIT, SC_FMOP, GR_NONE, {FP_LC, FP_RC, 0xFF, 0xFF}},
-    {"PITCH EG", FAM_EDIT, SC_FM6, GR_FMPEG, {FP_PR1, FP_PR1 + 1, FP_PR1 + 2, FP_PR1 + 3}},
-    {"PITCH LV", FAM_EDIT, SC_FM6, GR_FMPEG, {FP_PL1, FP_PL1 + 1, FP_PL1 + 2, FP_PL1 + 3}},
-    {"FM LFO", FAM_EDIT, SC_FM6, GR_NONE, {FP_LFW, FP_LFS, FP_LFD, FP_LKS}},
-    {"FM LFO 2", FAM_EDIT, SC_FM6, GR_NONE, {FP_LPMD, FP_LAMD, FP_LPMS, 0xFF}},
-    /* the FM6 function settings (a DX7's function mode, the track's own: saved with the project) */
-    {"FM BEND", FAM_EDIT, SC_FM6, GR_NONE, {FP_SIZE + FN_PBUP, FP_SIZE + FN_PBDN, FP_SIZE + FN_PBSTEP, FP_SIZE + FN_VNORM}},
-    {"FM PORTA", FAM_EDIT, SC_FM6, GR_NONE, {FP_SIZE + FN_PMODE, FP_SIZE + FN_PTIME, FP_SIZE + FN_GLISS, FP_SIZE + FN_ENGINE}},
-    {"FM WH/FT", FAM_EDIT, SC_FM6, GR_NONE, {FP_SIZE + FN_MWR, FP_SIZE + FN_MWA, FP_SIZE + FN_FCR, FP_SIZE + FN_FCA}},
-    {"FM BR/AT", FAM_EDIT, SC_FM6, GR_NONE, {FP_SIZE + FN_BCR, FP_SIZE + FN_BCA, FP_SIZE + FN_ATR, FP_SIZE + FN_ATA}},
-    /* CZ-1 only (page_visible): the native tone, every panel value (cz_edit.h) */
-    {"CZ TOOLS", FAM_EDIT, SC_CZ1, GR_CZTOOLS, {0, 1, 2, 3}},   /* NAME 1>2 2>1 COMP (ui_input.c act_do) */
-    {"CZ LINE", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_LINE, LCZ_MOD, LCZ_OCT, 0xFF}},
-    {"CZ DETUNE", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_SIGN, LCZ_DOCT, LCZ_NOTE, LCZ_FINE}},
-    {"CZ VIBRATO", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_VWAVE, LCZ_VRATE, LCZ_VDEP, LCZ_VDELAY}},
-    {"CZ WINDOW", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_WIN(0), LCZ_WIN(1), 0xFF, 0xFF}},
-    {"CZ1 WAVE", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_LBASE(0) + LCZ_W1, LCZ_LBASE(0) + LCZ_W2, LCZ_LBASE(0) + LCZ_KW, LCZ_LBASE(0) + LCZ_KA}},
-    {"CZ1 TOUCH", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_LBASE(0) + LCZ_LEVEL, LCZ_LBASE(0) + LCZ_VP, LCZ_LBASE(0) + LCZ_VW, LCZ_LBASE(0) + LCZ_VA}},
-    CZ_ENV_PAGES("C1 PIT", 0, 0), CZ_ENV_PAGES("C1 WAV", 0, 1), CZ_ENV_PAGES("C1 AMP", 0, 2),
-    {"CZ2 WAVE", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_LBASE(1) + LCZ_W1, LCZ_LBASE(1) + LCZ_W2, LCZ_LBASE(1) + LCZ_KW, LCZ_LBASE(1) + LCZ_KA}},
-    {"CZ2 TOUCH", FAM_EDIT, SC_CZ1, GR_NONE, {LCZ_LBASE(1) + LCZ_LEVEL, LCZ_LBASE(1) + LCZ_VP, LCZ_LBASE(1) + LCZ_VW, LCZ_LBASE(1) + LCZ_VA}},
-    CZ_ENV_PAGES("C2 PIT", 1, 0), CZ_ENV_PAGES("C2 WAV", 1, 1), CZ_ENV_PAGES("C2 AMP", 1, 2),
+    /* a kit's pads (pads.c: its synth's pads block names them, the first three pad parameters, the fourth) */
+    {"",FAM_EDIT,SC_PADS,GR_NONE,{0,1,2,3}},
+    {"",FAM_EDIT,SC_PADS,GR_NONE,{0,4,255,255}},
+    /* the selected track's synth's own pages (its schema: sch_page_at) */
+    SCH_PG8(0), SCH_PG8(8), SCH_PG8(16), SCH_PG8(24), SCH_PG8(32), SCH_PG8(40),
     /* PHASE: the retired FM4 storage fields hold split CZ envelopes. */
     {"DCW1 ENV", FAM_EDIT, SC_CZ, GR_NONE, {P_FM1_ATK, P_FM1_DEC, P_FM1_SUS, P_FM1_REL}},
     {"DCW2 ENV", FAM_EDIT, SC_CZ, GR_NONE, {P_FM2_ATK, P_FM2_DEC, P_FM2_SUS, P_FM2_REL}},
     {"DCA2 ENV", FAM_EDIT, SC_CZ, GR_NONE, {P_FM3_ATK, P_FM3_DEC, P_FM3_SUS, P_FM3_REL}},
     {"DCO ENV", FAM_EDIT, SC_CZ, GR_NONE, {P_FM4_ATK, P_FM4_DEC, P_FM4_SUS, P_FM4_REL}},
-    {"CZ LEVEL", FAM_EDIT, SC_CZ, GR_NONE, {P_FM1_LEVEL, P_FM2_LEVEL, P_FM3_LEVEL, P_FM4_LEVEL}},
+    {"PD LEVEL", FAM_EDIT, SC_CZ, GR_NONE, {P_FM1_LEVEL, P_FM2_LEVEL, P_FM3_LEVEL, P_FM4_LEVEL}},
     {"OP1 ENV", FAM_EDIT, SC_TRACK, GR_ADSR, {P_FM1_ATK, P_FM1_DEC, P_FM1_SUS, P_FM1_REL}},
     {"OP2 ENV", FAM_EDIT, SC_TRACK, GR_ADSR, {P_FM2_ATK, P_FM2_DEC, P_FM2_SUS, P_FM2_REL}},
     {"OP3 ENV", FAM_EDIT, SC_TRACK, GR_ADSR, {P_FM3_ATK, P_FM3_DEC, P_FM3_SUS, P_FM3_REL}},
@@ -719,68 +632,14 @@ static const page_t PAGES[] = {
     {"PATTERNS", FAM_SEQ, SC_GLOBAL, GR_PATGRID, {0xFF, 0xFF, 0xFF, 0xFF}},   /* the 4 x 8 grid: KNOB k track k's (ui_stage.c) */
     {"SONG", FAM_SEQ, SC_GLOBAL, GR_SONG, {0xFF, 0xFF, 0xFF, 0xFF}},
     {"MOTION", FAM_SEQ, SC_TRACK, GR_MOTION, {0xFF, 0xFF, 0xFF, 0xFF}},
-    {"DRUM HIT",FAM_SEQ,SC_DRUMHIT,GR_DRUMHIT,{0,1,2,3}},
+    {"",FAM_SEQ,SC_PADHIT,GR_PADHIT,{0,1,2,3}},    /* a kit's hits (its pads block names it) */
 };
-#define NPAGES (sizeof(PAGES) / sizeof(PAGES[0]))
+#define NPAGES (sizeof(PAGE_TAB) / sizeof(PAGE_TAB[0]))
+static const page_t *page_at(uint32_t i);                /* (below: a synth's page where PAGE_TAB has its place) */
+#define PG(i) (*page_at(i))
 static uint8_t mod_ui_slot;      /* the MOD page: the matrix slot (0..3) KNOB 2..4 edit */
 static uint8_t fx_rack_row[2];   /* the racks' rows KNOB 2 picks: FX's (0..2 its slots, 3 the shared FX), SHARED's
                                   * (0..2 its slots, 3 RETURN) */
-
-/* FM6's pages: the value in column slot (a copy in fm6_cell) and its descriptor; 0 = none (not an FM6 track) */
-static const param_desc_t *fm6_page_desc(const page_t *pg, uint32_t slot, int16_t **valp)
-{
-    uint32_t id = pg->id[slot], tr = song.sel % NTRK;
-    const uint8_t *v = fm6_patch_of(tr);
-    const param_desc_t *d;
-    *valp = 0;
-    if (id == 0xFFu || TSEL->eng_req != ENGI_FM6)
-        return 0;
-    if (pg->graph == GR_FMSTORE) {
-        fm6_cell[slot] = (int16_t)(slot ? 0 : fm6_bslot + 1u);
-        d = &FM6_SD[slot & 3u];
-    } else if (pg->scope == SC_FMOP) {
-        uint32_t k = 5u - fm6_opsel % 6u;               /* the patch keeps the sixth operator first */
-        fm6_cell[slot] = (int16_t)(id == FP_OP ? (fm6_on[tr] >> k) & 1u : v[k * FP_OP + id]);
-        d = &FM6_OPD[id];
-    } else if (id >= FP_SIZE) {
-        fm6_cell[slot] = fm6_fn[tr][(id - FP_SIZE) % FM6_NFN];
-        d = &FM6_FD[(id - FP_SIZE) % FM6_NFN];
-    } else if (id >= FP_PR1 && id < FP_NAME) {
-        fm6_cell[slot] = v[id];
-        d = &FM6_GD[id - FP_PR1];
-    } else {
-        return 0;
-    }
-    *valp = &fm6_cell[slot];
-    return d;
-}
-
-/* .. and a new value there, into the patch (an edit: the sounding notes follow), the switches or the functions */
-static void fm6_page_put(const page_t *pg, uint32_t slot, int32_t val)
-{
-    uint32_t id = pg->id[slot], tr = song.sel % NTRK;
-    uint8_t v[FP_SIZE + 1u];
-    if (pg->graph == GR_FMSTORE) {
-        if (!slot)
-            fm6_bslot = (uint16_t)(val - 1);
-        return;
-    }
-    memcpy(v, fm6_patch_of(tr), FP_SIZE);
-    if (pg->scope == SC_FMOP) {
-        uint32_t k = 5u - fm6_opsel % 6u;
-        if (id == FP_OP) {
-            fm6_on[tr] = (uint8_t)(val ? fm6_on[tr] | 1u << k : fm6_on[tr] & ~(1u << k));
-            return;
-        }
-        v[k * FP_OP + id] = (uint8_t)val;
-    } else if (id >= FP_SIZE) {
-        fm6_fn_set(tr, (id - FP_SIZE) % FM6_NFN, val);   /* (the track's: saved with the project) */
-        return;
-    } else {
-        v[id] = (uint8_t)val;
-    }
-    fm6_put_patch(tr, v, 0);
-}
 
 /* a rack's KNOB 1 (its row's effect) and KNOB 4 (the row's amount): FX's slots their MIX, its shared row the track's
  * SEND (CHAIN; in SPLIT the track's three sends are SHARED's rows); SHARED's slots their MIX (SPLIT: the track's send to
@@ -829,6 +688,7 @@ static const param_desc_t *fx_rack_desc(const page_t *pg, uint32_t slot, int16_t
     }
     return track_desc(TSEL, id);
 }
+static const param_desc_t *sch_page_desc(const page_t *pg, uint32_t slot, int16_t **valp);   /* (below) */
 static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **valp)
 {
     uint32_t id = pg->id[slot];
@@ -836,32 +696,9 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
         ((pg->scope == SC_TRACK || pg->scope == SC_ENGINE) && midi_track_audio_disabled(TSEL->eng_req, id)))) {
         *valp = 0; return 0;
     }
-    if(pg->scope==SC_P5 || pg->scope==SC_P5STORE){
-        if(id==255u || (pg->scope==SC_P5 && (id>=88u || !P5_PANEL[id].label))){*valp=0;return 0;}
-        p5_cell[slot&3u]=pg->scope==SC_P5STORE?(slot?0:p5_store_slot):p5_patch_of(TSEL)->raw[id]+(id==P5_BEND?1:0);
-        /* Sequential stores zero for the default five-voice unison count. */
-        if(pg->scope==SC_P5 && id==P5_UNISON_COUNT && !p5_cell[slot&3u])p5_cell[slot&3u]=5;
-        *valp=&p5_cell[slot&3u];
-        if(pg->scope==SC_P5 && p5_keyed_tune(TSEL,id)){
-            p5_cell[slot&3u]=(int16_t)(clamp(p5_patch_of(TSEL)->raw[id],0,96)/2-12);
-            return &P5_TUNE_DISPLAY[id];
-        }
-        return pg->scope==SC_P5STORE?&P5_STORE[slot&3u]:id==P5_BEND?&P5_BEND_DISPLAY:&P5_PANEL[id];
-    }
-    if (pg->scope == SC_CZ1) {                           /* a copy of the tone's panel value (cz_ed_put writes it) */
-        *valp = 0;
-        if (id == 0xFFu || TSEL->eng_req != ENGI_CZ)
-            return 0;
-        if (pg->graph == GR_CZTOOLS) {
-            cz_ed_cell[slot & 3u] = 0;
-            *valp = &cz_ed_cell[slot & 3u];
-            return &CZ_ACTIONS[slot & 3u];
-        }
-        return cz_ed_desc(song.sel % NTRK, id, slot, valp);
-    }
-    if (pg->scope == SC_FM6 || pg->scope == SC_FMOP)
-        return fm6_page_desc(pg, slot, valp);
-    if(pg->scope==SC_DRUM || pg->scope==SC_DRUMHIT){*valp=0;return 0;}
+    if (pg->scope == SC_MOD)                             /* a synth's own page (a copy: sch_page_put writes it) */
+        return sch_page_desc(pg, slot, valp);
+    if(pg->scope==SC_PADS || pg->scope==SC_PADHIT){*valp=0;return 0;}
     if (pg->graph == GR_FXRACK)
         return fx_rack_desc(pg, slot, valp);
     if (id == 0xFFu) {
@@ -877,8 +714,18 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
         return track_desc(TSEL, P_RECQ);
     }
     if (pg->scope == SC_GLOBAL && id >= G_WP5 && id <= G_SAFETY) {   /* GLO > WEIGHTS: the device's settings */
-        static const param_desc_t weights[] = {PE("P5", N_VPOINTS, 0), PE("CZ-1", N_VPOINTS, 0), PE("FM6", N_VPOINTS, 0),
-            PE("SID", N_VPOINTS, 0), PE("DRUM", N_VPOINTS, 0), PE("GUARD", N_ONOFF, 0)};
+        static param_desc_t weights[VOICE_KINDS + 1u];    /* a cost class's row: its synth's tag (the manifest's) */
+        if (!weights[VOICE_KINDS].label) {
+            static const param_desc_t guard = PE("GUARD", N_ONOFF, 0);
+            for (uint32_t c = 0; c < VOICE_KINDS; c++) {
+                static const param_desc_t row = PE("-", N_VPOINTS, 0);
+                weights[c] = row;
+                for (uint32_t k = 0; k < NSHIP; k++)
+                    if (SHIP[k].wclass == c + 1u)
+                        weights[c].label = SHIP[k].tag;
+            }
+            weights[VOICE_KINDS] = guard;
+        }
         *valp = id == G_SAFETY ? &settings_safety : &settings_vpoints[id - G_WP5];
         return &weights[id - G_WP5];
     }
@@ -935,3 +782,4 @@ static int param_kept(uint32_t i)
     return i == P_LEVEL || i == P_PAN || i == P_MUTE || (i >= P_AMODE && i <= P_SGATE) ||
            i == P_CHRD || i == P_VOIC || i == P_STRUM || i == P_STROKE || i == P_MPCDEG || i == P_RECQ || i == P_TUNING || param_fx(i) || param_fx_send(i);
 }
+#include "sch_pages.c"     /* a synth's own pages (its schema): page_at, their columns, values, edits */

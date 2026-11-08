@@ -70,16 +70,22 @@ static int stage_knobs_out(void)
 }
 
 /* ------------------------------------------------------- the knobs --- */
-/* a knob's label: the panel's, plain words for CZ-1's (its panel says R1, L1 ..) */
+/* a knob's label: the panel's, a synth's HOME role's own words (CZ-1's: its panel says R1, L1 ..) */
 static const char *stage_label(const page_t *sp, uint32_t k, const param_desc_t *d)
 {
-    static const char *const CZ_L[4] = {"WAVE", "DCW", "DETUNE", "VIBRATO"};
-    return sp == &stage_pg && sp->scope == SC_CZ1 ? CZ_L[k & 3u] : d->label;
+    static char b[MOD_SCH_NAME + 1u];
+    uint32_t id, f, l;
+    if (sp == &stage_pg && sp->scope == SC_MOD && !sch_role(eng_idx(TSEL->eng_req), MOD3_R_HOME1 + (k & 3u), 0, &id, &f, &l) &&
+        l != MOD_SCH_NONE && sch_str(eng_idx(TSEL->eng_req), l, b, sizeof b))
+        return b;
+    return d->label;
 }
-/* a knob's value as Stage shows it: the Prophet's 0..127 panel values in % (the mockup's CUTOFF 62 %) */
+/* a knob's value as Stage shows it: a synth's 0..127 panel values in % when its schema says so (the Prophet's: the
+ * mockup's CUTOFF 62 %) */
 static void stage_value(const page_t *sp, const param_desc_t *d, int32_t v, char *val, const char **unit)
 {
-    if (sp->scope == SC_P5 && d->fmt == F_INT && d->min == 0 && d->max == 127) {
+    if (sp->scope == SC_MOD && sch_flag(eng_idx(TSEL->eng_req), MOD_SCH_F_PCT127) && d->fmt == F_INT && d->min == 0 &&
+        d->max == 127) {
         fmt_int(val, (v * 100 + 63) / 127);
         *unit = "%";
         return;
@@ -112,8 +118,7 @@ static void stage_columns(void)
         const char *unit;
         char val[12];
         const param_desc_t *d = page_desc(sp, c, &vp);
-        int dim = (sp->scope == SC_CZ1 && !cz_ed_active(cz_patch_of(song.sel % NTRK)->raw, sp->id[c])) ||
-                  (sp->scope == SC_P5 && !p5_ed_active(TSEL, sp->id[c]));
+        int dim = sch_col_dim(sp, c);
         if (!d || !vp || !d->label || d->label[0] == '-') {
             draw_column(c, "", "", "", T_THEME, -1, ICON_NONE);
             continue;
@@ -198,7 +203,7 @@ static int stage_notes(int32_t x1, int32_t cy)
 static int graph_notes(void) { return stage_notes(220, ST_BAND_H / 2) != 0; }
 
 /* a DRUM track: its eight lanes across the band, a lane's name lit (the track's colour, a bar under it) while it hits
- * (drum_flash: the ISR's), else dim */
+ * (pads_flash: the ISR's), else dim */
 static void stage_hits(void)
 {
     uint32_t l;
@@ -207,7 +212,7 @@ static void stage_hits(void)
     for (l = 0; l < NLANE; l++) {
         int32_t xc = 4 + 29 * (int32_t)l + 14;
         int lit = stage.hit_t[l] != 0u;
-        cv_text_c(xc, ty_y(ST_BAND_H / 2 - 2, lf), lf, drum_lane_abbr(TSEL, l), lit ? T_THEME : T_DIM, T_BG);
+        cv_text_c(xc, ty_y(ST_BAND_H / 2 - 2, lf), lf, lane_abbr(TSEL, l), lit ? T_THEME : T_DIM, T_BG);
         if (lit)
             cv_rrect(xc - 9, ST_BAND_H - 5, 18, 3, 1, T_THEME, T_BG);
     }
@@ -222,15 +227,16 @@ static uint32_t stage_picture(int32_t *v)
     uint32_t hot = ui.hot_col & 3u, id = sp->id[hot], k;
     if (!stage.out)                                     /* (the frame's: the clock may pass ST_KNOB_MS while it draws) */
         return SP_NONE;
-    if (sp->scope == SC_P5) {
-        const uint8_t *r = p5_patch_of(TSEL)->raw;
-        if (id == P5_CUTOFF || id == P5_RESONANCE || id == P5_ENV_FILTER) {
-            v[0] = r[P5_CUTOFF];
-            v[1] = r[P5_RESONANCE];
+    if (sp->scope == SC_MOD) {                          /* a synth's: the pictures its HOME roles name */
+        uint32_t e = eng_idx(TSEL->eng_req), pic = id == 0xFFu ? 0u : sch_pic(e, id);
+        if (pic & MOD3_RF_PIC_FILTER) {
+            v[0] = sch_role_val(TSEL, e, MOD3_R_CUTOFF);
+            v[1] = sch_role_val(TSEL, e, MOD3_R_RESO);
             return SP_FILTER;
         }
-        if (id == P5_RELEASE_AMP) {
-            v[0] = r[P5_ATTACK_AMP]; v[1] = r[P5_DECAY_AMP]; v[2] = r[P5_SUSTAIN_AMP]; v[3] = r[P5_RELEASE_AMP];
+        if (pic & MOD3_RF_PIC_ENV) {
+            for (k = 0; k < 4u; k++)
+                v[k] = sch_role_val(TSEL, e, MOD3_R_ENV_A + k);
             return SP_ENV;
         }
         return SP_NONE;
@@ -280,8 +286,8 @@ static void stage_panel_hits(void)                      /* every frame: the DRUM
     uint32_t k, sel = song.sel % NTRK, l;
     fm1_irq_off();
     for (k = 0; k < NTRK; k++) {
-        f[k] = drum_flash[k];
-        drum_flash[k] = 0;
+        f[k] = pads_flash[k];
+        pads_flash[k] = 0;
     }
     fm1_irq_on();
     if (stage.hit_trk != sel + 1u) {
@@ -294,7 +300,7 @@ static void stage_panel_hits(void)                      /* every frame: the DRUM
 /* the band: the selected track's waveform, faint, the chord and notes in front (a DRUM track: its lanes) */
 static void stage_band(void)
 {
-    uint32_t sel = song.sel % NTRK, drum = (uint32_t)drum_track(TSEL), i;
+    uint32_t sel = song.sel % NTRK, drum = (uint32_t)pads_on(TSEL), i;
     int held = 0;
     cv_begin(240, ST_BAND_H, T_BG);
     if (!drum) {
@@ -497,7 +503,7 @@ static void stage_row(uint32_t k)
         if (!nm[0]) str_cpy(nm, tag, sizeof nm);
     } else {
         sound_name(t, nm);
-        if (!nm[0]) str_cpy(nm, ENGINES[eng_idx(t->eng_req)]->name, sizeof nm);
+        if (!nm[0]) str_cpy(nm, eng_name(eng_idx(t->eng_req)), sizeof nm);
         stage_entry(k, &src, &kk);
     }
     cat = entry_cat(src, kk) % CAT_N;

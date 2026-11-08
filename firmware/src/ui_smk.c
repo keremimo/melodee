@@ -33,7 +33,7 @@ static page_t smk_bank_pg;
 /* the pads' modes (docs/SMK37_UX.md section 2): what the 16 pads are. AUTO follows the page and the track (ui_input.c
  * pad_mode_auto); a mode picked by hand (a BANK button held + a bottom-row pad, Stage's sheet) stays until AUTO is
  * picked again, and the header carries its name while it differs from AUTO's choice */
-enum { PM_AUTO, PM_KEYS, PM_DRUM, PM_STEPS, PM_PATTERNS, PM_N };
+enum { PM_AUTO, PM_KEYS, PM_PADS, PM_STEPS, PM_PATTERNS, PM_N };
 static const char *const PM_NAME[PM_N] = {"AUTO", "KEYS", "DRUM", "STEPS", "PATTERNS"};
 static uint8_t smk_pmode;                               /* the pick */
 static uint8_t smk_pad_now;                             /* the mode this frame (PM_KEYS ..; ui_input.c smk_pads_sync) */
@@ -55,36 +55,52 @@ static void ps_pads(void) { pads_set((smk_pmode + 1u) % PM_N); }
 static const page_t *bank_titled(const char *t)
 {
     uint32_t i = page_titled(t);
-    return i < NPAGES && page_visible(i) ? &PAGES[i] : 0;
+    return i < NPAGES && page_visible(i) ? &PG(i) : 0;
+}
+/* a kit's first pads page (SC_PADS: its synth's pads block's DRUM SOUND), 0 none */
+static const page_t *bank_pads(void)
+{
+    for (uint32_t i = 0; i < NPAGES; i++)
+        if (PAGE_TAB[i].scope == SC_PADS && PAGE_TAB[i].id[1] != 4u)
+            return page_visible(i) ? &PG(i) : 0;
+    return 0;
 }
 /* bank's page for the selected track's engine (0: the engine has nothing for it; LEVELS: tracks 1..4, its callers'
  * own: level_knob, the GLO cards) */
 static const page_t *bank_page(uint32_t bank)
 {
-    static const uint8_t P5_FLT[4] = {P5_CUTOFF, P5_RESONANCE, P5_ENV_FILTER, P5_DECAY_FILTER};
-    static const uint8_t P5_AMP[4] = {P5_ATTACK_AMP, P5_DECAY_AMP, P5_SUSTAIN_AMP, P5_RELEASE_AMP};
     static const uint8_t FXK[4] = {P_FXMIX, P_FX2MIX, P_FX3MIX, P_FXSEND};
-    uint32_t e = eng_idx(TSEL->eng_req), k, scope = SC_TRACK;
-    int p5 = e == ENGI_PROPHET, cz = e == ENGI_CZ, fm = e == ENGI_FM6;
+    uint32_t e = eng_idx(TSEL->eng_req), k, scope = SC_TRACK, role = 0, j, f, l;
     const uint8_t *ids = 0;
+    uint8_t sid[4];
     const char *title = 0;
     if (midi_track_only(TSEL))
         return 0;
     switch (bank) {
-    case BK_SOUND: return drum_track(TSEL) ? bank_titled("DRUM SOUND") : stage_page();
-    case BK_FILTER:
-        if (p5) { ids = P5_FLT; scope = SC_P5; }
-        else if (cz) title = "CZ1 WAVE";
-        else return 0;
-        break;
-    case BK_ENV:
-        if (p5) { ids = P5_AMP; scope = SC_P5; }
-        else title = cz ? "C1 AMP R1-4" : fm ? "EG RATE" : "ENV";
-        break;
-    case BK_LFO: title = p5 ? "P5 LFO" : cz ? "CZ VIBRATO" : fm ? "FM LFO" : "LFO"; break;
+    case BK_SOUND: return pads_on(TSEL) ? bank_pads() : stage_page();
+    case BK_FILTER: role = MOD3_R_BANK_FILTER; break;
+    case BK_ENV: role = MOD3_R_BANK_ENV; title = "ENV"; break;
+    case BK_LFO: role = MOD3_R_BANK_LFO; title = "LFO"; break;
     case BK_FX: ids = FXK; break;
     case BK_ARP: title = "ARP"; break;
     default: return 0;
+    }
+    if (role && !sch_role(e, role, 0, &j, &f, &l)) {   /* a synth's bank: its schema's page j (one of its own, or a
+                                                         * bank only: MOD3_PG_BANK, its knobs here) */
+        sch_page_t g;
+        if (sch_page_rec(e, j, &g))
+            return 0;
+        if (!(g.flags & MOD3_PG_BANK)) {
+            uint32_t i = sch_page_place(j);
+            return i < NPAGES && page_visible(i) ? &PG(i) : 0;
+        }
+        for (k = 0; k < 4u; k++)
+            sid[k] = (uint8_t)(g.id[k] < 0xFFu ? g.id[k] : 0xFFu);
+        ids = sid;
+        scope = SC_MOD;
+        title = 0;
+    } else if (bank == BK_FILTER) {
+        return 0;
     }
     if (title)
         return bank_titled(title);
@@ -126,7 +142,7 @@ static int smk_faders_out(void)
  * independent of the page, so theirs is not gated here (main.c smk_faders) */
 static uint32_t knob_bank(void)
 {
-    uint32_t f = ui.home ? FAM_HOME : PAGES[ui.page].fam;
+    uint32_t f = ui.home ? FAM_HOME : PG(ui.page).fam;
     return f == FAM_GLO || f == FAM_SEQ || f == FAM_TRK || f == FAM_SAVE ? BK_PAGE : smk_kbank;
 }
 /* the bank whose cards the strip shows (BK_PAGE: the page's own): the faders' while theirs are up, else the knobs' */
@@ -174,8 +190,8 @@ static void smk_strip_poll(void)
 static int fader_page_ok(const page_t *pg)
 {
     uint32_t sc = pg->scope, g = pg->graph;
-    return sc != SC_STEP && sc != SC_DRUMHIT && sc != SC_TRK && sc != SC_DRUM && sc != SC_P5STORE &&
-           g != GR_FXRACK && g != GR_MOD && g != GR_FMSTORE && g != GR_CZTOOLS && g != GR_SCALE;
+    return sc != SC_STEP && sc != SC_PADHIT && sc != SC_TRK && sc != SC_PADS &&
+           g != GR_FXRACK && g != GR_MOD && g != GR_STORE && g != GR_TOOLS && g != GR_SCALE;
 }
 /* fader i's parameter as 0..127 (-1: nothing there) */
 static int32_t smk_fader_value(uint32_t i)

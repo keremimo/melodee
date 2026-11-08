@@ -636,12 +636,9 @@ stall:
 /* SysEx assembly: only short commands matter here */
 static void sysex_byte(uint8_t b)
 {
-#ifdef CZ_RX
-    cz_sx_byte(b);
-#endif
     static const uint8_t UBOOT_KEY[6] = {0xF0, 0x22, 0x24, 0x35, 0x7D, 0xF7};
-#ifdef FM6_RX
-    fm6_sx_byte(b);                                    /* DX7 voices, banks, parameter changes (eng_fm6.c) */
+#ifdef MSX_ROUTES
+    msx_byte(b, MSX_USB);                              /* a synth's SysEx: its module's (sysex_rx.c) */
 #endif
     if (b >= 0xF8u)
         return;                                        /* realtime may occur anywhere in SysEx */
@@ -710,8 +707,8 @@ static void midi_in_event(uint32_t pkt)
         return;
     }
     if (st >= 0x80u && st < 0xF8u) {
-#ifdef FM6_RX
-        fm6_sx_byte((uint8_t)st);                       /* abort DX7 assembly across USB packets too */
+#ifdef MSX_ROUTES
+        msx_byte(st, MSX_USB);                         /* (a synth's SysEx ends across USB packets too) */
 #endif
         usb.sx_on = 0;                                 /* channel/system common also ends SysEx */
 #if MELODEE_OTA
@@ -996,8 +993,8 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         mo_r = mo_w;                                    /* nothing stale for the next host */
         rt_r = rt_w;
         usb.sx_on = 0;
-#ifdef FM6_RX
-        fm6_rx_on = 0;
+#ifdef MSX_ROUTES
+        msx_link_gone(MSX_USB);
 #endif
 #if MELODEE_OTA
         so_r = so_w;

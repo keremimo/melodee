@@ -204,8 +204,9 @@ static uint32_t ua_transmit(uint8_t *p)
     return n * width * ua_cap_channels;
 }
 
-#if MELODEE_USER_KITS
-/* A drum take from the computer's or phone's playback (kit_take.c): armed, it keeps the last KT_PRE samples; the
+#if MELODEE_RECORDS
+/* A take from the computer's or phone's playback (Record kit, rec_ui.c: its synth makes it a pad's, engine_t.rec_take):
+ * armed, it keeps the last KT_PRE samples; the
  * first above KT_ON starts the take with them in front; KT_END samples below KT_QUIET in a row, or a full buffer,
  * end it. Mono, before the host's volume: its slider does not set the take's level. */
 enum { KT_OFF, KT_ARMED, KT_REC, KT_DONE };
@@ -213,6 +214,7 @@ enum { KT_OFF, KT_ARMED, KT_REC, KT_DONE };
 #define KT_ON 328                                     /* -40 dBFS */
 #define KT_QUIET 33                                   /* -60 dBFS */
 #define KT_END (FS * 15u / 100u)
+_Static_assert(KT_ON == MOD3_TAKE_ON && KT_PRE == MOD3_TAKE_PRE, "the take as a synth's rec_take expects it");
 static struct {
     int16_t *buf;                                     /* RES_KIT_TAKE */
     uint32_t cap, n, quiet, pw;                       /* its samples (64 zeros kept after them); taken; below */
@@ -306,7 +308,7 @@ static void ua_audio(int32_t *out, const int32_t *tracks, uint32_t n, uint32_t v
     }
     if (capture)
         ua.cw += n;
-#if MELODEE_USER_KITS
+#if MELODEE_RECORDS
     if (playback && kt.state)
         kt_hear(ua.pr, n);
     else if (kt.state == KT_REC && (kt.quiet += n) >= KT_END)   /* the stream stopped (a player closes it right after */

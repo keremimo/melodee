@@ -60,6 +60,14 @@
 #if MELODEE_OTA && !MELODEE_FLASH
 #error "MELODEE_OTA needs MELODEE_FLASH"
 #endif
+#ifndef MELODEE_BLE_EDITOR
+#define MELODEE_BLE_EDITOR (MELODEE_BLE && MELODEE_OTA)   /* Melodee Studio over Bluetooth: editor frames on the
+                                 * computer's link (midi_ble.c mbe, EDITOR_PROTOCOL.md "Studio over Bluetooth"). On
+                                 * wherever the build has Bluetooth and the editor; MELODEE_BLE_EDITOR=0 leaves it out */
+#endif
+#if MELODEE_BLE_EDITOR && !(MELODEE_BLE && MELODEE_OTA)
+#error "MELODEE_BLE_EDITOR needs MELODEE_BLE and MELODEE_OTA"
+#endif
 
 /* the resource region (res.c): data read in place at 0xEA020 (app.ld .mres), installed after an update */
 #define MELODEE_RES __attribute__((section(".mres"), aligned(4)))
@@ -71,6 +79,8 @@
 #define SMKX_OK() (smkx_ok != 0u)
 #endif
 #endif
+/* (the FM-1's 16 and 24 px icon cells: in the app again since the synths left it, 2026-11: the resource region's
+ * sectors they took went to the pool) */
 
 /* ------------------------------------------------------------- HAL --- */
 #include <stdint.h>
@@ -165,18 +175,19 @@ static void midi_thru(uint32_t pkt, uint32_t source);   /* midi_thru.c, after th
 #if BOARD_SMK37
 #include "smkx.c"                /* the SMK-37's app area tail (st_crc32) */
 #endif
-#if MELODEE_USER_KITS
-#include "kit_store.c"           /* the user's drum kits in the pool (drum_real.c plays them) */
+#if MELODEE_RECORDS
+#include "rec_store.c"           /* the synths' data records in the pool (a pads synth's recorded kits) */
 #endif
-#if KIT_REC
-#include "kit_take.c"            /* a drum take from USB audio, encoded and kept */
-#include "kit_rec_ui.c"          /* Record kit: the drum track's sheet */
+#if MELODEE_MODULES
+#include "module_store.c"        /* synth modules in the pool (eng_module.c plays them) */
+#endif
+#if REC_TAKES
+#include "rec_ui.c"              /* Record kit: a pads track's sheet, a take from USB audio for its synth */
 #endif
 #endif
 #include "upreset.c"             /* user presets (RAM mirror; flash with MELODEE_FLASH) */
 #include "project.c"
-#include "cz_store.c"
-#include "fm6_store.c"            /* FM6: DX7 SysEx, the STORE shortcut to user presets */
+#include "sysex_route.c"          /* the synths' SysEx: frames to their modules, the sends */
 #if MELODEE_OTA
 #define OTA_SCRATCH proj_wire_borrow()   /* the update entry stages in the project staging RAM */
 #include "ota.c"

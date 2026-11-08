@@ -4,9 +4,10 @@
 #define PERSISTENCE_TEST_NO_MAIN
 #include "persistence_test.c"
 
+static int native_fm_import32(uint32_t first,const uint8_t *raw,uint32_t *saved){return shared_import(ENGI_FM6,first,32u,raw,FM6_PACKED,saved);}
 static void reboot_presets(void)
 {
-    up_cache_reset();native_cache_reset();cz_bank_boot();up_boot();
+    up_cache_reset();native_cache_reset();up_boot();
 }
 static int bank_import(void)
 {

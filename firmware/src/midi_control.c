@@ -68,8 +68,8 @@ static uint32_t midi_targets(uint32_t ch)
 static void midi_expression(track_t *t, const midi_channel_t *c)
 {
     int32_t range = ((int32_t)c->semis * 100 + c->cents) * 256 / 100;
-    if(t->eng_req==ENGI_PROPHET)range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
-    if (drum_track(t))
+    {const engine_t *e=eng_of(t->eng_req);if(e->bend_range)range=e->bend_range(t);}   /* (the Prophet: its BEND) */
+    if (pads_flag(t, MOD3_PD_NOBEND))
         return;
     midi_bend_target[trk_index(t)] = (int32_t)c->bend * range / (c->bend < 0 ? 8192 : 8191);
     t->bend_raw = c->bend;                        /* (FM6 bends by its own range: its DX7 function settings) */
@@ -204,7 +204,7 @@ static void midi_note_event(uint32_t ch, uint32_t note, uint32_t vel)
             || midi_event_source == 3u || midi_note_source(ch, note) == 3u
 #endif
             ) && midi_note_source(ch, note) != midi_event_source) return;
-        if (c->pedal && !drum_track(&trk[id - 1u])) {
+        if (c->pedal && !pads_flag(&trk[id - 1u], MOD3_PD_NOSUS)) {
             step_midi_edge(id - 1u, 0, 0, ch, note);   /* physical release ends step entry, even under sustain */
             mn_set(ch, note, mn_get(ch, note) | MIDI_PEDAL_NOTE);
         } else
@@ -271,36 +271,41 @@ static int midi_track_held(uint32_t track)
     return 0;
 }
 
-/* Native envelope loops run only for their CC, outside the audio IRQ's hot loops. */
+/* the synth's own envelope (CC 73 / 75 / 72: the parameters its role names, schema.c sch_cc_role), its motion recorded:
+ * 1 when it has them */
+static __attribute__((noinline)) int midi_role_env(track_t *t, uint32_t role, uint32_t value)
+{
+    uint8_t old[MO_NATIVE_N];
+    uint32_t f = motion_guard();
+    int any;
+    motion_native_peek(t, old);
+    any = sch_cc_role(t, role, value);
+    if (any)
+        motion_native_edited(t, old);
+    motion_unguard(f);
+    return any;
+}
+/* A synth's own controls (its schema's roles, from the part's RAM summary: schema.c sch_part): CC 73 / 75 / 72 set every
+ * parameter it names ATK / DEC / REL (a rate: inverted), and record their motion; CC 74 / 71 the parameter it names
+ * BRIGHT / RESO (the part's own, an E value: below). Without them: the track's ADSR, the engine's E values */
 static __attribute__((noinline)) void midi_parameter(track_t *t,uint32_t cc,uint32_t value)
 {
     if (midi_track_only(t)) return; /* incoming controls belong to the USB destination */
-    uint32_t id=P_COUNT;
+    uint32_t id=P_COUNT,role=cc==72?MOD3_R_CC_REL:cc==73?MOD3_R_CC_ATK:cc==75?MOD3_R_CC_DEC:cc==74?MOD3_R_CC_BRIGHT:cc==71?MOD3_R_CC_RESO:0u;
     switch(cc){case 5:id=P_GLIDE;break;case 7:id=P_LEVEL;break;case 10:id=P_PAN;break;
     case 72:id=P_REL;break;case 73:id=P_ATK;break;case 75:id=P_DEC;break;
-    case 74:case 71:{
-        static const uint8_t map[NENGINES]={0,0,0x30,0x56,0,0x07,0,0,0,0,0x30,0x34,0x30,0,0,0,0,0,0,0x12};
-        uint32_t macro=(map[t->eng_req%NENGINES]>>(cc==74?4:0))&15u;
-        if(macro)id=P_E0+macro-1u;else if(cc==74 && t->eng_req==ENGI_CZ)id=P_ED_FLT;
-        break; }default:return;}
-    if((cc==72 || cc==73 || cc==75) && motion_native_tag(t)){   /* (the engine's own envelope: its motion too) */
-        uint8_t old[MO_NATIVE_N];uint32_t f=motion_guard();
-        motion_native_peek(t,old);
-        if(t->eng_req==ENGI_PROPHET){
-            p5_edit_value(t,cc==72?P5_RELEASE_AMP:cc==73?P5_ATTACK_AMP:P5_DECAY_AMP,value);
-        }else if(t->eng_req==ENGI_FM6){
-            uint8_t raw[FP_SIZE+1u];memcpy(raw,fm6_patch_of(trk_index(t)),sizeof raw);
-            for(uint32_t op=0;op<6;op++)raw[op*FP_OP+(cc==72?3:cc==73?0:1)]=(uint8_t)(99u-value*99u/127u);
-            fm6_put_patch(trk_index(t),raw,0);
-        }else{
-            uint32_t tr=trk_index(t);uint8_t raw[CZ_BYTES];
-            for(uint32_t line=0;line<2;line++) {
-                uint32_t stage=cc==72?(cz_patch_of(tr)->raw[CZ_ENV_END[line][2]]&7u):cc==73?0:1;
-                if(cz_ed_put(tr,LCZ_EBASE(line,2)+stage,99u-value*99u/127u,raw))memcpy(cz_patch_of(tr)->raw,raw,128u);
-            }
+    case 74:case 71:
+#if MELODEE_LEGACY_EXTRAS
+        {   /* (the retired PHASE, VOICE and NOISE: no schema) */
+            static const uint8_t map[12]={0,0,0x30,0,0,0x07,0,0,0,0,0,0x34};
+            uint32_t macro=t->eng_req<12u?(map[t->eng_req]>>(cc==74?4:0))&15u:0u;
+            if(macro)id=P_E0+macro-1u;
         }
-        motion_native_edited(t,old);motion_unguard(f);return;
-    }
+#endif
+        break;
+    default:return;}
+    if((role==MOD3_R_CC_ATK || role==MOD3_R_CC_DEC || role==MOD3_R_CC_REL) && midi_role_env(t,role,value))return;
+    if(role==MOD3_R_CC_BRIGHT || role==MOD3_R_CC_RESO){uint32_t r=sch_role_track(t,role);if(r<P_COUNT)id=r;}
     if(id>=P_COUNT)return;
     const param_desc_t *d=id<P_E0?&TP[id]:&ENGINES[t->eng_req]->edit[id-P_E0];
     if(d->max==d->min)return;

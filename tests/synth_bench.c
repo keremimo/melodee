@@ -56,7 +56,7 @@ static void measure_drum(uint32_t kit,uint32_t sound,uint32_t changing)
     for(uint32_t b=0;b<8192;b++){
         if(!(b%128u)){
             if(changing){t->p[P_E1]=(int16_t)(32u+b/128u%65u);t->p[P_E3]=(int16_t)(32u+(b/128u*7u)%96u);}
-            if(sound<16u)trk_note_on(t,drum_sound_note(t,sound),80u+b/128u%48u);
+            if(sound<16u)trk_note_on(t,pads_note(t,sound),80u+b/128u%48u);
             else{
                 trk_note_on(t,42,100);
                 if(!(b%512u))trk_note_on(t,36,110);

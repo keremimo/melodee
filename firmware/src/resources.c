@@ -14,10 +14,15 @@ enum { RES_ENGINE0, RES_NOTE_HISTORY = RES_ENGINE0 + NPART, RES_FX0,
 #if MELODEE_USB_AUDIO
        RES_USB_TRACKS,
 #endif
-#if MELODEE_USB_AUDIO && MELODEE_USER_KITS
-       RES_KIT_TAKE,                                  /* a drum take while the kit's sheet is open (kit_take.c) */
+#if MELODEE_USB_AUDIO && MELODEE_RECORDS
+       RES_KIT_TAKE,                                  /* a take while Record kit's sheet is open (rec_ui.c) */
 #endif
-       RES_PUNCH, RES_COUNT };
+       RES_PUNCH,
+#if MELODEE_MODULES
+       RES_MODULE0,                                   /* the synth modules' code + data (eng_module.c), NMOD of them */
+       RES_MODULE_END = RES_MODULE0 + NMOD - 1u,
+#endif
+       RES_COUNT };
 static uint8_t recording_undo_lost;
 static uint8_t recording_undo_active, recording_undo_skip;
 static struct { void *ptr; uint32_t size; } resource[RES_COUNT];
@@ -76,13 +81,13 @@ static uint32_t resource_used(void)
     return n;
 }
 static void resource_release(uint32_t id) { resource[id].size = 0; }
-static __attribute__((noinline)) void *resource_allocate_impl(uint32_t id, uint32_t bytes, int preserve)
+static __attribute__((noinline)) void *resource_allocate_impl(uint32_t id, uint32_t bytes, int preserve, uint32_t skip)
 {
     if (bytes > RESOURCE_CAPACITY) { resource_failures++; return 0; }
     uint32_t size = (bytes + 3u) & ~3u;
     if (!size) { resource_release(id); return 0; }
     for (uint32_t bank = 0; bank < RESOURCE_BANKS; bank++) {
-        if (bank == RESOURCE_CACHE_BANK && !RESOURCE_CACHE_AVAILABLE) continue;
+        if ((bank == RESOURCE_CACHE_BANK && !RESOURCE_CACHE_AVAILABLE) || (skip >> bank & 1u)) continue;
         uintptr_t at = (uintptr_t)resource_banks[bank].start;
         uintptr_t limit = (uintptr_t)resource_banks[bank].end;
         /* Each collision advances past a live block; at most RES_COUNT passes.
@@ -120,7 +125,12 @@ static __attribute__((noinline)) void *resource_allocate_impl(uint32_t id, uint3
     return 0;                          /* leave an existing allocation intact */
 }
 static void *resource_allocate(uint32_t id,uint32_t bytes)
-{return resource_allocate_impl(id,bytes,0);}
+{return resource_allocate_impl(id,bytes,0,0);}
+#if MELODEE_MODULES
+/* code the CPU runs (a synth module): the SRAM banks, never the cache RAM nor the retained words */
+static void *resource_allocate_code(uint32_t id,uint32_t bytes)
+{return resource_allocate_impl(id,bytes,0,1u<<RESOURCE_CACHE_BANK|1u<<1);}
+#endif
 /* History alone opts into preserving resize. No other live handle moves;
  * failure preserves the original allocation and all its bytes. */
 static void *resource_resize(uint32_t id,uint32_t bytes)
@@ -129,7 +139,7 @@ static void *resource_resize(uint32_t id,uint32_t bytes)
     uint32_t size=(bytes+3u)&~3u;
     if(!size){resource_release(id);return 0;}
     if(size<=resource[id].size){resource[id].size=size;return resource[id].ptr;}
-    return resource_allocate_impl(id,bytes,1);
+    return resource_allocate_impl(id,bytes,1,0);
 }
 
 /* Keep the already allocated path cheap in every engine accessor. */

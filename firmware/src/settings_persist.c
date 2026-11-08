@@ -154,6 +154,7 @@ static int settings_import(persist_t *p, int n)
     favorites.filter = favorites.filter == 1u;
 #endif
     memcpy(mlearn_row, p->favorites.factory[MLEARN_ROW], sizeof mlearn_row);
+    memcpy(mparam_row, p->favorites.factory[MPARAM_ROW0], sizeof mparam_row);
     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;
     {
         const uint8_t *w = p->favorites.factory[VOICE_PREF_ROW] + VOICE_PREF_BYTE;
@@ -182,6 +183,7 @@ static void settings_export(persist_t *p)
     p->ext.spare[0] = favorites_user_hi;
 #endif
     memcpy(p->favorites.factory[MLEARN_ROW], mlearn_row, sizeof mlearn_row);
+    memcpy(p->favorites.factory[MPARAM_ROW0], mparam_row, sizeof mparam_row);
     memcpy(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
     {
         uint8_t *m = p->favorites.factory[1] + MIDI_KNOB_PREF_BYTE;

@@ -24,6 +24,50 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
     return 0;
 }
 #include "../firmware/src/storage.c"
+/* the shipped synths' store formats and patch lengths as their schemas give them (schema.c: the firmware reads them
+ * from the synths' files; this test builds the record code alone) */
+#define MOD_SCH_NO_WRITER
+#include "../firmware/modules/sdk/mod_schema.h"
+static uint32_t patch_store_tag(uint32_t e)
+{
+    return e == ENGI_FM6 ? MOD_SCH_STORE_VOICE : e == ENGI_PROPHET ? MOD_SCH_STORE_PROGRAM : e == 15u ? MOD_SCH_STORE_TONE :
+           e == ENGI_DRUM ? MOD_SCH_STORE_KIT : MOD_SCH_STORE_NONE;
+}
+static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == 15u ? 144u : e == ENGI_DRUM ? 64u : 0u; }
+static uint32_t patch_sound_len(uint32_t e) { return e == ENGI_FM6 ? 128u : patch_len(e); }
+/* DRUM's KIT patch as its schema packs and checks it (drum_schema.h MOD3_R_PACK, its MOD3_R_CHECK records): per pad TUNE
+ * in 6 bits (+ 24), DECAY and the third in 7 (+ 64), the cut in 7; TUNE -24..24, the others in their bytes' range */
+#define MOD_SCH_KIT_PACKED 54u
+static uint32_t patch_pack(uint32_t tag, uint8_t *b, const uint8_t *patch, uint32_t n)
+{
+    static const uint8_t W[4] = {6, 7, 7, 7};
+    static const int8_t B[4] = {24, 64, 64, 0};
+    uint32_t pos = 0;
+    (void)tag;
+    memset(b, 0, n);
+    for (uint32_t i = 0; i < 64u; i++)
+        wire_bits_put(b, &pos, (uint32_t)((int8_t)patch[i] + B[i % 4u]), W[i % 4u]);
+    return n;
+}
+static void patch_unpack(uint32_t tag, uint8_t *patch, const uint8_t *b, uint32_t n)
+{
+    static const uint8_t W[4] = {6, 7, 7, 7};
+    static const int8_t B[4] = {24, 64, 64, 0};
+    uint32_t pos = 0;
+    (void)tag; (void)n;
+    for (uint32_t i = 0; i < 64u; i++)
+        patch[i] = (uint8_t)(int8_t)((int32_t)wire_bits_get(b, &pos, W[i % 4u]) - B[i % 4u]);
+}
+static int patch_stored_ok(uint32_t tag, const uint8_t *p)
+{
+    const int8_t *c = (const int8_t *)(const void *)p;
+    if (tag != MOD_SCH_STORE_KIT) return 1;
+    for (uint32_t i = 0; i < 16u; i++, c += 4)
+        if (c[0] < -24 || c[0] > 24 || c[1] < -64 || c[2] < -64 || c[3] < 0) return 0;
+    return 1;
+}
+#include "../firmware/modules/cz/cz_patch.h"                /* (a CZ-1 tone record's check: the stored layout's) */
+#define UP_HOST_TONE_OK cz_patch_valid                       /* (upreset.c UP_HOST: the TONE store's check) */
 #include "../firmware/src/upreset.c"
 
 static int up_pat_empty(const up_rec_t *r)          /* (the record's 16 steps: no note) */

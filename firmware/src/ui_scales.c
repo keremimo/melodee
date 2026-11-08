@@ -15,7 +15,7 @@ static const char *const SC_FAMILY_WORD[SCALE_FAMILIES + 2u] = {"All", "Western"
 static void scales_back(void)                           /* OCT- / OCT+: SCL's list */
 {
     uint32_t i;
-    for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, "SCL"); i++)
+    for (i = 0; i < NPAGES && !str_eq(PG(i).title, "SCL"); i++)
         ;
     if (i < NPAGES) {
         ui.page = (uint8_t)i;

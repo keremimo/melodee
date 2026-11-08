@@ -23,7 +23,7 @@ static void blank(project_t *a)
     memset(a, 0, sizeof *a);
     for (uint32_t k = 0; k < NPART; k++) {
         p5_patch_init(&a->p5[k]);
-        cz_patch_init(a->cz[k].raw);
+        cz_patch_init(a->cz[k]);
         memcpy(a->fm6[k], FM6_INIT, FM6_PACKED);
     }
     a->magic = PROJ_MAGIC; a->size = sizeof *a; a->parts = NPART; a->phys = PROJ_PHYS;

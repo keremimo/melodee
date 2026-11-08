@@ -56,6 +56,45 @@ static uint8_t mb_in_link;                      /* the link of the message mel_b
 #endif
 #define mb_central_up() mb_link_up(BLE_LINK_CENTRAL)   /* (one link: the link, whichever role) */
 
+#if MELODEE_BLE_EDITOR
+/* Melodee Studio over Bluetooth (MELODEE_BLE_EDITOR, EDITOR_PROTOCOL.md "Studio over Bluetooth"): editor frames on the
+ * computer's link (the peripheral role: a computer or phone that connected to Melodee). The BLE IRQ gathers one frame,
+ * the bytes between F0 and F7, as usb.c does (a frame arriving while one waits is dropped: Studio asks again); editor.c
+ * takes it in the main loop. A reply is not copied: it goes out from ed_out as the link takes it, ahead of the link's own
+ * MIDI (a channel message inside a SysEx would end it; real time may go between its bytes), and the main loop leaves
+ * ed_out alone until it is all out. */
+#define MB_ED_IN 640u                           /* the longest request (CAPS 'L', as usb.c's sx_frame) */
+#if BLE_LINKS > 1
+#define MB_ED_HERE() (ble_ll_link() == BLE_LINK_PERIPH)          /* (inside a hook: the computer's link) */
+#define MB_ED_UP() (mb.on && mb.ln[BLE_LINK_PERIPH].ready)
+#else
+#define MB_ED_HERE() (!ble_ll_central())
+#define MB_ED_UP() (mb.on && mb.ln[0].ready && !ble_ll_central())
+#endif
+static struct {
+    uint8_t in[MB_ED_IN];
+    uint32_t n;                                 /* the frame's bytes gathered so far */
+    volatile uint32_t ready;                    /* a frame waits for the main loop: its length (0 none) */
+    uint8_t on, peeked;                         /* gathering; the bytes of the reply's packet peeked */
+    const uint8_t *out;                         /* the reply, F0..F7: out_n bytes, sent up to out_at */
+    uint32_t out_n, out_ms;
+    volatile uint32_t out_at, epoch;            /* epoch: counts the computer's link coming up (WATCH ends with it) */
+} mbe __attribute__((section(".pool")));
+static void mb_ed_in(uint32_t pkt)              /* BLE IRQ: a SysEx packet (CIN 4..7) of the computer's link */
+{
+    uint32_t cin = pkt & 15u, k = cin == 4u ? 3u : cin - 4u;
+    for (uint32_t i = 0; i < k; i++) {
+        uint32_t b = pkt >> (8u + 8u * i) & 255u;
+        if (b == 0xF0u) { mbe.on = !mbe.ready; mbe.n = 0; }
+        else if (b == 0xF7u) {
+            if (mbe.on && mbe.n) { RING_PUBLISH(); mbe.ready = mbe.n; }
+            mbe.on = 0;
+        } else if ((b & 0x80u) || mbe.n >= MB_ED_IN) mbe.on = 0;   /* (a status ends it; too long: not Studio's) */
+        else if (mbe.on) mbe.in[mbe.n++] = (uint8_t)b;
+    }
+}
+#endif
+
 static void mb_dirty(void) { mb_saved.magic = MEL_BLE_MAGIC; mb_revision++; }
 /* TIMER5 may enter while foreground holds this lock. Keep its unlock from
  * re-enabling BLE underneath a foreground mutation. The depth itself is atomic. */
@@ -82,6 +121,17 @@ BLE_API int ble_app_midi_peek(uint32_t *pkt, uint32_t *ms)
         *pkt = l->rt[l->rt_r % MBRT]; *ms = l->rt_ms[l->rt_r % MBRT];
         return 1;
     }
+#if MELODEE_BLE_EDITOR
+    mbe.peeked = 0;
+    if (mbe.out_at < mbe.out_n && MB_ED_HERE()) {   /* the editor's reply: the link's MIDI waits for its F7 */
+        uint32_t at = mbe.out_at, k = mbe.out_n - at < 3u ? mbe.out_n - at : 3u;
+        const uint8_t *s = mbe.out + at;
+        *pkt = (at + k < mbe.out_n ? 4u : 4u + k) | (uint32_t)s[0] << 8 | (k > 1u ? (uint32_t)s[1] << 16 : 0u) |
+               (k > 2u ? (uint32_t)s[2] << 24 : 0u);
+        *ms = mbe.out_ms; mbe.peeked = (uint8_t)k;
+        return 1;
+    }
+#endif
     if (l->tr == l->tw) return 0;
     RING_PUBLISH();
     *pkt = l->tx[l->tr % MBQ]; *ms = l->ms[l->tr % MBQ];
@@ -92,12 +142,32 @@ BLE_API void ble_app_midi_pop(void)                 /* (the one peeked: a pulse 
     struct mb_link *l = MBL;
     RING_PUBLISH();
     if (l->peeked_rt) l->rt_r++;
+#if MELODEE_BLE_EDITOR
+    else if (mbe.peeked) mbe.out_at += mbe.peeked;
+#endif
     else l->tr++;
 }
 BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last)
 {
     struct mb_link *l = MBL;
     uint32_t status = (pkt >> 8) & 255u;
+    if ((pkt & 15u) - 4u < 4u) {                /* SysEx: a synth's (sysex_rx.c), Studio's frames */
+        uint32_t cin = pkt & 15u, k = cin == 4u ? 3u : cin - 4u;
+        if (!mb.on || l->closing)
+            return;
+#ifdef MSX_ROUTES
+        for (uint32_t i = 0; i < k; i++)
+            msx_byte(pkt >> (8u + 8u * i) & 255u, MSX_BLE);
+#endif
+#if MELODEE_BLE_EDITOR
+        if (MB_ED_HERE()) mb_ed_in(pkt);       /* (Studio: on the computer's link only) */
+#endif
+        return;
+    }
+#ifdef MSX_ROUTES
+    if (status >= 0x80u && status < 0xF8u)
+        msx_byte(status, MSX_BLE);              /* (another status ends a synth's frame) */
+#endif
     /* Route performance messages and clock only. OTA/editor framing stays USB. */
     if (!mb.on || l->closing || !((status >= 0x80u && status < 0xF0u) ||
         status == 0xF2u || status == 0xF8u || status == 0xFAu || status == 0xFBu || status == 0xFCu)) return;
@@ -119,6 +189,12 @@ BLE_API void ble_app_state(void)                    /* (the link's own: ble_midi
         l->closing = 0;
         if (mb.forgetting) { memset(&bhs_key, 0, sizeof bhs_key); mb.forgetting = 0; }
     }
+#if MELODEE_BLE_EDITOR
+    if (ble_ll_link() == BLE_LINK_PERIPH && ready != l->ready) {   /* the computer's link: up (a new epoch) or gone */
+        if (ready) mbe.epoch++;
+        else { mbe.on = 0; mbe.out_n = mbe.out_at = 0; }   /* (the reply's rest is dropped) */
+    }
+#endif
     l->connected = connected;
     l->ready = ready;
     if (!ready) { l->tr = l->tw; l->rt_r = l->rt_w; }

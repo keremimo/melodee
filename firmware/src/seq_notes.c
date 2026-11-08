@@ -40,11 +40,11 @@ static uint32_t notes_selected(const track_t *t)
     return chosen;
 }
 /* Shared by note preview and the drum editor, including undo preview. */
-static uint32_t drum_hit_selected(void)
+static uint32_t pads_hit_selected(void)
 {
     uint32_t selected=ui.note_pick?ui.note_pick-1u:RECORD_MAX, first=RECORD_MAX;
     for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i]){
-        if(!recording_active(TSEL,i) || recording_view(TSEL,&recording[i])!=ui.cursor || drum_sound_of(TSEL,recorded_note(&recording[i]))!=ui.drum_sound%drum_sound_count(TSEL))continue;
+        if(!recording_active(TSEL,i) || recording_view(TSEL,&recording[i])!=ui.cursor || pads_pad_of(TSEL,recorded_note(&recording[i]))!=ui.pad%pads_count(TSEL))continue;
         if(i==selected)return i;
         if(first==RECORD_MAX || recording[i].on<recording[first].on)first=i;
     }
@@ -109,8 +109,8 @@ static void notes_rebuild(track_t *t, uint32_t view)
         if (!recording_active(t, i) || recording_view(t, r) != view) continue;
         count++;
         if (r->vel > st->vel) st->vel = r->vel;
-        uint32_t lane = drum_lane(recorded_note(r));
-        if (drum_track(t) && recorded_note(r) == DRUM_LANE_NOTE[lane]) {
+        uint32_t lane = pads_lane(t, recorded_note(r));
+        if (pads_on(t) && recorded_note(r) == lane_note(t, lane)) {
             st->hit |= (uint8_t)(1u << lane);
             if (r->vel > 110u) st->acc |= (uint8_t)(1u << lane);
         } else {
@@ -189,7 +189,7 @@ static int notes_preview_on(void)
 {
     const page_t *pg=cur_page();
     return settings_preview && !song.playing && !seq_counting() && !ui.home && !ui.menu && !ui.layer && !ui.entry_open &&
-        (pg->graph==GR_ROLL || pg->graph==GR_STEPS || pg->graph==GR_DRUMHIT);
+        (pg->graph==GR_ROLL || pg->graph==GR_STEPS || pg->graph==GR_PADHIT);
 }
 static void notes_audition(const uint8_t *nn,const uint8_t *vv,uint32_t count,int32_t pitch,uint32_t gate)
 {
@@ -201,17 +201,17 @@ static void notes_preview(void)
     if(!notes_preview_on()) return;
     const page_t *pg=cur_page();
     uint8_t nn[12],vv[12];uint32_t count=0,chosen=notes_selected(TSEL);
-    if(pg->scope==SC_DRUMHIT)chosen=drum_hit_selected();
+    if(pg->scope==SC_PADHIT)chosen=pads_hit_selected();
     int32_t pitch=0;uint32_t gate=0;
     if(chosen<RECORD_MAX) { const recorded_note_t *r=&recording[chosen];nn[count]=recorded_note(r);vv[count++]=r->vel;
-        if(drum_track(TSEL)){pitch=r->pitch;if(recorded_gate(r))gate=(uint32_t)(((uint64_t)r->duration<<(recorded_exponent(r)))*seq_div_samples(TSEL->p[P_SDIV])/RECORD_UNIT);}
+        if(pads_on(TSEL)){pitch=r->pitch;if(recorded_gate(r))gate=(uint32_t)(((uint64_t)r->duration<<(recorded_exponent(r)))*seq_div_samples(TSEL->p[P_SDIV])/RECORD_UNIT);}
     }
     else {
         uint32_t at=step_note_start(TSEL,ui.cursor);
         if(at<NSTEP) { const step_t *st=&TSEL->step[at];
             if(pg->graph==GR_ROLL && st->n) { nn[count]=st->note[notes_manual_slot(st)];vv[count++]=st->vel?st->vel:96; }
             else for(uint32_t i=0;i<st->n;i++){nn[count]=st->note[i];vv[count++]=st->vel?st->vel:96;}
-            if(drum_track(TSEL))for(uint32_t i=0;i<NLANE;i++)if(step_lanes(st)&(1u<<i)){nn[count]=DRUM_LANE_NOTE[i];vv[count++]=(step_accents(st)&(1u<<i))?127:96;}
+            if(pads_on(TSEL))for(uint32_t i=0;i<NLANE;i++)if(step_lanes(TSEL, st)&(1u<<i)){nn[count]=lane_note(TSEL, i);vv[count++]=(step_accents(TSEL, st)&(1u<<i))?127:96;}
         }
     }
     notes_audition(nn,vv,count,pitch,gate);

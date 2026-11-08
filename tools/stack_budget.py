@@ -63,6 +63,20 @@ def analyze(ir, dis, src):
                 calls.add(m[1])
         frames[name] = total
         direct[name] = calls
+    # A synth module (ABI 3: firmware/modules/sdk/mod_abi3.h) is an engine of its own: any engine callback may be one
+    # of its functions, with the stack MOD3_STACK_MAX allows (tools/mod_build.py refuses a module whose paths need more)
+    abi = src.parent / 'modules' / 'sdk' / 'mod_abi3.h'
+    native_budget = re.search(r'#define MOD3_STACK_MAX (\d+)u', abi.read_text()) if abi.exists() else None
+    NATIVE = '(synth module)'
+    # .. its main-loop callbacks (host 3: SysEx) call the host's main-loop members, deep ones (a patch written tells the
+    # module again): those are its children
+    NATIVE_MAIN = '(synth module, main loop)'
+    HOST3 = {'mod_h3_part', 'mod_h3_part_patch', 'mod_h3_patch_put', 'mod_h3_sx_part', 'mod_h3_sx_send', 'mod_h3_sx_scratch',
+             'mod_h3_sx_stage', 'mod_h3_slot_get', 'mod_h3_store_slot', 'mod_h3_message'}
+    if native_budget:
+        asm[NATIVE], frames[NATIVE], direct[NATIVE] = [], int(native_budget[1]), set()
+        asm[NATIVE_MAIN], frames[NATIVE_MAIN] = [], int(native_budget[1])
+        direct[NATIVE_MAIN] = {f for f in HOST3 if f in asm}
     # Possible function-pointer values: globals and local function-address uses.
     taken = set(REFERENCE.findall(FUNCTION.sub('', ir))) & fns.keys()
     for name, m in fns.items():
@@ -115,7 +129,8 @@ def analyze(ir, dis, src):
                 engine_callbacks.setdefault(
                     callback_names.index(field), set()).add(fn)
     field_targets = {field: engine_callbacks.get(
-        i, set())for i, field in enumerate(callback_fields)}
+        i, set()) | ({NATIVE_MAIN if callback_names[i] in ('sysex', 'sysex_dump') else NATIVE} if native_budget else set())
+        for i, field in enumerate(callback_fields)}
     indirect = {}
     missing = []
     for name, m in fns.items():
@@ -168,6 +183,8 @@ def analyze(ir, dis, src):
                 targets = {n for n in worker_entries if n in asm}
             if name == 'audio_batch_worker':
                 targets = {n for n in batch_entries if n in asm}
+            if not targets and native_budget and '%struct.mod_host_v3*' in typ:
+                targets = {NATIVE}                     # (module_store.c: a module's bind)
             indirect.setdefault(name, set()).update(targets)
             if not targets:
                 missing.append((name, typ, line.strip()))

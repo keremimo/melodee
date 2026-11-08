@@ -8,8 +8,8 @@
  * USB-MIDI packets (cable 0, CIN = status >> 4), so seq.c routes them by channel
  * exactly as USB (a four-channel range or SEL;
  * host tests: midi_uart_test, hostsim TRACKS trs_test);
- * Clock/Start/Continue/Stop retain timestamps and source; other realtime,
- * system common and SysEx are ignored (no SysEx->UBOOT from DIN).
+ * Clock/Start/Continue/Stop retain timestamps and source; other realtime and
+ * system common are ignored, SysEx goes to the synths' collector only (sysex_rx.c: no SysEx->UBOOT from DIN).
  *
  * The ring is read by content, not by the DMA count: every slot the parser has
  * not yet been given holds UM_EMPTY, and the reader takes bytes until it meets
@@ -55,13 +55,22 @@ static void um_byte(uint32_t b)
         return;                                    /* realtime keeps running status */
     }
     if (b & 0x80u) {
+#ifdef MSX_ROUTES
+        msx_byte(b, MSX_TRS);                      /* a synth's SysEx begins, ends or is cut (sysex_rx.c) */
+#endif
         um.sysex = b == 0xF0u;
         um.st = b < 0xF0u || b == 0xF2u ? (uint8_t)b : 0;   /* system common/SysEx cancel running status */
         um.need = (uint8_t)um_len(b);
         um.got = 0;
         return;
     }
-    if (um.sysex || !um.st)
+    if (um.sysex) {
+#ifdef MSX_ROUTES
+        msx_byte(b, MSX_TRS);
+#endif
+        return;
+    }
+    if (!um.st)
         return;
     if (um.need == 2u && !um.got) {
         um.d0 = (uint8_t)b;

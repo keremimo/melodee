@@ -191,7 +191,11 @@ static void con_status(void)
     con_puts(e->name);
     con_puts("\r\n");
     con_puts("preset ");
-    con_puts(TSEL->preset < e->npresets ? eng_preset(e, TSEL->preset)->name : "-");
+    {
+        char nm[MOD_PST_NAME + 1u];
+        eng_preset_name(TSEL->eng_req, TSEL->preset, nm, sizeof nm);
+        con_puts(nm);
+    }
     con_puts("\r\n");
     con_kv("bpm", song.g[G_BPM]);
     con_kv("playing", song.playing);

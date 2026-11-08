@@ -35,8 +35,8 @@ static uint32_t fl_jedec_ram(void) { return 0; }
 static void fl_plain_window_init(void) {}
 #define FL_FAR(fn) (fn)
 #include "../firmware/src/storage.c"
-#ifdef BACKUP_TEST_KITS                          /* (mel_fixture.c: the user kits, objects 92..99) */
-#include "../firmware/src/kit_store.c"
+#ifdef BACKUP_TEST_KITS                          /* (mel_fixture.c: the data records (user kits), objects 92..99) */
+#include "../firmware/src/rec_store.c"
 #endif
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
@@ -64,6 +64,7 @@ static uint32_t ed_unpack7(const uint8_t *a, uint32_t na, uint8_t *out, uint32_t
 static void fm1_wdt_feed(void) {}
 static int ed_flash_stop(void) { return transport_busy(); }
 #include "../firmware/src/editor_backup.c"
+#include "../firmware/src/editor_projects.c"           /* Studio's PROJECTS / STORAGE (42, 43) */
 
 static int check(const char *what, int ok)
 {
@@ -94,6 +95,9 @@ static void reset(void)
     erases = 0;
     ed_bk_valid = ed_bk_put = 0;
     persist_old = tmpl_old = preset_old_write = 0;
+#ifdef BACKUP_TEST_KITS
+    rec_hooks();                                 /* (the host's record calls a synth's take writes through) */
+#endif
 }
 
 static uint32_t call(uint32_t cmd, const uint8_t *a, uint32_t n)
@@ -277,9 +281,63 @@ static int expanded_recording_archive(void)
     return bad;
 }
 #ifndef BACKUP_TEST_NO_MAIN
+/* Studio's PROJECTS (42) and STORAGE (43) on simulated flash: slots past 4, duplicate, rename, delete, the pool map;
+ * BACKUP_LIST 1 (an inventory) writes nothing */
+static uint32_t studio(uint32_t cmd, const uint8_t *a, uint32_t n) { rep_n = 0; ed_projects_handle(cmd, a, n); return rep_n; }
+static int owners(uint32_t who)                         /* STORAGE: the sectors slot / kit `who` holds (-1: rc) */
+{
+    int k = 0;
+    studio(ED_STORAGE, 0, 0);
+    if (rep[0]) return -1;
+    for (uint32_t i = 0; i < ST_LN; i++) k += rep[7 + i] == who;
+    return k;
+}
+static int studio_projects(void)
+{
+    int bad = 0;
+    uint8_t a[16];
+    uint32_t n, f0, e, i;
+    reset();
+    for (i = NPART; i < NTRK; i++) {                    /* the MIDI-only tracks as melodee_init sets them (a channel) */
+        track_defaults(&trk[i]); set_engine_of(&trk[i], trk_def_engine(i)); apply_preset_to(&trk[i], trk_def_preset(i));
+        trk[i].engine = trk[i].eng_req;
+    }
+    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0};
+    studio(ED_STORAGE, 0, 0);
+    f0 = rep[3] | rep[4] << 7;
+    bad += check("STORAGE: rc 0, every linear sector, free = the pool's, 4,056 B each",
+                 !rep[0] && (rep[1] | rep[2] << 7) == ST_LN && (int)f0 == st_project_free() && (rep[5] | rep[6] << 7) == ST_LIN_PAYLOAD_MAX);
+    a[0] = 3; a[1] = 19; memcpy(a + 2, "TWENTY", 6);
+    n = studio(ED_PROJECTS, a, 8);
+    st_hdr_t h;
+    bad += check("PROJECTS save as slot 20: its item, the stored size", !rep[1] && rep[2] == 19 && rep[3] == 19 && rep[4] == 1 &&
+                 st_current(st_proj_obj(19), &h) >= 0 && (rep[5] | rep[6] << 7 | rep[7] << 14) == h.len && !memcmp(rep + 8, "TWENTY", 7));
+    bad += check("STORAGE: slot 20 owns sectors, the free count fell by as many", owners(20) > 0 && (rep[3] | rep[4] << 7) == f0 - (uint32_t)owners(20));
+    studio(ED_PROJECTS, a, 0);
+    bad += check("PROJECTS status after the save: slot 20, unchanged, TWENTY", rep[0] == 127 && rep[2] == 19 && !rep[3] && !memcmp(rep + 4, "TWENTY", 7));
+    a[0] = 1; a[1] = 19; studio(ED_PROJECTS, a, 2);
+    studio(ED_PROJECTS, a, 0);
+    bad += check("PROJECTS load slot 20, then status: slot 20, unchanged", rep[2] == 19 && !rep[3]);
+    a[0] = 5; a[1] = 19; a[2] = 31; studio(ED_PROJECTS, a, 3);
+    bad += check("PROJECTS duplicate 20 -> 32: a copy with its name, the music still slot 20's", !rep[1] && rep[2] == 19 && rep[3] == 31 &&
+                 rep[4] == 1 && !memcmp(rep + 8, "TWENTY", 7) && project_used(31) && owners(32) > 0);
+    a[0] = 4; a[1] = 31; memcpy(a + 2, "LAST ONE", 8); studio(ED_PROJECTS, a, 10);
+    bad += check("PROJECTS rename slot 32: its name, the music's kept", !rep[1] && !memcmp(rep + 8, "LAST ONE", 9) && !memcmp(proj_name, "TWENTY", 7));
+    a[0] = 0; a[1] = 16; a[2] = 32; studio(ED_PROJECTS, a, 3);
+    bad += check("PROJECTS list from 17: sixteen of 32, slot 20 and 32 used", !rep[1] && (rep[3] | rep[4] << 7) == 16 && (rep[5] | rep[6] << 7) == 16 &&
+                 (rep[7] | rep[8] << 7) == PROJ_SLOTS && rep[9] == 16 && !rep[10]);
+    a[0] = 6; a[1] = 19; studio(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS delete slot 20: empty, its sectors free, the music has no slot", !rep[1] && rep[2] == 127 && !rep[4] && !owners(20) && owners(32) > 0);
+    a[0] = 1; studio(ED_PROJECTS, a, 2);
+    bad += check("PROJECTS load the deleted slot: rc 1", rep[1] == 1);
+    e = erases; a[0] = 1;
+    call(ED_BACKUP_LIST, a, 1);
+    bad += check("BACKUP_LIST 1: an inventory, no flash erased, slot 32 listed with its size", !rep[1] && erases == e);
+    return bad;
+}
 int main(void)
 {
-    int expanded_bad = expanded_recording_archive();
+    int expanded_bad = expanded_recording_archive() + studio_projects();
 
     int bad = 0;
     uint32_t len = 0, crc = 0, before;
@@ -503,19 +561,17 @@ int main(void)
         b.nslot = 3;
         bad += check("a bank with the wrong slot count is refused", put_all(7, &b, sizeof b, st_crc32(&b, sizeof b)) == 2u);
     }
-    {   /* CZ-1 banks: a never-saved bank (BANK A..D: Casio's factory tones) is no object of the backup, so a
-         * restore keeps it the default; a saved one is carried byte for byte */
-        static cz_bank_t cb;
+    {   /* Melodee 1.x's CZ-1 banks (TONE banks: converted into user presets): a never-saved one is no object of the
+         * backup; a saved one is carried byte for byte */
+        static cz_bank_t cb, rb;
         reset();
-        cz_bank_boot();
-        bad += check("CZ-1: a never-saved BANK A (its factory default) lists as length 0",
-                     list(9, &len, &crc) == 0 && len == 0 && cz_bank_load(0)->used == 0xFFFFu);
+        bad += check("CZ-1: a never-saved BANK A lists as length 0", list(9, &len, &crc) == 0 && len == 0);
         cz_bank_empty(&cb, 0);
         memcpy(cb.tone[3].raw, cz_fac(7), CZ_BYTES);
         cb.used = 1u << 3;
         bad += check("CZ-1: a saved BANK A restores and lists with its 2332 B",
                      put_all(9, &cb, sizeof cb, st_crc32(&cb, sizeof cb)) == 0 && list(9, &len, &crc) == 0 &&
-                     len == sizeof cb && cz_bank_load(0)->used == 1u << 3);
+                     len == sizeof cb && st_load(OBJ_CZBANK0, &rb, sizeof rb) == (int)sizeof rb && rb.used == 1u << 3);
         bad += check("CZ-1: length 0 clears native presets while keeping factory tones separate",
                      put_all(9, &cb, 0, st_crc32(&cb, 0)) == 0 && !up_used(144) &&
                      list(9, &len, &crc) == 0 && len == 0);

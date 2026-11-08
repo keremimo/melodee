@@ -206,13 +206,13 @@ static void smk_wheels(void)
     }
     t = TSEL;
     smk_wheel_trk = (uint8_t)song.sel;
-    smk_modw = drum_track(t) ? 0u : (uint8_t)mw;
-    if (drum_track(t))                             /* drums ignore bend and the wheel (as MIDI's) */
+    smk_modw = pads_flag(t, MOD3_PD_NOBEND) ? 0u : (uint8_t)mw;
+    if (pads_flag(t, MOD3_PD_NOBEND))           /* a kit ignores bend and the wheel (as MIDI's drums) */
         return;
     if (b != sent_b) {
         sent_b = b;
         t->bend_raw = (int16_t)b;                  /* PROPHET (its BEND) and FM6 (its DX7 range) read this */
-        if (t->eng_req != ENGI_PROPHET)
+        if (!eng_of(t->eng_req)->bend_range)       /* (else the engine's own range: voice.c trk_bend_own) */
             midi_bend_target[song.sel % NTRK] = b * (SMK_BEND_ST * 256) / (b < 0 ? 8192 : 8191);
     }
     if (mw != sent_m) {
@@ -231,6 +231,8 @@ static void fm1_fault(const fm1_crash_t *c)
         fm1_core1_bar_set();                          /* one core on every boot until power-off */
 #endif
     fm1_audio_stop();
+    mod_run.crashed = 1;                              /* (the next boot leaves out the module whose code ran) */
+    mod_run.pc = c->pc;
     scr_wake_now();
     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
     draw_text_line(0, 10, 240, TY_TX, "Melodee crash", UI_CRASH_INK, UI_CRASH_BG, 1);   /* (large type) */
@@ -253,6 +255,7 @@ static void fm1_fault(const fm1_crash_t *c)
 /* power-on: the parts with their default sounds (TRK_DEF); the sequencers empty */
 static void melodee_init(void)
 {
+    msx_reset();                                     /* the synths' SysEx: the router, the host table's calls */
     uint32_t i;
     trk_voices_bind();
     midi_insert_init();
@@ -262,8 +265,7 @@ static void melodee_init(void)
     for (i = 0; i < G_COUNT; i++)
         song.g[i] = GP[i].def;
     undo_depth++;                             /* (no undo copy of the power-on loads) */
-    fm6_init();                               /* every track's FM6 patch: the init voice */
-    cz_init();
+    sch_info_sync();                          /* (the synths' patches: schema.c) */
     for (i = 0; i < NTRK; i++) {
         track_t *t = &trk[i];
         track_defaults(t);
@@ -381,8 +383,15 @@ static void fm1_main(void)
     fm1_audio_unmute();                       /* the codec settled on silent I2S since audio_init: no cold-boot click */
     if (boot_work.state != 2u)
         lcd_fill(0, 0, 240, 240, T_BG);
+#if MELODEE_MODULES
+    if (mod_blamed && !boot_work.state) {     /* the last run crashed in a synth module's code: it is left out */
+        boot_work.state = 5u;
+        ui.force = 1;
+    }
+#endif
 #ifdef RES_BASE
-    if (flash_ok && !res_ok && !boot_work.state) {    /* the resource region missing: ask for an install (ui_boot.c) */
+    if (flash_ok && (!res_ok || !SHIPPED_OK()) && !boot_work.state) {   /* the resource region or a shipped synth
+                                                      * module missing: ask for an install (ui_boot.c) */
         boot_work.state = 4u;
         ui.force = 1;
     }
@@ -393,6 +402,9 @@ static void fm1_main(void)
         wire_release();                                 /* last turn's jobs are done with the scratch */
         fm1_wdt_feed();
         pattern_poll();
+#ifdef MODULE_STORE
+        mod_service(fm1_ms);                            /* synth modules: the used ones in SRAM, the idle ones out */
+#endif
 #if MELODEE_USB_HOST
         uh_task(fm1_ms);                                /* before usb_retry: a host port is not retried as a device */
         if (uh.msg) {
@@ -470,8 +482,7 @@ static void fm1_main(void)
                 fm1_enter_uboot();
             }
         }
-        cz_service();
-        fm6_service();                                  /* DX7 SysEx for FM6, a pending FM6 settings save */
+        msx_service();                                  /* the synths' SysEx: a frame to its module */
 #if MELODEE_OTA
         ed_service();                                   /* web editor SysEx */
         ota_service();                                  /* M-UPGRADE handshake */

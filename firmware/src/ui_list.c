@@ -34,7 +34,7 @@ static struct { char label[12], val[16], unit[8]; uint16_t vc; uint8_t on; } lca
 static uint32_t page_titled(const char *t)              /* the page of that title, NPAGES none */
 {
     uint32_t i;
-    for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, t); i++)
+    for (i = 0; i < NPAGES && !str_eq(PG(i).title, t); i++)
         ;
     return i;
 }
@@ -42,7 +42,7 @@ static const list_t *list_of(uint32_t page)             /* the list page i shows
 {
     uint32_t l;
     for (l = 0; l < NELEM(LISTS); l++)
-        if (str_eq(PAGES[page].title, LISTS[l].title))
+        if (str_eq(PG(page).title, LISTS[l].title))
             return &LISTS[l];
     return 0;
 }
@@ -52,7 +52,7 @@ static int list_gone(uint32_t i)
     uint32_t l, r;
     for (l = 0; l < NELEM(LISTS); l++)
         for (r = 0; r < LISTS[l].n; r++)
-            if (!str_eq(LISTS[l].row[r].page, LISTS[l].title) && str_eq(LISTS[l].row[r].page, PAGES[i].title))
+            if (!str_eq(LISTS[l].row[r].page, LISTS[l].title) && str_eq(LISTS[l].row[r].page, PG(i).title))
                 return 1;
     return 0;
 }
@@ -178,7 +178,7 @@ static void list_enter(void)
     p = page_titled(rw->page);
     if (p >= NPAGES)
         return;
-    d = page_desc(&PAGES[p], rw->slot, &vp);
+    d = page_desc(&PG(p), rw->slot, &vp);
     if (d && vp && d->fmt == F_ENUM && d->names && d->max > d->min)
         vlist_open((uint8_t)p, rw->slot);
 }

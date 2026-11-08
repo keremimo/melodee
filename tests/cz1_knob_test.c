@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* CZ-1's knobs (the SC_CZ1 pages, cz_edit.h), through cz_ed_put as the device writes them, rendered:
+/* CZ-1's knobs (its schema's pages, the module's cz_ui.c), through cz_ed_put as the device writes them, rendered:
  *   ALL WORK   on a tone that uses every part of the CZ (1+2', both lines' own values, detune, vibrato,
  *              eight-step envelopes), each panel value at its minimum and maximum changes the sound; the one
  *              exception is the level of END's own step, which the CZ holds at 0
@@ -72,7 +72,7 @@ static double knob(track_t *t, const uint8_t *base, uint32_t id, int *edits)
     *edits = 0;
     for (int side = 0; side < 2; side++) {
         memcpy(cz_patch_of(0)->raw, base, CZ_BYTES);
-        if (!cz_ed_put(0, id, (uint32_t)(side ? CZ_PD[id].max : CZ_PD[id].min), raw))
+        if (!cz_ed_put(cz_patch_of(0)->raw, id, (uint32_t)(side ? sch_pd(ENGI_CZ, id)->max : sch_pd(ENGI_CZ, id)->min), raw))
             continue;
         ++*edits;
         memcpy(cz_patch_of(0)->raw, raw, CZ_BYTES);
@@ -135,13 +135,13 @@ int main(void)
     render(t, out);
     check("renders are deterministic", change_db() == -999);
     for (id = 0; id < LCZ_NP; id++) {
-        if (!CZ_PD[id].label || end_level(id, p))
+        if (!sch_pd(ENGI_CZ, id) || end_level(id, p))
             continue;
         double d = knob(t, base, id, &edits);
         knobs++;
         live += edits && d > -60;
         if (!edits || d <= -60) {
-            printf("cz1 knobs:   no change: id %u %s (%d edits, %.1f dB)\n", id, CZ_PD[id].label, edits, d);
+            printf("cz1 knobs:   no change: id %u %s (%d edits, %.1f dB)\n", id, sch_pd(ENGI_CZ, id)->label, edits, d);
             dead++;
         }
         dim += !cz_ed_active(base, id);
@@ -169,13 +169,13 @@ int main(void)
         }
         render(t, ref);
         for (id = 0; id < LCZ_NP; id++) {
-            if (!CZ_PD[id].label || cz_ed_active(base, id))
+            if (!sch_pd(ENGI_CZ, id) || cz_ed_active(base, id))
                 continue;
             n++;
             double d = knob(t, base, id, &edits);
             if (d != -999) {
                 printf("cz1 knobs:   %.16s: id %u %s drawn dim but changes the sound (%.1f dB)\n", base + 128, id,
-                       CZ_PD[id].label, d);
+                       sch_pd(ENGI_CZ, id)->label, d);
                 bad++;
             }
         }

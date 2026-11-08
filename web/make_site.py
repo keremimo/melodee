@@ -55,7 +55,7 @@ def installer_module(name, exports):
 
 def installer_libraries():
     lib = "\n".join(strip_module((HERE / name).read_text(encoding="utf-8"))
-                    for name in ("fm1pkg.js", "fm1ota.js", "fm1backup.js", "fm1res.js"))
+                    for name in ("fm1pkg.js", "fm1ota.js", "fm1backup.js", "fm1res.js", "fm1mods.js"))
     for source, exports in (
         ("progress.js", ["progressModel", "remaining", "afterFailure", "describeDevice", "planFor"]),
         ("keepalive.js", ["hold", "busyElsewhere"]),
@@ -198,14 +198,17 @@ def publish_manual(src, dest, version=None, preserve_nightly=False):
 
 
 def publish_resources(source, published):
-    """the build's resource region (build/melodee-res.bin beside the package) as <package>-res.bin: the installer
-    writes it after the firmware (fm1res.js)"""
-    source, target = Path(source), published.with_name(published.stem + "-res.bin")
-    for res in (source.with_name(source.stem + "-res.bin"), source.with_name("melodee-res.bin")):
-        if res.exists():
-            if res.resolve() != target.resolve():   # a channel re-read from the site is already in place
-                shutil.copy(res, target)
-            return
+    """the build's resource region (build/melodee-res.bin beside the package) as <package>-res.bin and its synth
+    modules (build/melodee-mods.bin) as <package>-mods.bin: the installer writes them after the firmware (fm1res.js,
+    fm1mods.js)"""
+    source = Path(source)
+    for kind in ("res", "mods"):
+        target = published.with_name(f"{published.stem}-{kind}.bin")
+        for res in (source.with_name(f"{source.stem}-{kind}.bin"), source.with_name(f"melodee-{kind}.bin")):
+            if res.exists():
+                if res.resolve() != target.resolve():   # a channel re-read from the site is already in place
+                    shutil.copy(res, target)
+                break
 
 
 def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=None):

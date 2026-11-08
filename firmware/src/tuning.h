@@ -5,4 +5,9 @@
 #define A4_MAX 480
 #define A4_DEFAULT 440
 /* Device preference, independent of a project's cents offset (G_TUNE). */
+#if defined(MOD_SIDE) && MOD_SIDE   /* (a synth module: the firmware's, the host table) */
+static const int16_t *mod_imp_tuning_a4;
+#define tuning_a4 (*mod_imp_tuning_a4)
+#else
 static int16_t tuning_a4 = A4_DEFAULT;
+#endif

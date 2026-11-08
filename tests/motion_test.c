@@ -79,12 +79,13 @@ static int compact_project(void)
     project_t before, after; project_store_t packed, corrupt;
     project_capture(&before);
     bad += check("FUN16 fits the retained and flash extent", sizeof(proj_slot) == 4u * PROJ_STORE_SIZE && proj_pack(&packed, &before));
-    fm6_fn[0][FN_PTIME] = 33;                            /* (FM6 functions: in the FBKK around FUN16, not in FUN16) */
+    fm6_fn_set(1, FN_PTIME, 33);                         /* (FM6 functions, track 2's FM6: in the FBKK around FUN16, not
+                                                          * in FUN16) */
     project_capture(&before);
     {
         static uint8_t fbk[BANK_STORE_SIZE];
         bad += check("FBKK keeps the tracks' FM6 function settings", bank_pack(fbk, &before, 1) &&
-                     bank_valid(fbk, sizeof fbk) && proj_scratch.fm6_fn_ok && proj_scratch.fm6_fn[0][FN_PTIME] == 33u);
+                     bank_valid(fbk, sizeof fbk) && trk[1].eng_req == ENGI_FM6 && proj_scratch.voice_fn_ok && proj_scratch.voice_fn[1][FN_PTIME] == 33u);
     }
     proj_fn_none(&before); proj_pack(&packed,&before);
     bad += check("FUN16 round trip preserves signed values/FM params/probability/motion", proj_import(&after, &packed, sizeof packed) &&
@@ -206,25 +207,25 @@ static int native_motion_test(void)
     for (uint32_t e = 0; e < 3u; e++) {
         ui_power_on(); track_t *t = TSEL; set_engine_of(t, engines[e]); apply_preset_to(t, 0);
         uint32_t i = bytes[e], tag = motion_native_tag(t), id = MO_NATIVE + i;
-        uint8_t old[MO_NATIVE_N], base = *motion_native_at(t, i), changed = base == 80u ? 70u : 80u;
+        uint8_t old[MO_NATIVE_N], base = (uint8_t)motion_slot_get(t, i), changed = base == 80u ? 70u : 80u;
         song.rec = 1; seq_start(); seq_tick(t, CTL);
-        motion_native_peek(t, old); *motion_native_at(t, i) = changed; motion_native_edited(t, old);
+        motion_native_peek(t, old); motion_slot_put(t, i, changed); motion_native_edited(t, old);
         bad += check("native edit records tagged motion and keeps its patch base", motion.count == 1u &&
             motion.event[0].param == id && motion.event[0].value == (int16_t)(tag << 8 | changed) && motion_nbase[0][i] == base);
         project_t q, restored; project_store_t packed; uint8_t unpacked[FP_SIZE + 1u];
         project_capture(&q); fm6_unpack(q.fm6[0], unpacked);
         bad += check("native project snapshot saves the original patch while motion sounds",
-            (tag == MO_TAG_P5 ? q.p5[0].raw[i] : tag == MO_TAG_CZ ? q.cz[0].raw[i] : unpacked[i]) == base &&
+            (tag == MO_TAG_P5 ? q.p5[0][i] : tag == MO_TAG_CZ ? q.cz[0][i] : unpacked[i]) == base &&
             proj_pack(&packed, &q) && proj_import(&restored, &packed, sizeof packed) &&
             restored.motion.event[0].value == (int16_t)(tag << 8 | changed));
-        seq_stop(); bad += check("native stop immediately restores the original patch", *motion_native_at(t, i) == base);
+        seq_stop(); bad += check("native stop immediately restores the original patch", motion_slot_get(t, i) == base);
         song.rec = 0; seq_start(); seq_tick(t, CTL);
-        bad += check("native motion replays from the real sequencer", *motion_native_at(t, i) == changed);
+        bad += check("native motion replays from the real sequencer", motion_slot_get(t, i) == changed);
         motion_set_enabled(t, 0);
-        bad += check("native bypass restores the patch without losing events", *motion_native_at(t, i) == base && motion.count == 1u);
+        bad += check("native bypass restores the patch without losing events", motion_slot_get(t, i) == base && motion.count == 1u);
         motion_set_enabled(t, 1); motion_step(t, 0, &motion);
-        motion_native_peek(t, old); *motion_native_at(t, i) = 65; motion_native_edited(t, old); seq_stop();
-        bad += check("native manual edit outside REC becomes the new patch base", *motion_native_at(t, i) == 65);
+        motion_native_peek(t, old); motion_slot_put(t, i, 65); motion_native_edited(t, old); seq_stop();
+        bad += check("native manual edit outside REC becomes the new patch base", motion_slot_get(t, i) == 65);
         int16_t lane_value;
         bad += check("native motion has a named lane and the raw value", (mo_name(id|256u, (char *)unpacked, sizeof unpacked), unpacked[0]) &&
             mo_value(id|256u, 0, &lane_value) && lane_value == changed);
@@ -232,8 +233,8 @@ static int native_motion_test(void)
         bad += check("native lane clear removes its events", !motion.count);
         bad += check("native persisted project restores base then replays its motion", !project_restore_runtime(&restored));
         seq_start(); seq_tick(t, CTL);
-        bad += check("native saved events replay after loading", *motion_native_at(TSEL, i) == changed);
-        seq_stop(); bad += check("loaded native motion restores the saved patch", *motion_native_at(TSEL, i) == base);
+        bad += check("native saved events replay after loading", motion_slot_get(TSEL, i) == changed);
+        seq_stop(); bad += check("loaded native motion restores the saved patch", motion_slot_get(TSEL, i) == base);
     }
     ui_power_on(); set_engine_of(TSEL, ENGI_PROPHET); apply_preset_to(TSEL, 0);
     go_home(); song.rec = 1; turn(EN_K1, -1);
@@ -246,12 +247,12 @@ static int native_motion_test(void)
     bad += check("CZ Stage DCW records through the real UI", motion.count && (uint32_t)motion.event[0].value >> 8 == MO_TAG_CZ);
     seq_stop();
     ui_power_on(); set_engine_of(TSEL, ENGI_FM6); apply_preset_to(TSEL, 0);
-    for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].scope == SC_FMOP) { ui.home = 0; ui.page = p; break; }
+    for (uint32_t p = 0; p < NPAGES; p++) if (sec_inst(p)) { ui.home = 0; ui.page = p; break; }
     song.rec = 1; seq_start(); seq_tick(TSEL, CTL); turn(EN_K1, -1);
     bad += check("FM6 operator page records its native patch through UI", motion.count && (uint32_t)motion.event[0].value >> 8 == MO_TAG_FM6);
     seq_stop();
     ui_power_on(); set_engine_of(TSEL, ENGI_FM6); uint32_t page = 0;   /* (not the Prophet: its events below are another's) */
-    for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].graph == GR_MOTION) page = p;
+    for (uint32_t p = 0; p < NPAGES; p++) if (PG(p).graph == GR_MOTION) page = p;
     bad += check("empty motion page is hidden", !page_visible(page));
     motion_set_event(TSEL, 0, P_LEVEL, 50);
     bad += check("recorded motion makes its page visible", page_visible(page));
@@ -261,11 +262,11 @@ static int native_motion_test(void)
     motion_set_event(TSEL, 0, MO_NATIVE + P5_CUTOFF, MO_TAG_P5 << 8 | 60);
     bad += check("another engine's native events cannot expose an empty motion page", !page_visible(page));
     motion_clear(TSEL);
-    bad += check("invalid native tags, fields and values are refused", !motion_native_ok(MO_NATIVE, 0) &&
-        !motion_native_ok(MO_NATIVE + P5_UNISON, MO_TAG_P5 << 8 | 1) &&
-        !motion_native_ok(MO_NATIVE + P5_SAW_A, MO_TAG_P5 << 8 | 127) &&
-        !motion_native_ok(MO_NATIVE + FP_TRNSP, MO_TAG_FM6 << 8) &&
-        !motion_native_ok(MO_NATIVE + FP_DET, MO_TAG_FM6 << 8 | 99));
+    bad += check("invalid native tags, fields and values are refused", !motion_native_ok(MO_NATIVE, 0, 0) &&
+        !motion_native_ok(MO_NATIVE + P5_UNISON, MO_TAG_P5 << 8 | 1, 0) &&
+        !motion_native_ok(MO_NATIVE + P5_SAW_A, MO_TAG_P5 << 8 | 127, 0) &&
+        !motion_native_ok(MO_NATIVE + FP_TRNSP, MO_TAG_FM6 << 8, 0) &&
+        !motion_native_ok(MO_NATIVE + FP_DET, MO_TAG_FM6 << 8 | 99, 0));
     ui_power_on(); set_engine_of(TSEL, ENGI_CZ); apply_preset_to(TSEL, 0);
     for (uint32_t j = 0; j < MOTION_MAX - 1u; j++) motion_set_event(TSEL, j, P_LEVEL, 30);
     song.rec = 1; seq_start(); seq_tick(TSEL, CTL); uint8_t old[MO_NATIVE_N]; motion_native_peek(TSEL, old);

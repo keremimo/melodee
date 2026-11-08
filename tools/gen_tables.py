@@ -25,6 +25,13 @@ def arr(name, ctype, vals, per=12, ram=False):
     return out
 
 
+def shared(name, ctype, lines):
+    """a table the firmware keeps and a synth module reads in place (mod_abi3.h host table: the module's
+    compile sees a pointer the loader sets, not a copy)"""
+    return ["#if defined(MOD_SIDE) && MOD_SIDE   /* (a synth module: the firmware's) */",
+            f"static const {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", *lines, "#endif"]
+
+
 def nibbles(steps, first):
     """steps (each 0..15) two per byte, low nibble first (dsp_tables_init adds them up from first)"""
     assert first == 0 and all(0 <= d < 16 for d in steps)
@@ -47,7 +54,7 @@ def main(path):
          "#define TABLE_RAM __attribute__((section(\".data.tables\")))   /* RAM, not XIP flash: per-sample lookups */",
          "#endif", ""]
     # (1025 points: SINE[i + 1] needs no wrap; the users mask)
-    L += arr("SINE", "int16_t", [int(round(32767 * math.sin(2 * math.pi * i / 1024))) for i in range(1025)])
+    L += shared("SINE", "int16_t", arr("SINE", "int16_t", [int(round(32767 * math.sin(2 * math.pi * i / 1024))) for i in range(1025)]))
     # phase increment for pitch in 1/16 semitone, MIDI 0..127
     inc = []
     for p in range(128 * 16):
@@ -58,10 +65,10 @@ def main(path):
     oct_ = inc[1856:2048]
     assert all(inc[q] == oct_[(q + 64) % 192] >> (10 - (q + 64) // 192) for q in range(2048))
     assert all((q + 64) * 21846 >> 22 == (q + 64) // 192 for q in range(2048))
-    L += arr("PITCH_OCT", "uint32_t", oct_, 8)
+    L += shared("PITCH_OCT", "uint32_t", arr("PITCH_OCT", "uint32_t", oct_, 8))
     # Device concert pitch: exact frequency ratios and FM6's Q24 octave offsets.
-    L += arr("A4_RATIO", "uint32_t", [round((1 << 24) * hz / 440) for hz in range(400, 481)], 8)
-    L += arr("A4_LOG", "int32_t", [round((1 << 24) * math.log2(hz / 440)) for hz in range(400, 481)], 8)
+    L += shared("A4_RATIO", "uint32_t", arr("A4_RATIO", "uint32_t", [round((1 << 24) * hz / 440) for hz in range(400, 481)], 8))
+    L += shared("A4_LOG", "int32_t", arr("A4_LOG", "int32_t", [round((1 << 24) * math.log2(hz / 440)) for hz in range(400, 481)], 8))
     L += ["/* phase increment of pitch p in 1/16 semitone, 0..2047 (MIDI 0..127): 440 Hz * 2^((p / 16 - 69) / 12) */",
           "static inline uint32_t pitch_inc(uint32_t p)",
           "{",
@@ -86,7 +93,8 @@ def main(path):
     L += arr("CUTOFF_HZ", "uint16_t", [int(round(f)) for f in fc])
     # trapezoidal (Simper) SVF: g = tan(pi fc / FS), Q12; stable at any cutoff/resonance
     L += arr("SVF_G", "uint16_t", [int(4096 * math.tan(math.pi * min(f, 0.45 * FS) / FS)) for f in fc])
-    L += ["#if !defined(MELODEE_PROPHET) || MELODEE_PROPHET"]
+    L += ["#ifndef P5_OVERSAMPLE", "#define P5_OVERSAMPLE 1 /* prototype: benchmark base rate before enabling optional 2x */",
+          "#endif", "#if !defined(MELODEE_PROPHET) || MELODEE_PROPHET"]
     L += [f"#define P5_KEYTRACK_HALF_Q7 {round(128 * 256 * 127 * math.log(2) / (2 * 192 * math.log(fc[-1] / fc[0])))}"]
     # LFO rate, raw 0..127. Measured on a Rev-4 factory demo (rates 74..97 -> 2.4..8.4 Hz,
     # within 2 %): ln Hz = -3.1005 + 0.05387 raw, bent at the ends to the documented .022 / 500 Hz.
@@ -117,7 +125,7 @@ def main(path):
     L += ["#endif"]  # oversampling
     tanh = arr("P5_TANH", "float", [f"{math.tanh(i / 128):.9e}f" for i in range(1025)])
     tanh[0] = tanh[0].replace(" =", ' __attribute__((section(".dsp_tables"))) =')
-    L += tanh
+    L += shared("P5_TANH", "float", tanh)
     exp2 = arr("P5_EXP2", "float", [f"{2 ** (i / 512):.9e}f" for i in range(514)])
     exp2[0] = exp2[0].replace(" =", ' __attribute__((section(".dsp_tables"))) =')
     L += exp2
@@ -132,10 +140,15 @@ def main(path):
     # soft clip curve for |x| in 0..2 (Q12 in, Q15 out): tanh
     tanh_q15 = arr("TANH_Q15", "int16_t", [int(32767 * math.tanh(i / 256 * 2)) for i in range(257)])
     tanh_q15[0] = tanh_q15[0].replace(" =", ' __attribute__((section(".dsp_tables"))) =')
-    L += tanh_q15
+    L += shared("TANH_Q15", "int16_t", tanh_q15)
     L += fm6_tables()
     L += sid_tables()
     L += sid_kit_tables()
+    # the host table's shared tables by id (mod_abi3.h MOD3_T_*, frozen): the firmware hands a module these (eng_module.c
+    # mod_h_table); their names stay here, the firmware's sources name none
+    ids = ["SINE", "TANH_Q15", "SVF_G", "PITCH_OCT", "A4_RATIO", "A4_LOG", "P5_TANH", "FM6_SIN", "FM6_MKI_LOG",
+           "FM6_MKI_EXP", "FM6_OPL_LOG", "FM6_OPL_EXP"]
+    L += ["#ifndef MOD_SIDE", "#define SHARED_TABLES(X) " + " ".join(f"X(MOD3_T_{n}, {n})" for n in ids), "#endif"]
     Path(path).write_text("\n".join(L) + "\n")
     print(f"tables: {path}")
 
@@ -370,6 +383,13 @@ def sid_kit_tables():
     return L
 
 
+def shared_ram(name, ctype, line):
+    """a table the firmware fills at power-on (dsp_tables_init) that a synth module reads in place: a pointer
+    the loader sets in the module's compile (dsp_tables_init's writes there compile, never run)"""
+    return ["#if defined(MOD_SIDE) && MOD_SIDE   /* (a synth module: the firmware's) */",
+            f"static {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", line, "#endif"]
+
+
 def fm6_tables():
     """FM6 (eng_fm6.c): Dexed's lookup tables, computed as Dexed computes them at 44.1 kHz with its
     64-sample blocks (MSFA sin.cc, exp2.cc, freqlut.cc, lfo.cc, pitchenv.cc, porta.cpp, dx7note.cc,
@@ -388,7 +408,7 @@ def fm6_tables():
         sin_t[i + 512] = -((v + 32) >> 6)
         u, v = (u * c - v * s + (1 << 29)) >> 30, (u * s + v * c + (1 << 29)) >> 30
     assert all(abs(x) <= 1 << 24 and f32(x / 2**24) == x / 2**24 for x in sin_t)   # (float)x * 2^-24 is exact
-    L += [f"#define FM6_SIN_C {c}", f"#define FM6_SIN_S {s}", "static float FM6_SIN[1025];"]
+    L += [f"#define FM6_SIN_C {c}", f"#define FM6_SIN_S {s}"] + shared_ram("FM6_SIN", "float", "static float FM6_SIN[1025];")
     # Exact integer phase steps for Q24 log pitches (Freqlut). The continuous
     # signal path is float, but float cannot carry every bit of this pitch.
     y, inc, fl = float(1 << 44) / FS, math.pow(2, 1.0 / 1024), []
@@ -419,9 +439,9 @@ def fm6_tables():
           for i in range(1024)]
     ex = [int(round(f32((math.pow(2, f32(i / 1024.0)) - 1) * 4096))) for i in range(1024)]
     L += arr("FM6_MKI_LOG_H", "uint16_t", lg, 16)           # FM6_MKI_LOG: lg + reversed: half a cycle (the sign: the phase)
-    L += ["static uint16_t FM6_MKI_LOG[1024];"]
+    L += shared_ram("FM6_MKI_LOG", "uint16_t", "static uint16_t FM6_MKI_LOG[1024];")
     L += arr("FM6_MKI_EXP_D", "uint8_t", nibbles([ex[i] - ex[i - 1] - 2 for i in range(1, 1024)], ex[0]), 16)
-    L += ["static uint16_t FM6_MKI_EXP[1024];             /* 4096 + exp, reversed */"]
+    L += shared_ram("FM6_MKI_EXP", "uint16_t", "static uint16_t FM6_MKI_EXP[1024];             /* 4096 + exp, reversed */")
     # OPL (EngineOpl.cpp): the OPL's quarter-wave log sine and exponent ROMs
     opl_log = [
         2137, 1731, 1543, 1419, 1326, 1252, 1190, 1137, 1091, 1050, 1013, 979, 949, 920, 894, 869,
@@ -441,7 +461,7 @@ def fm6_tables():
         7, 7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2,
         2, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
     L += arr("FM6_OPL_LOG_H", "uint16_t", opl_log, 16)      # FM6_OPL_LOG: half a cycle
-    L += ["static uint16_t FM6_OPL_LOG[256];"]
+    L += shared_ram("FM6_OPL_LOG", "uint16_t", "static uint16_t FM6_OPL_LOG[256];")
     opl_exp = [
         0, 3, 6, 8, 11, 14, 17, 20, 22, 25, 28, 31, 34, 37, 40, 42,
         45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90,
@@ -460,7 +480,7 @@ def fm6_tables():
         854, 859, 864, 869, 874, 880, 885, 890, 895, 900, 906, 911, 916, 921, 927, 932,
         937, 942, 948, 953, 959, 964, 969, 975, 980, 986, 991, 996, 1002, 1007, 1013, 1018]
     L += arr("FM6_OPL_EXP_D", "uint8_t", nibbles([opl_exp[i] - opl_exp[i - 1] - 2 for i in range(1, 256)], opl_exp[0]), 16)
-    L += ["static uint16_t FM6_OPL_EXP[256];              /* (0x400 + exp) << 1, reversed */"]
+    L += shared_ram("FM6_OPL_EXP", "uint16_t", "static uint16_t FM6_OPL_EXP[256];              /* (0x400 + exp) << 1, reversed */")
     L += ["/* the RAM tables above, bit for bit as this script made them before (checked by tests/fm6_parity.sh and the",
           " * goldens); fm1_main calls it before anything renders, host builds before main */",
           "static void dsp_tables_init(void)",

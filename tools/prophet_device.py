@@ -33,6 +33,26 @@ def pack(b):
         out += [sum((x >> 7) << j for j, x in enumerate(group))] + [x & 127 for x in group]
     return out
 
+PROPHET = 19   # engines.c ENGI_PROPHET
+
+# a synth's patch and parameters through the editor's synth commands (firmware/src/editor_synth.c: PATCH 86, PARAM 88)
+def patch_get(d, part, engine=127):
+    """-> (engine, bytes) of the part's synth patch"""
+    r = d.request(86, [0, 0, engine & 127, part & 127, part >> 7 & 127])
+    if len(r) < 9 or r[5]: raise RuntimeError(f'Patch read failed: part {part}: {r[:6]}')
+    return r[6], bytearray(unpack(r[9:])[:r[7] | r[8] << 7])
+def patch_put(d, part, engine, raw):
+    r = d.request(86, [1, 0, engine & 127, part & 127, part >> 7 & 127] + pack(bytes(raw)))
+    if r[:6] != [1, 0, engine & 127, part & 127, part >> 7 & 127, 0]: raise RuntimeError(f'Patch rejected: part {part}: {r[:6]}')
+def param_set(d, part, ident, value):
+    u = value + 8192
+    r = d.request(88, [1, part, ident & 127, ident >> 7 & 127, u & 127, u >> 7 & 127])
+    if len(r) < 3 or r[2]: raise RuntimeError(f'Parameter {ident} rejected: part {part}')
+    return r
+def prophet_patch(raw, model=0x32, command=3, group=0, program=0):
+    """a Prophet program's 133 bytes as the synth's patch: then size, model, command, group, program"""
+    return bytearray(bytes(raw[:133]) + bytes([133, model, command, group, program]))
+
 def param_ids():
     source = re.sub(r'/\*.*?\*/', '', (ROOT/'firmware/src/core.h').read_text(), flags=re.S)
     def ids(start):
@@ -132,7 +152,7 @@ def patch(raw, mode, stress):
         for k in (23,24,25,27,28,29,30,31,38,39,41,42):raw[k]=1
         raw[52]=0;raw[53]=5;raw[86]=11;raw[87]=3
         raw[32]=127;raw[43]=raw[44]=0;raw[47]=80;raw[49]=raw[50]=0
-    return bytes([1,0x32,3]+pack(raw))
+    return prophet_patch(raw)
 
 def measure(d,seconds,label,expected,before,expected_steals=0):
     results=[];end=time.monotonic()+seconds
@@ -173,10 +193,8 @@ def bench(d,args):
                                      P_M1AMT=0,P_M2AMT=0,P_M3AMT=0,P_M4AMT=0,
                                      P_RESERVED33=30,P_RESERVED34=70,P_RESERVED35=70,P_RESERVED36=70))
                 if mode is not None:
-                    reply=d.request(95,[1,0]+list(patch(raw,mode,True)))
-                    if reply[:2]!=[1,0]:raise RuntimeError(f'Native patch PUT failed: {reply[:3]}')
-                    readback=d.request(95,[0,0])
-                    if readback[3:]!=list(patch(raw,mode,True)):raise RuntimeError('Native patch readback mismatch')
+                    body=patch(raw,mode,True);patch_put(d,0,PROPHET,body)
+                    if patch_get(d,0,PROPHET)[1]!=body:raise RuntimeError('Native patch readback mismatch')
                 d.request(27,[0])  # Show the Prophet track while measuring the mix.
                 with usb_streams(args.usb):
                     # Include note attack and overload shedding in the window.
@@ -232,9 +250,8 @@ def recordings(d,args):
                     if sound=='sync':r[10]=1;r[32]=90;r[34]=1
                     else:
                         r[5]=0;r[6]=1;r[4]=1;r[33]=95;r[34]=r[35]=r[36]=1
-                body=(list(programs[sound][1:6]) if native else [1,0x32,3])+pack(r)
-                if d.request(95,[1,0]+body)[:2]!=[1,0]:raise RuntimeError('Recording patch rejected')
-                if d.request(95,[0,0])[3:]!=body:raise RuntimeError('Recording patch readback mismatch')
+                body=prophet_patch(r,*(programs[sound][2:6] if native else (0x32,3,0,0)));patch_put(d,0,PROPHET,body)
+                if patch_get(d,0,PROPHET)[1]!=body:raise RuntimeError('Recording patch readback mismatch')
                 d.request(27,[0])
                 notes=([36] if sound==3 else [60] if sound in (16,23) else [60,64,67,71,74]) if native else \
                       [60,63,67,70,74] if sound in ('pad','brass') else [36 if sound=='bass' else 60]

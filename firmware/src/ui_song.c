@@ -11,6 +11,7 @@ static struct {
     uint32_t signature, guard;
     uint16_t epoch;
     uint8_t top, count, range, anchor, end, pending, first, last, track, locked;
+    uint8_t edits;                                       /* edits begun (the editor's SONG2: did its row operation run) */
 } se;
 enum { SONG_CELL_COPY = 1, SONG_CELL_MOVE, SONG_SECTIONS_COPY, SONG_SECTIONS_MOVE };
 /* The target runtime exposes memcpy, so handle overlapping editor ranges here. */
@@ -63,7 +64,7 @@ static int song_edit_begin(void)
         song_edit_shift(h, h + 1, (SONG_UNDO_LEVELS - 1u) * sizeof *h); se.top--;
     }
     song_snapshot_get(&h[se.top++]); se.count = se.top;
-    se.guard = f; se.locked = 1; return 1;
+    se.guard = f; se.locked = 1; se.edits++; return 1;
 }
 static void song_edit_end(void)
 {
@@ -223,6 +224,16 @@ static void song_cell_copy(void) { song_arm(SONG_CELL_COPY); }
 static void song_cell_move(void) { song_arm(SONG_CELL_MOVE); }
 static void song_sections_copy(void) { song_arm(SONG_SECTIONS_COPY); }
 static void song_sections_move(void) { song_arm(SONG_SECTIONS_MOVE); }
+/* the rows past the song's end as an empty song has them (chain_valid: no punch, no sound there) */
+static void song_rows_clear(void)
+{
+    for (uint32_t r = chain_config.count; r < CHAIN_ROWS; r++) {
+        chain_config.row[r] = (chain_row_t){0, 1}; memset(chain_patterns[r], 0, NTRK);
+        memset(chain_config.fx[r], 0, sizeof chain_config.fx[r]);
+        memset(chain_config.sound[r], 0, NTRK);
+    }
+    if (ui.song_row > chain_config.count) ui.song_row = chain_config.count;
+}
 static void song_rows_remove(uint32_t first, uint32_t n)
 {
     uint32_t tail = chain_config.count - first - n;
@@ -232,12 +243,7 @@ static void song_rows_remove(uint32_t first, uint32_t n)
     song_edit_shift(chain_config.sound + first, chain_config.sound + first + n, tail * NTRK);
     song_edit_shift(chain_patterns + first, chain_patterns + first + n, tail * NTRK);
     chain_config.count -= (uint8_t)n;
-    for (uint32_t r = chain_config.count; r < CHAIN_ROWS; r++) {
-        chain_config.row[r] = (chain_row_t){0, 1}; memset(chain_patterns[r], 0, NTRK);
-        memset(chain_config.fx[r], 0, sizeof chain_config.fx[r]);
-        memset(chain_config.sound[r], 0, NTRK);
-    }
-    if (ui.song_row > chain_config.count) ui.song_row = chain_config.count;
+    song_rows_clear();
 }
 static void song_sections_delete(void)
 {

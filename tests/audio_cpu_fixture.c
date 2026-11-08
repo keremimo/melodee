@@ -42,14 +42,14 @@ static int make_fixture(uint32_t count,uint32_t quant,uint32_t spread,uint32_t t
         uint32_t on=quant?0u:8192u+(local*1777u)%49152u;
         uint32_t round=!quant && on>=32768u,view=(cell+round)%NSTEP;
         recorded_note_t r={0};r.on=(uint16_t)on;r.duration=(uint16_t)(14000u+(i*109u)%42000u);
-        recorded_set_note(&r,category>=4u?DRUM_LANE_NOTE[(cell+group)%NLANE]:(uint8_t)(48u+(cell%12u)+group*3u));
+        recorded_set_note(&r,category>=4u?STEP_LANE_NOTE[(cell+group)%NLANE]:(uint8_t)(48u+(cell%12u)+group*3u));
         r.vel=(uint8_t)(70u+i%58u);recorded_set_owner(&r,k*NPAT);recorded_set_exponent(&r,tails?3u:0u);
         r.step=(uint8_t)(cell|(round?64u:0u)|(round && cell==63u?128u:0u));
         recording[i]=r;
         step_t *s=&t->step[view];s->time=ST_NOTE;s->flags|=SF_RECORDED;s->vel=r.vel;
         uint32_t j=0;for(;j<s->n && s->note[j]!=recorded_note(&r);j++);
         if(j==s->n && s->n<4u)s->note[s->n++]=recorded_note(&r);
-        if(category>=4u)for(uint32_t lane=0;lane<NLANE;lane++)if(DRUM_LANE_NOTE[lane]==recorded_note(&r))s->hit|=1u<<lane;
+        if(category>=4u)for(uint32_t lane=0;lane<NLANE;lane++)if(STEP_LANE_NOTE[lane]==recorded_note(&r))s->hit|=1u<<lane;
         assert(recording_valid(&r));
     }
     recording_reindex();memcpy(fixture_notes,recording,sizeof recording);

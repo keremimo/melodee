@@ -599,7 +599,32 @@ def run(a, backend, out, ask):
         (p for p in (pkg.with_name(pkg.stem + "-res.bin"), pkg.with_name("melodee-res.bin")) if p.exists()), None)
     if not a.no_resources and res and res.exists():
         install_resources(up, res, out)
+    mods = Path(a.modules) if a.modules else next(
+        (p for p in (pkg.with_name(pkg.stem + "-mods.bin"), pkg.with_name("melodee-mods.bin")) if p.exists()), None)
+    if not a.no_resources and mods and mods.exists():
+        install_modules(up, mods, out)
     return 0
+
+
+def install_modules(up, mods, out):
+    """the build's synth modules (SID, DRUM: tools/fm1_modules.py) after the resources; never fails the install:
+    without them their tracks stay silent and the FM-1 asks to finish the update"""
+    import fm1_modules
+    from prophet_device import Device
+    dev = up.find()
+    if not dev:
+        print(f"synth modules: the FM-1 did not answer after the update; run tools/fm1_modules.py {mods}", file=out)
+        return
+    name = dev.name
+    dev.link.close()
+    device = Device(name)
+    try:
+        print(f"synth modules: {fm1_modules.push(device, mods.read_bytes(), lambda *s, **k: print(*s, file=out, **k))}",
+              file=out)
+    except (RuntimeError, TimeoutError) as e:
+        print(f"synth modules: {e}; run tools/fm1_modules.py {mods}", file=out)
+    finally:
+        device.close()
 
 
 def install_resources(up, res, out):
@@ -638,7 +663,9 @@ def main(argv=None, backend=None, out=sys.stdout, ask=ask_tty):
     ap.add_argument("--force", action="store_true", help="install a package without the Melodee loader marker")
     ap.add_argument("--resources", metavar="FILE", help="resource region to write after the update (default: "
                     "melodee-res.bin beside the package)")
-    ap.add_argument("--no-resources", action="store_true", help="do not write the resource region")
+    ap.add_argument("--modules", metavar="FILE", help="synth modules to write after the update (default: "
+                    "melodee-mods.bin beside the package)")
+    ap.add_argument("--no-resources", action="store_true", help="do not write the resource region nor the synth modules")
     a = ap.parse_args(argv)
     if bool(a.info) == bool(a.package):
         ap.error("give a PACKAGE.fwsc or --info")

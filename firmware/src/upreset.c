@@ -37,14 +37,14 @@ static const uint8_t UP_NATIVE_PARAMS[] = {
     P_LSYNC,P_LTRIG,P_LPOL,P_SPRD,P_E0,P_E1,P_E2,P_E3,P_E4,P_E5,P_E6,P_E7
 };
 _Static_assert(sizeof UP_NATIVE_PARAMS <= 46u,"native preset parameter storage");
-#include "cz_patch.h"
-#define UP_VER_CZ 8u                            /* native CZ-1 bytes in the 144-byte payload */
+#define UP_VER_CZ 8u                            /* a TONE patch's 144 bytes in the payload (before the native layout) */
+#define UP_VER_BLOB 14u                         /* a synth's patch without a Melodee 1.x format, as the native layout */
 #define UP_PMAX 72u                              /* room for P_COUNT to grow */
 #define UP_USED 0xA5u
 #define UP_STAR 2u
 #define UP_VER 4u                                /* the values as biased bytes */
-#define UP_VER_DRUM 9u
-#define UP_VER_DRUM_GRID 10u
+#define UP_VER_KIT 9u
+#define UP_VER_KIT_GRID 10u
 #define UP_VER_GRID 5u                           /* 4 with a drum grid as the pattern (see the top) */
 #define UP_BANK_MAGIC 0x31425055u                /* "UPB1" */
 typedef struct {
@@ -53,7 +53,7 @@ typedef struct {
     uint8_t packed[UP_PMAX * 2u];                /* the values + 64 (UP_VER_CZ: the native tone) */
     uint8_t note[16], flags[16];                 /* note 0 = rest; flags 1 accent, 2 slide, 4 tie (UP_VER_GRID:
                                                   * lane hits, their accents) */
-    uint8_t cz_extra[46];                        /* UP_VER_DRUM*: the DRUM patch's first bytes (up_drum_raw) */
+    uint8_t tone_extra[46];                        /* UP_VER_KIT*: the packed KIT patch's first bytes (up_kit_wire) */
 } up_rec_t;
 typedef struct {
     uint32_t magic;
@@ -64,23 +64,25 @@ _Static_assert(sizeof(up_rec_t) == 238, "user preset record layout");
 _Static_assert(P_COUNT <= UP_PMAX * 2u && P_COUNT < 128, "user preset record: P_COUNT");
 #if MELODEE_FLASH && !defined(UP_HOST)
 /* One main-loop bank cache holds whichever bank was asked for last: a user preset bank, a native FM6 or CZ-1 bank
- * (or the CZ-1 bank's older view, cz_bank_load) or a Prophet user bank (bank_buf, after native_presets.c). Each owner
+ * (Melodee 1.x's: native_presets.c) (bank_buf). Each owner
  * keeps its own cached-bank byte; bank_claim(kind) before a load forgets the others' (a user bank is indexed first,
  * up_meta). Names, used masks and favourites stay in the owners' indexes, so browsing never reloads. A pointer into a
  * bank is good until the next call that may load another kind: copy what outlives it. */
-enum { BK_UP, BK_FM, BK_CZ, BK_CZOLD, BK_P5 };
+enum { BK_UP, BK_FM };
 static void bank_claim(uint32_t kind);
 static up_bank_t *bank_up(void);
 #define up_cache (*bank_up())
 static uint8_t up_cached = 255;
 /* Main-loop index only, never serialized. Readiness belongs to a whole bank;
- * its entries are indexed together. Three flags and the bounded engine ID
- * share a byte; names retain all twelve bytes and need no flash reads. */
+ * its entries are indexed together. Two flags and the bounded engine number
+ * share a byte (OLD FORMAT: a bit of its own); names retain all twelve bytes
+ * and need no flash reads. */
 static struct {
-    uint8_t used:1, old:1, favorite:1, engine:5;
+    uint8_t used:1, favorite:1, engine:6;
     char name[12];
 } up_meta[UP_SLOTS] MELODEE_BIG_BSS;
-_Static_assert(sizeof up_meta[0] == 13u && NENGINES <= 32u && UP_BANKS <= 32u, "compact preset index");
+static uint32_t up_meta_old[(UP_SLOTS + 31u) / 32u];
+_Static_assert(sizeof up_meta[0] == 13u && NENGINES <= 64u && UP_BANKS <= 32u, "compact preset index");
 static uint32_t up_index_ready;
 static uint32_t up_migrate;
 static uint8_t up_migration_error,up_converting;
@@ -116,6 +118,43 @@ static uint32_t up_obj(uint32_t b)
 typedef struct { uint8_t head[160], extra[46]; } up_disk_rec_t;
 typedef struct { uint32_t magic; uint16_t rsize,nslot; up_disk_rec_t r[UP_PER_BANK]; } up_disk_bank_t;
 _Static_assert(sizeof(up_disk_bank_t)<=3808u,"unified presets fit every A/B sector");
+/* A bank whose records name synths that are not Melodee's defaults here (eng_map.c) carries their entries after its
+ * records: "EMA2", the count, 0 x 3, the entries (their IDs). A bank of Melodee's own synths is the record it always
+ * was */
+#define UP_MAP_MAGIC 0x32414D45u
+static uint32_t up_map_write(uint8_t *b, const uint8_t *disk)   /* (disk: its records packed) its bytes, 0 none */
+{
+    uint32_t n = 0;
+    for (uint32_t e = 0; e < NENGINES; e++) {
+        uint32_t named = 0;
+        for (uint32_t i = 0; i < UP_PER_BANK; i++)   /* (a record's head: used, version, engine, ..) */
+            named |= disk[i * sizeof(up_disk_rec_t)] && disk[i * sizeof(up_disk_rec_t) + 2u] == e;
+        if (named && eng_map_own(e))
+            eng_map_put(b + 8u + EMAP_ENTRY * n++, e);
+    }
+    if (!n)
+        return 0;
+    memcpy(b, &(uint32_t){UP_MAP_MAGIC}, 4);
+    b[4] = (uint8_t)n; b[5] = b[6] = b[7] = 0;
+    return 8u + n * EMAP_ENTRY;
+}
+/* the bank just read: its records' engine numbers as this device has them (up_map_read's remap) */
+static __attribute__((noinline)) void up_remap_cache(void)
+{
+    for (uint32_t j = 0; j < UP_PER_BANK; j++)
+        if (up_cache.r[j].used) up_cache.r[j].engine = (uint8_t)eng_in(up_cache.r[j].engine);
+}
+/* a stored bank of n bytes: its entries read (the remap for its records' numbers, eng_in), the bank's own length */
+static int up_map_read(int n)
+{
+    const uint8_t *m = (const uint8_t *)&up_cache + sizeof(up_disk_bank_t);
+    uint32_t c;
+    eng_remap_reset();
+    if (n <= (int)sizeof(up_disk_bank_t) || mod_le32(m) != UP_MAP_MAGIC || m[5] || m[6] || m[7] ||
+        (uint32_t)n != sizeof(up_disk_bank_t) + 8u + (c = m[4]) * EMAP_ENTRY || eng_remap_read(m + 8, c))
+        return n;
+    return (int)sizeof(up_disk_bank_t);
+}
 /* The bank cache has one foreground owner; audio holds independent patches.
  * Serialize it in place, saving only the omitted legacy phrase and old flags.
  * Restore the decoded view on success AND failure before returning to callers.
@@ -130,7 +169,7 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
     }
     for(uint32_t i=0;i<UP_PER_BANK;i++){
         up_disk_rec_t r;
-        memcpy(r.head,&bank->r[i],160u);memcpy(r.extra,bank->r[i].cz_extra,46u);
+        memcpy(r.head,&bank->r[i],160u);memcpy(r.extra,bank->r[i].tone_extra,46u);
         uint32_t k=b*UP_PER_BANK+i;
         if((up_fav_dirty>>b&1u) && k<UP_SLOTS && (r.head[0]&~UP_STAR)==UP_USED)
             r.head[0]=(uint8_t)((r.head[0]&~UP_STAR)|(up_meta[k].favorite?UP_STAR:0));
@@ -138,10 +177,10 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
     }
     struct {uint32_t magic;uint16_t size,count;} disk_head={UP_DISK_MAGIC,sizeof(up_disk_rec_t),UP_PER_BANK};
     memcpy(bank,&disk_head,sizeof disk_head);
-    int rc=st_save(up_obj(b),bank,sizeof(up_disk_bank_t));
+    int rc=st_save(up_obj(b),bank,sizeof(up_disk_bank_t)+up_map_write((uint8_t *)bank+sizeof(up_disk_bank_t),(const uint8_t *)bank+8u));
     for(uint32_t i=UP_PER_BANK;i--;){
         up_disk_rec_t r;memcpy(&r,(uint8_t *)bank+8u+i*sizeof r,sizeof r);
-        memcpy(&bank->r[i],r.head,160u);memcpy(bank->r[i].cz_extra,r.extra,46u);
+        memcpy(&bank->r[i],r.head,160u);memcpy(bank->r[i].tone_extra,r.extra,46u);
         memcpy(bank->r[i].note,saved[i].phrase,16u);memcpy(bank->r[i].flags,saved[i].phrase+16u,16u);
         if(rc)bank->r[i].used=saved[i].used;
     }
@@ -153,41 +192,62 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
 
 static up_rec_t *up_rec(uint32_t k) { return &up_cache_bank(k / UP_PER_BANK)->r[k % UP_PER_BANK]; }
 
-static int up_native_cz(const up_rec_t *r){return r->engine==ENGI_CZ && (r->ver==UP_VER_CZ || r->ver==UP_VER_NATIVE_CZ);}
+/* the layouts by the format a synth's patch is stored in (module_schema.h MOD_SCH_STORE_*): the native layout (the
+ * patch's sound bytes in packed, the voice's values in tone_extra) by its version, a KIT patch bit packed after the
+ * values (UP_VER_KIT*), else the values only */
+static uint32_t up_native_ver(uint32_t e)
+{
+    switch (patch_store_tag(e)) {
+    case MOD_SCH_STORE_VOICE: return UP_VER_FM;
+    case MOD_SCH_STORE_PROGRAM: return UP_VER_P5;
+    case MOD_SCH_STORE_TONE: return UP_VER_NATIVE_CZ;
+    case MOD_SCH_STORE_KIT: return UP_VER_KIT;
+    default: return patch_len(e) && patch_sound_len(e) <= UP_PMAX * 2u ? UP_VER_BLOB : UP_VER;
+    }
+}
+static int up_native_cz(const up_rec_t *r){return r->ver==UP_VER_CZ;}   /* (a TONE patch, the older layout) */
 static int up_native(const up_rec_t *r)
 {
-    return (r->engine==ENGI_FM6 && r->ver==UP_VER_FM) || (r->engine==ENGI_PROPHET && r->ver==UP_VER_P5) || (r->engine==ENGI_CZ && r->ver==UP_VER_NATIVE_CZ);
-}
-static int up_cz_raw(const up_rec_t *r,uint8_t *raw)
-{
-    if(!up_native_cz(r))return 0;
-    memcpy(raw,r->packed,CZ_BYTES);return cz_patch_valid(raw);
+    return r->ver==UP_VER_FM || r->ver==UP_VER_P5 || r->ver==UP_VER_NATIVE_CZ || r->ver==UP_VER_BLOB;
 }
 static int up_bank_shape(uint32_t len,uint32_t rsize){return len==sizeof(up_bank_t) && rsize==sizeof(up_rec_t);}
-static int up_drum_raw(const up_rec_t *r,drum_patch_t *p)
+static int up_kit_wire(const up_rec_t *r,uint8_t *b)  /* a KIT patch's bits (MOD_SCH_KIT_PACKED) */
 {
-    uint8_t b[DRUM_WIRE_BYTES];if(r->np>sizeof r->packed-8u)return 0;
-    memcpy(b,r->cz_extra,sizeof r->cz_extra);memcpy(b+sizeof r->cz_extra,r->packed+r->np,8u);return drum_patch_unpack(p,b);
+    if(r->np>sizeof r->packed-8u)return 0;
+    memcpy(b,r->tone_extra,sizeof r->tone_extra);memcpy(b+sizeof r->tone_extra,r->packed+r->np,8u);return 1;
 }
 
 static int up_valid(const up_rec_t *r)
 {
     if((r->used & ~UP_STAR)==UP_USED && up_native(r)){
         if(!r->name[0] || (r->np && r->np!=sizeof UP_NATIVE_PARAMS))return 0;
-        for(uint32_t i=0;i<r->np;i++)if(r->cz_extra[i]>191u)return 0;
-        if(r->engine==ENGI_CZ)return cz_patch_valid(r->packed);
-        if(r->engine==ENGI_FM6){for(uint32_t i=0;i<128u;i++)if(r->packed[i]>127u)return 0;return 1;}
+        for(uint32_t i=0;i<r->np;i++)if(r->tone_extra[i]>191u)return 0;
+        if (r->engine >= NENGINES)
+            return 0;
 #ifndef UP_HOST
-        p5_patch_t p;memcpy(&p,r->packed,sizeof p);return p5_patch_valid(&p);
+        return patch_stored_ok(r->ver == UP_VER_FM ? MOD_SCH_STORE_VOICE : r->ver == UP_VER_P5 ? MOD_SCH_STORE_PROGRAM :
+                              r->ver == UP_VER_NATIVE_CZ ? MOD_SCH_STORE_TONE : MOD_SCH_STORE_NONE, r->packed);
 #else
-        return r->packed[133]==128u || r->packed[133]==133u;
+        if (r->ver == UP_VER_NATIVE_CZ) return UP_HOST_TONE_OK(r->packed);
+        if (r->ver == UP_VER_FM) { for (uint32_t i = 0; i < 128u; i++) if (r->packed[i] > 127u) return 0; return 1; }
+        return r->ver != UP_VER_P5 || r->packed[133] == 128u || r->packed[133] == 133u;
 #endif
     }
-    if ((r->used & ~UP_STAR) == UP_USED && up_native_cz(r)) { uint8_t raw[CZ_BYTES];return (r->np==92u || r->np==100u || r->np==104u || r->np==108u || r->np==119u || r->np==122u || r->np==125u /* (the FX cuts) */ || r->np==P_COUNT) && r->name[0] && up_cz_raw(r,raw); }
-    if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || (r->engine==ENGI_DRUM && (r->ver==UP_VER_DRUM || r->ver==UP_VER_DRUM_GRID))) && r->engine < USER_GENERAL &&
+    if ((r->used & ~UP_STAR) == UP_USED && up_native_cz(r)) return (r->np==92u || r->np==100u || r->np==104u || r->np==108u || r->np==119u || r->np==122u || r->np==125u /* (the FX cuts) */ || r->np==P_COUNT) && r->name[0] &&
+#ifndef UP_HOST
+        patch_stored_ok(MOD_SCH_STORE_TONE, r->packed);
+#else
+        UP_HOST_TONE_OK(r->packed);
+#endif
+    if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID) && (r->engine < USER_GENERAL || (r->engine >= ENGI_MOD0 && r->engine < NENGINES)) &&
           r->np >= 8u && r->np <= UP_PMAX * 2u && r->name[0])) return 0;
     for (uint32_t i = 0; i < r->np; i++) if (r->packed[i] > 191u) return 0;
-    if(r->engine==ENGI_DRUM && (r->ver==UP_VER_DRUM || r->ver==UP_VER_DRUM_GRID)){drum_patch_t p;if(!up_drum_raw(r,&p))return 0;}
+    if(r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID){   /* (a KIT patch's bits: its offsets in their ranges) */
+        uint8_t b[MOD_SCH_KIT_PACKED],p[MOD3_PATCH_MAX];
+        if(!up_kit_wire(r,b))return 0;
+        patch_unpack(MOD_SCH_STORE_KIT,p,b,MOD_SCH_KIT_PACKED);
+        if(!patch_stored_ok(MOD_SCH_STORE_KIT,p))return 0;   /* (its synth's checks: mod_schema.h MOD3_R_CHECK) */
+    }
     return 1;
 }
 
@@ -206,7 +266,7 @@ static int up_old(uint32_t k)
 #if MELODEE_FLASH && !defined(UP_HOST)
     if (!(up_index_ready>>(k/UP_PER_BANK)&1u)) (void)up_cache_bank(k / UP_PER_BANK);
     if (up_cached == k / UP_PER_BANK) return ((up_bank_old >> up_cached) & 1u) || (up_rec(k)->used != 0 && !up_valid(up_rec(k)));
-    return up_meta[k].old;
+    return (up_meta_old[k >> 5] >> (k & 31u)) & 1u;
 #else
     return up_rec(k)->used != 0 && !up_valid(up_rec(k));
 #endif
@@ -222,7 +282,7 @@ static int up_old_bank(uint32_t k)
 #endif
 }
 
-static int up_grid(const up_rec_t *r) { return r->ver == UP_VER_GRID || r->ver==UP_VER_DRUM_GRID; }
+static int up_grid(const up_rec_t *r) { return r->ver == UP_VER_GRID || r->ver==UP_VER_KIT_GRID; }
 static int16_t up_value(const up_rec_t *r, uint32_t k) { return (int16_t)r->packed[k] - 64; }
 static void up_set_value(up_rec_t *r, uint32_t k, int16_t v)
 {
@@ -243,8 +303,9 @@ static void up_cache_index(uint32_t b)
         uint32_t k=b*UP_PER_BANK+j; if(k>=UP_SLOTS)break; const up_rec_t *r=&up_cache.r[j];
         int valid = up_valid(r);
         up_meta[k].used=(uint8_t)valid;if(!(up_fav_dirty>>b&1u))up_meta[k].favorite=(uint8_t)(!!(r->used&UP_STAR) && valid);
-        up_meta[k].old=(uint8_t)(((up_bank_old >> b) & 1u) || (r->used != 0 && !valid));
-        up_meta[k].engine=up_native_cz(r)?ENGI_CZ:eng_sound_idx(r->engine);
+        if(((up_bank_old >> b) & 1u) || (r->used != 0 && !valid))up_meta_old[k>>5]|=1u<<(k&31u);
+        else up_meta_old[k>>5]&=~(1u<<(k&31u));
+        up_meta[k].engine=eng_sound_idx(r->engine);
         uint32_t n=0;
         for(;n<12u && r->name[n];n++)up_meta[k].name[n]=r->name[n]>='a' && r->name[n]<='z'?(char)(r->name[n]-32):r->name[n];
         if(n<sizeof up_meta[k].name)up_meta[k].name[n]=0;
@@ -259,7 +320,9 @@ static up_bank_t *up_cache_bank(uint32_t b)
         up_cached=(uint8_t)b;
         memset(&up_cache,0,sizeof up_cache);
         int n=flash_ok?st_load(up_obj(b),&up_cache,sizeof up_cache):-1;
+        n=up_map_read(n);                          /* (a bank naming synths of another device: its engine map entries) */
         int decoded=up_decode_bank(b,n);
+        if(decoded==1)up_remap_cache();
         if(!decoded)memset(&up_cache,0,sizeof up_cache);
         if(decoded!=1 && flash_ok && st_exists(up_obj(b)))up_bank_old|=1u<<b;
         else up_bank_old&=~(1u<<b);
@@ -275,11 +338,10 @@ static void up_params(const up_rec_t *r, int16_t *out, const int16_t *def)
 {
     if(up_native(r)){
         memcpy(out,def,P_COUNT*sizeof *out);
-        for(uint32_t i=0;i<r->np;i++)out[UP_NATIVE_PARAMS[i]]=(int16_t)r->cz_extra[i]-64;
-        if(r->engine==ENGI_CZ)out[P_E7]=CZ_NATIVE;
+        for(uint32_t i=0;i<r->np;i++)out[UP_NATIVE_PARAMS[i]]=(int16_t)r->tone_extra[i]-64;
         return;
     }
-    if (up_native_cz(r)) { memcpy(out, def, P_COUNT * sizeof *out); out[P_E7] = CZ_NATIVE; return; }
+    if (up_native_cz(r)) { memcpy(out, def, P_COUNT * sizeof *out); return; }
     int16_t values[UP_PMAX * 2u];
     for (uint32_t i = 0; i < r->np && i < NELEM(values); i++) values[i] = up_value(r, i);
     params_by_count(out, values, r->np, def);
@@ -355,7 +417,7 @@ static int up_parse(const uint8_t *a, uint32_t na, up_rec_t *r, uint32_t *slot)
     r->used = UP_USED;
     r->ver = UP_VER;
     r->engine = a[1];
-    if(r->engine==ENGI_PROPHET)return 1;
+    if(patch_store_tag(r->engine)==MOD_SCH_STORE_PROGRAM)return 1;   /* (a program is its patch: values alone are not it) */
     r->np = P_COUNT;
     for (i = 0; i < n; i++)
         r->name[i] = (char)a[2 + i];
@@ -390,15 +452,14 @@ static void up_values(const up_rec_t *r, int16_t *v)   /* mapped and clamped for
     int16_t def[P_COUNT];
     uint32_t i;
     for (i = 0; i < P_COUNT; i++)
-        def[i] = param_desc_of(up_native_cz(r)?ENGI_CZ:r->engine, i)->def;
+        def[i] = param_desc_of(r->engine, i)->def;
     up_params(r, v, def);
     for (i = 0; i < P_COUNT; i++) if (param_reserved(i) || i == P_TUNING) v[i] = 0;   /* (a sound never brings a tuning) */
     for (i = 0; i < P_COUNT; i++)
         if (!(eng_extra_retired(r->engine) && i >= P_E0))
-        v[i] = (int16_t)clamp(v[i], param_desc_of(up_native_cz(r)?ENGI_CZ:r->engine, i)->min, param_desc_of(up_native_cz(r)?ENGI_CZ:r->engine, i)->max);
+        v[i] = (int16_t)clamp(v[i], param_desc_of(r->engine, i)->min, param_desc_of(r->engine, i)->max);
 }
 
-#include "cz_bank.c"
 static void shared_boot(void);
 static void native_cache_reset(void);
 
@@ -411,7 +472,6 @@ static void up_boot(void)                      /* persist_boot: the banks from f
     /* shared_boot indexes and converts in source-preserving order. */
 #endif
     native_cache_reset();
-    cz_bank_boot();
     shared_boot();
 #ifdef MELODEE_FAVORITES
     for (uint32_t k = 0; k < UP_SLOTS; k++)
@@ -516,7 +576,7 @@ static void up_auto_name(char *b, uint32_t e, uint32_t k)
 {
     char l[5];
     e %= NENGINES;
-    str_cpy(b, ENGINES[eng_sound_idx(e)]->name, 9);
+    str_cpy(b, eng_name(eng_sound_idx(e)), 9);
     up_slot_label(l, k);
     str_cpy(b + str_len(b), " ", 2);
     str_cpy(b + str_len(b), l + 1, 4);
@@ -537,10 +597,10 @@ static void up_set_name(up_rec_t *r, uint32_t k, const char *name)
 }
 
 /* the selected part's sound -> slot k; name 0 or "": the automatic name (up_auto_name); up_put's result */
-static void up_native_name(up_rec_t *r,const char *name)
+static void up_native_name(up_rec_t *r,const char *name)   /* the patch's own name too (its schema's place) */
 {
-    uint32_t e=r->engine,off=e==ENGI_PROPHET?P5_NAME:e==ENGI_FM6?118u:128u;
-    uint32_t len=e==ENGI_PROPHET?20u:e==ENGI_FM6?10u:16u;
+    uint32_t off,len=patch_name_place(r->engine,&off);
+    if(!len || off+len>sizeof r->packed)return;
     memset(r->packed+off,' ',len);
     for(uint32_t i=0;i<len && name && name[i];i++)r->packed[off+i]=(uint8_t)name[i];
 }
@@ -551,23 +611,22 @@ static int up_store_to(uint32_t k,uint32_t tr,const char *name)
     track_t *t=&trk[tr];up_rec_t r;
     memset(&r,0,sizeof r);r.used=UP_USED;r.ver=UP_VER;r.engine=t->eng_req;r.np=P_COUNT;
     up_set_name(&r,k,name);
-    if(r.engine==ENGI_FM6 || r.engine==ENGI_PROPHET || (r.engine==ENGI_CZ && t->p[P_E7]==CZ_NATIVE)){
-        r.ver=r.engine==ENGI_FM6?UP_VER_FM:r.engine==ENGI_PROPHET?UP_VER_P5:UP_VER_NATIVE_CZ;
-        if(r.engine==ENGI_FM6)fm6_pack(fm6_patch_of(tr),r.packed);
-        else if(r.engine==ENGI_PROPHET)memcpy(r.packed,p5_patch_of(t),sizeof(p5_patch_t));
-        else memcpy(r.packed,cz_patch_of(tr)->raw,CZ_BYTES);
+    uint32_t nv=up_native_ver(r.engine);
+    if(nv!=UP_VER && nv!=UP_VER_KIT){                  /* the native layout: the patch's sound bytes */
+        r.ver=(uint8_t)nv;
+        memcpy(r.packed,patch_of(tr),patch_sound_len(r.engine));
         r.np=sizeof UP_NATIVE_PARAMS;
-        for(uint32_t i=0;i<r.np;i++)r.cz_extra[i]=(uint8_t)(motion_base_value(t,UP_NATIVE_PARAMS[i])+64);
+        for(uint32_t i=0;i<r.np;i++)r.tone_extra[i]=(uint8_t)(motion_base_value(t,UP_NATIVE_PARAMS[i])+64);
         if(name && name[0])up_native_name(&r,name);
         return up_put(k,&r);
     }
     for(uint32_t i=0;i<P_COUNT;i++)up_set_value(&r,i,(param_fx(i)||param_fx_send(i))?param_desc_of(r.engine,i)->def:motion_base_value(t,i));
     up_pat_from(&r,t->step);
-    if(drum_track(t)){
-        uint32_t any=0;for(uint32_t i=0;i<16u;i++)any|=step_lanes(&t->step[i]);
-        if(any){r.ver=UP_VER_GRID;for(uint32_t i=0;i<16u;i++){r.note[i]=(uint8_t)step_lanes(&t->step[i]);r.flags[i]=(uint8_t)step_accents(&t->step[i]);}}
+    if(pads_on(t)){
+        uint32_t any=0;for(uint32_t i=0;i<16u;i++)any|=step_lanes(t, &t->step[i]);
+        if(any){r.ver=UP_VER_GRID;for(uint32_t i=0;i<16u;i++){r.note[i]=(uint8_t)step_lanes(t, &t->step[i]);r.flags[i]=(uint8_t)step_accents(t, &t->step[i]);}}
     }
-    if(r.engine==ENGI_DRUM){uint8_t b[DRUM_WIRE_BYTES];drum_patch_pack(b,drum_patch_of(tr));memcpy(r.cz_extra,b,sizeof r.cz_extra);memcpy(r.packed+r.np,b+sizeof r.cz_extra,8u);r.ver=r.ver==UP_VER_GRID?UP_VER_DRUM_GRID:UP_VER_DRUM;}
+    if(nv==UP_VER_KIT){uint8_t b[MOD_SCH_KIT_PACKED];patch_pack(MOD_SCH_STORE_KIT,b,patch_of(tr),MOD_SCH_KIT_PACKED);memcpy(r.tone_extra,b,sizeof r.tone_extra);memcpy(r.packed+r.np,b+sizeof r.tone_extra,8u);r.ver=r.ver==UP_VER_GRID?UP_VER_KIT_GRID:UP_VER_KIT;}
     return up_put(k,&r);
 }
 static int up_store(uint32_t k,const char *name){return up_store_to(k,song.sel,name);}
@@ -602,25 +661,29 @@ static int up_load_to(uint32_t k,uint32_t tr)
     if (trk_midi_slot(tr) && rec.engine != ENGI_MIDI)  /* (tracks 5..8: MIDI Track only) */
         return 1;
     up_values(r, v);
+    mod_want(r->engine % NENGINES);                     /* (a synth module: into SRAM first) */
     load_begin(t, UNDO_SOUND);                          /* (ui.c: the copy for EDIT held = undo) */
     panic_req |= (uint8_t)(1u << tr);
     {
         fm1_irq_off();                                  /* the audio ISR must not see half a sound */
-        t->eng_req = up_native_cz(r)?ENGI_CZ:r->engine;
+        uint32_t e = r->engine;
+        t->eng_req = (uint8_t)e;
         for (i = 0; i < P_COUNT; i++)
             if (!param_kept(i))
                 t->p[i] = param_reserved(i) ? 0 : v[i];
         t->preset = 0;
-        if (up_native_cz(r))up_cz_raw(r,cz_patch_of(tr)->raw);
-        if(r->engine==ENGI_DRUM){memset(drum_patch_of(tr),0,sizeof(drum_patch_t));if(r->ver==UP_VER_DRUM || r->ver==UP_VER_DRUM_GRID)up_drum_raw(r,drum_patch_of(tr));}
-        if(r->engine==ENGI_PROPHET && r->ver==UP_VER_P5){memcpy(&p5_patch[tr],r->packed,sizeof(p5_patch_t));p5_ready[tr]=1;p5_track_accept(t);}
-        cz_track_accept(t);
-        fm1_irq_on();
-        if (t->eng_req == ENGI_FM6) {                   /* FM6: its voice, native slot k (else INIT) */
-            uint8_t v[FP_SIZE + 1u];
-            fm6_unpack(r->ver==UP_VER_FM?r->packed:FM6_INIT,v);
-            fm6_set_patch(tr, v);
+        if (up_native(r) || up_native_cz(r)) {          /* the patch's sound bytes (the rest kept, or its defaults) */
+            patch_set(tr, e, r->packed, patch_sound_len(e), MOD3_PATCH_LOAD);
+        } else if (r->ver == UP_VER_KIT || r->ver == UP_VER_KIT_GRID) {   /* a KIT patch */
+            uint8_t b[MOD_SCH_KIT_PACKED], d[MOD3_PATCH_MAX];
+            memset(d, 0, sizeof d);
+            if (up_kit_wire(r, b))
+                patch_unpack(MOD_SCH_STORE_KIT,d,b,MOD_SCH_KIT_PACKED);
+            patch_set(tr, e, d, patch_len(e), MOD3_PATCH_LOAD);
+        } else {
+            patch_set(tr, e, 0, 0, MOD3_PATCH_LOAD);      /* (values only: the synth's starting patch) */
         }
+        fm1_irq_on();
     }
     t->user = (uint16_t)(k + 1u);
     t->user_native=0;
@@ -632,12 +695,24 @@ static int up_load_to(uint32_t k,uint32_t tr)
 
 static int up_load(uint32_t k){return up_load_to(k,song.sel);}
 
+/* a used, indexed slot's sound plays on engine e (eng_map.c: a lent number one of them still names) */
+static int up_names(uint32_t e)
+{
+    for (uint32_t k = 0; k < UP_SLOTS; k++)
+#if MELODEE_FLASH && !defined(UP_HOST)
+        if (up_meta[k].used && up_meta[k].engine == e && (up_index_ready >> (k / UP_PER_BANK) & 1u))
+#else
+        if (up_rec(k)->used && up_rec(k)->engine == e)   /* (the slots in RAM: every one read) */
+#endif
+            return 1;
+    return 0;
+}
 /* the engine a used slot's sound plays on */
 static uint32_t up_engine(uint32_t k) {
 #if MELODEE_FLASH && !defined(UP_HOST)
     if(up_cached != k/UP_PER_BANK && (up_index_ready>>(k/UP_PER_BANK)&1u))return up_meta[k].engine;
 #endif
- if(up_native_cz(up_rec(k)))return ENGI_CZ; return eng_sound_idx(up_rec(k)->engine); }
+ return eng_sound_idx(up_rec(k)->engine); }
 
 static uint32_t up_count(void)                 /* used slots */
 {
@@ -695,28 +770,30 @@ static void up_ui_named(uint32_t op, uint32_t k, const char *name)   /* 0 load, 
     ui.force = 1;
 }
 static void up_ui(uint32_t op, uint32_t k) { up_ui_named(op, k, 0); }
-#include "prophet_user.c"
 #include "native_presets.c"
 #include "shared_presets.c"
 #if MELODEE_FLASH
-static union { up_bank_t up; native_fm_t fm; cz_bank_t cz; p5_bank_t p5; } bank_buf __attribute__((section(".pool")));
+static union { up_bank_t up; native_fm_t fm; tone_bank_t tone; program_bank_t program; } bank_buf __attribute__((section(".pool")));
 static up_bank_t *bank_up(void) { return &bank_buf.up; }
 static native_fm_t *bank_fm(void) { return &bank_buf.fm; }
-static cz_bank_t *bank_cz(void) { return &bank_buf.cz; }
 static void bank_claim(uint32_t kind)
 {
     if (kind != BK_UP && up_cached < UP_BANKS)
         up_cache_index(up_cached);
     if (kind != BK_UP) up_cached = 255;
     if (kind != BK_FM) native_fm_cached = 255;
-    if (kind != BK_CZOLD) cz_bank_cached = 255;
 }
 #endif
 #endif
 
 #ifndef UP_HOST
-/* Melodee user-preset files: F0 7D 4D 4C 01 pack7(record) checksum F7.
- * Native engines export their manufacturer's voice format instead. */
+/* Melodee user-preset files: F0 7D 4D 4C 02 pack7(record, its synth's map entry: eng_map.c) checksum F7 (01: the
+ * record alone, its engine number the writing device's, read as it is). Native engines export their manufacturer's
+ * voice format instead. */
+static void up_pack7(uint8_t *frame, uint32_t *n, const uint8_t *raw, uint32_t len)
+{
+    for(uint32_t pos=0;pos<len;){uint32_t count=len-pos;if(count>7u)count=7;uint32_t mask=(*n)++;frame[mask]=0;for(uint32_t j=0;j<count;j++,pos++){frame[mask]|=(raw[pos]>>7)<<j;frame[(*n)++]=raw[pos]&127u;}}
+}
 static int general_sysex_save(uint32_t k,const uint8_t *raw)
 {
     up_rec_t r;memcpy(&r,raw,sizeof r);
@@ -727,9 +804,9 @@ static int general_sysex_send(uint32_t k)
 {
 #if MELODEE_OTA
     if(!usb.config || !up_used(k))return 1;
-    up_rec_t r=*up_rec(k);const uint8_t *raw=(const uint8_t *)&r;
-    uint8_t frame[280];memcpy(frame,(uint8_t[]){0xf0,0x7d,0x4d,0x4c,1},5);uint32_t n=5;
-    for(uint32_t pos=0;pos<sizeof r;){uint32_t count=sizeof r-pos;if(count>7u)count=7;uint32_t mask=n++;frame[mask]=0;for(uint32_t j=0;j<count;j++,pos++){frame[mask]|=(raw[pos]>>7)<<j;frame[n++]=raw[pos]&127u;}}
+    struct { up_rec_t r; uint8_t entry[EMAP_ENTRY]; } x;x.r=*up_rec(k);eng_map_put(x.entry,x.r.engine);
+    uint8_t frame[5u+(sizeof x+6u)/7u*8u+2u];memcpy(frame,(uint8_t[]){0xf0,0x7d,0x4d,0x4c,2},5);uint32_t n=5;
+    up_pack7(frame,&n,(const uint8_t *)&x,sizeof x);
     frame[n]=sx_checksum(frame+1,n-1u);n++;frame[n++]=0xf7;
     return ota_wire_send(frame,n);
 #else
@@ -739,11 +816,17 @@ static int general_sysex_send(uint32_t k)
 static int general_sysex_frame(const uint8_t *body,uint32_t n)
 {
     if(n<4u || body[0]!=0x7d || body[1]!=0x4d || body[2]!=0x4c)return 0;
-    if(body[3]!=1u || n!=4u+sizeof(up_rec_t)+(sizeof(up_rec_t)+6u)/7u+1u){ui_message("INVALID PRESET SYSEX");return 1;}
+    struct { up_rec_t r; uint8_t entry[EMAP_ENTRY]; } x;
+    uint32_t len=body[3]==2u?(uint32_t)sizeof x:(uint32_t)sizeof x.r;
+    if((body[3]!=1u && body[3]!=2u) || n!=4u+len+(len+6u)/7u+1u){ui_message("INVALID PRESET SYSEX");return 1;}
     for(uint32_t i=0;i<n;i++)if(body[i]>127u){ui_message("INVALID PRESET SYSEX");return 1;}
     if(sx_checksum(body,n)){ui_message("INVALID PRESET SYSEX");return 1;}
-    up_rec_t r;uint8_t *raw=(uint8_t *)&r;uint32_t pos=0;
-    for(uint32_t i=4;i<n-1u;){uint32_t count=sizeof r-pos;if(count>7u)count=7;uint32_t mask=body[i++];if(!count || mask>>count){ui_message("INVALID PRESET SYSEX");return 1;}for(uint32_t j=0;j<count;j++)raw[pos++]=(uint8_t)(body[i++]|((mask>>j)&1u)<<7);}
+    up_rec_t r;uint8_t *raw=(uint8_t *)&x;uint32_t pos=0;
+    for(uint32_t i=4;i<n-1u;){uint32_t count=len-pos;if(count>7u)count=7;uint32_t mask=body[i++];if(!count || mask>>count){ui_message("INVALID PRESET SYSEX");return 1;}for(uint32_t j=0;j<count;j++)raw[pos++]=(uint8_t)(body[i++]|((mask>>j)&1u)<<7);}
+    r=x.r;
+    if(body[3]==2u && mod_le64(x.entry+4)){   /* (an entry with no ID: a number of Melodee's own history, as it is) */
+        uint32_t from,e=eng_map_get(x.entry,&from);if(from!=r.engine || e>=NENGINES){ui_message("INVALID PRESET SYSEX");return 1;}r.engine=(uint8_t)e;}
+    else if(body[3]==2u && x.entry[0]!=r.engine){ui_message("INVALID PRESET SYSEX");return 1;}
     if(!up_valid(&r)){ui_message("INVALID PRESET SYSEX");return 1;}
     sysex_stage(r.engine,(const uint8_t *)&r,1,sizeof r);return 1;
 }

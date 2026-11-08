@@ -63,6 +63,12 @@
 #                   coder, damaged files refused, a project's kits renamed in every place as the firmware's decoded
 #                   state has them, export / import against a simulated device, then what the page sent through the
 #                   device's own backup PUT; the sizes next to the stored records.
+# Studio bundle (tools/studio_bundle.py -> build/studio-bundle): what Melodee Studio takes from the firmware (desc,
+#                   layout + fixtures, protocol, constants, settings, scales, Prophet factory, palettes, licences), from
+#                   the firmware's own sources (tests/protodump.c, constdump.c, settingsdump.c), checked against itself
+#                   and its manifest's hashes; with web/core/build.sh's WebAssembly, the virtual FM-1 core
+#                   (web/core/core_check.mjs): Studio's commands, a render, taps, events, kits, the NOR, WASM == native,
+#                   the five synths' modules in WebAssembly (tools/mod_build.py --wasm) == the native core's.
 # PHYS (tests/phys_test.c): stability over the whole parameter and pitch range, the worst-case cost against
 #                   the heaviest factory preset, demos in build/phys_demo/; tests/phys_ref.cpp compares the
 #                   fixed-point models with DaisySP's float originals when DaisySP is there (DAISYSP=path).
@@ -177,7 +183,7 @@ web_tests() {                                     # the editor mock's tables mus
             step "parameter and engine tables as JSON (for the editor mock test)" desc_json
     fi
     if command -v node >/dev/null 2>&1; then
-        step "web pages: editor protocol + native CZ patches, package builder, update protocol" node web/test_web.mjs
+        step "web pages: editor protocol + the synths from their schemas, package builder, update protocol" node web/test_web.mjs
         step "installer UI: release selection, fetch races, cache and write lock" node web/test_installer.mjs
         step "installer safety: tab locks, wake/leave guards, throttled MIDI, preflight and interrupted resumes" node web/test_install_safety.mjs
         step "TransitFM1: verified package, backup, loader isolation and resume" node web/test_transit.mjs
@@ -189,6 +195,66 @@ web_tests() {                                     # the editor mock's tables mus
         fi
     else
         echo "== skip web tests (no node)"
+    fi
+}
+module_tests() {                                  # synth modules (ABI 3): built for the host ONCE, three firmwares
+    _m="$OUT/modules" _o= _dev="-DMELODEE_SID_BUILTIN=0 -DMELODEE_DRUM_BUILTIN=0 -DMELODEE_CZ_BUILTIN=0 -DMELODEE_FM6_BUILTIN=0 -DMELODEE_P5_BUILTIN=0"
+    mkdir -p "$_m/abi"
+    for _s in sid drum cz fm6 prophet; do          # (the engine sources' modules; again for another firmware's layout)
+        $CC -c -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/$_s/$_s.c -o "$_m/$_s.o" &&
+            $CC -c -O2 -DMELODEE_ABI_SHUFFLE=1 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW \
+                firmware/modules/$_s/$_s.c -o "$_m/abi/$_s.o" || { fail "compile firmware/modules/$_s/$_s.c"; return; }
+        _o="$_o $_m/$_s.o"
+    done
+    for _s in trio wheel; do                       # (the contract alone)
+        $CC -c -O2 -DMOD_HOSTED -Ifirmware/modules/sdk firmware/modules/$_s/$_s.c -o "$_m/$_s.o" ||
+            { fail "compile firmware/modules/$_s/$_s.c"; return; }
+        _o="$_o $_m/$_s.o"
+    done
+    step "synth module objects: the same against another firmware's private track_t / voice_t and its options (a module sees ABI 3's views only)" \
+        sh -c "for s in sid drum cz fm6 prophet; do cmp -s '$_m/'\$s.o '$_m/abi/'\$s.o || { echo \$s.o differs; exit 1; }; done"
+    (build module_test module_test -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
+        step "synth modules: TRIO, WHEEL, SID, DRUM, CZ-1, FM6 and the Prophet (ABI 3) bit-exact, their presets from their files as the makers made them, files into slots, relocation, boot, refusals, capabilities (tools/mod_build.py)" \
+            "$OUT/module_test") > "$_m/1.log" 2>&1 &
+    (build module_test_device module_test -O2 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
+        step "synth modules as the device builds them: SID, DRUM, CZ-1, FM6 and the Prophet out of the firmware, the modules against the old renders, their presets (files only) against the old makers" \
+            "$OUT/module_test_device") > "$_m/2.log" 2>&1 &
+    (build module_test_abi module_test -O2 -DMELODEE_ABI_SHUFFLE=1 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
+        step "synth modules ABI stability: the same module objects in a firmware whose private track_t / voice_t fields are padded and reordered, bit-exact" \
+            "$OUT/module_test_abi") > "$_m/3.log" 2>&1 &
+    wait
+    cat "$_m/1.log" "$_m/2.log" "$_m/3.log"
+}
+outside_author() {                                # the SDK alone: firmware/modules/sdk copied away with one module's source
+    _d="$OUT/outside"
+    rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp firmware/modules/trio/trio.c "$_d/trio.c" ||
+        { fail "outside author: the folder"; return; }
+    printf '%s\n' 028b4316505219da8b45b58781af5e22cd8e9771377068f9a1232d7e872b9f52 > "$_d/test.key"   # (the test key's seed)
+    step "outside author: the SDK folder alone (no Melodee tree; the test key, as a tree without the release key) builds a module from its source" \
+        sh -c "cd '$_d' && MELODEE_SIGN_KEY=test.key '$PY' sdk/mod_build.py trio.c -o out/trio.mmod >/dev/null" || return
+    $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/trio.c" -o "$_d/trio.o" || { fail "outside author: the host object"; return; }
+    build outside_author_test outside_author_test -O1 $FW "$_d/trio.o" &&
+        step "outside author: installed, listed, loaded and played in the host firmware as the reference plays it, Melodee's TRIO; the in-tree file (the release key's) the same module" \
+            "$OUT/outside_author_test" "$_d/out/trio.mmod" build/modules/trio.mmod
+}
+outside_j106() {                                  # an outside synth: Saadet's JUNO-106 (outside/j106) and the SDK alone
+    _d="$OUT/outside_j106"
+    rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp -R outside/j106 "$_d/j106" ||
+        { fail "outside JUNO-106: the folder"; return; }
+    printf '%s\n' 5aade7a5e6c1b3d0a2e7b6f4c9d8e1f0a3b2c5d4e7f6a9b8c1d0e3f2a5b4c7d6 > "$_d/author.key"   # (a test author)
+    step "outside JUNO-106: Saadet's synth built from the SDK folder alone (no Melodee tree; signed by a test author's key)" \
+        sh -c "cd '$_d' && MELODEE_AUTHOR_KEY=author.key '$PY' sdk/mod_build.py j106/j106.c -o out/j106.mmod >/dev/null" || return
+    $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/j106/j106.c" -o "$_d/j106.o" || { fail "outside JUNO-106: the host object"; return; }
+    build outside_j106_test outside_j106_test -O1 $FW "$_d/j106.o" || return
+    step "outside JUNO-106: installed (the first free number, its author's), its presets from its file, plays in stereo, its pages, SysEx, a project saved, loaded, on another device" \
+        "$OUT/outside_j106_test" "$_d/out/j106.mmod" "$_d/mel"
+    if command -v node >/dev/null 2>&1; then
+        step "outside JUNO-106: its project through a .mel file (web/mel_file.js: export, import)" \
+            node tests/outside_j106_mel.mjs "$_d/mel" &&
+            step "outside JUNO-106: what the .mel import sent goes in through the backup PUT, loads, plays the same" \
+                "$OUT/outside_j106_test" --mel "$_d/out/j106.mmod" "$_d/mel"
+    else
+        echo "== skip the outside JUNO-106 .mel round trip (no node)"
     fi
 }
 desc_json() { "$OUT/descdump" > "$OUT/desc.json"; }
@@ -205,15 +271,39 @@ mel_tests() {                                     # the .mel project file: the p
         echo "== skip the .mel page test (no node)"
     fi
 }
+studio_bundle() {                                 # the firmware's data for Melodee Studio, its own dumpers in $OUT/studio
+    rm -rf build/studio-bundle                    # (a failed build leaves none: nothing stale is verified)
+    step "Studio bundle: tables, records, protocol, constants, menu, scales, palettes -> build/studio-bundle" \
+        "$PY" tools/studio_bundle.py --work "$OUT/studio"
+    [ -f build/studio-bundle/manifest.json ] &&
+        step "Studio bundle: every file matches the manifest" "$PY" tools/studio_bundle.py --verify build/studio-bundle
+    # the virtual FM-1 (web/core/build.sh makes the WebAssembly, emcc in Docker): its replies and its sound against
+    # the same core built here from this tree, byte for byte (a WebAssembly core older than the tree shows here)
+    if [ -f build/core/melodee_core.wasm ] && command -v node >/dev/null 2>&1; then
+        _ver=$(sed -n 's/^#define MELODEE_VERSION "\([^"]*\)".*/\1/p' firmware/src/melodee.c | head -n 1)
+        mkdir -p "$OUT/core_mods"                 # (the synths as modules: their objects beside the native core)
+        for _s in sid drum cz fm6 prophet; do
+            $CC -c -O2 -DMOD_IN_CORE=1 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/$_s/$_s.c -o "$OUT/core_mods/$_s.o" ||
+                { fail "compile firmware/modules/$_s/$_s.c (core)"; return 1; }
+        done
+        $CC -O2 -std=gnu99 $FW -Itests -DMELODEE_RAM_AUDIO=1 -DMELODEE_VERSION="\"$_ver\"" -DCORE_MODULES=1 -DCORE_NATIVE_MAIN \
+            -o "$OUT/core_native" web/core/melodee_core.c "$OUT"/core_mods/*.o -lm || { fail "compile web/core/melodee_core.c"; return 1; }
+        step "virtual FM-1 core: Studio's commands, a render, taps, MIDI events, kits, the NOR kept, the five synths as WebAssembly modules (WASM == native)" \
+            node web/core/core_check.mjs --native "$OUT/core_native" --mel "$OUT/studio/mel"
+    else
+        echo "== skip the virtual FM-1 core check (no build/core/melodee_core.wasm: web/core/build.sh; or no node)"
+    fi
+}
 old_to_new() {                                    # a package of another app (this one cut short) -> this build
     head -c 200000 build/melodee.bin > "$OUT/old_app.bin" &&
         "$PY" tools/fm1pkg_make.py "$OUT/old_app.bin" build/loader/ota.bin "$OUT/old.fwsc" >/dev/null &&
         "$OUT/ldr_test" "$OUT/old.fwsc" build/melodee.fwsc
 }
 smk_packages() {                                  # SMK-37 layout packages of this build's binaries (BOARD_SMK37 tests)
-    # (a resource region the SMK-37's 16 sectors hold: the FM-1's, cut short, its header remade; NEW with an app
+    # (a resource region the SMK-37's 16 sectors hold: the FM-1's, cut short, its header remade with the window 9
+    # (FL_RES_RESERVE, both boards: build.py's offset 12); NEW with an app
     # area tail from 0x93000 of 0xA000 - 100 pseudo-random bytes: firmware/src/smkx.c)
-    "$PY" -c 'import struct,sys,zlib; d=open(sys.argv[1],"rb").read()[32:60032]; h=struct.pack("<7I",0x3153524D,len(d),zlib.crc32(d),0,0,0,0); open(sys.argv[2],"wb").write(h+struct.pack("<I",zlib.crc32(h))+d)' build/melodee-res.bin "$OUT/smk_res.bin" &&
+    "$PY" -c 'import struct,sys,zlib; d=open(sys.argv[1],"rb").read()[32:60032]; h=struct.pack("<7I",0x3153524D,len(d),zlib.crc32(d),9,0,0,0); open(sys.argv[2],"wb").write(h+struct.pack("<I",zlib.crc32(h))+d)' build/melodee-res.bin "$OUT/smk_res.bin" &&
     "$PY" -c "import random, sys; r = random.Random(37); sys.stdout.buffer.write(bytes(r.randrange(256) for _ in range(0xA000 - 100)))" \
         > "$OUT/smk_tail.bin" &&
         "$PY" tools/fm1pkg_make.py --board smk37 --res "$OUT/smk_res.bin" --tail "$OUT/smk_tail.bin" build/melodee.bin \
@@ -354,6 +444,7 @@ core && t "MIDI Track: host output, reconnect cleanup and USB input loss" midi_t
 core && t "EQ accelerator: register layout, isolated histories and bounded timeout" eq_hw_test
 core && job web_tests
 core && [ $TABLES = 1 ] && job mel_tests
+core && [ $TABLES = 1 ] && job studio_bundle
 sound && [ $TABLES = 1 ] && job dsp_tracks
 
 if core; then
@@ -383,6 +474,13 @@ if core; then
     run "CPU live takes: native replay comparison, timed input, failure cleanup and guarded restoration" "$PY" tests/audio_cpu_take_test.py
     run "target budget: natural loops and FPU decoding" "$PY" tests/target_budget_test.py
     t "retired synth identities, project/user patch preservation and favorites" engine_retirement_test -O2 $FW
+    job module_tests
+    job outside_author
+    job outside_j106
+    t "identity: the engine map (UIDs, numbers given, kept), stores carrying their entries and patches, record owners, crash blame, signatures" \
+        identity_test -O1 $FW
+    t "the resource region's freed sectors to the pool: a c53538c9 install (53,884-B region) updated, cut at every step, nothing lost, the pool 6 sectors bigger" \
+        res_pool_test -O1 $FW -- "$OUT/res_pool_test" tests/fixtures/pre-phase1-c53538c9-fm1.bin build/melodee-res.bin
     t "capture gating, derived caches and silent-track clocks" performance_test -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
     t "canvas drawing overlaps DMA without changing pending pixels" lcd_overlap_test -O1 -w -Ibuild/gen
     t "user presets (UP_PUT parser, bank round trip, versions, PHYS DRUM -> DRUM, grid records)" upreset_test
@@ -416,6 +514,7 @@ if core; then
     t "installer crash report (read only)" installer_report_test
     t "update loader: other app -> this build" ldr_test -- old_to_new
     run "installer CLI (fm1_install.py) against a simulated FM-1" "$PY" tests/install_test.py
+    run "synth modules after an update (tools/fm1_modules.py) against a simulated FM-1" "$PY" tests/fm1_modules_test.py
     job smk_tests
     run "ROM USB recovery: backup, protected regions, interrupted writes and transport failures" "$PY" tests/recovery_test.py
     run "recovery diagnostics: legacy and boot-protected retained RAM" "$PY" tests/retained_ram_test.py
@@ -445,6 +544,8 @@ if core && [ $TABLES = 1 ]; then
     t "USB/TRS clock, bend, sustain, ownership and panic recovery" midi_control_test -O1 $FW
     t "CLK INT as MIDI master: clock, Start and Stop on the output queues, locked to the steps" midi_clock_out_test -O1 $FW
     t "MIDI panel knobs: profiles, native edits, encoder modes and bounded foreground dispatch" midi_knob_test -O1 $FW
+    t "synth schemas: field mappings, roles, patch blobs, Motion and learned knobs by id, mutations caught" schema_test \
+        -O1 $FW
     t "MIDI timing: quantized TRS/USB recording, audio timeline, tempo changes and timer wrap" midi_timing_test -O1 $FW
     t "MIDI recording: raw events, quantization at take end, independent releases, banks and capacity" recording_test \
         -O1 $FW
@@ -476,6 +577,8 @@ if core && [ $TABLES = 1 ]; then
         ui_test -DMELODEE_USB_AUDIO=1 $FW
     t "Prophet: all native tone knobs through the panel and sound engine" prophet_knob_test -O2 -DMELODEE_USB_AUDIO=1 $FW
     t "Sound designer: native recipes, dependencies, compare, discard and save" designer_test -O2 -DMELODEE_USB_AUDIO=1 $FW
+    t "Sound designer from the synths' blocks: every answer as a894c6f7's designer gave it" designer_parity_test -O1 \
+        -DMELODEE_USB_AUDIO=1 $FW
     t "Sequencer: tied length/move/delete, eight-level undo/redo, MIDI step entry and playing-step recording" seq_edit_test \
         -DMELODEE_USB_AUDIO=1 $FW
     t "Note/library gestures: quarter snapping, range moves/copies, undo and bulk preset erase" note_tools_test \
@@ -488,6 +591,8 @@ if core && [ $TABLES = 1 ]; then
         -DMELODEE_BENCH_SILENT=1 $FW
     t "384 shared presets: all-engine capacity, conversion, torn writes and high-slot identity" unified_presets_test $FW
     t "persistence: deferred settings, retry and failed-save rollback" persistence_test $FW
+    t "synths' patches as bytes: a894c6f7's project, template, user presets and song sounds load byte for byte" \
+        schema_load_test -O1 $FW
     t "flash JEDEC gate: accepted parts (Puya, UCUN) enable writes, unknown IDs stay RAM-only" flash_id_test $FW
     t "first boot: foreign settings, safe defaults, ownership and interrupted cleanup" settings_origin_test $FW
     t "first boot: reset unsupported preset banks, preserve good entries and retry cuts" preset_boot_reset_test $FW
@@ -496,6 +601,11 @@ if core && [ $TABLES = 1 ]; then
     t "full backup: CRC before writes, stale runtime, USB reset / timeout, malformed objects, older projects" backup_test $FW
     t "CPU laboratory: persistence guard and RAM-only preference restoration" backup_lab:backup_test -DMELODEE_AUDIO_PROFILE=1 $FW
     t "editor: real C protocol, malformed transfers and queue recovery" editor_test $FW
+    t "synths' SysEx in and out as 88f4eb02 had them: DX7 banks, voices, functions, CZ-1 tones, Prophet programs, sends (tests/fixtures/sysex-88f4eb02.txt)" \
+        sysex_parity_test $FW
+    t "editor over Bluetooth (MELODEE_BLE_EDITOR, two links): SysEx across BLE packets, the command list, replies on the asking link" \
+        editor_ble:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -DBLE_LINKS=2 -Itests/ble_fake $FW
+    t "editor over Bluetooth (MELODEE_BLE_EDITOR, one link)" editor_ble1:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -Itests/ble_fake $FW
     t "CPU lab controls: native recording/transport, guarded protocol and exact restoration" audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 -DMELODEE_AUDIO_BENCH=1 $FW
     t "CPU lab controls absent in normal firmware" cpu_lab_off:audio_cpu_lab_test -O2 $FW
     t "CPU lab controls absent with profiling only" cpu_lab_profile:audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 $FW
@@ -505,6 +615,12 @@ if core && [ $TABLES = 1 ]; then
     t "GLO double-tap lock, SCL tap navigation, SCREEN OFF, LFO 2 SYNC / TRIG / POL" layer_screen_test \
         -O1 -DMELODEE_USB_AUDIO=1 $FW
     t "DRUM EDITOR: synthesized 909, sound controls, individual pitch/length, undo and storage" drum_editor_test -O2 $FW
+    t "pads: DRUM's pads block read as any synth's == 70111e91's drum_map.c (every KIT), flags, records, the KIT packing, mutations caught" \
+        pads_test $FW
+    run "no synth code in firmware/src: every hit of a synth's name, number or symbol under a rule with its reason (tests/no_synth_code.py)" \
+        "$PY" tests/no_synth_code.py
+    t "pads: 70111e91's kit tracks, lanes, recorded hits, KIT user preset and user kit record load, play and save the same" \
+        pads_load_test -DMELODEE_USB_AUDIO=1 $FW -- "$OUT/pads_load_test" tests/fixtures/pads-70111e91.bin
 fi
 
 if sound && [ $TABLES = 1 ]; then

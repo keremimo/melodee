@@ -20,7 +20,7 @@ GPL licence does not make new Melodee code Hügelton Instruments' work.
 
 Every file in this tree that carries an `SPDX-License-Identifier: GPL-3.0-only` header:
 
-- the firmware: `firmware/` (app, HAL, update loader)
+- the firmware: `firmware/` (app, HAL, update loader), apart from the synth module SDK below
 - the build script and tools: `build.sh`, `tools/`
 - the web pages (installer, editor) and their tests: `web/` (apart from the MPL installer ports and Fukiai font below)
 - the host tests: `tests/`
@@ -34,6 +34,18 @@ The firmware built with them is GPL-3.0-only as a whole.
 You may use, study, change and share Melodee under the GPL. If you distribute Melodee, or
 firmware derived from it, you must also give your recipients its complete corresponding
 source under the same licence. That includes devices that ship with modified Melodee inside.
+
+## The synth module SDK (MPL-2.0)
+
+The SDK that synth modules are built with, `firmware/modules/sdk/` (the module contract `mod_abi3.h`, the helpers
+`mod_sdk.h` and `mod_schema.h`, `mod_rt.c`, `module.ld`, the builder and signing scripts, the example), is licensed
+under the Mozilla Public License 2.0 (`MPL-2.0`, `LICENSES/MPL-2.0.txt`). MPL-2.0 is per file: changes to these files
+stay under it, while a synth built with them may carry any licence of its author's choosing, open or closed. The
+retained Felucca portions in `mod_sdk.h` are Leo Kuroshita's, who agreed to their relicensing under MPL-2.0. The
+GPL-3.0-only firmware includes the contract's headers under MPL-2.0's GPL compatibility (section 3.3).
+
+An outside synth in this tree keeps its own licence: `outside/j106/` (Saadet's JUNO-106, the outside-author test's
+module) is MPL-2.0; the Roland factory patch data in it is Roland's, as its header says.
 
 ## Retained Hügelton Instruments material
 

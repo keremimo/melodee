@@ -300,7 +300,8 @@ static uint16_t recording_pitch_mask(uint32_t note,uint32_t key)
 {
     /* Exact zero-byte markers without cross-byte borrow. Pack their high
      * bits into the four note-position bits. Inverse default lane mapping
-     * follows eng_drum.c DRUM_LANE_NOTE; the scanner tests every MIDI pitch. */
+     * follows core.h STEP_LANE_NOTE (every part's lanes: pads.c); the scanner
+     * tests every MIDI pitch. */
     static const uint8_t lane[21]={1,64,2,4,0,0,8,0,0,32,16,0,0,0,0,0,0,0,0,0,128};
     _Static_assert(NLANE==8u,"recording lane mask width");
     uint32_t x=key^(note*0x01010101u);
@@ -369,7 +370,7 @@ static uint32_t recording_step_skip(track_t *t,const step_t *s,uint32_t skip)
 scan:
     for(uint32_t r=recording_head[recording_owner(t)];r<RECORD_MAX;r=recording_next[r])if(recording_active(t,r) && recording_view(t,&recording[r])==t->seq_idx){
         for(uint32_t k=0;k<s->n;k++)if(s->note[k]==recorded_note(&recording[r]))skip|=1u<<k;
-        for(uint32_t k=0;k<NLANE;k++)if(DRUM_LANE_NOTE[k]==recorded_note(&recording[r]))skip|=1u<<(8u+k);
+        for(uint32_t k=0;k<NLANE;k++)if(STEP_LANE_NOTE[k]==recorded_note(&recording[r]))skip|=1u<<(8u+k);
     }
     return skip;
 }
@@ -839,10 +840,10 @@ static void recording_fire(track_t *t, uint32_t i, uint32_t period, uint32_t lat
     uint32_t chance = step_chance(&t->step[recording_view(t, r)]);
     if (chance < 100u && rng() % 100u >= chance) return;
     uint32_t gate = recording_gate(r, period);
-    drum_event_pitch=r->pitch; drum_event_length=recorded_gate(r)?gate:0;
+    note_hit_pitch=r->pitch; note_hit_len=recorded_gate(r)?gate:0;
     trk_note_on(t, recorded_note(r), r->vel);
     chord_auto_observe(t, recorded_note(r));
-    drum_event_pitch=0; drum_event_length=0;
+    note_hit_pitch=0; note_hit_len=0;
     uint32_t was = recording_sounding(i), remaining = gate > late ? gate - late : 0u;
 #if MELODEE_RECORD_QUEUE
     if (remaining && !recording_queue_add(t, i, remaining)) remaining = 0;

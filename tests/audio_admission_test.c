@@ -16,7 +16,7 @@ static const uint8_t family[6]={ENGI_PROPHET,ENGI_FM6,15,3,ENGI_DRUM,ENGI_DRUM};
 static void setup(const uint32_t cat[4])
 {
     memset(trk,0,sizeof trk);trk_voices_bind();memset(&song,0,sizeof song);eng_state_reset();
-    memset(fm6_eff,0,sizeof fm6_eff);memset(p5_ready,0,sizeof p5_ready);cz_init();host_tracks_init();
+    memset(fm6_eff,0,sizeof fm6_eff);p5_parts_init();cz_init();host_tracks_init();
     voice_kills=capacity_steals=resource_failures=0;settings_budget=16;voice_admitting=0;
     for(uint32_t p=0;p<4;p++){uint32_t c=cat[p];host_preset(&trk[p],family[c],c==0?3:c==1?4:c==3?8:c==5?1:0);trk[p].p[P_VOICE]=V_POLY;}
 }

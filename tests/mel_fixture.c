@@ -4,18 +4,20 @@
  * no .mel code): the records the web page reads and writes, made and read here by the firmware's own code.
  *   mel_fixture emit DIR    layout.json: where a project record keeps what the page touches; projects as the device
  *                           stores them (.hpj, packed) and whole (.rec); three kits recorded through Record kit's path
- *                           from the firmware's own drum voices; a project naming kits in every place a record can (a
- *                           drum track, a song's and a pattern's own sound, automation), beside values that only look
- *                           like kits, and the same project with its kits renamed here, on the decoded state
+ *                           from the firmware's own drum voices, with the takes it was given (take-KIT-PAD.s16: 16-bit,
+ *                           44.1 kHz, the whole buffer; web/kit/check.mjs makes the same kits from them); a project
+ *                           naming kits in every place a record can (a drum track, a song's and a pattern's own sound,
+ *                           automation), beside values that only look like kits, and the same project with its kits
+ *                           renamed here, on the decoded state
  *   mel_fixture verify DIR  what the page's import sent (out-*.bin, written by test_mel.mjs) goes through the backup
  *                           protocol's PUT as the device takes it: the kit plays, the project loads, every kit it
  *                           names is the new one, everything else as it was */
 static unsigned char nor[0x100000];
-#define DRK_XIP(off) ((const uint8_t *)nor + (off))
+#define REC_BASE ((const uint8_t *)nor)        /* (the data records' flash: the player reads them in place) */
 #define BACKUP_TEST_NO_MAIN 1
 #define BACKUP_TEST_KITS 1
 #include "backup_test.c"
-#include "../firmware/src/kit_take.c"
+/* (DRUM's Record kit take, encoder and record check: built in, modules/drum/kit_take.c) */
 #include <assert.h>
 #include <sys/stat.h>
 
@@ -99,7 +101,7 @@ static void song_project(uint32_t pats, uint32_t density, uint32_t notes, uint32
         char name[16];
         uint32_t k = i % NPART, id;
         snprintf(name, sizeof name, "SOUND %u", (unsigned)(i + 1u));
-        apply_preset_to(&trk[k], 3u + i); song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s));
+        apply_preset_to(&trk[k], 3u + i); song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s, 0));
         if (!(id = song_sound_store(&s))) break;
         chain_config.sound[i % rows][k] = (uint8_t)id; apply_preset_to(&trk[k], k);
     }
@@ -128,12 +130,14 @@ static void kit_record(uint32_t u, int32_t k, const char *name)
         for (uint32_t i = 0; i < n; i++) pk = abs(out[i]) > pk ? abs(out[i]) : pk;
         if (pk < 100) continue;                      /* (a voice this kit does not have: an empty pad) */
         for (uint32_t i = 0; i < n; i++) take[i] = (int16_t)((int64_t)out[i] * 20000 / pk);
+        char tname[64];
+        snprintf(tname, sizeof tname, "take-%s-%u.s16", name, (unsigned)d); save(tname, take, n * 2u);
         uint32_t r = kt_keep(u, d, take, n, n);
         assert(r == KM_KEPT);
     }
     st_hdr_t h;
-    int copy = st_current(kit_obj(u), &h);
-    assert(copy >= 0 && h.len <= DRK_KIT_MAX && !st_read_range(kit_obj(u), (uint32_t)copy, 0, kit[u], h.len));
+    int copy = st_current(rec_obj(u), &h);
+    assert(copy >= 0 && h.len <= DRK_KIT_MAX && !st_read_range(rec_obj(u), (uint32_t)copy, 0, kit[u], h.len));
     kit_n[u] = h.len;
     char path[64];
     snprintf(path, sizeof path, "kit-%s.bin", name); save(path, kit[u], kit_n[u]);
@@ -148,7 +152,7 @@ enum { T_KEYS, T_DRUM2, T_OTHER, T_DRUM };           /* tracks: a synth, drums, 
 static uint32_t snap(uint32_t k, const char *name)   /* track k's sound as it is: a sound of the song's */
 {
     song_sound_t s;
-    song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s));
+    song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s, 0));
     uint32_t id = song_sound_store(&s); assert(id);
     return id;
 }
@@ -253,9 +257,10 @@ static int do_emit(void)
     FILE *f = file("layout.json", "w");
     fprintf(f, "{\"REC_BYTES\":%u,\"KIT_MAX\":%u,\"KIT_FIRST\":%u,\"KIT_COUNT\":%u,\"KIT_HEAD\":%u,\"ENGI_DRUM\":%u,\n",
             (unsigned)BANK_STORE_SIZE, (unsigned)DRK_KIT_MAX, (unsigned)DK_USER0, (unsigned)DK_NUSER, (unsigned)DRK_KIT_BYTES, (unsigned)ENGI_DRUM);
-    fprintf(f, " \"FUN_BYTES\":%u,\"TAIL_AT\":%u,\"FUN_MAGIC\":%u,\"FBKP\":%u,\"FBKQ\":%u,\"KIT_MAGIC\":%u,\"PJ_MAGIC\":%u,\"PZ_MAGIC\":%u,\"PROJECTS\":%u,\n",
+    fprintf(f, " \"FUN_BYTES\":%u,\"TAIL_AT\":%u,\"FUN_MAGIC\":%u,\"FBKP\":%u,\"FBKQ\":%u,\"FBKR\":%u,\"KIT_MAGIC\":%u,\"PJ_MAGIC\":%u,\"PZ_MAGIC\":%u,\"PROJECTS\":%u,\n",
             (unsigned)PROJ_STORE_SIZE, (unsigned)BANK_ACTIVE_OFF, (unsigned)PROJ_MAGIC, (unsigned)BANKP_MAGIC, (unsigned)BANKQ_MAGIC,
-            (unsigned)DRK_KIT_MAGIC, (unsigned)PJ_MAGIC, (unsigned)PZ_MAGIC, (unsigned)PROJ_SLOTS);
+            (unsigned)BANKR_MAGIC, (unsigned)DRK_KIT_MAGIC, (unsigned)PJ_MAGIC, (unsigned)PZ_MAGIC, (unsigned)PROJ_SLOTS);
+    fprintf(f, " \"KIT_OWNER_UID\":\"%016llx\",\n", (unsigned long long)rec_owner_uid(MOD3_NREC));
     fprintf(f, " \"layout\":{\"np\":%u,\"e0\":%u,\"track\":%u,\"tracks\":%u,\"motion\":%u,\"funSum\":%u,\"name\":%u,\"tags\":%u,\"song\":%u,"
             "\"sounds\":%u,\"soundHead\":%u,\"soundBytes\":%u}}\n",
             (unsigned)P_COUNT, (unsigned)P_E0, (unsigned)(P_COUNT + 2u + NSTEP * 8u), 8u + 68u,
@@ -317,14 +322,15 @@ static int do_verify(void)
 {
     int bad = 0;
     uint32_t n;
-    reset(); kit_scan();
+    reset(); rec_scan();
     /* the device test_mel.mjs imported into: KIT 1 held the 808 kit already; the page sent KIT 4 and the project */
     n = load("kit-808.bin", big, sizeof big);
-    bad += check("mel: a kit record goes in through the backup's PUT", put_object(92, big, n) == 0 && kit_len[0] == n);
+    bad += check("mel: a kit record goes in through the backup's PUT", put_object(92, big, n) == 0 && rec_len[0] == n);
+    bad += check("mel: .. its owner the default (DRUM's): the engine map as it was, nothing to save", !rec_uid[0] && !eng_map_dirty);
     n = load("out-kit-12.bin", big, sizeof big);
     uint32_t n909 = load("kit-909.bin", kit[0], sizeof kit[0]);
     bad += check("mel: the kit the page sent is the file's, byte for byte, and plays", n == n909 && !memcmp(big, kit[0], n) &&
-                 put_object(92 + 3, big, n) == 0 && kit_len[3] == n && drk_user[3].n);
+                 put_object(92 + 3, big, n) == 0 && rec_len[3] == n && drk_user[3].n);
     n = load("out-project.bin", big, sizeof big);
     /* (project 3: the host build mirrors the first four slots only; the slot is nothing to the record) */
     bad += check("mel: the project the page sent, packed by the page, is accepted into a free slot",
@@ -347,7 +353,7 @@ static int do_verify(void)
     bad += check("mel: .. and loads as the same music", kit_project_is(12, 9, 15));
     n = load("kit-909.bin", big, sizeof big);
     big[4] ^= 8u;
-    bad += check("mel: a damaged kit is refused by the device", put_object(92 + 5, big, n) != 0 && !kit_len[5]);
+    bad += check("mel: a damaged kit is refused by the device", put_object(92 + 5, big, n) != 0 && !rec_len[5]);
     puts(bad ? "mel: FAILED" : "mel: the web page's import as the device takes it: passed");
     return bad != 0;
 }

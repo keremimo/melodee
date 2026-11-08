@@ -48,23 +48,6 @@ static struct {
 #endif
 #include "../firmware/src/core.h"
 #include "../firmware/src/engines.c"
-/* the packed factory banks, unpacked for comparisons (four slots each, so a few can be held at once) */
-static const p5_patch_t *p5_fac(uint32_t k)
-{
-    static p5_patch_t s[4];
-    static uint32_t n;
-    p5_patch_t *p = &s[n++ % 4u];
-    p5_factory(k, p);
-    return p;
-}
-static const uint8_t *cz_fac(uint32_t k)
-{
-    static uint8_t s[4][CZ_BYTES];
-    static uint32_t n;
-    uint8_t *p = s[n++ % 4u];
-    cz_factory(k, p);
-    return p;
-}
 #include "../firmware/src/params.c"
 #include "../firmware/src/mod.c"
 #include "../firmware/src/voice.c"
@@ -93,6 +76,7 @@ static void mel_ble_radio_start(const struct ble_rf_trims *t) { ble_hw_wl82_star
 #include "../firmware/src/midi_uart.c"                /* TRS MIDI IN: its parser (um_byte) feeds midi_in_q */
 #include "../firmware/src/song_chain.c"
 #include "../firmware/src/seq.c"
+#include "synth_compat.h"                        /* (the synths' patches by their schemas, for the checks) */
 /* Assertions can inspect a bank without exposing mutable pool internals.
  * Mutating fixtures must publish through pattern_write. */
 static const pattern_t *pattern_at(uint32_t k, uint32_t bank)
@@ -132,7 +116,7 @@ static void host_tracks_init(void)                /* as melodee_init: defaults, 
 {
     trk_voices_bind();
     midi_insert_init();
-    cz_init();
+
     pattern_init();
     uint32_t i, k;
     for (i = 0; i < G_COUNT; i++)
@@ -162,9 +146,11 @@ static void host_preset_values(track_t *t, uint32_t e, uint32_t pi, const preset
     t->p[P_REL] = p->env[3];
     t->p[P_ED_FLT] = p->fenv;
     t->p[P_VOICE] = p->mono ? V_LEGATO : V_POLY;
-    cz_factory_loaded(t);
-    if(e==ENGI_PROPHET){uint32_t k=(uint32_t)(t-trk)%NPART;p5_ready[k]=1;p5_preset_loaded(t,pi);}   /* (its program, as ui.c) */
-    fm6_track_loaded(t);                          /* FM6: the preset's patch (ui.c apply_preset_to) */
+    {                                             /* the synth's patch: the preset's (ui.c apply_preset_with) */
+        static preset_entry_t x;
+        preset_fetch_into(e, pi, &x, 1);
+        preset_patch_put(t, &x);
+    }
 }
 static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
 {
@@ -174,6 +160,7 @@ static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
         t->preset = 0;
         for (uint32_t i = 0; i < 8u; i++)
             t->p[P_E0 + i] = ENGINES[e]->edit[i].def;
+        patch_set((uint32_t)(t - trk), e, 0, 0, MOD3_PATCH_NEW);
         return;
     }
     pi %= n;
@@ -359,12 +346,13 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
         return bmax > NVOICE;
     {
         const step_t *s3 = &td->step[3], *s4 = &td->step[4], *l1 = &t3->step[1], *p14 = &t2->step[14];
-        int ok_clap = !(s3->hit & (1u << DV_CLAP)) && (s4->hit & (1u << DV_CLAP)) &&
+#define HS_CLAP_LANE 2u                                  /* (the clap's lane: STEP_LANE_NOTE[2], 39) */
+        int ok_clap = !(s3->hit & (1u << HS_CLAP_LANE)) && (s4->hit & (1u << HS_CLAP_LANE)) &&
                       s4->n == 3u && s4->note[0] == 36 && s4->note[1] == 38 && s4->note[2] == 42 && clap_hits == 3u;
         int ok_lead = l1->n == 1u && l1->note[0] == 84u && l1->time == ST_NOTE;
         int ok_keys = p14->n == 2u && p14->time == ST_NOTE && p14->note[0] == 60u && p14->note[1] == 64u;
         printf("tracks: recording: late clap rounds to step 4 = %u; step 4 keeps %u notes, triggers %u hits "
-               "(want 3: no repeated clap) %s\n", (s4->hit & (1u << DV_CLAP)) ? 39u : 0u, s4->n, clap_hits,
+               "(want 3: no repeated clap) %s\n", (s4->hit & (1u << HS_CLAP_LANE)) ? 39u : 0u, s4->n, clap_hits,
                ok_clap ? "ok" : "FAIL");
         printf("tracks: recording: MIDI ch 3 -> lead step 1 = %u (want 84) %s; keys -> pad step 14 = %u notes %u %u %s\n",
                l1->note[0], ok_lead ? "ok" : "FAIL", p14->n, p14->note[0], p14->note[1], ok_keys ? "ok" : "FAIL");

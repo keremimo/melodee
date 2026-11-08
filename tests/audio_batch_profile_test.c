@@ -63,13 +63,13 @@ static void dense_group(void)
 static void ghost_cost_split(void)
 {
     int32_t out[CTL]={0};uint32_t value=1;online=join_ok=1;
-    audio_batch_native_fm6=1;
+    audio_batch_reserve=1;
     audio_batch_push_cost(render,&value,sizeof value,out,CTL,AP_FM6_CONTROL,5600u);
     for(uint32_t k=0;k<12u;k++)audio_batch_push(render,&value,sizeof value,out,CTL,AP_FM6);
     /* A native ghost group contributes its measured cost to the partition. */
     assert(__builtin_popcount(AB_LOAD(&audio_batch_worker_mask))==7);
     audio_batch_flush();for(uint32_t i=0;i<CTL;i++)assert(out[i]==13);
-    audio_batch_native_fm6=0;
+    audio_batch_reserve=0;
 }
 int main(void)
 {
