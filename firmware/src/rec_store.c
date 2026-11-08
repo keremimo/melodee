@@ -16,7 +16,8 @@ _Static_assert(MOD3_REC_PAYLOAD == ST_LIN_PAYLOAD_MAX && MOD3_REC_OFF == ST_POOL
                ST_LONG_SECTORS <= MOD3_REC_LIST, "a data record is a pool record");
 #define REC_BOX_MAGIC 0x3254494Bu                /* KIT2 */
 #define REC_BOX_HEAD 88u
-#define REC_NAME_MAX 32u                         /* a name record's bytes read, at most */
+#define REC_NAME_MAX 32u                         /* a name record's bytes, at most */
+#define REC_NAME_MAGIC 0x4E54494Bu               /* KITN (SAMPLER's drk_name_t: drum_kit.h) */
 static uint32_t rec_r32(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static void rec_w32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
 static uint16_t rec_pend;                        /* kits with a stored pad record waiting for its module's check */
@@ -128,14 +129,19 @@ static int rec_scan_pad(uint32_t s)
         rec_table_set(s, sec, n);
     return n != 0;
 }
-/* kit u's name record into the names the lists show (none: "") */
+/* kit u's name record into the names the lists show (none: ""): the host's own (REC_NAME_MAGIC, rec_put_name), a
+ * record of another form in its place (Melodee 1.x's KIT1 kit) names nothing. Its synth not listed yet (the boot scan
+ * runs before the modules): rec_pend, read again by rec_recheck */
 static void rec_scan_name(uint32_t u)
 {
     uint32_t len, at = rec_name_at(u, &len), k = 0;
     uint8_t b[REC_NAME_MAX];
     st_hdr_t h;
     int copy = st_current(rec_name_obj(u), &h);
-    if (copy >= 0 && len && at + len <= h.len && !st_read_range(rec_name_obj(u), (uint32_t)copy, 0, b, at + len))
+    if (copy >= 0 && !len)
+        rec_pend |= (uint16_t)(1u << u);
+    if (copy >= 0 && len && at + len <= h.len && h.len <= REC_NAME_MAX &&
+        !st_read_range(rec_name_obj(u), (uint32_t)copy, 0, b, h.len) && rec_r32(b) == REC_NAME_MAGIC)
         for (; k < len && b[at + k] >= ' ' && b[at + k] <= '~'; k++) rec_nm[u][k] = (char)b[at + k];
     for (; k < sizeof rec_nm[u]; k++) rec_nm[u][k] = 0;
 }
@@ -269,7 +275,7 @@ static int rec_put_name(uint32_t u, const char *name, uint32_t n)
         rc = st_project_delete(rec_name_obj(u));
     } else {
         memset(b, 0, sizeof b);
-        b[0] = 'K'; b[1] = 'I'; b[2] = 'T'; b[3] = 'N';                       /* (SAMPLER's drk_name_t magic) */
+        rec_w32(b, REC_NAME_MAGIC);
         for (uint32_t k = 0; k < n && k < len && name[k]; k++) b[at + k] = (uint8_t)name[k];
         rc = st_project_save(rec_name_obj(u), b, at + len < 20u ? 20u : at + len);
     }

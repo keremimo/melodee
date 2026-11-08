@@ -257,10 +257,21 @@ int main(void)
         int hidden = rec_hidden(2u * MOD3_RPAD) && rec_used(2) == 2 && !rec_hidden(3u * MOD3_RPAD);
         ENGINES[ENGI_SAMPLER] = smp; sch_gen++;
         rec_recheck();                                    /* (eng_module_main.c mod_register: SAMPLER in SRAM) */
-        check("kits found before their synth is listed wait for it, then play (not dropped until a save)",
-              waited && rec_tab[2u * MOD3_RPAD].n && rec_tab[2u * MOD3_RPAD + 15u].n && !rec_pend);
+        check("kits found before their synth is listed wait for it, then play (not dropped until a save), named again",
+              waited && rec_tab[2u * MOD3_RPAD].n && rec_tab[2u * MOD3_RPAD + 15u].n && !rec_pend && !strcmp(rec_nm[2], "ROCK"));
         check("... and while they wait each pad is a take, not an empty pad a take may write over",
               hidden && !rec_hidden(2u * MOD3_RPAD));
+    }
+
+    {   /* a record of another form where a kit's name goes (Melodee 1.x's KIT1 kit): no name, the kit still taken */
+        static uint8_t old[600];
+        memset(old, 0x11, sizeof old); memcpy(old, "KIT1", 4); memcpy(old + 8, "OLDKT", 5);
+        int rc = st_project_save(rec_name_obj(6), old, sizeof old);
+        rec_scan();
+        check("a 1.x kit record where a name goes names nothing; the kit stays taken (Record kit passes it by)",
+              !rc && !rec_nm[6][0] && rec_used(6) == 1);
+        st_project_delete(rec_name_obj(6));
+        rec_scan();
     }
 
     {   /* delete while it rings */
