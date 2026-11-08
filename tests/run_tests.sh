@@ -257,6 +257,34 @@ outside_j106() {                                  # an outside synth: Saadet's J
         echo "== skip the outside JUNO-106 .mel round trip (no node)"
     fi
 }
+outside_hydra() {                                 # an outside synth: Saadet's HYDRA (outside/hydra) and the SDK alone
+    _d="$OUT/outside_hydra"
+    rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp -R outside/hydra "$_d/hydra" ||
+        { fail "outside HYDRA: the folder"; return; }
+    printf '%s\n' 5aade7a5e6c1b3d0a2e7b6f4c9d8e1f0a3b2c5d4e7f6a9b8c1d0e3f2a5b4c7d6 > "$_d/author.key"   # (a test author)
+    step "outside HYDRA: Saadet's synth built from the SDK folder alone (no Melodee tree; signed by a test author's key)" \
+        sh -c "cd '$_d' && MELODEE_AUTHOR_KEY=author.key '$PY' sdk/mod_build.py hydra/hydra.c -o out/hydra.mmod >/dev/null" || return
+    $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/hydra/hydra.c" -o "$_d/hydra.o" || { fail "outside HYDRA: the host object"; return; }
+    build outside_hydra_test outside_hydra_test -O1 $FW "$_d/hydra.o" || return
+    step "outside HYDRA: installed (the first free number, its author's), its presets from its file, plays (CPU1 queue too), its part memory by the patch, macros, its pages, SysEx, a project saved, loaded, on another device" \
+        "$OUT/outside_hydra_test" "$_d/out/hydra.mmod" "$_d/mel"
+}
+outside_ppg() {                                   # an outside synth: Saadet's PPG (outside/ppg; its waves PPG's, from local images)
+    "$PY" outside/ppg/gen_ppg_data.py >/dev/null 2>&1 || [ -f outside/ppg/ppg_rom.h ] ||
+        { echo "== skip the outside PPG (no PPG Wave 2.2 images: outside/ppg/gen_ppg_data.py)"; return 0; }
+    _d="$OUT/outside_ppg"
+    rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp -R outside/ppg "$_d/ppg" ||
+        { fail "outside PPG: the folder"; return; }
+    printf '%s\n' 5aade7a5e6c1b3d0a2e7b6f4c9d8e1f0a3b2c5d4e7f6a9b8c1d0e3f2a5b4c7d6 > "$_d/author.key"   # (a test author)
+    step "outside PPG: Saadet's synth built from the SDK folder alone (no Melodee tree; signed by a test author's key)" \
+        sh -c "cd '$_d' && MELODEE_AUTHOR_KEY=author.key '$PY' sdk/mod_build.py ppg/ppg.c -o out/ppg.mmod >/dev/null" || return
+    $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/ppg/ppg.c" -o "$_d/ppg.o" || { fail "outside PPG: the host object"; return; }
+    _smp=
+    grep -q "PPG_HAVE_SAMPLE 1" outside/ppg/ppg_rom.h && _smp=-DPPG_TEST_SAMPLE
+    build outside_ppg_test outside_ppg_test -O1 $FW $_smp "$_d/ppg.o" || return
+    step "outside PPG: installed (the first free number), its presets from its file, plays, KEYB's voice dealing, its pages, a project saved, loaded, on another device" \
+        "$OUT/outside_ppg_test" "$_d/out/ppg.mmod" "$_d/dir"
+}
 desc_json() { "$OUT/descdump" > "$OUT/desc.json"; }
 mel_tests() {                                     # the .mel project file: the page's coding against the firmware's records
     build mel_fixture mel_fixture -DMELODEE_USB_AUDIO=1 $FW || return
@@ -477,6 +505,8 @@ if core; then
     job module_tests
     job outside_author
     job outside_j106
+    job outside_hydra
+    job outside_ppg
     t "identity: the engine map (UIDs, numbers given, kept), stores carrying their entries and patches, record owners, crash blame, signatures" \
         identity_test -O1 $FW
     t "the resource region's freed sectors to the pool: a c53538c9 install (53,884-B region) updated, cut at every step, nothing lost, the pool 6 sectors bigger" \
