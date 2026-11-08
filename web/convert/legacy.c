@@ -602,14 +602,17 @@ static uint32_t lg_hpj2(const uint8_t *raw, uint8_t *out)   /* raw[BANK_STORE_SI
     memcpy(out, &h, sizeof h);
     return at;
 }
-/* project id (n bytes) -> its FBKS record, packed (HPJ2): its length; 0: 1.x refused it */
+static uint8_t cv_whole;                                /* cv_raw(1): projects as whole records (a .mel's form) */
+EXPORT(cv_raw) void cv_raw(uint32_t on) { cv_whole = on != 0u; }
+/* project id (n bytes) -> its FBKS record, packed (HPJ2; whole after cv_raw(1)): its length; 0: 1.x refused it */
 EXPORT(cv_project) uint32_t cv_project(uint32_t id, uint32_t n)
 {
     static uint8_t rec[BANK_STORE_SIZE];
     lg_note("project %u\n", (unsigned)id);
     uint32_t rc = n <= CV_MAX ? lg_project(cv_inb, n, rec) : 0x82u;
     if (rc) lg_note("  1.x refused it (%#x): left out\n", (unsigned)rc);
-    return rc ? 0u : lg_hpj2(rec, cv_outb);
+    if (!rc && cv_whole) memcpy(cv_outb, rec, BANK_STORE_SIZE);
+    return rc ? 0u : cv_whole ? BANK_STORE_SIZE : lg_hpj2(rec, cv_outb);
 }
 /* preset bank id (n bytes) into the 1.x runtime: rc 0 taken */
 EXPORT(cv_bank_in) uint32_t cv_bank_in(uint32_t id, uint32_t n)

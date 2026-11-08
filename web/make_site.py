@@ -312,8 +312,19 @@ def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=
             if (HERE / f).exists():
                 shutil.copy(HERE / f, ed / f)
         (ed / "install").mkdir(exist_ok=True)
-        for f in ("transfer.js", "keepalive.js", "progress.js", "fakefm1.js", "installer.css"):
+        for f in ("transfer.js", "keepalive.js", "progress.js", "fakefm1.js", "installer.css", "conversion.js"):
             shutil.copy(HERE / "install" / f, ed / "install" / f)
+        # Melodee 1.x's files opened on 2.0 (Restore, Open project file): the converter's page code and, beside the
+        # page, this package's converter files (none for a 1.x package: a 1.x file there is refused as before)
+        for sub, names in (("convert", ("convert.mjs", "mel_legacy.mjs")), ("core", ("mod_link.mjs",))):
+            (ed / sub).mkdir(exist_ok=True)
+            for f in names:
+                shutil.copy(HERE / sub / f, ed / sub / f)
+        conv = next((c for c in (pkg.with_name(f"{pkg.stem}-convert.bin"), pkg.with_name("melodee-convert.bin")) if c.exists()), None)
+        if conv:
+            shutil.copy(conv, ed / "melodee-convert.bin")
+        else:
+            (ed / "melodee-convert.bin").unlink(missing_ok=True)
         (out / "index.html").write_text(
             '<!doctype html><meta charset="utf-8"><title>Melodee</title>'
             '<meta http-equiv="refresh" content="0; url=webapp/installer/">'

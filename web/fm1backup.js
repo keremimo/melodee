@@ -152,8 +152,10 @@ export async function captureBackup(request, firmware, onProgress = () => {}, ch
   const file = backupFile(objects, firmware);
   check(file); return file;
 }
-export async function restoreBackup(request, file, onProgress = () => {}) {
-  const archive = readBackup(file); // Validate every byte before the first destructive request.
+/* check: what the file must pass, the objects' bytes in its reply (the editor restoring a 1.x file onto a 1.x FM-1
+   leaves its records to that firmware's own checks) */
+export async function restoreBackup(request, file, onProgress = () => {}, check = readBackup) {
+  const archive = check(file); // Validate every byte before the first destructive request.
   const total = archive.objects.reduce((n, o) => n + o.size, 0); let done = 0;
   const ask = async (r, o = {}) => request(r, { timeout: 4000, retries: 0, ...o });
   const supported = bkManifest(await ask([BACKUP_CMD.LIST, []]));

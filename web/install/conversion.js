@@ -7,6 +7,7 @@
 // firmware and its synths: the converted objects written as a restore writes a backup, then listed again.
 //   prepareConversion(request, firmware, getBundle, onProgress) -> null (nothing of 1.x's) | { before, after, report,
 //     refused, left, old }   before / after: backup files (fm1backup.js), the 1.x one and the 2.0 one to write
+//   convertBackup(file, getBundle): the same for a backup file (the editor's Restore)
 //   writeConverted(request, after, onProgress) -> the ids written; throws code "convverify" if one reads back otherwise
 import { BACKUP_CMD, bkCheck, bkManifest, bkR32, bkU32, bkUnpack, backupFile, captureBackup, readBackup, restoreBackup } from "../fm1backup.js";
 import { convertBundle, legacyConverter, legacyIds, readBackupV1 } from "../convert/convert.mjs";
@@ -29,13 +30,20 @@ async function legacyOnDevice(request) {
 /* request: a BackupConnection's; getBundle: the build's converter files (<package>-convert.bin), fetched only when the
    device holds 1.x's records */
 export async function prepareConversion(request, firmware, getBundle, onProgress = () => {}) {
-  let before, old;
+  let before;
   try {
     if (!(await legacyOnDevice(request)).length) return null;
     before = await captureBackup(request, firmware, onProgress, readBackupV1);
   } catch (e) { throw convError("convbackup", e.message); }
-  const objects = readBackupV1(before);
-  old = legacyIds(objects);
+  return convertBackup(before, getBundle);
+}
+
+/* A backup file (the device's, or one the editor opens) -> null (nothing of 1.x's in it), or { before, after, report,
+   refused, left, old }: after the file to restore, every id it had (1.x's converted or emptied, 2.0's as they were) */
+export async function convertBackup(before, getBundle) {
+  if (typeof before === "string") before = JSON.parse(before);
+  const objects = readBackupV1(before), old = legacyIds(objects);
+  if (!old.length) return null;
   let r;
   try {
     const { wasm, modules } = convertBundle(await getBundle());
@@ -44,7 +52,7 @@ export async function prepareConversion(request, firmware, getBundle, onProgress
   /* every id the backup had: 1.x's converted (or nothing: its place emptied), 2.0's own as they were */
   const empty = new Uint8Array(0);
   const after = backupFile(before.objects.map(({ id }) => ({ id, bytes: old.includes(id) ? r.objects.get(id) ?? empty : objects.get(id) })),
-                           `${firmware}, converted`);
+                           `${before.firmware || "Melodee 1.x"}, converted`);
   try { readBackup(after); }                          // (what restoreBackup checks: before the firmware is written)
   catch (e) { throw convError("convfail", e.message); }
   return { before, after, report: r.report, refused: r.refused, left: r.left, old };

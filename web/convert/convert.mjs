@@ -80,11 +80,13 @@ export async function legacyConverter(wasm, modules) {
     return Uint8Array.from(modules[m]);
   });
   return {
-    /** objects: Map (or [[id, bytes], ...]) of a 1.x backup -> { objects, report, refused, left } */
-    async convert(objects) {
+    /** objects: Map (or [[id, bytes], ...]) of a 1.x backup -> { objects, report, refused, left }. packed false: the
+     * projects as whole records (a .mel's form), else packed as the device stores them */
+    async convert(objects, { packed = true } = {}) {
       const input = objects instanceof Map ? objects : new Map(objects);
       const x = (await WebAssembly.instantiate(module, {})).exports;
       x._initialize?.();
+      x.cv_raw(packed ? 0 : 1);
       x.core_boot(0); x.core_poll(100);                 // (power-on as legacy.c lg_boot_modules: the synths in the pool)
       await installModules(x, files);
       x.core_poll(100); x.core_boot(1); x.core_poll(100);

@@ -526,6 +526,7 @@ const parse = {
     o.namespace={general:ns>=0?trailer[ns+3]:o.shared?16:o.nengines};
     /* Melodee 2.0 ('I' 1): engine handles are this session's (84 op 6 names their IDs): the MIDI Track's, the user kinds */
     const id=trailer.findIndex((x,i)=>i>=15&&x===0x49&&trailer[i+1]===1);
+    o.v2=id>=0;                                   /* (Melodee 1.x's firmware never sends it: its records are 1.x's) */
     o.midi=id>=0?trailer[id+2]:21;
     if(id>=0)o.namespace={general:trailer[id+3],fm:trailer[id+4],cz:trailer[id+5],p5:trailer[id+6]};
     return o;
@@ -2732,7 +2733,7 @@ const TEXT = {
     synthImport: "SysEx を読み込む", synthExport: "SysEx に書き出し", synthSent: "SysEx を送りました",
     synthNone: "この SysEx に答えるシンセが本体にありません", sysexFrom: "{n} 以降にファイルの音色を保存しますか？使用中のスロットは上書きされます。",
     motion: "モーション", motionOn: "再生", motionClear: "モーションを消去", motionConfirm: "選択トラックのモーションを消しますか？", chance: "確率 %", motionStep: "ステップ", motionParam: "パラメーター", motionValue: "値",
-    backupTitle: "全体バックアップ", backupExport: "バックアップ保存", backupImport: "バックアップ復元", backupHelp: "現在の曲・A〜D・音色バンク・ユーザーサンプル・設定を、このパソコンへ保存。", backupOld: "全体バックアップには対応版への更新が必要です。", backupConfirm: "全体バックアップを復元しますか？ 現在の曲、保存データとサンプルを置き換えます。USBを抜かないでください。", backupWorking: "バックアップ処理中 ", backupDone: "バックアップを保存しました", backupRestored: "全体バックアップを復元しました",
+    backupTitle: "全体バックアップ", backupExport: "バックアップ保存", backupImport: "バックアップ復元", backupHelp: "現在の曲・A〜D・音色バンク・ユーザーサンプル・設定を、このパソコンへ保存。", backupOld: "全体バックアップには対応版への更新が必要です。", backupConfirm: "全体バックアップを復元しますか？ 現在の曲、保存データとサンプルを置き換えます。USBを抜かないでください。", backupWorking: "バックアップ処理中 ", backupDone: "バックアップを保存しました", backupRestored: "全体バックアップを復元しました", convertWorking: "Melodee 1.x から変換しています…", backupConfirmConvert: "このバックアップは Melodee 1.x のものです。このファームウェア用に変換しました。復元しますか？ 現在の曲、保存データを置き換えます。USBを抜かないでください。", backupConverted: "Melodee 1.x のバックアップを変換して復元しました", backupNewer: "このバックアップは Melodee 2.0 のものです。先にファームウェアを更新してください。", melConverted: "（Melodee 1.x から変換）", melOld: "この Melodee 1.x のプロジェクトファイルを開くには、先にファームウェアを Melodee 2.0 に更新してください。", convertMissing: "Melodee 1.x のファイルを変換するツールがこのページにありません。",
     melTitle: "プロジェクトファイル", melExport: "プロジェクトファイルを保存", melImport: "プロジェクトファイルを開く", melHelp: ".melファイルは、1つのプロジェクトと、そのために録音したドラムキットをまとめて保存します。開くと、プロジェクトは最初の空きプロジェクトへ、キットは空きスロットへ入ります（本体に同じキットがあればそれを使います）。本体のデータは置き換えません。", melCurrent: "現在の曲", melProject: "プロジェクト ", melWorking: "プロジェクトファイル ", melSaved: "プロジェクトファイルを保存しました", melKit: "（キット付き）", melKits: "（キット付き）", melOpened: "次のプロジェクトとして開きました: ",
     deviceDisplay: "本体の画面",
     deviceDisplayHelp: "FM-1 の画面に反映し、保存します。再生中の変更は停止後に保存されます。",
@@ -2821,7 +2822,7 @@ const TEXT = {
     synthImport: "Import SysEx", synthExport: "Export SysEx", synthSent: "SysEx sent",
     synthNone: "No synth on the device answers this SysEx", sysexFrom: "Keep the file's sounds from {n} on? Used slots from there are overwritten.",
     motion: "Motion", motionOn: "Play motion", motionClear: "Clear motion", motionConfirm: "Clear this track's motion?", chance: "Chance %", motionStep: "Step", motionParam: "Parameter", motionValue: "Value",
-    backupTitle: "Complete backup", backupExport: "Save backup", backupImport: "Restore backup", backupHelp: "Save the current music, A–D, sound banks and settings to this computer.", backupOld: "Complete backups need firmware with archive support.", backupConfirm: "Restore this complete backup? Current music, saved data and samples will be replaced. Keep USB connected.", backupWorking: "Backing up / restoring ", backupDone: "Backup saved", backupRestored: "Complete backup restored",
+    backupTitle: "Complete backup", backupExport: "Save backup", backupImport: "Restore backup", backupHelp: "Save the current music, A–D, sound banks and settings to this computer.", backupOld: "Complete backups need firmware with archive support.", backupConfirm: "Restore this complete backup? Current music, saved data and samples will be replaced. Keep USB connected.", backupWorking: "Backing up / restoring ", backupDone: "Backup saved", backupRestored: "Complete backup restored", convertWorking: "Converting from Melodee 1.x… ", backupConfirmConvert: "This backup is from Melodee 1.x and has been converted for this firmware. Restore it? Current music and saved data will be replaced. Keep USB connected.", backupConverted: "Melodee 1.x backup converted and restored", backupNewer: "This backup is from Melodee 2.0. Update the firmware first.", melConverted: " (converted from Melodee 1.x)", melOld: "To open this Melodee 1.x project file here, update the firmware to Melodee 2.0 first.", convertMissing: "This page has no converter for Melodee 1.x files.",
     melTitle: "Project file", melExport: "Save project file", melImport: "Open project file", melHelp: "A .mel file holds one project and the drum kits you recorded for it. Opening one puts the project in the first free project and its kits in free kit slots (a kit the device has already is used as it is). Nothing on the device is replaced.", melCurrent: "Current music", melProject: "Project ", melWorking: "Project file ", melSaved: "Project file saved", melKit: " with its kit", melKits: " with its kits", melOpened: "Opened as project ",
     deviceDisplay: "Device display",
     deviceDisplayHelp: "Changes apply to the FM-1 screen and save. Changes made while playing save after STOP.",
@@ -3711,13 +3712,29 @@ function renderBackup() {
   $("mel-import").disabled = !(caps & 2);
 }
 const backupModule = () => import("./fm1backup.js");
+/* Melodee 1.x's files on 2.0: the converter (convert/: 1.x's own readers in WebAssembly, ./melodee-convert.bin beside
+   this page: make_site.py) runs here, on this computer */
+const convertModule = () => import("./convert/convert.mjs");
+let converterP = null;
+function converter() {
+  converterP ??= (async () => {
+    const r = await fetch("./melodee-convert.bin", { cache: "no-cache" });
+    if (!r.ok) throw new Error(t("convertMissing"));
+    const bytes = new Uint8Array(await r.arrayBuffer()), { convertBundle, legacyConverter } = await convertModule();
+    const { wasm, modules } = convertBundle(bytes);
+    return { bundle: async () => bytes, run: await legacyConverter(wasm, modules) };
+  })();
+  converterP.catch(() => { converterP = null; });
+  return converterP;
+}
 const backupProgress = (done, total) => sayK("backupWorking", `${Math.round(done / Math.max(1, total) * 100)}%`);
 $("backup-export").addEventListener("click", () => op(async () => {
   const d = dev;
   if (!(d?.info?.backupCaps & 1)) return;
   const { captureBackup } = await backupModule();
+  const v1 = d.info.v2 ? null : (await convertModule()).readBackupV1;   /* (a 1.x FM-1's records: 1.x's forms, its KIT1 kits) */
   assertSession(d);
-  const file = await captureBackup((r, o) => sessionRequest(d, r, o), d.info.version, backupProgress);
+  const file = await captureBackup((r, o) => sessionRequest(d, r, o), d.info.version, backupProgress, v1 || undefined);
   assertSession(d);
   download(`Melodee-backup-${new Date().toISOString().slice(0, 10)}.json`, file);
   sayK("backupDone");
@@ -3727,12 +3744,24 @@ $("backup-file").addEventListener("change", () => {
   const file = $("backup-file").files[0], d = dev; $("backup-file").value = "";
   if (!file || !(d?.info?.backupCaps & 2)) return;
   op(async () => {
-    if (file.size > 600000) throw new Error("Backup file too large");
-    const { readBackup, restoreBackup } = await backupModule();
-    const archive = readBackup(await file.text()); assertSession(d);
-    if (!confirm(t("backupConfirm"))) return;
-    await restoreBackup((r, o) => sessionRequest(d, r, o), archive, backupProgress);
-    await load(d); sayK("backupRestored");
+    if (file.size > 4000000) throw new Error("Backup file too large");
+    const { readBackup, restoreBackup } = await backupModule(), { readBackupV1, legacyIds } = await convertModule();
+    const text = await file.text(), objects = readBackupV1(text), old = legacyIds(objects).length > 0;
+    let archive, check = readBackup, conv = null;
+    if (d.info.v2 && old) {                         /* a 1.x file onto 2.0: converted here first (install/conversion.js) */
+      sayK("convertWorking");
+      const [{ convertBackup }, c] = await Promise.all([import("./install/conversion.js"), converter()]);
+      conv = await convertBackup(text, c.bundle);
+      archive = readBackup(conv.after);
+    } else if (!d.info.v2) {                        /* a 1.x FM-1: 1.x's files only, its own checks */
+      if (!old && objects.get(1)?.length) throw new Error(t("backupNewer"));
+      check = (f) => ({ ...f, objects: f.objects.map((o) => ({ ...o, bytes: objects.get(o.id) })) });
+      archive = check(JSON.parse(text));
+    } else archive = readBackup(text);
+    assertSession(d);
+    if (!confirm(t(conv ? "backupConfirmConvert" : "backupConfirm"))) return;
+    await restoreBackup((r, o) => sessionRequest(d, r, o), archive, backupProgress, check);
+    await load(d); sayK(conv ? "backupConverted" : "backupRestored");
   });
 });
 
@@ -3755,13 +3784,23 @@ $("mel-file").addEventListener("change", () => {
   const file = $("mel-file").files[0], d = dev; $("mel-file").value = "";
   if (!file || !(d?.info?.backupCaps & 2)) return;
   op(async () => {
-    const { melImport, MEL_MAX } = await melModule();
+    const { melImport, melImportParts, MEL_MAX } = await melModule();
     if (file.size > MEL_MAX) throw new Error("Not a Melodee project file");
     const bytes = new Uint8Array(await file.arrayBuffer()); assertSession(d);
-    const r = await melImport((rq, o) => sessionRequest(d, rq, o), bytes, melProgress);
+    let r, converted = false;
+    try { r = await melImport((rq, o) => sessionRequest(d, rq, o), bytes, melProgress); }
+    catch (e) {                                     /* a 1.x file (version 2): converted here, then opened as a 2.0 one */
+      if (e.code !== "mel1x") throw e;
+      if (!d.info.v2) throw new Error(t("melOld"));
+      sayK("convertWorking");
+      const [{ melConvert }, c] = await Promise.all([import("./convert/mel_legacy.mjs"), converter()]);
+      const mel = await melConvert(c.run, bytes); assertSession(d);
+      r = await melImportParts((rq, o) => sessionRequest(d, rq, o), mel, melProgress);
+      converted = true;
+    }
     await load(d);
     sayK("melOpened", String(r.slot + 1).padStart(2, "0") + (r.name ? ` ${r.name}` : "") +
-      r.kits.map((k) => ` · KIT ${k.from - 8} → KIT ${k.to - 8}`).join(""));
+      r.kits.map((k) => ` · KIT ${k.from - 8} → KIT ${k.to - 8}`).join("") + (converted ? t("melConverted") : ""));
   });
 });
 

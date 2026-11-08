@@ -162,7 +162,7 @@ async function editorMock() {
   const info = E.parse[E.CMD.INFO](await rq(E.req.info())), H = engineHandles(info);
   ok(info.nengines === 30 && info.engines.slice(0, 12).join() === "-,MIDI Track,PROPHET,FM6,CZ-1,SID,808,909,SID KIT,CR78,FM KIT,SAMPLER" && info.engines.slice(12).every((n) => n === "-") &&
      info.midi === 1 && info.namespace.general === 0x40 && info.namespace.fm === 0x41 && info.namespace.cz === 0x42 && info.namespace.p5 === 0x43 &&
-     info.pcount === 124 && info.pe0 === 116,
+     info.pcount === 124 && info.pe0 === 116 && info.v2 === true,
     "editor: INFO (2.0 handles: 0 none, 1 MIDI Track, the shipped synths; the 0x49 tag's MIDI handle and user kinds)");
   let descs = 0;
   for (let i = 0; i < info.pcount; i++) if (E.parse[E.CMD.DESC](await rq(E.req.desc(0, i))).label) descs++;
@@ -225,6 +225,7 @@ async function editorMock() {
   const baseInfo = [116,101,115,116,0, 0, 69, 27, 64, 61, 4];
   const untagged = E.parse[E.CMD.INFO]([...baseInfo, 15]);
   ok(!untagged.chainRows && !untagged.uiCaps, "editor: an untagged PR capability cannot masquerade as SONG or preferences");
+  ok(untagged.v2 === false, "editor: firmware without INFO's 0x49 tag is Melodee 1.x (its files and records 1.x's)");
   const oldSong = E.parse[E.CMD.INFO]([...baseInfo, 16]);
   ok(oldSong.chainRows === 16 && !oldSong.uiCaps, "editor: existing SONG firmware remains compatible without preference probes");
   const tagged = E.parse[E.CMD.INFO]([...baseInfo, 16, 0x55, 1, 11]);

@@ -199,6 +199,13 @@ function cmRun(c, d, kit, encoding) {
       if (!encoding) { view.setUint32(at, w[0], true); view.setUint32(at + 4, w[1], true); }
     }
   };
+  if (kit === "kit1") {                          // (Melodee 1.x's KIT1 record, in a version 2 file: its 616-byte header,
+    const head = Math.min(d.length, 616), count = (d.length - head) >> 3;   // its slices; web/convert/mel_legacy.mjs)
+    for (let i = 0; i < head; i++) byteAt(i);
+    slices(head, count);
+    for (let i = head + count * 8; i < d.length; i++) byteAt(i);
+    return;
+  }
   let at = 0;
   for (const head = Math.min(d.length, KIT_HEAD); at < head; at++) byteAt(at);
   for (let p = 0; p < KIT_PADS && at < d.length && at >= KIT_HEAD; p++) {
@@ -470,7 +477,7 @@ export function melUnpack(file) {
   if (!(file instanceof Uint8Array)) file = new Uint8Array(file);
   if (file.length < MEL_HEAD + SEC_HEAD || u32(file, 0) !== 0x004C454D) bad("no MEL header");
   const version = file[4] | file[5] << 8;
-  if (version < 3) throw new Error("This project file is Melodee 1.x's: convert it in the web installer");
+  if (version < 3) throw Object.assign(new Error("This project file is Melodee 1.x's"), { code: "mel1x" });   /* (the editor converts it) */
   if (version !== 3) throw new Error("This project file needs a newer editor");
   if ((file[6] | file[7] << 8) !== MEL_HEAD || u32(file, 8) || file[22] || file[23]) bad("header");
   if (u32(file, 28) !== bkCrc(file.subarray(0, 28))) bad("header checksum");
@@ -548,8 +555,10 @@ export async function melExport(request, id, onProgress = () => {}) {
 // A project file onto the device: its kits into slots that hold the same bytes already or are free, the project,
 // naming the kits where they went, into the first free project. Nothing on the device is replaced.
 // -> { slot (0..31), name, kits: [{ from, to, reused }], empty: [KIT values the file's project names without a kit] }
-export async function melImport(request, file, onProgress = () => {}) {
-  const mel = melUnpack(file), objects = await list(request);
+export async function melImport(request, file, onProgress = () => {}) { return melImportParts(request, melUnpack(file), onProgress); }
+/* { project, kits, name } (melUnpack's, or a Melodee 1.x file's converted: web/convert/mel_legacy.mjs) onto the device */
+export async function melImportParts(request, mel, onProgress = () => {}) {
+  const objects = await list(request);
   if (!objects.some((x) => x.id === 64)) throw new Error("This firmware cannot take a project file. Update the firmware first.");
   const target = projectIds.map((id) => objects.find((x) => x.id === id)).findIndex((o) => o && !o.size);
   if (target < 0) throw new Error("No free project. Delete a project on the device, then open the file again.");

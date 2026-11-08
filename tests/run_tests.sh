@@ -189,6 +189,8 @@ web_tests() {                                     # the editor mock's tables mus
                 node web/convert/update_check.mjs
             step "installer page 1.x -> 2.0: backed up before the write, converted, written back; safe and failed cases" \
                 node web/test_install_convert.mjs
+            step "editor 1.x files on 2.0: a 1.x .mel (1.x's own writer) and backup converted, opened, restored; 1.x Backup" \
+                node web/convert/editor_check.mjs
         else
             echo "== skip the installer's 1.x -> 2.0 checks (no build/melodee-convert.bin, build/core/melodee_core.wasm: web/convert/build.sh, web/core/build.sh)"
         fi
