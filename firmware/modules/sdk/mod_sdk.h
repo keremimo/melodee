@@ -1,32 +1,51 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* The module side of the synth-module contract (firmware/src/module_abi.h): the firmware's DSP helpers (dsp.c) as
- * a module can have them, the same arithmetic over the host's tables, so a ported engine renders what it rendered
+/* A synth module from the contract alone (ABI 3, mod_abi3.h): no firmware header, the firmware's DSP helpers (dsp.c)
+ * as a module can have them, the same arithmetic over the host's tables, so a ported engine renders what it rendered
  * built in. Everything here inlines: a module calls into the firmware only through the host table.
  *
  * A module (one .c file, tools/mod_build.py):
  *     #include "mod_sdk.h"
- *     static void my_note_on(mod_ctx_t *c, mod_voice_t *v) { ... }
- *     static void my_render(mod_ctx_t *c, mod_voice_t *v, int32_t *out, uint32_t n, const mod_vmod_t *m) { ... }
- *     MOD_EXPORT(my_module) = { MOD_DESC_HEAD, .name = "MINE", ..., .host = &mh, .note_on = ..., .render = ... };
- * Host tests build the same file natively with MOD_NATIVE (no section, the descriptor by its name). */
+ *     static void my_note_on(mod_part_v3 *t, mod_voice_v3 *v) { ... }
+ *     static void my_render(mod_part_v3 *t, mod_voice_v3 *v, int32_t *out, uint32_t n, const mod_vmod_v3 *m) { ... }
+ *     static const mod_engine_v3 MY = { .name = "MINE", ..., .note_on = my_note_on, .render = my_render };
+ *     MOD3_EXPORT(my_module) = { MOD3_SDK_HEAD, .engine = 22, .name = "MINE", .npresets = 0, .eng = &MY };
+ * Host tests build the same file natively with MOD_HOSTED (no section, the descriptor by its name). */
 #pragma once
 #include <stdint.h>
-#include "module_abi.h"
+#include "mod_abi3.h"
 
-#define MOD_CTL 32u                              /* ABI 1: a render call's block, at most */
+#define MOD_CTL MOD3_CTL                         /* a render call's block, at most */
 #define MOD_CTL_LOG2 5
-#define MOD_VOICE_FS 24000                       /* ABI 1: mod_host_t.voice_fs */
-#define MOD_DESC_HEAD .magic = MOD_DESC_MAGIC, .abi = MOD_ABI, .size = sizeof(mod_desc_t)
-#ifdef MOD_NATIVE
-#define MOD_EXPORT(sym) const mod_desc_t sym
-#else
-#define MOD_EXPORT(sym) __attribute__((used, section(".mod_desc"))) const mod_desc_t sym
-#endif
+#define MOD_VOICE_FS MOD3_VOICE_FS
 #define MOD_NELEM(a) (sizeof(a) / sizeof((a)[0]))
+#define md_e(t) ((t)->p + MOD3_P_E0)              /* E1..E8 of part t */
 
-static const mod_host_t *mh;                     /* the firmware's table: the descriptor's .host = &mh */
+static const mod_host_v3 *mh;                    /* the firmware's table (md_bind) */
+static const int16_t *md_sine_tab, *md_tanh_tab; /* its tables the helpers read */
+static const uint16_t *md_svf_tab;
+/* the descriptor's bind: the host table and the tables the helpers read; 0 ready */
+static int md_bind(const mod_host_v3 *h, uint32_t self)
+{
+    (void)self;
+    if (h->version < MOD3_HOST || h->size < sizeof(mod_host_v3))
+        return 1;
+    mh = h;
+    md_sine_tab = (const int16_t *)h->table(MOD3_T_SINE);
+    md_tanh_tab = (const int16_t *)h->table(MOD3_T_TANH_Q15);
+    md_svf_tab = (const uint16_t *)h->table(MOD3_T_SVF_G);
+    return !md_sine_tab || !md_tanh_tab || !md_svf_tab;
+}
+#ifdef MOD_HOSTED
+#define MOD3_EXPORT(sym) const mod_desc_v3 sym
+#else
+#define MOD3_EXPORT(sym) __attribute__((used, section(".mod_desc"))) const mod_desc_v3 sym
+#endif
+#define MOD3_SDK_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
+    .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = md_bind
+/* the part's working memory (bytes: the engine's .state), 0: none yet */
+static inline void *md_part(const mod_part_v3 *t, uint32_t bytes) { return mh->part_mem(t->index, bytes); }
 
 static inline __attribute__((always_inline)) int32_t md_clamp(int32_t v, int32_t lo, int32_t hi)
 {
@@ -44,7 +63,7 @@ static inline int32_t md_osc_tri(uint32_t ph)
 static inline int32_t md_sine(uint32_t ph)
 {
     uint32_t i = ph >> 22;
-    int32_t a = mh->sine[i], b = mh->sine[(i + 1u) & 1023u];
+    int32_t a = md_sine_tab[i], b = md_sine_tab[(i + 1u) & 1023u];
     return a + (((b - a) * (int32_t)((ph >> 7) & 0x7FFFu)) >> 15);
 }
 /* xorshift32 */
@@ -60,7 +79,7 @@ static inline __attribute__((always_inline)) uint32_t md_noise32(int32_t *st)
 /* tanh(x / 32768) * 32767, interpolated */
 static inline __attribute__((always_inline)) int32_t md_softclip(int32_t x)
 {
-    const int16_t *t = mh->tanh_q15;
+    const int16_t *t = md_tanh_tab;
     int32_t a = x < 0 ? -x : x, i = a >> 8, y;
     if (i >= 256)
         y = t[256];
@@ -92,9 +111,9 @@ static inline void md_svf_coef_k(md_svf_t *c, int32_t cut, int32_t k)   /* cut 0
     int32_t i, g;
     cut = md_clamp(cut, 0, 127 << 8);
     i = cut >> 8;
-    g = mh->svf_g[i];
+    g = md_svf_tab[i];
     if (i < 127)
-        g += ((mh->svf_g[i + 1] - g) * (cut & 255)) >> 8;
+        g += ((md_svf_tab[i + 1] - g) * (cut & 255)) >> 8;
     md_svf_coef_gk(c, g, k);
 }
 static inline int32_t md_svf_lp(const md_svf_t *c, int32_t in, int32_t *ic1, int32_t *ic2)
@@ -108,7 +127,7 @@ static inline int32_t md_svf_lp(const md_svf_t *c, int32_t in, int32_t *ic1, int
 }
 
 /* the voice's amplitude ramp at sample i of the block */
-static inline __attribute__((always_inline)) int32_t md_amp_at(const mod_vmod_t *m, uint32_t i)
+static inline __attribute__((always_inline)) int32_t md_amp_at(const mod_vmod_v3 *m, uint32_t i)
 {
     int32_t x = (m->amp1 - m->amp0) * (int32_t)i;
     return m->amp0 + ((x + ((x >> 31) & (MOD_CTL - 1))) >> MOD_CTL_LOG2);
@@ -116,11 +135,11 @@ static inline __attribute__((always_inline)) int32_t md_amp_at(const mod_vmod_t 
 /* (p + 1/2 LSB + dither) >> sh, 1 <= sh <= 15; 0 stays 0 */
 static inline __attribute__((always_inline)) int32_t md_dith_cut(int32_t p, uint32_t sh, uint32_t k)
 {
-    int32_t d = ((int32_t)mh->dither[k & 31u] >> (15u - sh)) + (1 << (sh - 1u));
+    int32_t d = ((int32_t)mh->dither[k & (MOD3_DITH_N - 1u)] >> (15u - sh)) + (1 << (sh - 1u));
     return (p + (d & -(int32_t)(p != 0))) >> sh;
 }
 /* a voice's sample s (Q15) at sample i, at the voice's level: what render adds to out[i] */
-static inline int32_t md_voice_amp(int32_t s, const mod_vmod_t *m, uint32_t i)
+static inline int32_t md_voice_amp(int32_t s, const mod_vmod_v3 *m, uint32_t i)
 {
     return md_dith_cut(s * md_mulq15(md_amp_at(m, i), MOD_VOICE_FS), 15, i + (uint32_t)m->amp1);
 }

@@ -4,8 +4,8 @@
  * Nothing here depends on a module ABI: the chunks follow the address words of any module file, the loader copies
  * only the image into SRAM and never a chunk, and the lists read a module's presets from the pool without loading it.
  *
- * Chunks: a file whose head has MOD_FILE_CHUNKS in mod_file_t.flags goes on after its address words with chunks,
- * each a u32 tag, a u32 length, that many bytes, then zero bytes to the next multiple of 4. The file's CRC (mod_file_t
+ * Chunks: a file whose head has MOD_FILE_CHUNKS in its flags (mod_abi3.h mod_file3_t) goes on after its address words with chunks,
+ * each a u32 tag, a u32 length, that many bytes, then zero bytes to the next multiple of 4. The file's CRC (mod_file3_t
  * .crc) covers them, its total counts them. Readers skip tags they do not know.
  *
  * MOD_PST_TAG ("PRST"), version 1, little endian:
@@ -24,7 +24,7 @@
 #pragma once
 #include <stdint.h>
 
-#define MOD_FILE_CHUNKS 1u                       /* mod_file_t.flags: chunks follow the address words */
+#define MOD_FILE_CHUNKS 1u                       /* the head's flags: chunks follow the address words (MOD3_FILE_CHUNKS) */
 #define MOD_PST_TAG 0x54535250u                  /* "PRST" */
 #define MOD_PST_VERSION 1u
 #define MOD_PST_HEAD 16u

@@ -9,7 +9,7 @@ static const char *eng_name(uint32_t e)
     return k < NMOD ? mods[k].name : ENGINES[e % NENGINES]->name;
 }
 /* the slot whose file holds e's factory presets (its PRST chunk) while e plays from it or waits for it, NMOD: none (a
- * built-in engine, an ABI 1 module: its descriptor's rows) */
+ * built-in engine: its rows or maker) */
 static uint32_t mod_pst_of(uint32_t e)
 {
     uint32_t k = e < NENGINES ? mod_slot_of(e) : NMOD;
@@ -29,6 +29,11 @@ static uint32_t eng_npresets(uint32_t e)
  * scratch (scratch.h dec: filled and consumed inside mod_pst_get) */
 #include "scratch.h"
 static int (*mod_pread)(uint32_t k, uint32_t off, void *dst, uint32_t n);   /* module_store.c mod_rd: slot k's file */
+/* the host table's file_read: n bytes of slot self's file at off (a module reads its own: bind's self). 0 ok */
+static int mod_h_file_read(uint32_t self, uint32_t off, void *dst, uint32_t n)
+{
+    return self >= NMOD || !mod_pread || off > mods[self].len || n > mods[self].len - off || mod_pread(self, off, dst, n);
+}
 #define MOD_WIN 128u
 #define MOD_CATS 512u                               /* the factory presets whose categories RAM holds, every slot's */
 static uint8_t mod_win[2][MOD_WIN] __attribute__((section(".pool")));
@@ -230,47 +235,21 @@ static void mod_order_remove(uint32_t e)
             ENGINE_ORDER[j++] = ENGINE_ORDER[n];
     eng_nshown = (uint8_t)j;
 }
-static void mod_engine_make(engine_t *e, const mod_desc_t *d)
+/* slot k's module into its engine number: its engine copied after its bytes (a field its ABI 3 minor has not: 0), the
+ * number, then the table entry the audio reads (each step a single store: a block in between sees the engine retired) */
+static void mod_register(uint32_t k, const mod_desc_v3 *d, engine_t *e)
 {
-    static const uint8_t KNOB[12] = {P_E0, P_E0 + 1, P_E0 + 2, P_E0 + 3, P_E0 + 4, P_E0 + 5, P_E0 + 6, P_E0 + 7,
-                                     P_ATK, P_DEC, P_SUS, P_REL};
-    memcpy(e, &ENG_MODULE, sizeof *e);
-    e->name = d->name;
-    e->page_title[0] = d->page_title[0];
-    e->page_title[1] = d->page_title[1];
-    memcpy(e->edit, d->edit, sizeof e->edit);
-    e->presets = (const preset_t *)d->presets;
-    e->npresets = d->npresets;
-    for (uint32_t k = 0; k < 4u; k++)
-        e->knob[k] = KNOB[d->knob[k] % 12u];
-    e->poly = d->poly > NVOICE ? NVOICE : d->poly;
-    e->keep = d->keep;
-    if (!d->block)
-        e->block = 0;                               /* (no block: idle parts need no state) */
-}
-/* slot k's module into its engine number: the descriptor first, then the number, then the table entry the audio
- * reads (each step a single store: a block in between sees the engine retired) */
-static void mod_register(uint32_t k, const mod_desc_t *d, engine_t *e)
-{
-    uint32_t n = mods[k].engine;
-    mod_engine_make(e, d);
-    uint32_t g = mod_guard();
+    uint32_t n = mods[k].engine, g;
+    memset(e, 0, sizeof *e);
+    memcpy(e, d->eng, d->eng_size < sizeof *e ? d->eng_size : sizeof *e);
+    e->name = d->name;                              /* (its file's: the lists' while it is not loaded) */
+    if (e->poly > NVOICE)
+        e->poly = NVOICE;
+    g = mod_guard();
     mods[k].d = d;
     mod_at[n] = (uint8_t)(k + 1u);
     __asm__ volatile("" ::: "memory");
     ENGINES[n] = e;
-    mods[k].state = MS_LOADED;
-    mod_order_add(n);
-    mod_unguard(g);
-}
-/* a native module: its own engine_t (module_native.h), as the registration above */
-static void mod_register_native(uint32_t k, const mod_native_t *d)
-{
-    uint32_t n = mods[k].engine, g = mod_guard();
-    mods[k].nd = d;
-    mod_at[n] = (uint8_t)(k + 1u);
-    __asm__ volatile("" ::: "memory");
-    ENGINES[n] = d->eng;
     mods[k].state = MS_LOADED;
     mod_order_add(n);
     mod_unguard(g);
@@ -293,7 +272,6 @@ static void mod_unregister(uint32_t k, int idle)
             }
     }
     mods[k].d = 0;
-    mods[k].nd = 0;
     resource_release(RES_MODULE0 + k);
     mod_unguard(g);
 }

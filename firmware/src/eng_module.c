@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Synth modules (module_abi.h): engines that live outside the image. A module file is read from wherever it is kept
- * (module_store.c: pool records; later an SD card) into a block of the audio working arena, its address words moved
- * to the block, checked, and from then on it is engine `engine`: ENGINES[engine] points at an engine_t made for it
- * (in the block, after the module's own bytes) whose callbacks are the ones below. They hand the module its part,
- * a copy of the voice and the voice's modulation, and copy the voice back.
+/* Synth modules (ABI 3: firmware/modules/sdk/mod_abi3.h): engines that live outside the image. A module file is read
+ * from wherever it is kept (module_store.c: pool records; later an SD card) into a block of the audio working arena,
+ * its address words moved to the block, checked, bound to the host table below, and from then on it is engine
+ * `engine`: ENGINES[engine] points at a copy of its mod_engine_v3 (in the block, after the module's own bytes). Its
+ * callbacks get the firmware's own track_t and voice_t, read through the frozen heads they begin with (asserted here),
+ * so a module built once plays on every firmware that keeps this contract.
  *
  * NMOD slots, loaded lazily: at power-on only the files' heads are read (module_store.c mod_catalog), and a stored
  * module's engine is ENG_MOD_IDLE: the lists show its name (eng_name), its sounds keep their values (retired
@@ -12,30 +13,29 @@
  * Picking it (mod_want) or a part, a song section or a pattern using it (module_store.c mod_service) loads it; one
  * nothing has used for MOD_IDLE_MS goes back to the flash. Unloading points its engine at ENG_MOD_IDLE first, so no
  * audio block can be inside the module when its block is released. */
-#include "module_abi.h"
-#include "module_native.h"   /* native modules: an engine's own source, its own engine_t (SID, DRUM, CZ-1, FM6, the
-                              * Prophet) */
+#include "module_legacy.h"   /* TEMPORARY: the five shipped synths' data, until the patch blob */
 
 enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
-       MS_STALE };                                 /* mod_slot_t.state; STALE: a native module of another firmware */
+       MS_STALE,                                   /* an older ABI's module, or another firmware's legacy data (key) */
+       MS_NEWER };                                 /* a module that needs a later host table than this firmware's */
 typedef struct {
     uint8_t state, engine;                          /* MS_*; the engine number its file names */
     uint16_t version;
     uint32_t len;                                   /* the file's length (0: empty) */
-    char name[MOD_NAME_MAX + 1u];
-    uint8_t npresets;                               /* (its head: the browser's list without loading it; a native
-                                                     * module's: its PRST chunk's, 0 without one) */
-    uint8_t abi;                                    /* MOD_ABI or MOD_ABI_NATIVE */
-    uint32_t crc, key;                              /* its head's CRC and (native) layout key: what the installer
-                                                     * compares with its own files (editor_module.c) */
+    char name[MOD3_NAME_MAX + 1u];
+    uint8_t npresets;                               /* (its head: the browser's list without loading it; its PRST
+                                                     * chunk's, 0 without one) */
+    uint8_t abi;                                    /* its file's ABI (MOD3_ABI; 1, 2: an older firmware's) */
+    uint16_t host;                                  /* the host table version it needs */
+    uint32_t crc, key;                              /* its head's CRC and legacy key: what the installer compares with
+                                                     * its own files (editor_module.c) */
     uint32_t copy, xcopy, cut;                      /* where its file is (st_current's copies, the first record's
                                                      * length: mod_open) */
     uint32_t pst, pst_len, pst_dat;                 /* its factory presets (module_presets.h): the PRST payload's place
                                                      * in the file, its length (0: none), its dictionary's place in it */
     uint16_t pst_init, pst_dict, pst_ulen;          /* .. its INIT, dictionary and entry bytes */
     uint16_t cat_at;                                /* .. their categories in mod_cat (MOD_PST_NONE: in the file) */
-    const mod_desc_t *d;                            /* MS_LOADED, ABI 1: the descriptor in the block */
-    const mod_native_t *nd;                         /* MS_LOADED, native: its descriptor */
+    const mod_desc_v3 *d;                           /* MS_LOADED: its descriptor in the block */
 } mod_slot_t;
 static mod_slot_t mods[NMOD];
 static uint8_t mod_skipped;                         /* this boot did not load modules (mod_guard: last boot crashed) */
@@ -52,150 +52,139 @@ static uint32_t mod_slot_of(uint32_t e)            /* the slot playing as engine
     return NMOD;
 }
 
-/* ---- the host side of the contract */
-static uint32_t mod_pitch_inc(uint32_t p) { return tuned_pitch_inc(p > 2047u ? 2047u : p); }
-static void mod_mem_set(void *d, int c, uint32_t n) { memset(d, c, n); }
-static void mod_mem_copy(void *d, const void *s, uint32_t n) { memcpy(d, s, n); }
-static const mod_host_t MOD_HOST = {
-    MOD_ABI, sizeof(mod_host_t), FS, CTL, VOICE_FS, SINE, TANH_Q15, SVF_G, dith,
-    mod_pitch_inc, mod_mem_set, mod_mem_copy,
-};
-_Static_assert(CTL == 32 && VOICE_FS == 24000, "ABI 1 freezes the block length and the voice level");
+/* ---- the contract: the firmware's structs begin with ABI 3's views, its numbers are the frozen ones */
+#define MOD3_SAME(T, f, V, g) (__builtin_offsetof(T, f) == __builtin_offsetof(V, g) && \
+                               sizeof(((T *)0)->f) == sizeof(((V *)0)->g))
+_Static_assert(MOD3_SAME(track_t, p, mod_part_v3, p) && MOD3_SAME(track_t, size, mod_part_v3, size) &&
+               MOD3_SAME(track_t, index, mod_part_v3, index) && MOD3_SAME(track_t, engine, mod_part_v3, engine) &&
+               MOD3_SAME(track_t, v, mod_part_v3, voices) && MOD3_SAME(track_t, vsize, mod_part_v3, vsize) &&
+               MOD3_SAME(track_t, nmono, mod_part_v3, nmono) && MOD3_SAME(track_t, mono_stack, mod_part_v3, mono_stack) &&
+               MOD3_SAME(track_t, mw, mod_part_v3, mw) && MOD3_SAME(track_t, at, mod_part_v3, at) &&
+               MOD3_SAME(track_t, foot, mod_part_v3, foot) && MOD3_SAME(track_t, breath, mod_part_v3, breath) &&
+               MOD3_SAME(track_t, porta, mod_part_v3, porta) && MOD3_SAME(track_t, bend_raw, mod_part_v3, bend_raw) &&
+               MOD3_SAME(track_t, rsv, mod_part_v3, rsv) && sizeof(track_t) >= sizeof(mod_part_v3),
+               "track_t begins with mod_part_v3 (mod_abi3.h)");
+_Static_assert(MOD3_SAME(voice_t, note, mod_voice_v3, note) && MOD3_SAME(voice_t, vel, mod_voice_v3, vel) &&
+               MOD3_SAME(voice_t, gate, mod_voice_v3, gate) && MOD3_SAME(voice_t, active, mod_voice_v3, active) &&
+               MOD3_SAME(voice_t, stage, mod_voice_v3, stage) && MOD3_SAME(voice_t, mvel, mod_voice_v3, mvel) &&
+               MOD3_SAME(voice_t, index, mod_voice_v3, index) && MOD3_SAME(voice_t, env, mod_voice_v3, env) &&
+               MOD3_SAME(voice_t, env_out, mod_voice_v3, env_out) && MOD3_SAME(voice_t, pitch16, mod_voice_v3, pitch16) &&
+               MOD3_SAME(voice_t, pitch_cur, mod_voice_v3, pitch_cur) && MOD3_SAME(voice_t, ph, mod_voice_v3, ph) &&
+               MOD3_SAME(voice_t, age, mod_voice_v3, age) &&
+               __builtin_offsetof(voice_t, s) == __builtin_offsetof(mod_voice_v3, s) &&
+               sizeof(voice_t) >= sizeof(mod_voice_v3) && sizeof(voice_t) % 4u == 0, "voice_t begins with mod_voice_v3");
+#if !MELODEE_LEGACY_EXTRAS
+_Static_assert(MOD3_SAME(voice_t, s, mod_voice_v3, s) && MOD3_SAME(voice_t, rsv, mod_voice_v3, rsv), "voice_t s, rsv");
+#endif
+#define MOD3_SAME_E(f) MOD3_SAME(engine_t, f, mod_engine_v3, f)
+_Static_assert(MOD3_SAME_E(name) && MOD3_SAME_E(page_title) && MOD3_SAME_E(edit) && MOD3_SAME_E(presets) &&
+               MOD3_SAME_E(npresets) && MOD3_SAME_E(knob) && MOD3_SAME_E(poly) && MOD3_SAME_E(sampled) &&
+               MOD3_SAME_E(keep) && MOD3_SAME_E(oneshot) && MOD3_SAME_E(note_on) && MOD3_SAME_E(render) &&
+               MOD3_SAME_E(amp) && MOD3_SAME_E(desc) && MOD3_SAME_E(block) && MOD3_SAME_E(keys) &&
+               MOD3_SAME_E(ownenv) && MOD3_SAME_E(done) && MOD3_SAME_E(alloc) && MOD3_SAME_E(legato) &&
+               MOD3_SAME_E(mono_key) && MOD3_SAME_E(post) && MOD3_SAME_E(cap) && MOD3_SAME_E(units) &&
+               MOD3_SAME_E(preset_make) && MOD3_SAME_E(state) && MOD3_SAME_E(env_q15) && MOD3_SAME_E(chord) &&
+               MOD3_SAME_E(reuse) && MOD3_SAME_E(batch) && MOD3_SAME_E(render_p) && MOD3_SAME_E(wclass) &&
+               MOD3_SAME_E(menv) && MOD3_SAME_E(join) && MOD3_SAME_E(reserve) && MOD3_SAME_E(caps) &&
+               MOD3_SAME_E(bend_range) && sizeof(engine_t) == sizeof(mod_engine_v3),
+               "engine_t is mod_engine_v3 (mod_abi3.h)");
+_Static_assert(P_COUNT == MOD3_P_COUNT && P_E0 == MOD3_P_E0 && NVOICE == MOD3_NVOICE && NPART == MOD3_NPART &&
+               FS == MOD3_RATE && CTL == MOD3_CTL && VOICE_FS == MOD3_VOICE_FS && DITH_N == MOD3_DITH_N &&
+               P_ATK == MOD3_P_ATK && P_DEC == MOD3_P_DEC && P_SUS == MOD3_P_SUS && P_REL == MOD3_P_REL &&
+               P_VOICE == MOD3_P_VOICE && G_TUNE == MOD3_G_TUNE && AP_COUNT == MOD3_AP_COUNT && F_ALIAS + 1 == MOD3_F_COUNT &&
+               F_ENUM == MOD3_F_ENUM && F_ONOFF == MOD3_F_ONOFF && F_FMFRQ == MOD3_F_FMFRQ,
+               "the numbers ABI 3 freezes (mod_abi3.h): another ABI");
+#ifdef FM1_IRQ_TARGET
+_Static_assert(sizeof(mod_desc_v3) == 32u && sizeof(mod_file3_t) == MOD3_HEAD && sizeof(mod_part_v3) == 300u &&
+               sizeof(mod_voice_v3) == 68u && sizeof(mod_vmod_v3) == 36u && sizeof(mod_param_v3) == 20u &&
+               __builtin_offsetof(mod_engine_v3, note_on) == 188u && __builtin_offsetof(mod_engine_v3, render) == 192u &&
+               MOD3_BATCH_BYTES <= AUDIO_BATCH_BYTES,
+               "ABI 3 layouts on the device (tools/mod_build.py)");
+#endif
 
-/* ---- the firmware's side of a native module (module_native.h): its data and calls, handed over at load */
+/* ---- the host table (mod_host_v3): what a module reaches of the firmware */
 static void *mod_part_mem(uint32_t part, uint32_t bytes) { return resource_get(RES_ENGINE0 + part % NPART, bytes); }
 static void voice_scale_pitch(const track_t *t, voice_t *v, uint32_t note);   /* voice.c */
 static uint32_t trk_nvoice(const track_t *t);                                  /* voice.c */
-static void p5_update_bend(track_t *t);                                        /* voice.c */
+static uint32_t mod_h_pitch_inc(uint32_t p) { return tuned_pitch_inc(p > 2047u ? 2047u : p); }
+static int32_t mod_h_octave(const mod_part_v3 *t) { return input_octave((const track_t *)(const void *)t); }
 #if !MELODEE_DUAL_CORE
-static int mod_no_worker;                           /* (no CPU1: a module's own pairing finds it never online) */
+static const int mod_no_worker;                     /* (no CPU1: a module's own pairing finds it never online) */
 static uint32_t mod_no_pairs;
+static int mod_h_no_submit(void (*fn)(void *), void *context) { (void)fn; (void)context; return 0; }
+static int mod_h_no_join(void) { return 0; }
 #endif
-static const mod_imports_t MOD_IMPORTS = {
-    trk, &song, &voice_was, &tuning_a4, dith, dith_f, midi_verb, drum_patch, &drum_patch_none,
-    &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen, mod_part_mem, voice_scale_pitch,
-    SINE, TANH_Q15, PITCH_OCT, A4_RATIO, P5_TANH,
-    cz_patch, &cz_patch_none, FM6_SIN,
+#if !MELODEE_AUDIO_PROFILE
+static void mod_h_no_profile(uint32_t cls, uint32_t ticks) { (void)cls; (void)ticks; }
+#endif
+static const void *mod_h_table(uint32_t id)
+{
+    switch (id) {
+    case MOD3_T_SINE: return SINE;
+    case MOD3_T_TANH_Q15: return TANH_Q15;
+    case MOD3_T_SVF_G: return SVF_G;
+    case MOD3_T_PITCH_OCT: return PITCH_OCT;
+    case MOD3_T_A4_RATIO: return A4_RATIO;
+    case MOD3_T_A4_LOG: return A4_LOG;
+    case MOD3_T_P5_TANH: return P5_TANH;
+    case MOD3_T_FM6_SIN: return FM6_SIN;
+    case MOD3_T_FM6_MKI_LOG: return FM6_MKI_LOG;
+    case MOD3_T_FM6_MKI_EXP: return FM6_MKI_EXP;
+    case MOD3_T_FM6_OPL_LOG: return FM6_OPL_LOG;
+    case MOD3_T_FM6_OPL_EXP: return FM6_OPL_EXP;
+    default: return 0;
+    }
+}
+static int mod_h_file_read(uint32_t self, uint32_t off, void *dst, uint32_t n);   /* eng_module_main.c */
+static const mod_legacy_v3 MOD_LEGACY = {          /* TEMPORARY (module_legacy.h) */
+    drum_patch, &drum_patch_none, &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen,
+    cz_patch, &cz_patch_none,
     fm6_patch, fm6_patch_none, fm6_pgen, fm6_lgen, fm6_on, fm6_fn,
 #if MELODEE_DUAL_CORE
     &fm6_pairs,
 #else
     &mod_no_pairs,
 #endif
-    trk_nvoice, &audio_batch_active, audio_batch_push, audio_batch_push_cost,
+    p5_patch, p5_ready,
+};
+#define MOD3_CALL(T, f) ((T)(void (*)(void))(f))   /* (track_t, voice_t: read as their views) */
+static const mod_host_v3 MOD_HOST3 = {
+    .version = MOD3_HOST, .size = sizeof(mod_host_v3),
+    .was = &voice_was, .a4 = &tuning_a4, .song_g = song.g, .midi_rel = midi_verb, .dither = dith, .dither_f = dith_f,
+    .table = mod_h_table,
+    .part_mem = mod_part_mem,
+    .scale_pitch = MOD3_CALL(void (*)(const mod_part_v3 *, mod_voice_v3 *, uint32_t), voice_scale_pitch),
+    .nvoice = MOD3_CALL(uint32_t (*)(const mod_part_v3 *), trk_nvoice),
+    .pitch_inc = mod_h_pitch_inc,
+    .octave = mod_h_octave,
+    .batch_active = &audio_batch_active, .batch_push = audio_batch_push, .batch_push_cost = audio_batch_push_cost,
 #if MELODEE_DUAL_CORE
-    &audio_worker_online, audio_worker_submit, audio_worker_join,
+    .worker_online = &audio_worker_online, .worker_submit = audio_worker_submit, .worker_join = audio_worker_join,
 #else
-    &mod_no_worker, 0, 0,
+    .worker_online = &mod_no_worker, .worker_submit = mod_h_no_submit, .worker_join = mod_h_no_join,
 #endif
 #if MELODEE_AUDIO_PROFILE
-    audio_profile_add,
+    .profile_add = audio_profile_add,
 #else
-    0,
+    .profile_add = mod_h_no_profile,
 #endif
-    FM6_MKI_LOG, FM6_MKI_EXP, FM6_OPL_LOG, FM6_OPL_EXP, A4_LOG,
-    p5_patch, p5_ready, p5_update_bend,
+    .lz_unpack = lz_unpack,
+    .file_read = mod_h_file_read,
+    .legacy = &MOD_LEGACY,
 };
-#ifdef FM1_IRQ_TARGET
-_Static_assert(sizeof(mod_native_t) == 28u && MOD_NHEAD == sizeof(mod_file_t) + 4u, "tools/mod_build.py ABI_NATIVE");
-#endif
-_Static_assert(F_INT == MF_INT && F_PCT == MF_PCT && F_CUTOFF == MF_CUTOFF && F_SEMI == MF_SEMI && F_ENUM == MF_ENUM &&
-               F_ONOFF == MF_ONOFF, "ABI 1 freezes the parameter formats");
-_Static_assert(sizeof(mod_param_t) == sizeof(param_desc_t) &&
-               __builtin_offsetof(mod_param_t, def) == __builtin_offsetof(param_desc_t, def) &&
-               __builtin_offsetof(mod_param_t, names) == __builtin_offsetof(param_desc_t, names) &&
-               __builtin_offsetof(mod_param_t, unit) == __builtin_offsetof(param_desc_t, unit), "mod_param_t");
-_Static_assert(sizeof(mod_preset_t) == sizeof(preset_t) &&
-               __builtin_offsetof(mod_preset_t, env) == __builtin_offsetof(preset_t, env) &&
-               __builtin_offsetof(mod_preset_t, mono) == __builtin_offsetof(preset_t, mono), "mod_preset_t");
-_Static_assert(sizeof(mod_vmod_t) == sizeof(vmod_t) &&
-               __builtin_offsetof(mod_vmod_t, amp1) == __builtin_offsetof(vmod_t, amp1) &&
-               __builtin_offsetof(mod_vmod_t, plog) == __builtin_offsetof(vmod_t, plog), "mod_vmod_t");
-#ifdef FM1_IRQ_TARGET
-_Static_assert(sizeof(mod_desc_t) == 216u && sizeof(mod_file_t) == 52u, "ABI 1 layouts (tools/mod_build.py)");
-#endif
 
-static const mod_desc_t *mod_desc_of(uint32_t e)
-{
-    uint32_t s = e < NENGINES ? mod_at[e] : 0u;
-    return s ? mods[s - 1u].d : 0;
-}
-static uint32_t mod_part_bytes(uint32_t e)
-{
-    const mod_desc_t *d = mod_desc_of(e);
-    return d ? d->part_bytes : 0u;
-}
-
-/* ---- the engine callbacks (audio; one part at a time) */
-static mod_ctx_t mod_ctx;
-static mod_ctx_t *modg_ctx(track_t *t, const mod_desc_t *d)
-{
-    uint32_t k = (uint32_t)(t - trk) % NPART;
-    mod_ctx.e = t->p + P_E0;
-    mod_ctx.part = d->part_bytes ? resource_get(RES_ENGINE0 + k, d->part_bytes) : 0;
-    mod_ctx.part_index = (uint8_t)k;
-    mod_ctx.voice_mode = (uint8_t)t->p[P_VOICE];
-    mod_ctx.held = 0;
-    return d->part_bytes && !mod_ctx.part ? 0 : &mod_ctx;
-}
-static void modg_vin(mod_voice_t *w, const voice_t *v, const track_t *t)
-{
-    w->note = v->note; w->vel = v->vel; w->gate = v->gate; w->index = (uint8_t)(v - t->v);
-    w->was = voice_was; w->age = v->age;
-    for (uint32_t k = 0; k < 3u; k++) w->ph[k] = v->ph[k];
-    for (uint32_t k = 0; k < 6u; k++) w->s[k] = v->s[k];
-}
-static void modg_vout(voice_t *v, const mod_voice_t *w)
-{
-    for (uint32_t k = 0; k < 3u; k++) v->ph[k] = w->ph[k];
-    for (uint32_t k = 0; k < 6u; k++) v->s[k] = w->s[k];
-}
-static void modg_note_on(track_t *t, voice_t *v)
-{
-    const mod_desc_t *d = mod_desc_of(t->engine);
-    mod_ctx_t *c;
-    mod_voice_t w;
-    if (!d || !(c = modg_ctx(t, d)))
-        return;
-    for (uint32_t k = 0; k < NVOICE; k++)          /* the keys down (WHEEL's single-trigger percussion) */
-        if (t->v[k].active && t->v[k].gate && t->v[k].stage != 4u)
-            c->held |= (uint16_t)(1u << k);
-    modg_vin(&w, v, t);
-    d->note_on(c, &w);
-    modg_vout(v, &w);
-}
-static void modg_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
-{
-    const mod_desc_t *d = mod_desc_of(t->engine);
-    mod_ctx_t *c;
-    mod_voice_t w;
-    if (!d || !(c = modg_ctx(t, d)))
-        return;
-    modg_vin(&w, v, t);
-    d->render(c, &w, out, n > CTL ? CTL : n, (const mod_vmod_t *)m);
-    modg_vout(v, &w);
-}
-static void modg_block(track_t *t)
-{
-    const mod_desc_t *d = mod_desc_of(t->engine);
-    mod_ctx_t *c;
-    if (d && d->block && (c = modg_ctx(t, d)))
-        d->block(c);
-}
-/* what a module's engine_t starts from (mod_engine_make), and a stored module's engine while it is not in SRAM
- * (ENG_MOD_IDLE: its callbacks find no descriptor, silent). tools/audio_ram.py roots these callbacks in SRAM */
-static const engine_t ENG_MODULE = {
+/* a stored module's engine while it is not in SRAM: its lists' names come from its file (eng_name), its sounds keep
+ * their values and play silent (retired semantics); tools/audio_ram.py roots these callbacks in SRAM */
+static const engine_t ENG_MOD_IDLE = {
     .name = "-",
     .page_title = {"-", "-"},
     .edit = {{"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}},
-    .note_on = modg_note_on,
-    .render = modg_render,
-    .block = modg_block,
+    .note_on = slice_gone_note_on,
+    .render = slice_gone_render,
     .knob = {P_E4, P_E5, P_E6, P_REL},
 };
-#define ENG_MOD_IDLE ENG_MODULE
 static int mod_idle(uint32_t e) { return ENGINES[e] == &ENG_MOD_IDLE; }
 /* the audio (voice.c engine_block): a part asked to switch to e keeps its engine while e's module is on its way */
 static int mod_waiting(uint32_t e)

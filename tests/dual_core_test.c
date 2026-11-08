@@ -152,7 +152,7 @@ static void fm6_control_jobs(int parallel, uint32_t eng)
             trk_all_off(&trk[p]);
             for(uint32_t n=0;n<3;n++)trk_note_on(&trk[p],48+(block/7+p)%12+n*4,100);
         }
-        audio_batch_active=(uint8_t)parallel;audio_batch_native_fm6=1;
+        audio_batch_active=(uint8_t)parallel;audio_batch_reserve=1;
         for(uint32_t p=0;p<NPART;p++) {
             trk[p].p[P_E2]=(int16_t)((int32_t)((block+p*11)%65)-32);
             spread_on=0;rendered[p]=track_render(&trk[p],pcm[p],CTL);
@@ -176,7 +176,7 @@ static void fm6_control_jobs(int parallel, uint32_t eng)
             }
         }
     }
-    memset(midi_verb,0,sizeof midi_verb);audio_batch_native_fm6=0;
+    memset(midi_verb,0,sizeof midi_verb);audio_batch_reserve=0;
 }
 static uint32_t active_voices(const track_t *t)
 {

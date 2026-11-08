@@ -148,10 +148,10 @@ const digest = createHash('sha256').update(firmware).digest('hex');
 // a resource region (fm1res.js): MRS1, the payload length, a CRC-32 the fake device reports back, then the payload
 const region = new Uint8Array(32 + 3000).map((_,i) => (i * 13 + 5) & 255);
 new DataView(region.buffer).setUint32(0,0x3153524d,true);new DataView(region.buffer).setUint32(4,3000,true);
-// the build's synth modules (fm1mods.js): native .mmod files (56-byte heads, the fake firmware's layout key), one after another
+// the build's synth modules (fm1mods.js): ABI 3 .mmod files (60-byte heads, the fake firmware's legacy key), one after another
 const fakeModule = (engine, name, n, key = 0x13572468, seed = 1) => {
-  const b = new Uint8Array(56 + n).map((_, i) => (i * 29 + seed) & 255), v = new DataView(b.buffer);
-  v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 2, true); b[6] = engine; b[7] = 0; v.setUint32(8, b.length, true);
+  const b = new Uint8Array(60 + n).map((_, i) => (i * 29 + seed) & 255), v = new DataView(b.buffer);
+  v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 3, true); b[6] = engine; b[7] = 0; v.setUint32(8, b.length, true);
   v.setUint32(28, 0x1000 * seed + engine, true); b.fill(0, 32, 48); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); });
   v.setUint32(52, key, true);
   return b;
@@ -263,7 +263,7 @@ console.log('Resource region: refused write shows Finish setup and retries alone
   const sim=fakeAccess({images:{firmware:logicalImage(firmware)},identity:productOf(firmware),after:productOf(firmware),loader:MELODEE_LOADER,timers:clock});
   const input=sim.access.inputs.values().next().value,output=sim.access.outputs.values().next().value;
   const link=new BackupConnection(input,output),rq=(r,o)=>link.request(r,o);
-  assert.deepEqual(modBundle(mods).map(f=>[f.engine,f.name,f.abi]),[[10,'DRUM',2],[3,'SID',2]]);
+  assert.deepEqual(modBundle(mods).map(f=>[f.engine,f.name,f.abi]),[[10,'DRUM',3],[3,'SID',3]]);
   assert.throws(()=>modBundle(mods.subarray(0,100)),e=>e.code==='modfile');
   assert.equal(await modulesMissing(rq,mods),true);
   let seen=0;assert.equal(await installModules(rq,mods,(d,t)=>{seen=d;assert(d<=t);}),'written');assert.equal(seen,mods.length);

@@ -191,6 +191,34 @@ web_tests() {                                     # the editor mock's tables mus
         echo "== skip web tests (no node)"
     fi
 }
+module_tests() {                                  # synth modules (ABI 3): built for the host ONCE, three firmwares
+    _m="$OUT/modules" _o= _dev="-DMELODEE_SID_BUILTIN=0 -DMELODEE_DRUM_BUILTIN=0 -DMELODEE_CZ_BUILTIN=0 -DMELODEE_FM6_BUILTIN=0 -DMELODEE_P5_BUILTIN=0"
+    mkdir -p "$_m/abi"
+    for _s in sid drum cz fm6 prophet; do          # (the engine sources' modules; again for another firmware's layout)
+        $CC -c -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/$_s/$_s.c -o "$_m/$_s.o" &&
+            $CC -c -O2 -DMELODEE_ABI_SHUFFLE=1 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW \
+                firmware/modules/$_s/$_s.c -o "$_m/abi/$_s.o" || { fail "compile firmware/modules/$_s/$_s.c"; return; }
+        _o="$_o $_m/$_s.o"
+    done
+    for _s in trio wheel; do                       # (the contract alone)
+        $CC -c -O2 -DMOD_HOSTED -Ifirmware/modules/sdk firmware/modules/$_s/$_s.c -o "$_m/$_s.o" ||
+            { fail "compile firmware/modules/$_s/$_s.c"; return; }
+        _o="$_o $_m/$_s.o"
+    done
+    step "synth module objects: the same against another firmware's private track_t / voice_t and its options (a module sees ABI 3's views only)" \
+        sh -c "for s in sid drum cz fm6 prophet; do cmp -s '$_m/'\$s.o '$_m/abi/'\$s.o || { echo \$s.o differs; exit 1; }; done"
+    (build module_test module_test -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
+        step "synth modules: TRIO, WHEEL, SID, DRUM, CZ-1, FM6 and the Prophet (ABI 3) bit-exact, their presets from their files as the makers made them, files into slots, relocation, boot, refusals, capabilities (tools/mod_build.py)" \
+            "$OUT/module_test") > "$_m/1.log" 2>&1 &
+    (build module_test_device module_test -O2 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
+        step "synth modules as the device builds them: SID, DRUM, CZ-1, FM6 and the Prophet out of the firmware, the modules against the old renders, their presets (files only) against the old makers" \
+            "$OUT/module_test_device") > "$_m/2.log" 2>&1 &
+    (build module_test_abi module_test -O2 -DMELODEE_ABI_SHUFFLE=1 $_dev -Ifirmware/modules/sdk -Ifirmware/hal $FW $_o &&
+        step "synth modules ABI stability: the same module objects in a firmware whose private track_t / voice_t fields are padded and reordered, bit-exact" \
+            "$OUT/module_test_abi") > "$_m/3.log" 2>&1 &
+    wait
+    cat "$_m/1.log" "$_m/2.log" "$_m/3.log"
+}
 desc_json() { "$OUT/descdump" > "$OUT/desc.json"; }
 mel_tests() {                                     # the .mel project file: the page's coding against the firmware's records
     build mel_fixture mel_fixture -DMELODEE_USB_AUDIO=1 $FW || return
@@ -383,13 +411,7 @@ if core; then
     run "CPU live takes: native replay comparison, timed input, failure cleanup and guarded restoration" "$PY" tests/audio_cpu_take_test.py
     run "target budget: natural loops and FPU decoding" "$PY" tests/target_budget_test.py
     t "retired synth identities, project/user patch preservation and favorites" engine_retirement_test -O2 $FW
-    t "synth modules: TRIO, SID, DRUM, CZ-1, FM6 and the Prophet as modules bit-exact, their presets from their files as the makers made them, files into slots, relocation, boot, refusals (tools/mod_build.py)" \
-        module_test -O2 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/sid/sid.c firmware/modules/drum/drum.c \
-        firmware/modules/cz/cz.c firmware/modules/fm6/fm6.c firmware/modules/prophet/prophet.c
-    t "synth modules as the device builds them: SID, DRUM, CZ-1, FM6 and the Prophet out of the firmware, the modules against the old renders, their presets (files only) against the old makers" \
-        module_test_device:module_test -O2 -DMELODEE_SID_BUILTIN=0 -DMELODEE_DRUM_BUILTIN=0 -DMELODEE_CZ_BUILTIN=0 \
-        -DMELODEE_FM6_BUILTIN=0 -DMELODEE_P5_BUILTIN=0 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/sid/sid.c \
-        firmware/modules/drum/drum.c firmware/modules/cz/cz.c firmware/modules/fm6/fm6.c firmware/modules/prophet/prophet.c
+    job module_tests
     t "capture gating, derived caches and silent-track clocks" performance_test -DMELODEE_LEGACY_EXTRAS=1 -O2 $FW
     t "canvas drawing overlaps DMA without changing pending pixels" lcd_overlap_test -O1 -w -Ibuild/gen
     t "user presets (UP_PUT parser, bank round trip, versions, PHYS DRUM -> DRUM, grid records)" upreset_test

@@ -105,7 +105,7 @@ typedef struct {
 static sid_part_t *sid_part(uint32_t part);   /* engines.c: shared runtime pool */
 static sid_voice_t *sid_voice(track_t *t, voice_t *v)
 {
-    return &sid_part((uint32_t)(t - trk) % NPART)->v[(uint32_t)(v - t->v) % SID_POLY];
+    return &sid_part(trk_ix(t) % NPART)->v[voice_ix(t, v) % SID_POLY];
 }
 
 /* C64 in POLY: the chord on the one voice (voice.c keeps its keys in the mono stack), a note a frame */
@@ -113,14 +113,14 @@ static void voice_scale_pitch(const track_t *t, voice_t *v, uint32_t note);   /*
 static int sid_chord(const track_t *t) { return sid_c64(t->p) && t->p[P_VOICE] == V_POLY; }
 static void sid_chord_take(track_t *t)
 {
-    sid_part_t *sp = sid_part((uint32_t)(t - trk) % NPART);
+    sid_part_t *sp = sid_part(trk_ix(t) % NPART);
     memcpy(sp->chord, t->mono_stack, t->nmono);
     sp->nchord = t->nmono;
 }
 /* the next held note up from the one sounding (past the top: the lowest); a jump, a glide under it goes on */
 static void sid_arp(track_t *t, voice_t *v)
 {
-    const sid_part_t *sp = sid_part((uint32_t)(t - trk) % NPART);
+    const sid_part_t *sp = sid_part(trk_ix(t) % NPART);
     uint32_t i, n, up = 128u, low = 128u;
     int32_t was = v->pitch16;
     for (i = 0; i < sp->nchord; i++) {
@@ -198,7 +198,7 @@ static const uint8_t *sid_table(track_t *t, uint32_t model, uint32_t wb)
     uint32_t key = 0x100u | model << 3 | wb;
     if (wb != 3u && (wb < 5u || wb > 7u))
         return 0;
-    sp = sid_part((uint32_t)(t - trk) % NPART);
+    sp = sid_part(trk_ix(t) % NPART);
     if (sp->wave_key != key) {
         lz_unpack(sp->wave, SID_WAVE_LZ + SID_WAVE_AT[model][wb == 3u ? 0u : wb - 4u], sizeof sp->wave);
         sp->wave_key = key;
@@ -337,7 +337,7 @@ static int sid_done(track_t *t, voice_t *v)
     uint32_t c = s->cycle_frac + SID_CYC_Q16, hr = s->hr;
     s->env_prev = s->env;
     s->cycle_frac = (uint16_t)c;
-    sid_env_clock_release(s, t->p, c >> 16, midi_verb[t-trk]);
+    sid_env_clock_release(s, t->p, c >> 16, midi_verb[trk_ix(t)]);
     if (hr && !s->hr) {                                /* C64: the hard restart is over: the note's registers go */
         s->latch = 1;                                  /* in with its gate, its frames count from it */
         s->frame = (int32_t)SID_FRAME_Q16;
@@ -348,7 +348,7 @@ static int sid_done(track_t *t, voice_t *v)
         s->frame += (int32_t)SID_FRAME_Q16;            /* writes frequency, pulse width, cutoff, resonance */
         if (!s->hr) {                                  /* (not in a hard restart: the last note fades out) */
             s->latch = 1;
-            if (v == t->v && sid_chord(t)) {           /* POLY: the chord's next note (in the release too) */
+            if (v == trk_voice(t, 0) && sid_chord(t)) {           /* POLY: the chord's next note (in the release too) */
                 if (v->gate)
                     sid_chord_take(t);
                 sid_arp(t, v);
@@ -539,7 +539,7 @@ static uint32_t sid_cap(const track_t *t) { return sid_c64(t->p) ? 1u : SID_POLY
     {n, {mo, wa, st, pw, cu, re, md, dr}, {a, d, s, r}, fe, mi}
 
 #define SID_NPRESETS 32u
-#if !MOD_NATIVE_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
+#if !MOD_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
 static const preset_t SID_PRESETS[] = {
     SIDP("INIT SID",    0, 1, 0, 64, 127,  0, 0,  0,   0, 36, 127, 36,   0, 0,  0,  0, 0,  0),
     SIDP("BREADBOX",    0, 2, 1, 40,  60,  6, 0, 30,   0, 78, 100, 57,  16, 0,  0, 10, 0,  8),
@@ -591,7 +591,7 @@ static const engine_t ENG_SID = {
         {"MODE", F_ENUM, 0, 7, 0, N_SID_MODE, 0},
         {"DRIVE", F_PCT, 0, 127, 0, 0, 0},
     },
-#if !MOD_NATIVE_SIDE
+#if !MOD_SIDE
     .presets = SID_PRESETS,
 #endif
     .npresets = SID_NPRESETS,

@@ -50,7 +50,7 @@ _Static_assert(sizeof(drk_map_t) == 10u && sizeof(drk_sample_t) == 12u && sizeof
  * while it changes them: the audio side then plays nothing, and a part that took a slot under an older number
  * stops reading its sectors before a later save can erase them (kit_store.c waits two blocks). */
 typedef struct { uint8_t n, sec[DRK_KSEC]; } drk_user_t;
-#if MOD_NATIVE_SIDE                              /* (DRUM as a module: the firmware's, which kit_store.c keeps) */
+#if MOD_SIDE                              /* (DRUM as a module: the firmware's, which kit_store.c keeps) */
 static drk_user_t *mod_imp_drk_user;
 static volatile uint32_t *mod_imp_drk_user_gen;
 #define drk_user mod_imp_drk_user
@@ -80,7 +80,7 @@ static const int8_t DRK_LV[4][16] = {
 };
 
 
-#if !MOD_NATIVE_SIDE
+#if !MOD_SIDE
 /* a user slot's name for the KIT card (b: 6 bytes): EMPTY when there is none */
 static void drk_user_name(uint32_t u, char *b)
 {

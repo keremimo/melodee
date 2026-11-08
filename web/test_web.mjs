@@ -1298,25 +1298,29 @@ async function editorModules() {
   const link = new E.Link((d) => [...m.access.outputs.values()][0].send(d), { timeout: 200 });
   [...m.access.inputs.values()][0].onmidimessage = (e) => link.receive(e.data);
   const rq = (r, o) => link.request(r, o);
-  const file = (engine, name, n) => {
-    const b = new Uint8Array(52 + n), v = new DataView(b.buffer);
-    v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 1, true); b[6] = engine; v.setUint32(8, b.length, true);
+  const file = (engine, name, n, abi = 3) => {
+    const b = new Uint8Array(60 + n), v = new DataView(b.buffer);
+    v.setUint32(0, 0x31444D4D, true); v.setUint16(4, abi, true); b[6] = engine; v.setUint32(8, b.length, true);
     v.setUint32(12, n, true); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); }); v.setUint16(48, 2, true); b[50] = 5;
-    for (let i = 52; i < b.length; i++) b[i] = (i * 37) & 255;
+    v.setUint32(52, 0, true); v.setUint16(56, 1, true);
+    for (let i = 60; i < b.length; i++) b[i] = (i * 37) & 255;
     return b;
   };
   let bad = 0; try { E.MODS.head(new Uint8Array(60)); } catch (e) { bad++; }
-  const f = file(6, "TRIO", 1000), h = E.MODS.head(f);
-  ok(bad === 1 && h.engine === 6 && h.name === "TRIO" && h.version === 2 && h.npresets === 5 && h.total === 1052, "modules: a .mmod head read, a foreign file refused");
+  try { E.MODS.head(file(3, "SID", 500, 2)); } catch (e) { bad++; }     /* (a native ABI 2 file: an older firmware's) */
+  const f = file(6, "TRIO", 992), h = E.MODS.head(f);
+  ok(bad === 2 && h.engine === 6 && h.name === "TRIO" && h.version === 2 && h.npresets === 5 && h.total === 1052 && h.key === 0 && h.host === 1,
+     "modules: an ABI 3 .mmod head read, a foreign file and an older firmware's refused");
   const built = join(HERE, "..", "build", "modules", "trio.mmod");   /* (tools/mod_build.py: the C head's layout) */
   if (existsSync(built)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(built)));
-    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5, "modules: the built TRIO file's head reads as the firmware's");
+    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5 && t.key === 0 && t.host === 1,
+       "modules: the built TRIO file's head reads as the firmware's (an SDK module: no legacy key)");
   }
-  const sid = join(HERE, "..", "build", "modules", "sid.mmod");     /* a native module (src/module_native.h) */
+  const sid = join(HERE, "..", "build", "modules", "sid.mmod");     /* an engine-source module (modules/sdk/mod_engine.h) */
   if (existsSync(sid)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(sid)));
-    ok(t.name === "SID" && t.engine === 3 && t.native && t.key !== null && t.npresets === 32, "modules: the built native SID file's head reads as the firmware's");
+    ok(t.name === "SID" && t.engine === 3 && t.key !== 0 && t.host === 1 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (the legacy key it was built against)");
   }
   let list = await E.MODS.list(rq);
   ok(!list.rc && !list.skipped && list.slots.length === 8 && list.slots.every((x) => !x.len), "modules: eight empty slots listed");

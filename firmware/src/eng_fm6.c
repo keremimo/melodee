@@ -44,7 +44,7 @@ static struct {                                  /* the patch through the macros
  * 1 = made again (the patch or a macro changed) */
 static int fm6_eff_build(const track_t *t)
 {
-    uint32_t tr = (uint32_t)(t - trk), k, j, car, n = 0;
+    uint32_t tr = trk_ix(t), k, j, car, n = 0;
     const int16_t *e = &t->p[P_E0];
     int32_t meg, step;
     if (tr >= NTRK)
@@ -127,8 +127,8 @@ typedef struct {                                         /* a part's (engines.c 
     int32_t dc_x1, dc_y1;                                /* the DC filter: the last input; the last output << 8 */
 } fm6_part_t;
 static fm6_part_t *fm6_part(uint32_t part);             /* engines.c */
-#define FM6P(t) fm6_part((uint32_t)((t) - trk))
-#define FM6F(t) fm6_fn[(uint32_t)((t) - trk) % NTRK]   /* the track's function settings */
+#define FM6P(t) fm6_part(trk_ix(t))
+#define FM6F(t) fm6_fn[trk_ix(t) % NTRK]   /* the track's function settings */
 
 static void fm6_lfo_step(fm6_lfo_t *l, const uint8_t *ed)   /* one block of the LFO: Lfo::getsample, getdelay */
 {
@@ -230,18 +230,18 @@ static void fm6_ctl_block(track_t *t, const uint8_t *ed)
         fm6_lfo_step(&P->lfo, ed);
         uint32_t ghosts=0;
         for (k = 0; k < NVOICE; k++)                     /* voices over, as Dexed runs them on */
-            if (P->v[k].played && !P->v[k].frozen && !t->v[k].active && P->v[k].still!=2u)
+            if (P->v[k].played && !P->v[k].frozen && !trk_voice(t, k)->active && P->v[k].still!=2u)
                 ghosts|=1u<<k;
         if (ghosts) {
             if (audio_batch_active) fm6_ghosts_dispatch(t,P,ghosts);
-            else for(k=0;k<NVOICE;k++)if((ghosts>>k)&1u)fm6_ghost(t,&t->v[k],&P->v[k]);
+            else for(k=0;k<NVOICE;k++)if((ghosts>>k)&1u)fm6_ghost(t,trk_voice(t, k),&P->v[k]);
         }
     }
 }
 
 /* ------------------------------------------------------------ the voice --- */
-static fm6_voice_t *fm6_state(const track_t *t, const voice_t *v) { return &FM6P(t)->v[v - t->v]; }
-static inline __attribute__((always_inline)) const uint8_t *fm6_ed(const track_t *t) { return fm6_eff[(uint32_t)(t - trk) % NTRK].p; }
+static fm6_voice_t *fm6_state(const track_t *t, const voice_t *v) { return &FM6P(t)->v[voice_ix(t, v)]; }
+static inline __attribute__((always_inline)) const uint8_t *fm6_ed(const track_t *t) { return fm6_eff[trk_ix(t) % NTRK].p; }
 static uint32_t fm6_note(const track_t *t, const voice_t *v)   /* the note the DX7 rules see: + TRANSPOSE */
 {
     return (uint32_t)clamp((int32_t)v->note + fm6_ed(t)[FP_TRNSP] - 24, 0, 127);
@@ -281,8 +281,8 @@ static uint32_t fm6_alloc(track_t *t, uint32_t note)
     uint32_t np=trk_nvoice(t),k=P->pt.rr%np,best=k,i;
     int32_t bs = -1;
     for (i = 0; i < np; i++) {
-        int32_t sc = (fm6_playing(t, k) ? 0 : 4) + (t->v[k].gate ? 0 : 2) + (P->v[k].played && t->v[k].note == note);
-        if (sc > bs || (sc == bs && t->v[k].age < t->v[best].age)) {
+        int32_t sc = (fm6_playing(t, k) ? 0 : 4) + (trk_voice(t, k)->gate ? 0 : 2) + (P->v[k].played && trk_voice(t, k)->note == note);
+        if (sc > bs || (sc == bs && trk_voice(t, k)->age < trk_voice(t, best)->age)) {
             best = k;
             bs = sc;
         }
@@ -330,7 +330,7 @@ static void fm6_mhand(track_t *t, uint32_t c)
     uint32_t l = P->pt.mlive, k;
     fm6_voice_t *s = &P->v[0];
     if (l) {                                             /* the one left keeps what it had */
-        P->ms[l - 1u].fplay = (uint8_t)(t->v[0].active || s->played ? fm6_playing(t, 0) : 0);
+        P->ms[l - 1u].fplay = (uint8_t)(trk_voice(t, 0)->active || s->played ? fm6_playing(t, 0) : 0);
         for (k = 0; k < 6u; k++)
             P->ms[l - 1u].porta[k] = s->porta[k];
         P->ms[l - 1u].fb[0] = s->fb[0];
@@ -402,7 +402,7 @@ static void fm6_key(track_t *t, uint32_t note)
 static void fm6_note_on(track_t *t, voice_t *v)
 {
     fm6_part_t *P = FM6P(t);
-    uint32_t k, i, vi = (uint32_t)(v - t->v), note, vel;
+    uint32_t k, i, vi = voice_ix(t, v), note, vel;
     fm6_voice_t *s = fm6_state(t, v);
     const uint8_t *ed;
     int mono = t->p[P_VOICE] != V_POLY, steal = P->pt.steal || (mono && s->played), ps;
@@ -413,7 +413,7 @@ static void fm6_note_on(track_t *t, voice_t *v)
     ed = fm6_ed(t);
     ps = fm6_psrc(t, P, src);                               /* before this voice takes the note */
     for (i = 0; i < NVOICE; i++)                         /* the first key down: the LFO restarts */
-        if (i != vi && t->v[i].gate)
+        if (i != vi && trk_voice(t, i)->gate)
             break;
     if (i == NVOICE) {
         if (ed[FP_LKS])
@@ -444,7 +444,7 @@ static void fm6_note_on(track_t *t, voice_t *v)
         fm6_mtake(t, s);
     if (!mono && !ed[FP_OKS])                            /* the same note sounding: its phases */
         for (i = 0; i < NVOICE; i++)
-            if (i != vi && fm6_playing(t, i) && P->v[i].played && t->v[i].note == v->note) {
+            if (i != vi && fm6_playing(t, i) && P->v[i].played && trk_voice(t, i)->note == v->note) {
                 for (k = 0; k < 6u; k++)
                     s->ph[k] = P->v[i].ph[k];
                 break;
@@ -536,7 +536,7 @@ static void fm6_prepare_controls(track_t *t, fm6_part_t *P, int32_t tune)
 /* a new Dexed block: key-up, the envelopes, pitch and gains (Dx7Note::compute), the routing */
 static __attribute__((noinline,section(".audio_text"))) void fm6_control_ram(track_t *t, voice_t *v, fm6_voice_t *s, const vmod_t *m, const fm6_part_t *P, int32_t brightness)
 {
-    uint32_t tr = (uint32_t)(t - trk) % NTRK, alg, k, dead = 1;
+    uint32_t tr = trk_ix(t) % NTRK, alg, k, dead = 1;
     const uint8_t *ed = fm6_ed(t);
     int32_t lv[6], pm, pbase, amd, fbv;
     /* MLVL and FLT: the modulators' level, 0.75 dB / 32 steps (microsteps, as the output levels), Q24 */
@@ -661,7 +661,7 @@ static void fm6_ghost_state(track_t *t, voice_t *v, fm6_voice_t *s, const fm6_pa
         for (k = 0; k < 6u && s->eg[k].ix >= 4u && s->porta[k] == s->base[k]; k++)
             ;
         if (k == 6u)
-            s->still = (uint8_t)(ed[FP_OKS] && poly && !fm6_playing(t, (uint32_t)(v - t->v)) ? 2 : 1);
+            s->still = (uint8_t)(ed[FP_OKS] && poly && !fm6_playing(t, voice_ix(t, v)) ? 2 : 1);
     }
 }
 
@@ -685,7 +685,7 @@ static void fm6_ghost_batch_kernel(const void *data,int32_t *pcm)
 {
     (void)pcm;const fm6_ghost_batch_t *j=data;
     for(uint32_t k=0;k<NVOICE;k++)if((j->mask>>k)&1u)
-        fm6_ghost_state(j->track,&j->track->v[k],&j->part->v[k],j->part,j->pb,j->brightness,j->poly);
+        fm6_ghost_state(j->track,trk_voice(j->track, k),&j->part->v[k],j->part,j->pb,j->brightness,j->poly);
 }
 static void fm6_ghosts_dispatch(track_t *t, fm6_part_t *P, uint32_t mask)
 {
@@ -794,8 +794,8 @@ static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const v
 #if MELODEE_DUAL_CORE && !defined(FM6_TAP)
     /* The first voice runs on CPU1; CPU0 prepares AND renders the second.
      * Join before adding either voice and before any post/next-block work. */
-    uint32_t next = (uint32_t)(v - t->v) + 1u;
-    while (next < NVOICE && !t->v[next].active) next++;
+    uint32_t next = voice_ix(t, v) + 1u;
+    while (next < NVOICE && !trk_voice(t, next)->active) next++;
     if (!fm6_pending && audio_worker_online && n <= CTL && next < NVOICE) {
         fm6_job.voice = s; fm6_job.modulation = *m; fm6_job.n = n; fm6_job.gain = k;
         if (audio_worker_submit(fm6_worker_kernel, 0)) {
@@ -828,7 +828,7 @@ static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const v
 static void fm6_sync(track_t *t, const voice_t *self)
 {
     fm6_part_t *P = FM6P(t);
-    uint32_t tr = (uint32_t)(t - trk) % NTRK, i, h = 2166136261u;
+    uint32_t tr = trk_ix(t) % NTRK, i, h = 2166136261u;
     const uint8_t *ed;
     int panic;
     if (!fm6_eff_build(t) && P->pt.hash && P->pt.on == fm6_on[tr] && P->pt.lgen == fm6_lgen[tr])
@@ -841,7 +841,7 @@ static void fm6_sync(track_t *t, const voice_t *self)
     if (h == P->pt.hash && !panic)
         return;
     for (i = 0; i < NVOICE; i++) {
-        voice_t *v = &t->v[i];
+        voice_t *v = trk_voice(t, i);
         fm6_voice_t *s = &P->v[i];
         uint32_t k;
         if (v == self || !(v->active || (s->played && !s->frozen)))
@@ -913,7 +913,7 @@ static const char *const N_FM6_ALG[] = {"PAT", "1", "2", "3", "4", "5", "6", "7"
                                         "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25",
                                         "26", "27", "28", "29", "30", "31", "32", 0};
 /* {ALG, FB, MLVL, MRAT, MEG, VMOD, DTUN, unused}: neutral macros, DTUN on the pad. */
-#if !MOD_NATIVE_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
+#if !MOD_SIDE                    /* (a synth module's presets are in its file: tools/mod_presets.py) */
 #define FM6_PR(name, mono) {name, {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, mono}
 static const preset_t FM6_PRESETS[] = {
     {"TINE EP", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
@@ -974,7 +974,7 @@ static const engine_t ENG_FM6 = {
         {"DTUN", F_PCT, 0, 127, 0, 0, 0},
         {"-", F_INT, 0, 0, 0, 0, 0},
     },
-#if !MOD_NATIVE_SIDE
+#if !MOD_SIDE
     .presets = FM6_PRESETS,
 #endif
     .npresets = FM6_NFAC + 1u,
@@ -995,4 +995,5 @@ static const engine_t ENG_FM6 = {
     .join = fm6_join,            /* (a voice paired on CPU1 outside the queue: in before the spread is summed) */
 #endif
     .reserve = fm6_reserve,
+    .caps = MOD3_CAP_WHEEL,      /* (its DX7 controllers read the wheel: no SMK-37 vibrato) */
 };

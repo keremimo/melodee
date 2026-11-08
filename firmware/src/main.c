@@ -212,7 +212,7 @@ static void smk_wheels(void)
     if (b != sent_b) {
         sent_b = b;
         t->bend_raw = (int16_t)b;                  /* PROPHET (its BEND) and FM6 (its DX7 range) read this */
-        if (t->eng_req != ENGI_PROPHET)
+        if (!eng_of(t->eng_req)->bend_range)       /* (else the engine's own range: voice.c trk_bend_own) */
             midi_bend_target[song.sel % NTRK] = b * (SMK_BEND_ST * 256) / (b < 0 ? 8192 : 8191);
     }
     if (mw != sent_m) {

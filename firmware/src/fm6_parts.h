@@ -58,7 +58,7 @@ static uint32_t fm6_carriers(uint32_t a)
 }
 
 /* ----------------------------------------------------- the parts' voices --- */
-#if MOD_NATIVE_SIDE                              /* (a native synth module: the firmware's, module_native.h) */
+#if MOD_SIDE                              /* (a synth module: the firmware's, module_legacy.h) */
 static uint8_t (*mod_imp_fm6_patch)[FP_SIZE + 1u], *mod_imp_fm6_patch_none;
 static volatile uint8_t *mod_imp_fm6_pgen, *mod_imp_fm6_lgen;
 static uint8_t *mod_imp_fm6_on;
@@ -83,4 +83,4 @@ static uint32_t fm6_pairs;                       /* FM6's voices paired on CPU1 
 #endif
 #endif
 static uint8_t *fm6_patch_of(uint32_t k) { return k < NPART ? fm6_patch[k] : fm6_patch_none; }
-static inline __attribute__((always_inline)) int fm6_op_on(const track_t *t, uint32_t k) { return (fm6_on[(uint32_t)(t - trk) % NTRK] >> k) & 1u; }
+static inline __attribute__((always_inline)) int fm6_op_on(const track_t *t, uint32_t k) { return (fm6_on[trk_ix(t) % NTRK] >> k) & 1u; }

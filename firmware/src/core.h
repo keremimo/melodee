@@ -6,8 +6,16 @@
  * parameters, voices and 64-step patterns. The parts share one budget of VBUDGET units of sounding voices (voice.c).
  * Drums are the DRUM engine (synthesized 808 on the General MIDI map) on any part. Tracks 5..8 are MIDI-only: always
  * the MIDI Track engine, sequenced like the parts, never rendered or mixed (NMIDI).
- * Sections: sizes, parameters, voices and engines, tracks and the song, system. */
+ * Sections: sizes, parameters, voices and engines, tracks and the song, system.
+ *
+ * MOD_SIDE 1: a synth module's own compile (firmware/modules/sdk/mod_engine.h). Its track_t, voice_t, vmod_t and
+ * engine_t are the frozen views of ABI 3 (firmware/modules/sdk/mod_abi3.h: the firmware's structs begin with them),
+ * and the firmware's data below is reached through the pointers its bind() takes from the host table. */
 #include <stdint.h>
+#ifndef MOD_SIDE
+#define MOD_SIDE 0
+#endif
+#include "../modules/sdk/mod_abi3.h"
 #include "performance_options.h"
 #include "tuning.h"
 #include "audio_profile.h"
@@ -128,13 +136,7 @@ enum {
     F_BITS, F_ALIAS             /* CRUSH's bits and the rate of its held samples */
 };
 
-typedef struct {
-    const char *label;
-    uint8_t fmt;
-    int16_t min, max, def;
-    const char *const *names;   /* F_ENUM */
-    const char *unit;           /* F_INT / F_ENUM optional unit */
-} param_desc_t;
+typedef mod_param_v3 param_desc_t;   /* label, fmt (F_*), min, max, def, names (F_ENUM), unit (frozen: mod_abi3.h) */
 
 enum {                          /* per-track parameters */
     P_LEVEL,
@@ -308,50 +310,52 @@ static int drum_from_phys(uint32_t engine, int16_t *e)
 /* ------------------------------------------------- voices, engines --- */
 enum { V_POLY, V_MONO, V_LEGATO, V_UNISON };   /* P_VOICE */
 enum { Q_OFF, Q_SNAP, Q_WHITE, Q_ALL, Q_MPC };  /* P_QUANT (seq.c kb_map, midi_map); 1 = SNAP, the former ON */
+#if MOD_SIDE
+typedef mod_voice_v3 voice_t;                    /* (a module sees the head only: its voices are vsize apart) */
+#else
 typedef struct {
-    uint8_t side; /* stereo spread side, retained while sounding */
+    /* the frozen head (mod_abi3.h mod_voice_v3: what engines read and write; eng_module.c asserts it field by field) */
     uint8_t note, vel, gate, active;
-    uint8_t stage;               /* env: 0 off, 1 attack, 2 decay/sustain, 3 release */
+    uint8_t stage;               /* env: 0 off, 1 attack, 2 decay/sustain, 3 release, 4 fading out */
+    uint8_t mvel;                /* mod.c: the note-on velocity (before UNISON scaling) */
+    uint8_t index;               /* its slot in the part (trk_voices_bind) */
+    uint8_t rsv0;
     int32_t env;                 /* Q24 */
     int32_t env_out;             /* last control-rate amplitude, Q15 */
     int32_t pitch16, pitch_cur;  /* 1/16 semitone, with glide */
+    uint32_t ph[3];
+    uint32_t age;
+#if MELODEE_LEGACY_EXTRAS
+    int32_t s[8];                /* retired VOICE/NOISE also use slots 6 and 7 (over the head's reserved word: the
+                                  * firmware's own fields move on, a host build's) */
+#else
+    int32_t s[6];                /* current engines: slots 0..5, including drum gates */
+    uint32_t rsv[1];
+#endif
+    /* the firmware's own (any layout: no module sees them) */
+#if MELODEE_ABI_SHUFFLE                          /* (tests: another firmware's private layout, tests/module_test.c) */
+    uint8_t abi_pad[20];
+    int16_t mrnd;
+    int32_t scale_fine;
+    uint8_t side;
+    int32_t fine, gstep;
+#else
+    uint8_t side;                /* stereo spread side, retained while sounding */
+    int16_t mrnd;                /* mod.c: the RAND of the note */
     int32_t gstep;               /* glide TIME mode: 1/16 st per control tick, 0 = RATE mode */
     int32_t fine;                /* unison detune: phase increment * (1 + fine / 4096) */
     int32_t scale_fine;          /* note-on snapshot: scale pitch below 1/16 semitone */
-    uint32_t ph[3];
-#if MELODEE_LEGACY_EXTRAS
-    int32_t s[8];                /* retired VOICE/NOISE also use slots 6 and 7 */
-#else
-    int32_t s[6];                /* current engines: slots 0..5, including drum gates */
 #endif
-    uint32_t age;
-    uint8_t mvel;                /* mod.c: the note-on velocity (before UNISON scaling) and RAND of the note */
-    int16_t mrnd;
 } voice_t;
+#endif
 
-typedef struct {                 /* per-voice control-rate modulation, computed in voice.c */
-    uint32_t inc;                /* phase increment of the base pitch */
-    int32_t pitch16;
-    int32_t amp0, amp1;          /* Q15 ramp over the block */
-    int32_t cutoff;              /* 0..127 << 8 */
-    int32_t shape;               /* 0..127 << 8 */
-    int32_t envq15;              /* env value (for engines that use it as a mod source) */
-    int32_t fine;                /* the residual below 1/16 semitone in inc: unison detune, TUNE, bend (1/4096) */
-    int32_t plog;                /* the voice's own pitch offset without TUNE and bend (glide, LFO and ENV pitch, the
-                                  * matrix's, unison detune), Q24 octaves: for engines that figure their pitch (FM6) */
-} vmod_t;
+typedef mod_vmod_v3 vmod_t;      /* per-voice control-rate modulation, computed in voice.c (frozen: mod_abi3.h) */
+typedef mod_preset_v3 preset_t;  /* a sound's common values: name, E1..E8, ATK DEC SUS REL, ENV -> FILTER, MONO
+                                  * (frozen: mod_abi3.h; a sound load never touches the steps, the arp is the track's) */
 
-typedef struct {
-    const char *name;
-    int8_t e[8];                 /* P_E0..P_E7 (signed: an interval below the note; every value fits) */
-    uint8_t env[4];              /* ATK DEC SUS REL */
-    int8_t fenv;                 /* ENV -> FILTER amount (-64..63) */
-    uint8_t mono;                /* 1 = MONO (bass / lead), 0 = POLY */
-    /* the rest of the patch; each value is stored + 1, 0 = the default */
-                                 /* (a sound load never touches the steps; the arp is the track's: a preset does
-                                  * not set it) */
-} preset_t;
-
+#if MOD_SIDE
+typedef mod_engine_v3 engine_t;
+#else
 struct track;
 typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c files) */
     const char *name;            /* "ANALOG" (PRESETS, the editor) */
@@ -421,7 +425,14 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     /* optional: 1 = the part keeps CPU0's larger service reserve while CPU1 renders this block (FM6: a voice sounds or
      * runs on); state, bytes: the part's working memory as it is (bytes 0: none) */
     int (*reserve)(const void *state, uint32_t bytes);
+    /* ABI 3 (mod_abi3.h: the fields above in this order, its mod_engine_v3; eng_module.c asserts them). Declared
+     * capabilities, MOD3_CAP_*: WHEEL = it plays the mod wheel itself (the SMK-37's wheel adds no vibrato to it) */
+    uint8_t caps;
+    /* optional: the pitch wheel's range now, Q8 semitones, instead of the channel's (the Prophet: its program's BEND);
+     * voice.c sets the wheel's target from it at the part's block */
+    int32_t (*bend_range)(const struct track *t);
 } engine_t;
+#endif
 /* Built-in engines that are synth modules on the device (firmware/modules/<name>): host builds compile them in, the
  * reference the module tests hold the modules to; the device's image leaves them out (eng_module.c plays them) */
 #ifndef MELODEE_SID_BUILTIN
@@ -443,15 +454,10 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
 #ifndef MELODEE_P5_BUILTIN
 #define MELODEE_P5_BUILTIN MELODEE_SID_BUILTIN
 #endif
-/* MOD_NATIVE_SIDE 1: a native synth module's own compile (firmware/modules/sdk/mod_native.h): the firmware's data
- * below is not its own but the firmware's, reached through pointers the loader hands over (module_native.h) */
-#ifndef MOD_NATIVE_SIDE
-#define MOD_NATIVE_SIDE 0
-#endif
 /* voice_start: what the voice it starts did just before (0 free, 1 released, 2 its key down: a steal or a move);
  * engine_t.note_on may read it  */
-#if MOD_NATIVE_SIDE
-static uint8_t *mod_imp_voice_was;
+#if MOD_SIDE
+static const uint8_t *mod_imp_voice_was;
 #define voice_was (*mod_imp_voice_was)
 #else
 static uint8_t voice_was;
@@ -467,7 +473,7 @@ enum { ST_NOTE, ST_TIE, ST_REST };
 #include "recorded_note.h"
 /* Sound offsets: semitones, decay and voice character; zero preserves the factory kit. */
 typedef struct { int8_t c[16][4]; } drum_patch_t;
-#if MOD_NATIVE_SIDE
+#if MOD_SIDE
 static drum_patch_t *mod_imp_drum_patch, *mod_imp_drum_patch_none;
 #define drum_patch mod_imp_drum_patch
 #define drum_patch_none (*mod_imp_drum_patch_none)
@@ -553,14 +559,34 @@ typedef struct {
 } chain_legacy_t;
 _Static_assert(sizeof(chain_legacy_t) == 36u, "legacy song disk layout");
 
+#if MOD_SIDE
+typedef mod_part_v3 track_t;                     /* (a module sees the head only) */
+#else
 typedef struct track {
+    /* the frozen head (mod_abi3.h mod_part_v3: what engines read and write; eng_module.c asserts it field by field) */
     int16_t p[P_COUNT];
-    uint8_t engine, preset;      /* engine: what the audio ISR renders */
+    uint16_t size;               /* sizeof(mod_part_v3) (trk_voices_bind) */
+    uint8_t index;               /* the track's own number, 0..NTRK-1 (trk_voices_bind) */
+    uint8_t engine;              /* what the audio ISR renders */
+    voice_t *v;                  /* NVOICE voices: the part's (part_voice), a MIDI-only track the silent midi_voice */
+    uint16_t vsize;              /* sizeof(voice_t): a module's stride over v */
+    uint8_t nmono;
+    uint8_t mono_stack[NVOICE];  /* keys held, in press order (as many as Dexed keeps voices for) */
+    /* modulation matrix (mod.c): MIDI performance controllers of the track's channel, 0..127 */
+    uint8_t mw, at;              /* CC1 mod wheel, channel aftertouch */
+    uint8_t foot, breath, porta; /* CC4 foot, CC2 breath, CC65 portamento on: FM6's DX7 controllers */
+    int16_t bend_raw;            /* the pitch bend as sent (signed 14-bit): FM6 bends by its own range */
+    uint32_t rsv[4];
+    /* the firmware's own (any layout: no module sees them) */
+#if MELODEE_ABI_SHUFFLE                          /* (tests: another firmware's private layout, tests/module_test.c) */
+    uint8_t abi_pad0[36];
+#endif
+    uint8_t preset;
     uint8_t eng_req;             /* engine the UI asked for (the ISR switches at a block start) */
     int8_t mpc_octave;           /* MPC bank's input octave, -3..3; independent of song.octave */
     uint16_t user;                /* user preset slot + 1 the sound came from (UI), 0 = none */
     uint8_t user_native;         /* legacy project origin only; new presets use the shared bank */
-    voice_t *v;                  /* NVOICE voices: the part's (part_voice), a MIDI-only track the silent midi_voice */
+#if !MELODEE_ABI_SHUFFLE
     /* LFO */
     uint32_t lfo_ph;
     int32_t lfo_val;             /* Q15 */
@@ -568,6 +594,7 @@ typedef struct track {
     uint32_t lfo_rnd;
     int16_t lfo_prev;
     uint8_t sp_alt;
+#endif
     /* keyboard / arp input: held notes in press order */
     uint8_t held[16];
     uint8_t nheld;
@@ -599,9 +626,17 @@ typedef struct track {
     uint8_t rh_last;             /* the last of them; rh_bak: what it held (an early release puts it back) */
     step_t rh_bak;
     uint32_t rh_elapsed;         /* actual held duration before onset quantization */
-    /* mono */
-    uint8_t mono_stack[NVOICE];  /* keys held, in press order (as many as Dexed keeps voices for) */
-    uint8_t nmono;
+#if MELODEE_ABI_SHUFFLE
+    uint8_t abi_pad1[52];
+    /* LFO */
+    uint32_t lfo_ph;
+    int32_t lfo_val;
+    int32_t lfo_fade;
+    uint32_t lfo_rnd;
+    int16_t lfo_prev;
+    uint8_t sp_alt;
+#endif
+    /* mono (the stack: the head's) */
     uint8_t mono_note;           /* note the MONO / LEGATO / UNISON voice(s) play, 0 = none */
     uint8_t rr;                  /* POLY ROTATE: next voice to try */
     /* mix runtime */
@@ -611,15 +646,13 @@ typedef struct track {
     uint8_t xf_on, xf;           /* fading; blocks of the fade still to render */
     int16_t pe_old[8];           /* P_E0..P_E7 of the sounding engine: the fade renders with these */
     uint8_t xp_n, xp_note[4], xp_vel[4];   /* note-ons during the fade, played on the new engine */
-    /* modulation matrix (mod.c): MIDI performance controllers of the track's channel, 0..127 */
-    uint8_t mw, at;              /* CC1 mod wheel, channel aftertouch */
-    uint8_t foot, breath, porta; /* CC4 foot, CC2 breath, CC65 portamento on: FM6's DX7 controllers */
-    int16_t bend_raw;            /* the pitch bend as sent (signed 14-bit): FM6 bends by its own range */
+    /* modulation matrix (mod.c; the controllers: the head's) */
     uint8_t ex_off;              /* 127 - CC11 expression (0: full, the MIDI default) */
     uint8_t m_vel, m_key, m_vi;  /* the latest note-on: velocity, note, voice index (per-block destinations) */
     int16_t m_rnd;               /* .. its RAND */
     int32_t m_env;               /* the amp envelope of voice m_vi, last block (Q15) */
 } track_t;
+#endif
 
 typedef struct {
     int16_t g[G_COUNT];
@@ -638,12 +671,11 @@ typedef struct {
     int32_t batt_raw;            /* smoothed ADC ch3 (battery divider), 0 = not read yet */
 } song_t;
 
-#if MOD_NATIVE_SIDE                /* (a native module: the firmware's tracks, its song, its MIDI insert releases) */
-static track_t *mod_imp_trk;
-static song_t *mod_imp_song;
-static uint8_t *mod_imp_midi_verb;
-#define trk mod_imp_trk
-#define song (*mod_imp_song)
+#if MOD_SIDE                /* (a module: the song's global parameters, the MIDI insert's releases; no track_t but
+                             * the one a callback gets) */
+static struct { const int16_t *g; } mod_song;
+static const uint8_t *mod_imp_midi_verb;
+#define song mod_song
 #define midi_verb mod_imp_midi_verb
 #else
 static track_t trk[NTRK];        /* the instrument: four parts, then the MIDI-only tracks */
@@ -653,7 +685,16 @@ static void trk_voices_bind(void)    /* boot, and a host fixture after clearing 
 {
     memset(part_voice, 0, sizeof part_voice);
     memset(midi_voice, 0, sizeof midi_voice);
-    for (uint32_t k = 0; k < NTRK; k++) trk[k].v = k < NPART ? part_voice[k] : midi_voice;
+    for (uint32_t k = 0; k < NTRK; k++) {
+        trk[k].v = k < NPART ? part_voice[k] : midi_voice;
+        trk[k].index = (uint8_t)k;               /* (the views a synth module reads: mod_abi3.h) */
+        trk[k].size = (uint16_t)sizeof(mod_part_v3);
+        trk[k].vsize = (uint16_t)sizeof(voice_t);
+    }
+    for (uint32_t i = 0; i < NVOICE; i++) {
+        for (uint32_t k = 0; k < NPART; k++) part_voice[k][i].index = (uint8_t)i;
+        midi_voice[i].index = (uint8_t)i;
+    }
 }
 /* the part a voice belongs to (NPART: none, midi_voice) */
 static inline uint32_t voice_part(const voice_t *v)
@@ -664,7 +705,6 @@ static inline uint32_t voice_part(const voice_t *v)
 static song_t song;
 /* Audio-owner snapshot of the insert release override; zero keeps the sound's envelope. */
 static uint8_t midi_verb[NTRK];
-#endif
 #define TSEL (&trk[song.sel])    /* the selected track */
 
 static int32_t input_octave(const track_t *t)
@@ -676,7 +716,20 @@ static inline uint32_t trk_n(void) { return song.ntrk - 1u < NTRK ? song.ntrk : 
 static inline uint32_t trk_parts(void) { uint32_t n = trk_n(); return n < NPART ? n : NPART; }
 /* track k can only be a MIDI Track (tracks 5..8) */
 static inline int trk_midi_slot(uint32_t k) { return k >= NPART && k < NTRK; }
+#endif
+/* a part's number, voice i of a part, a voice's slot: what engine sources use (a module reads the views' fields, the
+ * firmware its arrays) */
+#if MOD_SIDE
+#define trk_ix(t) ((uint32_t)(t)->index)
+#define trk_voice(t, i) ((voice_t *)mod3_voice(t, i))
+#define voice_ix(t, v) ((uint32_t)(v)->index)
+#else
+#define trk_ix(t) ((uint32_t)((t) - trk))
+#define trk_voice(t, i) (&(t)->v[i])
+#define voice_ix(t, v) ((uint32_t)((v) - (t)->v))
+#endif
 
+#if !MOD_SIDE
 #include "microtonal.h"
 
 /* SWING of a track's step clock: the track's own plus the global one, at most 100 (#31). The sequencer
@@ -694,10 +747,11 @@ static inline uint32_t swing_step_len(const track_t *t, uint32_t base, uint32_t 
     int32_t sw = track_swing(t) * (int32_t)base / 250;
     return base + (uint32_t)((idx & 1u) ? -sw : sw);
 }
+#endif
 
 /* ----------------------------------------------------------- system --- */
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")   /* slot store before the index update */
-#if !MOD_NATIVE_SIDE
+#if !MOD_SIDE
 static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIMER5 ISR in main.c) */
 /* boot-loop guard (main.c): two boots in a row that die in the first 30 s -> UBOOT */
 #define BOOTGUARD_MAGIC 0x42475244u

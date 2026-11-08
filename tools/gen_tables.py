@@ -26,9 +26,9 @@ def arr(name, ctype, vals, per=12, ram=False):
 
 
 def shared(name, ctype, lines):
-    """a table the firmware keeps and a native synth module reads in place (firmware/src/module_native.h: the module's
+    """a table the firmware keeps and a synth module reads in place (mod_abi3.h host table: the module's
     compile sees a pointer the loader sets, not a copy)"""
-    return ["#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE   /* (a native module: the firmware's) */",
+    return ["#if defined(MOD_SIDE) && MOD_SIDE   /* (a synth module: the firmware's) */",
             f"static const {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", *lines, "#endif"]
 
 
@@ -378,9 +378,9 @@ def sid_kit_tables():
 
 
 def shared_ram(name, ctype, line):
-    """a table the firmware fills at power-on (dsp_tables_init) that a native synth module reads in place: a pointer
+    """a table the firmware fills at power-on (dsp_tables_init) that a synth module reads in place: a pointer
     the loader sets in the module's compile (dsp_tables_init's writes there compile, never run)"""
-    return ["#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE   /* (a native module: the firmware's) */",
+    return ["#if defined(MOD_SIDE) && MOD_SIDE   /* (a synth module: the firmware's) */",
             f"static {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", line, "#endif"]
 
 

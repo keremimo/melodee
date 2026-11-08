@@ -18,9 +18,9 @@ typedef void (*audio_batch_fn)(const void *,int32_t *);
 #endif
 #define AUDIO_BATCH_JOBS 24u
 _Static_assert(AUDIO_BATCH_JOBS<=32u,"Batch worker mask must cover every descriptor");
-#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE
-/* (a native synth module: the firmware's queue, through its imports: module_native.h) */
-static uint8_t *mod_imp_audio_batch_active;
+#if defined(MOD_SIDE) && MOD_SIDE
+/* (a synth module: the firmware's queue, through the host table: mod_abi3.h) */
+static const uint8_t *mod_imp_audio_batch_active;
 static void (*mod_imp_audio_batch_push)(audio_batch_fn run,const void *data,uint32_t bytes,int32_t *out,uint32_t n,uint32_t profile_id);
 static void (*mod_imp_audio_batch_push_cost)(audio_batch_fn run,const void *data,uint32_t bytes,int32_t *out,uint32_t n,uint32_t profile_id,uint32_t estimated_cost);
 #define audio_batch_active (*mod_imp_audio_batch_active)
@@ -58,9 +58,9 @@ static const uint32_t audio_batch_cost[AP_COUNT] __attribute__((section(".dsp_ta
 #endif
 static volatile uint32_t audio_batch_worker_mask,audio_batch_published,audio_batch_closed,audio_batch_invalid;
 static uint32_t audio_batch_producer_cost,audio_batch_worker_cost;
-static uint8_t audio_batch_started,audio_batch_native_fm6;
+static uint8_t audio_batch_started,audio_batch_reserve;   /* reserve: a part asked for it (engine_t.reserve) */
 /* CPU0 prepares descriptors and services TIMER5 while CPU1 synthesizes.
- * Reserve service time when splitting kernels. Native FM6 ghost groups
+ * Reserve service time when splitting kernels. FM6's ghost groups
  * contribute their own bounded state-update cost. */
 #define AUDIO_BATCH_SERVICE_AUTO UINT32_MAX
 #if MELODEE_AUDIO_PROFILE && MELODEE_AUDIO_BENCH
@@ -171,7 +171,7 @@ static void audio_batch_push_cost(audio_batch_fn run,const void *data,uint32_t b
         /* Voice and native ghost controls now travel with queue jobs.
          * Reserve CPU0 service work; their costs participate in the split. */
         uint32_t service=2000u;
-        if(audio_batch_native_fm6){
+        if(audio_batch_reserve){
             if(profile_id==AP_PROPHET)service=6000u;
             else if(profile_id==AP_FM6 || profile_id==AP_FM6_CONTROL)service=6000u;
         }

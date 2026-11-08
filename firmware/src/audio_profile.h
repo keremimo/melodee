@@ -24,8 +24,8 @@ enum {
 #define AUDIO_PROFILE_TICKS() 0u
 #endif
 #endif
-#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE
-/* (a native synth module: its spans go to the firmware's, through its imports: module_native.h) */
+#if defined(MOD_SIDE) && MOD_SIDE
+/* (a synth module: its spans go to the firmware's, through the host table: mod_abi3.h) */
 static void (*mod_imp_audio_profile_add)(uint32_t id, uint32_t ticks);
 #define audio_profile_add (*mod_imp_audio_profile_add)
 #define AUDIO_LAB_GUARDED() 0

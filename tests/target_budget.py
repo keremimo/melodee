@@ -188,8 +188,8 @@ def main():
         print(f"target: skip ({dis} missing: run ./build.sh)")
         return 0
     fns = functions(dis)
-    # the native synth modules built beside the image (tools/mod_build.py: build/modules/<name>.dis): engines that
-    # left the image (SID, DRUM) keep their budgets there; a function the image has stays the image's
+    # the synth modules built beside the image (tools/mod_build.py: build/modules/<name>.dis): engines that left the
+    # image (SID, DRUM, CZ-1, FM6, the Prophet) keep their budgets there; a function the image has stays the image's
     for mod in sorted(glob.glob(os.path.join(os.path.dirname(dis) or ".", "modules", "*.dis"))):
         for name, insns in functions(mod).items():
             fns.setdefault(name, insns)

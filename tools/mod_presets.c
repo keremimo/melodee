@@ -20,6 +20,10 @@ int main(int argc, char **argv)
 {
     uint32_t e = argc == 2 ? (uint32_t)atoi(argv[1]) : NENGINES;
     reset();
+    if (e == 6u && ENGINES[6] == &ENG_RETIRED)    /* (TRIO and WHEEL, retired in the firmware: their modules' sounds */
+        ENGINES[6] = &ENG_TRIO;                   /* are the built-in references' rows, eng_trio.c, eng_wheel.c) */
+    if (e == 7u && ENGINES[7] == &ENG_RETIRED)
+        ENGINES[7] = &ENG_WHEEL;
     if (e >= NENGINES || ENGINES[e] == &ENG_RETIRED || ENGINES[e]->preset_make == 0 && ENGINES[e]->presets == 0) {
         fprintf(stderr, "mod_presets: engine %u is not built into this host firmware\n", e);
         return 1;

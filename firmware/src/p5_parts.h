@@ -20,7 +20,7 @@ static uint32_t p5_poly(void)
 #endif
     return 5u;
 }
-#if MOD_NATIVE_SIDE                              /* (a native synth module: the firmware's, module_native.h) */
+#if MOD_SIDE                              /* (a synth module: the firmware's, module_legacy.h) */
 static p5_patch_t *mod_imp_p5_patch;
 static uint8_t *mod_imp_p5_ready;
 #define p5_patch mod_imp_p5_patch
@@ -31,7 +31,7 @@ static uint8_t p5_ready[NPART];
 #endif
 static p5_patch_t *p5_patch_of(const track_t *t)
 {
-    uint32_t k = (uint32_t)(t - trk) % NPART;
+    uint32_t k = trk_ix(t) % NPART;
     if (!p5_ready[k]) { p5_patch_init(&p5_patch[k]); p5_ready[k] = 1; }
     return &p5_patch[k];
 }

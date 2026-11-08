@@ -9,7 +9,7 @@ SECTIONS
     . = MOD_BASE;
     .image : {
         KEEP(*(.mod_desc))
-        *(.text*) *(.audio_text*) *(.dsp_text*) *(.ram_text*)   /* (a native module: the firmware's placements, */
+        *(.text*) *(.audio_text*) *(.dsp_text*) *(.ram_text*)   /* (an engine-source module: the firmware's placements, */
         mod_rodata_ = .;                                         /* all of them SRAM here; a label where the code
                                                                   * ends: its strings follow, unnamed, and
                                                                   * tests/target_budget.py reads up to a label) */

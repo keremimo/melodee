@@ -38,9 +38,9 @@ static inline int32_t mulq16(int32_t a, uint32_t k)
  * One table a block (mix_block), each cut reading it at its own offset; a zero sample stays exact 0 */
 #define DITH_N 32u
 #define DITH_SEED 0x2545F491u
-#if MOD_NATIVE_SIDE                              /* (a native synth module: the firmware's table of the block, core.h) */
-static int16_t *mod_imp_dith;
-static float *mod_imp_dith_f;
+#if MOD_SIDE                              /* (a synth module: the firmware's dither of the block, the host table) */
+static const int16_t *mod_imp_dith;
+static const float *mod_imp_dith_f;
 #define dith mod_imp_dith
 #define dith_f mod_imp_dith_f
 #else

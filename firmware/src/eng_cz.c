@@ -8,7 +8,7 @@
 static int cz_native_done(track_t *t, voice_t *v)
 {
     cz_voice_t *c = cz_voice(t, v);
-    const uint8_t *b = cz_patch_of((uint32_t)(t - trk) % NTRK)->raw;
+    const uint8_t *b = cz_patch_of(trk_ix(t) % NTRK)->raw;
     uint32_t ls = b[0] & 3u;
     uint32_t a = ls == 1u ? 1u : 0u, z = ls >= 2u ? 1u : a;
     return c->native_eg[a][2].stage > (b[CZ_ENV_END[a][2]] & 7u) &&
@@ -24,7 +24,7 @@ static const engine_t ENG_CZ = {
         {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
         {"-", F_INT, 0, 0, 0, 0, 0}, {"TONE", F_INT, CZ_NATIVE, CZ_NATIVE, CZ_NATIVE, 0, 0},
     },
-#if !MOD_NATIVE_SIDE
+#if !MOD_SIDE
     .preset_make = cz_preset_make,     /* (host builds; a synth module's presets are in its file) */
 #endif
     .npresets = CZ_FACTORY_N + 1u,

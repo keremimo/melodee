@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* TRIO as a synth module (engine 6, its number before it was retired): firmware/src/eng_trio.c's engine, the same
- * arithmetic over the SDK's helpers (bit-identical to the built-in engine: tests/module_test.c). Three oscillators
- * with ring modulation and hard sync into a 12 dB/oct multimode filter; eng_trio.c has the full description. */
+/* TRIO as a synth module (ABI 3 from the contract alone: mod_sdk.h; engine 6, its number before it was retired):
+ * firmware/src/eng_trio.c's engine, the same arithmetic over the SDK's helpers (bit-identical to the built-in engine:
+ * tests/module_test.c). Three oscillators with ring modulation and hard sync into a 12 dB/oct multimode filter;
+ * eng_trio.c has the full description. Its five sounds are its file's (the PRST chunk: tools/mod_build.py). */
 #include "mod_sdk.h"
 
 enum { TRW_OFF, TRW_TRI, TRW_SAW, TRW_PLS, TRW_NOI, TRW_ST, TRW_PS };
@@ -231,9 +232,9 @@ static uint32_t trm_inc(int32_t pitch16, int32_t semi, int32_t ct, int32_t fine)
     return md_cents_inc(pitch16 + semi * 16, ct, fine);
 }
 
-static void trm_note_on(mod_ctx_t *c, mod_voice_t *v)
+static void trm_note_on(mod_part_v3 *t, mod_voice_v3 *v)
 {
-    (void)c;
+    (void)t;
     v->ph[0] = 0;
     v->ph[1] = 0x1C000000u;      /* start phases a little apart (a third apart would cancel all but
                                   * every third harmonic of equal-pitched saws until DTN drifts them) */
@@ -246,9 +247,9 @@ static void trm_note_on(mod_ctx_t *c, mod_voice_t *v)
     v->s[5] = 0;                 /* cutoff drift */
 }
 
-static void trm_render(mod_ctx_t *c, mod_voice_t *v, int32_t *out, uint32_t n, const mod_vmod_t *m)
+static void trm_render(mod_part_v3 *t, mod_voice_v3 *v, int32_t *out, uint32_t n, const mod_vmod_v3 *m)
 {
-    const int16_t *p = c->e;
+    const int16_t *p = md_e(t);
     const trm_set_t *ws = &TRM_SETS[(uint32_t)p[0] & 15u];
     uint32_t w1 = ws->w[0], w2 = ws->w[1], w3 = ws->w[2], i;
     uint32_t ring = ws->flags & TRM_RING, sync = ws->flags & TRM_SYNC;
@@ -325,34 +326,29 @@ static void trm_render(mod_ctx_t *c, mod_voice_t *v, int32_t *out, uint32_t n, c
     v->s[5] = drift;
 }
 
-static const mod_preset_t TRM_PRESETS[] = {
-    /* name, {WAVE, INT2, INT3, DTN, MODE, CUT, RES, PW}, {A D S R}, fenv, mono */
-    {"FAT BASS", {0, 0, -12, 9, 0, 62, 45, 64}, {0, 62, 60, 25}, 40, 1},
-    {"ARP LEAD", {2, 12, 0, 4, 0, 88, 25, 32}, {0, 60, 90, 30}, 8, 0},
-    {"SYNC LEAD", {9, 9, 0, 0, 0, 82, 30, 64}, {2, 70, 100, 40}, 18, 1},
-    {"RING BELL", {13, 0, 18, 6, 1, 96, 30, 64}, {0, 92, 0, 80}, 0, 0},
-    {"CHIP CHOIR", {1, 0, 12, 7, 1, 62, 95, 40}, {70, 90, 110, 85}, 30, 0},
-};
-
-MOD_EXPORT(mod_trio) = {
-    MOD_DESC_HEAD,
+static const mod_engine_v3 TRIO = {
     .name = "TRIO",
-    .engine = 6,                                 /* TRIO's number before it was retired: old sounds play again */
     .page_title = {"OSC", "TONE"},
     .edit = {
-        {"WAVE", MF_ENUM, 0, 15, 0, N_TRM_WAVE, 0},
-        {"INT2", MF_SEMI, -24, 24, 0, 0, 0},
-        {"INT3", MF_SEMI, -24, 24, -12, 0, 0},
-        {"DTN", MF_INT, 0, 50, 6, 0, "ct"},
-        {"MODE", MF_ENUM, 0, 3, 0, N_TRM_MODE, 0},
-        {"CUT", MF_CUTOFF, 0, 127, 80, 0, 0},
-        {"RES", MF_PCT, 0, 127, 40, 0, 0},
-        {"PW", MF_PCT, 0, 127, 64, 0, 0},
+        {"WAVE", MOD3_F_ENUM, 0, 15, 0, N_TRM_WAVE, 0},
+        {"INT2", MOD3_F_SEMI, -24, 24, 0, 0, 0},
+        {"INT3", MOD3_F_SEMI, -24, 24, -12, 0, 0},
+        {"DTN", MOD3_F_INT, 0, 50, 6, 0, "ct"},
+        {"MODE", MOD3_F_ENUM, 0, 3, 0, N_TRM_MODE, 0},
+        {"CUT", MOD3_F_CUTOFF, 0, 127, 80, 0, 0},
+        {"RES", MOD3_F_PCT, 0, 127, 40, 0, 0},
+        {"PW", MOD3_F_PCT, 0, 127, 64, 0, 0},
     },
-    .presets = TRM_PRESETS,
-    .npresets = MOD_NELEM(TRM_PRESETS),
-    .knob = {MK_E6, MK_E7, MK_E8, MK_E2},
-    .host = &mh,
+    .npresets = 5,
+    .knob = {MOD3_P_E0 + 5, MOD3_P_E0 + 6, MOD3_P_E0 + 7, MOD3_P_E0 + 1},
     .note_on = trm_note_on,
     .render = trm_render,
+};
+
+MOD3_EXPORT(mod_trio) = {
+    MOD3_SDK_HEAD,
+    .engine = 6,                                 /* TRIO's number before it was retired: old sounds play again */
+    .name = "TRIO",
+    .npresets = 5,                               /* (FAT BASS, ARP LEAD, SYNC LEAD, RING BELL, CHIP CHOIR) */
+    .eng = &TRIO,
 };

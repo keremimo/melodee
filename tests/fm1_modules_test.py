@@ -17,8 +17,8 @@ KEY = 0x13572468
 
 
 def module(engine, name, n, key=KEY, seed=1):
-    b = bytearray((i * 29 + seed) & 255 for i in range(56 + n))
-    struct.pack_into("<IHBBI", b, 0, M.FILE_MAGIC, 2, engine, 0, len(b))
+    b = bytearray((i * 29 + seed) & 255 for i in range(60 + n))
+    struct.pack_into("<IHBBI", b, 0, M.FILE_MAGIC, 3, engine, 0, len(b))
     struct.pack_into("<I", b, 28, 0x1000 * seed + engine)
     b[32:48] = name.encode().ljust(16, b"\0")
     struct.pack_into("<I", b, 52, key)
@@ -26,7 +26,7 @@ def module(engine, name, n, key=KEY, seed=1):
 
 
 class Device:
-    """editor_module.c's ops on eight slots; commit takes a native file of this firmware's key, room permitting"""
+    """editor_module.c's ops on eight slots; commit takes an ABI 3 file of this firmware's legacy key (or none), room permitting"""
     def __init__(self, room=1 << 20):
         self.slot = [dict(b=None, state=0, up=None) for _ in range(8)]
         self.room, self.log = room, []
@@ -46,7 +46,7 @@ class Device:
             b = s["b"]
             abi = struct.unpack_from("<H", b, 4)[0] if b and len(b) >= 6 else 0
             return [0, s["state"], b[6] if b else 0, abi] + u(struct.unpack_from("<I", b, 28)[0] if b else 0) + \
-                u(struct.unpack_from("<I", b, 52)[0] if abi == 2 else 0) + u(KEY)
+                u(struct.unpack_from("<I", b, 52)[0] if abi >= 2 else 0) + u(KEY)
         if a[0] == 1:
             s["up"] = bytearray()
             s["want"] = sum(x << 7 * i for i, x in enumerate(a[2:7]))
@@ -60,7 +60,7 @@ class Device:
             return [0]
         if a[0] == 3:
             b = bytes(s.pop("up"))
-            if struct.unpack_from("<H", b, 4)[0] == 2 and struct.unpack_from("<I", b, 52)[0] != KEY:
+            if struct.unpack_from("<H", b, 4)[0] != 3 or struct.unpack_from("<I", b, 52)[0] not in (0, KEY):
                 return [5, s["state"], 0]
             if sum(len(x["b"]) for x in self.slot if x["b"] and x is not s) + len(b) > self.room:
                 return [2, s["state"], 0]
@@ -85,7 +85,7 @@ def main():
     mods = module(10, "DRUM", 3000) + module(3, "SID", 900)
     d = Device()
     check("bundle: the files and their heads", [(f["engine"], f["name"], f["abi"]) for f in M.bundle(mods)] ==
-          [(10, "DRUM", 2), (3, "SID", 2)])
+          [(10, "DRUM", 3), (3, "SID", 3)])
     check("an empty FM-1: both written into free slots", M.push(d, mods, quiet) == "written" and d.log == ["DRUM -> 1", "SID -> 2"])
     check("the very files there already: nothing written", M.push(d, mods, quiet) == "current" and len(d.log) == 2)
     d.slot[0].update(b=module(10, "DRUM", 2000, key=0x5555, seed=7), state=7)       # another firmware's DRUM
@@ -117,9 +117,9 @@ def main():
     real = ROOT / "build/melodee-mods.bin"
     if real.exists():
         files = M.bundle(real.read_bytes())
-        check("build/melodee-mods.bin: the native CZ-1, SID, DRUM, FM6 and PROPHET files",
+        check("build/melodee-mods.bin: the ABI 3 CZ-1, SID, DRUM, FM6 and PROPHET files (one legacy key)",
               sorted(f["name"] for f in files) == ["CZ-1", "DRUM", "FM6", "PROPHET", "SID"] and
-              all(f["abi"] == 2 for f in files) and len({f["key"] for f in files}) == 1)
+              all(f["abi"] == 3 for f in files) and len({f["key"] for f in files}) == 1 and all(f["key"] for f in files))
     print("fm1_modules tests", "FAILED" if bad else "passed")
     return 1 if bad else 0
 

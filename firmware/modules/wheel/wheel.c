@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* WHEEL as a synth module (engine 7, its number before it was retired): firmware/src/eng_wheel.c's tonewheel organ,
- * the same arithmetic over the SDK's helpers (bit-identical: tests/module_test.c). Nine drawbar partials per voice,
- * percussion, key click, drive and a rotary speaker; its rotors and bar gains run once per block (desc .block) in
- * the part's memory. eng_wheel.c has the full description. */
+/* WHEEL as a synth module (ABI 3 from the contract alone: mod_sdk.h; engine 7, its number before it was retired):
+ * firmware/src/eng_wheel.c's tonewheel organ, the same arithmetic over the SDK's helpers (bit-identical:
+ * tests/module_test.c). Nine drawbar partials per voice, percussion, key click, drive and a rotary speaker; its rotors
+ * and bar gains run once per block (.block) in the part's memory (.state). eng_wheel.c has the full description. Its
+ * five sounds are its file's (the PRST chunk: tools/mod_build.py). */
 #include "mod_sdk.h"
 
 #define WDR_NP 9                 /* partials */
@@ -89,8 +90,8 @@ typedef struct {                 /* per voice */
 } wdr_vc_t;
 
 #define WHL_POLY 8u
-typedef struct { wdr_trk_t t; wdr_vc_t v[WHL_POLY]; } wdr_part_t;   /* the part's memory (desc part_bytes) */
-#define wdr_of(c) ((wdr_part_t *)(c)->part)
+typedef struct { wdr_trk_t t; wdr_vc_t v[WHL_POLY]; } wdr_part_t;   /* the part's memory (.state) */
+#define wdr_of(t) ((wdr_part_t *)md_part(t, sizeof(wdr_part_t)))
 
 
 /* the bar level 0..8 of partial k: the registration plus SUB / BODY / TOP */
@@ -102,10 +103,13 @@ static int32_t wdr_level(const int16_t *p, uint32_t k)
 }
 
 /* once per block, before the voices: bar gains, percussion, click, drive, the rotors */
-static void whl_block(mod_ctx_t *c)
+static void whl_block(mod_part_v3 *t)
 {
-    wdr_trk_t *T = &wdr_of(c)->t;
-    const int16_t *p = c->e;
+    wdr_part_t *P = wdr_of(t);
+    if (!P)
+        return;
+    wdr_trk_t *T = &P->t;
+    const int16_t *p = md_e(t);
     uint32_t k, perc = (uint32_t)p[4] % 7u, rot = (uint32_t)p[7] % 3u;
     int32_t s = 0, lv[WDR_NP];
     uint32_t norm;
@@ -149,11 +153,17 @@ static void whl_block(mod_ctx_t *c)
     }
 }
 
-static void whl_note_on(mod_ctx_t *c, mod_voice_t *v)
+static void whl_note_on(mod_part_v3 *t, mod_voice_v3 *v)
 {
-    uint32_t vi = v->index % WHL_POLY, k, held = (c->held & ~(1u << v->index)) != 0;   /* single trigger: another
-                                                                                           * key of the part held? */
-    wdr_vc_t *V = &wdr_of(c)->v[vi];
+    wdr_part_t *P = wdr_of(t);
+    uint32_t vi = v->index % WHL_POLY, k, held = 0;
+    if (!P)
+        return;
+    for (k = 0; k < MOD3_NVOICE; k++) {                /* single trigger: another key of the part held? */
+        const mod_voice_v3 *w = mod3_voice(t, k);
+        held |= k != v->index && w->active && w->gate && w->stage != 4u;
+    }
+    wdr_vc_t *V = &P->v[vi];
     if (!V->init) {                                     /* the wheels: spread start phases, then free running */
         for (k = 0; k < WDR_NP; k++)
             V->ph[k] = (k * 0x9E3779B9u) ^ (vi * 0x7F4A7C15u);
@@ -166,10 +176,13 @@ static void whl_note_on(mod_ctx_t *c, mod_voice_t *v)
     V->gate = 1;
 }
 
-static void whl_render(mod_ctx_t *c, mod_voice_t *v, int32_t *out, uint32_t n, const mod_vmod_t *m)
+static void whl_render(mod_part_v3 *t, mod_voice_v3 *v, int32_t *out, uint32_t n, const mod_vmod_v3 *m)
 {
-    const wdr_trk_t *T = &wdr_of(c)->t;
-    wdr_vc_t *V = &wdr_of(c)->v[v->index % WHL_POLY];
+    wdr_part_t *P = wdr_of(t);
+    if (!P)
+        return;
+    const wdr_trk_t *T = &P->t;
+    wdr_vc_t *V = &P->v[v->index % WHL_POLY];
     int32_t acc[MOD_CTL], perc1, clk0, clk1;
     uint32_t i, k;
     if (n > MOD_CTL)
@@ -196,14 +209,14 @@ static void whl_render(mod_ctx_t *c, mod_voice_t *v, int32_t *out, uint32_t n, c
         if (g0 == g1) {
             for (i = 0; i < n; i++) {
                 ph += inc;
-                acc[i] += (mh->sine[ph >> 22] * g1) >> 15;
+                acc[i] += (md_sine_tab[ph >> 22] * g1) >> 15;
             }
         } else {                                        /* gain ramp over the block (MOD_CTL = 32) */
             int32_t gq = g0 << 5, dg = g1 - g0;
             for (i = 0; i < n; i++) {
                 ph += inc;
                 gq += dg;
-                acc[i] += (mh->sine[ph >> 22] * (gq >> 5)) >> 15;
+                acc[i] += (md_sine_tab[ph >> 22] * (gq >> 5)) >> 15;
             }
         }
         V->ph[k] = ph;
@@ -239,36 +252,33 @@ static void whl_render(mod_ctx_t *c, mod_voice_t *v, int32_t *out, uint32_t n, c
         out[i] += md_voice_amp(acc[i] >> 1, m, i) << 1;
 }
 
-static const mod_preset_t WHL_PRESETS[] = {
-    /* name, {REG, SUB, BODY, TOP, PERC, CLICK, DRIVE, ROTR}, {A D S R}, fenv, mono */
-    {"FULL ORGAN", {15, 0, 0, 0, 0, 30, 20, 1}, {0, 64, 127, 45}, 0, 0},
-    {"JAZZ PERC", {4, 0, 0, 0, 2, 50, 8, 1}, {0, 64, 127, 40}, 0, 0},
-    {"GOSPEL", {6, 0, 0, 0, 1, 60, 40, 2}, {0, 64, 127, 45}, 0, 0},
-    {"SOFT FLUTE", {1, 0, -2, 0, 0, 10, 0, 1}, {0, 64, 127, 55}, 0, 0},
-    {"ROCK DRIVE", {7, 0, 0, 0, 0, 70, 100, 2}, {0, 64, 127, 40}, 0, 0},
-};
+static uint32_t whl_state(const mod_part_v3 *t) { (void)t; return sizeof(wdr_part_t); }
 
-MOD_EXPORT(mod_wheel) = {
-    MOD_DESC_HEAD,
+static const mod_engine_v3 WHEEL = {
     .name = "WHEEL",
-    .engine = 7,                                 /* WHEEL's number before it was retired */
     .page_title = {"BARS", "TONE"},
     .edit = {
-        {"REG", MF_ENUM, 0, 15, 4, N_WDR_REG, 0},
-        {"SUB", MF_INT, -8, 8, 0, 0, 0},
-        {"BODY", MF_INT, -8, 8, 0, 0, 0},
-        {"TOP", MF_INT, -8, 8, 0, 0, 0},
-        {"PERC", MF_ENUM, 0, 6, 0, N_WDR_PERC, 0},
-        {"CLICK", MF_PCT, 0, 127, 40, 0, 0},
-        {"DRV", MF_PCT, 0, 127, 0, 0, 0},
-        {"ROTR", MF_ENUM, 0, 2, 1, N_WDR_ROTR, 0},
+        {"REG", MOD3_F_ENUM, 0, 15, 4, N_WDR_REG, 0},
+        {"SUB", MOD3_F_INT, -8, 8, 0, 0, 0},
+        {"BODY", MOD3_F_INT, -8, 8, 0, 0, 0},
+        {"TOP", MOD3_F_INT, -8, 8, 0, 0, 0},
+        {"PERC", MOD3_F_ENUM, 0, 6, 0, N_WDR_PERC, 0},
+        {"CLICK", MOD3_F_PCT, 0, 127, 40, 0, 0},
+        {"DRV", MOD3_F_PCT, 0, 127, 0, 0, 0},
+        {"ROTR", MOD3_F_ENUM, 0, 2, 1, N_WDR_ROTR, 0},
     },
-    .presets = WHL_PRESETS,
-    .npresets = MOD_NELEM(WHL_PRESETS),
-    .knob = {MK_E1, MK_E5, MK_E7, MK_E8},
-    .part_bytes = sizeof(wdr_part_t),
-    .host = &mh,
+    .npresets = 5,
+    .knob = {MOD3_P_E0, MOD3_P_E0 + 4, MOD3_P_E0 + 6, MOD3_P_E0 + 7},
     .note_on = whl_note_on,
     .render = whl_render,
     .block = whl_block,
+    .state = whl_state,
+};
+
+MOD3_EXPORT(mod_wheel) = {
+    MOD3_SDK_HEAD,
+    .engine = 7,                                 /* WHEEL's number before it was retired */
+    .name = "WHEEL",
+    .npresets = 5,                               /* (FULL ORGAN, JAZZ PERC, GOSPEL, SOFT FLUTE, ROCK DRIVE) */
+    .eng = &WHEEL,
 };

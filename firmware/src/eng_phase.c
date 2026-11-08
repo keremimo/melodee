@@ -37,7 +37,7 @@ typedef struct {
 static cz_part_t *cz_part(uint32_t part);              /* engines.c: shared runtime pool */
 static cz_voice_t *cz_voice(track_t *t, voice_t *v)
 {
-    return &cz_part((uint32_t)(t - trk) % NPART)->v[(uint32_t)(v - t->v) % NPOLY];
+    return &cz_part(trk_ix(t) % NPART)->v[voice_ix(t, v) % NPOLY];
 }
 
 static int32_t cz_env_tick(cz_env_t *e, const cz_env_def_t *d, uint32_t gate)
@@ -226,7 +226,7 @@ static void phase_note_on(track_t *t, voice_t *v)
     v->ph[0] = v->ph[1] = v->ph[2] = 0;
     v->s[0] = v->s[1] = v->s[4] = 0;
     if (!voice_was) v->s[2] = v->s[3] = 0;
-    c->noise = 0x6D2B79F5u ^ (uint32_t)(v - t->v) * 0x9E3779B9u;
+    c->noise = 0x6D2B79F5u ^ voice_ix(t, v) * 0x9E3779B9u;
 }
 
 

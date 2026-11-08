@@ -117,7 +117,7 @@ static __attribute__((noinline)) int dlk_noise(dlk_ch_t *restrict c, int32_t *y,
 
 static dlk_part_t *dlk_of(const track_t *t)
 {
-    dlk_part_t *K = dlk_part((uint32_t)(t - trk));
+    dlk_part_t *K = dlk_part(trk_ix(t));
     if (K && (!K->ready || K->kit != t->p[P_E0])) {
         __typeof__(&memset) volatile clear = memset;
         clear(K, 0, sizeof *K);
@@ -138,7 +138,7 @@ static void dlk_hit(track_t *t, uint32_t note, uint32_t vel)
     if (!K)
         return;
     uint32_t lane = DV_TYPE_LANE[drum_gm(t->p, note, &st)], sound = drum_sound_of(t, note) & 15u;
-    const int8_t *pc = drum_patch_of(t - trk)->c[sound];
+    const int8_t *pc = drum_patch_of(trk_ix(t))->c[sound];
     dlk_ch_t *c = &K->ch[lane];
     if (lane == DV_HATC && K->ch[DV_HATO].on && !K->ch[DV_HATO].fade)
         K->ch[DV_HATO].fade = DLK_FADE;
@@ -163,7 +163,7 @@ static void dlk_hit(track_t *t, uint32_t note, uint32_t vel)
 /* once per control tick (drum_amp): 0 once every lane has gone quiet */
 static int dlk_tick(track_t *t)
 {
-    dlk_part_t *K = dlk_part((uint32_t)(t - trk));
+    dlk_part_t *K = dlk_part(trk_ix(t));
     if (!K || !K->ready || K->kit != t->p[P_E0])
         return 0;
     for (uint32_t k = 0; k < DV_NLANE; k++)
@@ -192,7 +192,7 @@ static inline __attribute__((always_inline)) void dlk_out(const int32_t *y, int3
 static __attribute__((noinline)) void dlk_render(track_t *t, int32_t *out, uint32_t n, const vmod_t *m,
                                                  const int16_t *p)
 {
-    dlk_part_t *K = dlk_part((uint32_t)(t - trk) % NPART);
+    dlk_part_t *K = dlk_part(trk_ix(t) % NPART);
     int32_t y[CTL] = {0}, x[CTL];
     uint32_t i, k;
     if (!K || !K->ready || K->kit != p[P_E0])

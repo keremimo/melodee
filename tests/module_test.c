@@ -1,37 +1,44 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Synth modules (src/eng_module.c, src/module_store.c, src/module_abi.h, src/module_native.h): TRIO built as a module
- * renders bit for bit what the built-in TRIO rendered; SID, DRUM, CZ-1, FM6 and the Prophet as native modules
- * (firmware/modules/sid, drum, cz, fm6, prophet: their own sources, compiled here for the host and linked beside this
- * test) render bit for bit what
- * the built-in engines render (this build, MELODEE_*_BUILTIN 1) and what they rendered before they left the firmware
+/* Synth modules, ABI 3 (firmware/modules/sdk/mod_abi3.h; src/eng_module.c, src/module_store.c): every module is a
+ * file the firmware loads, binds to its host table and plays through the frozen views of its own track_t and voice_t.
+ * The modules here are firmware/modules/<name>/<name>.c built for the host ONCE (tests/run_tests.sh: objects linked
+ * beside this test; the same objects in every configuration, also a firmware whose private track_t / voice_t fields
+ * are padded and reordered, MELODEE_ABI_SHUFFLE): SID, DRUM, CZ-1, FM6 and the Prophet render bit for bit what the
+ * built-in engines render (this build, MELODEE_*_BUILTIN 1) and what they rendered before they left the firmware
  * (MP_GOLDEN, tests/module_phrases.h: every preset, POLY and LEGATO, the C64 models, ENV3, every kit, every CZ-1 tone
  * edited as it plays with the matrix's ENV, every FM6 voice with every algorithm, ENGINE and controller, a DX7 bank by
- * SysEx, every Prophet program in POLY and UNISON edited as it plays, on CPU0 and CPU1), a native
- * file longer than a record in two, its layout key checked; module files into the pool's slots (head, CRC, address words moved to the block),
- * loaded once at commit, listed at power-on without loading, loaded when picked or used and out of SRAM again when
- * idle, a part kept on its engine while its module is on its way, listed after the built-in engines, refused when
- * bad or when their number is taken, left out after a boot that died early, deleted; a track keeps a module's number
- * when it goes. With
- * build/modules/trio.mmod (tools/mod_build.py) the real pi32v2 file is relocated too and its descriptor read back.
+ * SysEx, every Prophet program in POLY and UNISON edited as it plays and bent over its BEND range, on CPU0 and CPU1);
+ * TRIO and WHEEL, rewritten on the contract alone (mod_sdk.h), render what the built-in references and their ABI 1
+ * modules rendered. Module files into the pool's slots (head, CRC, address words moved to the block), loaded once at
+ * commit, listed at power-on without loading, loaded when picked or used and out of SRAM again when idle, a part kept
+ * on its engine while its module is on its way, listed after the built-in engines; refused when bad, when their number
+ * is taken, when they are an older firmware's (ABI 1, 2, another legacy key: MS_STALE) or need a newer host table
+ * (MS_NEWER); left out after a boot that died early, deleted; a track keeps a module's number when it goes. The
+ * capabilities that replaced the engine-number checks (bend range, wheel, cost class, reserve) are declared by the
+ * modules. With build/modules/trio.mmod (tools/mod_build.py) the real pi32v2 file is relocated too and its descriptor
+ * read back.
  *   module_test [build/modules/trio.mmod] */
 #define PERSISTENCE_TEST_NO_MAIN
 #include "persistence_test.c"
 #include "../firmware/src/fm6_store.c"         /* (DX7 SysEx in: the FM6 bank phrases) */
 #include "../firmware/src/module_store.c"
-/* (engines.c has the built-in TRIO, ENG_TRIO: the reference) */
-#define MOD_NATIVE
-#include "../firmware/modules/trio/trio.c"     /* the modules, built for the host */
-#include "../firmware/modules/wheel/wheel.c"
 #include "module_phrases.h"
 #include "module_preset_golden.h"               /* (the factory presets as c53538c9's makers made them) */
-extern const mod_native_t mod_native_sid, mod_native_drum, mod_native_cz, mod_native_fm6,
-                          mod_native_p5;        /* (firmware/modules/sid/sid.c, drum/drum.c, cz/cz.c, fm6/fm6.c,
-                                                 * prophet/prophet.c: host-built) */
-static const mod_native_t *nmods(uint32_t e)
+extern const mod_desc_v3 mod_sid, mod_drum, mod_cz, mod_fm6, mod_p5, mod_trio, mod_wheel;   /* (firmware/modules/: the
+                                                 * host's objects, built once) */
+static mod_desc_v3 trio22;                      /* TRIO as a new engine (22) */
+static const mod_desc_v3 *hdesc(uint32_t e)
 {
-    return e == 3u ? &mod_native_sid : e == ENGI_DRUM ? &mod_native_drum : e == ENGI_CZ ? &mod_native_cz :
-           e == ENGI_FM6 ? &mod_native_fm6 : e == ENGI_PROPHET ? &mod_native_p5 : 0;
+    return e == 3u ? &mod_sid : e == ENGI_DRUM ? &mod_drum : e == ENGI_CZ ? &mod_cz : e == ENGI_FM6 ? &mod_fm6 :
+           e == ENGI_PROPHET ? &mod_p5 : e == 6u ? &mod_trio : e == 7u ? &mod_wheel : e == 22u ? &trio22 : 0;
+}
+/* engine e plays module d (its engine copied into the block: the same callbacks) */
+static int plays(uint32_t e, const mod_desc_v3 *d)
+{
+    return ENGINES[e] != &ENG_MOD_IDLE && ENGINES[e] != &ENG_RETIRED && ENGINES[e] != (const engine_t *)(const void *)d->eng &&
+           ENGINES[e]->note_on == (void (*)(struct track *, voice_t *))(void (*)(void))d->eng->note_on &&
+           ENGINES[e]->render == (void (*)(struct track *, voice_t *, int32_t *, uint32_t, const vmod_t *))(void (*)(void))d->eng->render;
 }
 /* the chunks after build/modules/<stem>.mmod's address words (its factory presets, module_presets.h: the device
  * build's file, as tools/mod_build.py wrote it) into dst; their length, 0: none */
@@ -39,44 +46,52 @@ static uint32_t mmod_chunks(const char *stem, uint8_t *dst, uint32_t cap)
 {
     static uint8_t b[MOD_FILE_MAX];
     char path[80];
-    mod_head_t h;
+    mod_file3_t h;
     snprintf(path, sizeof path, "build/modules/%s.mmod", stem);
     FILE *fp = fopen(path, "rb");
     if (!fp)
         return 0;
     uint32_t n = (uint32_t)fread(b, 1, sizeof b, fp), at;
     fclose(fp);
-    if (n < MOD_NHEAD)
+    if (n < MOD3_HEAD)
         return 0;
-    memcpy(&h, b, MOD_NHEAD);
-    at = MOD_NHEAD + h.f.image + 4u * h.f.nrel;
-    if (h.f.abi != MOD_ABI_NATIVE || !(h.f.flags & MOD_FILE_CHUNKS) || at > n || n - at > cap)
+    memcpy(&h, b, MOD3_HEAD);
+    at = MOD3_HEAD + h.image + 4u * h.nrel;
+    if (h.abi != MOD3_ABI || !(h.flags & MOD3_FILE_CHUNKS) || at > n || n - at > cap)
         return 0;
     memcpy(dst, b + at, n - at);
     return n - at;
 }
-/* a native module file for the host loader (its image a pattern; the host plays nmods()); key: its layout key; stem:
- * the device build's file whose chunks it carries (its presets), 0 none */
-static uint32_t make_nfile(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t key, uint32_t npresets,
-                           const char *stem)
+/* a module file for the host loader (its image a pattern; the host plays hdesc()); key: its legacy key (0: an SDK
+ * module), host: the host table it needs; stem: the device build's file whose chunks it carries (its presets), 0 none */
+static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t nrel, uint32_t key,
+                          uint32_t npresets, const char *stem)
 {
-    mod_head_t h;
+    mod_file3_t h;
     memset(&h, 0, sizeof h);
-    h.f.magic = MOD_FILE_MAGIC; h.f.abi = MOD_ABI_NATIVE; h.f.engine = (uint8_t)engine;
-    h.f.image = image; h.f.bss = 128; h.f.nrel = 12; h.f.version = 1; h.f.npresets = (uint8_t)npresets; h.key = key;
-    strncpy(h.f.name, name, sizeof h.f.name);
-    for (uint32_t i = 0; i < image; i++) b[MOD_NHEAD + i] = (uint8_t)(i * 13u + 5u);
-    for (uint32_t k = 0; k < h.f.nrel; k++) {
-        uint32_t off = 40u + k * 64u;
-        memcpy(b + MOD_NHEAD + image + 4u * k, &off, 4);
+    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)engine; h.host = MOD3_HOST;
+    h.image = image; h.bss = 128; h.nrel = nrel; h.version = 3; h.npresets = (uint8_t)npresets; h.key = key;
+    strncpy(h.name, name, sizeof h.name);
+    for (uint32_t i = 0; i < image; i++) b[MOD3_HEAD + i] = (uint8_t)(i * 13u + 5u);
+    for (uint32_t k = 0; k < nrel; k++) {
+        uint32_t off = 6u + k * 10u;               /* (unaligned words, as a 6-byte instruction's immediate) */
+        memcpy(b + MOD3_HEAD + image + 4u * k, &off, 4);
     }
-    uint32_t body = image + 4u * h.f.nrel,
-             ck = stem ? mmod_chunks(stem, b + MOD_NHEAD + body, MOD_FILE_MAX - MOD_NHEAD - body) : 0u;
-    h.f.flags = ck ? (uint8_t)MOD_FILE_CHUNKS : 0u;
-    h.f.total = MOD_NHEAD + body + ck;
-    h.f.crc = st_crc32(b + MOD_NHEAD, body + ck);
-    memcpy(b, &h, MOD_NHEAD);
-    return h.f.total;
+    uint32_t body = image + 4u * nrel,
+             ck = stem ? mmod_chunks(stem, b + MOD3_HEAD + body, MOD_FILE_MAX - MOD3_HEAD - body) : 0u;
+    h.flags = ck ? (uint8_t)MOD3_FILE_CHUNKS : 0u;
+    h.total = MOD3_HEAD + body + ck;
+    h.crc = st_crc32(b + MOD3_HEAD, body + ck);
+    memcpy(b, &h, MOD3_HEAD);
+    return h.total;
+}
+/* the same file's head made another firmware's: abi, its key, the host it needs (the CRC stays right) */
+static void make_other(uint8_t *b, uint32_t abi, uint32_t key, uint32_t host)
+{
+    mod_file3_t h;
+    memcpy(&h, b, MOD3_HEAD);
+    h.abi = (uint16_t)abi; h.key = key; h.host = (uint16_t)host;
+    memcpy(b, &h, MOD3_HEAD);
 }
 /* FNV-1a, as tests/module_preset_golden.h hashes */
 static uint32_t mpr_fnv(const void *p, uint32_t n, uint32_t h)
@@ -135,28 +150,14 @@ static uint32_t mpr_banks(void)
     return bad;
 }
 static int32_t mp_mod[MP_NB * CTL];
-
-static mod_desc_t trio22;                       /* the same module as a new engine (22) */
-static const mod_desc_t *native(uint32_t e) { return e == 6u ? &mod_trio : e == 7u ? &mod_wheel : e == 22u ? &trio22 : 0; }
-
-/* a module file for the host loader (the image's bytes are a pattern; the host plays native()) */
-static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t nrel)
-{
-    mod_file_t f;
-    memset(&f, 0, sizeof f);
-    f.magic = MOD_FILE_MAGIC; f.abi = MOD_ABI; f.engine = (uint8_t)engine;
-    f.image = image; f.bss = 64; f.nrel = nrel; f.version = 3; f.npresets = 5;
-    f.total = (uint32_t)sizeof f + image + 4u * nrel;
-    strncpy(f.name, name, sizeof f.name);
-    for (uint32_t i = 0; i < image; i++) b[sizeof f + i] = (uint8_t)(i * 7u + 1u);
-    for (uint32_t k = 0; k < nrel; k++) {
-        uint32_t off = 6u + k * 10u;               /* (unaligned words, as a 6-byte instruction's immediate) */
-        memcpy(b + sizeof f + image + 4u * k, &off, 4);
-    }
-    f.crc = st_crc32(b + sizeof f, image + 4u * nrel);
-    memcpy(b, &f, sizeof f);
-    return f.total;
-}
+/* FNV-1a of the TRIO / WHEEL phrases as b8b3e092 rendered them (its built-in references = its ABI 1 modules: e 6..7 x
+ * preset 0..4 x POLY / LEGATO) */
+static const uint32_t TW_GOLDEN[20] = {
+    0x7c336b4au, 0xdb64bb68u, 0xa78f1cb4u, 0x220b8036u, 0x174d19d5u,
+    0xa1854a8au, 0xaa4c23e8u, 0xbceabe3bu, 0x90ca2468u, 0x5248ecc9u,
+    0xd3db4c42u, 0x83985aeeu, 0x71c4d5beu, 0x306ced21u, 0xcdf155f9u,
+    0x523f744du, 0x6eceebbdu, 0xb8026cb4u, 0xe7c250fdu, 0x8f2002cbu,
+};
 static int put(uint32_t k, const uint8_t *b, uint32_t n)
 {
     int rc = mod_put_begin(k, n);
@@ -204,48 +205,59 @@ int main(int argc, char **argv)
     static uint8_t file[32768], file2[32768];
     int bad = 0;
     reset();
-    mod_host_native = native;
+    mod_host_desc = hdesc;
     trio22 = mod_trio;
     trio22.engine = 22;
     trio22.name = "TRIO2";
+#if MELODEE_ABI_SHUFFLE
+    printf("persist: another firmware's private layout: track_t %u B (head %u), voice_t %u B (head %u)\n",
+           (unsigned)sizeof(track_t), (unsigned)sizeof(mod_part_v3), (unsigned)sizeof(voice_t), (unsigned)sizeof(mod_voice_v3));
+    bad += check("ABI stability: this firmware's private track_t / voice_t fields padded and reordered, the modules' "
+                 "objects as built once",
+                 __builtin_offsetof(track_t, preset) >= sizeof(mod_part_v3) + 32u && sizeof(voice_t) >= sizeof(mod_voice_v3) + 32u &&
+                 trk[0].vsize == sizeof(voice_t) && trk[1].index == 1u && part_voice[1][5].index == 5u);
+#endif
 
     bad += check("modules: numbers past the built-in engines, none loaded at first",
                  NENGINES == 30 && ENGI_MOD0 == 22 && !eng_ok(6) && !eng_ok(22) && eng_nshown == NENG_SHOWN &&
                  ENGINES[6] == &ENG_RETIRED && eng_extra_retired(22) && eng_sound_idx(22) == 22);
 
     /* a file into slot 0: published, loaded, playing as engine 6 */
-    uint32_t n = make_file(file, 6, "TRIO", 1024, 20);
+    uint32_t n = make_file(file, 6, "TRIO", 1024, 20, 0, 5, "trio");
     int rc = put(0, file, n);
     uint8_t *blk = resource[RES_MODULE0].ptr;
     int moved = blk != 0;
     for (uint32_t k = 0; moved && k < 20u; k++) {   /* every listed word: the block's address added */
         uint32_t off = 6u + k * 10u, was, now;
-        memcpy(&was, file + sizeof(mod_file_t) + off, 4);
+        memcpy(&was, file + MOD3_HEAD + off, 4);
         memcpy(&now, blk + off, 4);
         moved = now == was + (uint32_t)(uintptr_t)blk;
     }
     bad += check("module file: committed, loaded into the arena, address words moved by the block's address",
                  rc == MS_LOADED && mods[0].state == MS_LOADED && moved && st_exists(ST_MFILE0));
-    bad += check("loaded module: engine 6 again (TRIO's old number), named, its presets, browsable after the others",
-                 eng_ok(6) && ENGINES[6] != &ENG_RETIRED && !strcmp(ENGINES[6]->name, "TRIO") &&
-                 ENGINES[6]->npresets == 5 && !strcmp(ENGINES[6]->presets[3].name, "RING BELL") &&
+    bad += check("loaded module: engine 6 again (TRIO's old number), named, its presets (its file's), browsable after the "
+                 "others, its engine a copy in its block",
+                 eng_ok(6) && plays(6, &mod_trio) && !strcmp(ENGINES[6]->name, "TRIO") && eng_npresets(6) == 5 &&
+                 ENGINES[6]->npresets == 5 && !strcmp(eng_preset(ENGINES[6], 3)->name, "RING BELL") &&
+                 (const uint8_t *)ENGINES[6] >= blk && (const uint8_t *)ENGINES[6] < blk + resource[RES_MODULE0].size &&
                  eng_nshown == NENG_SHOWN + 1 && eng_vis(NENG_SHOWN) == 6 && listed(6) &&
                  ENGINES[6]->knob[0] == P_E0 + 5 && !strcmp(ENGINES[6]->edit[0].names[9], "SYNC") &&
                  mods[0].version == 3 && !strcmp(mods[0].name, "TRIO"));
 
     /* bit for bit: the module against the built-in engine, every preset, POLY and LEGATO */
-    n = make_file(file2, 7, "WHEEL", 1024, 8);
+    n = make_file(file2, 7, "WHEEL", 1024, 8, 0, 5, "wheel");
     rc = put(2, file2, n);
     bad += check("WHEEL module (engine 7, block + part memory) loaded beside TRIO",
-                 rc == MS_LOADED && eng_ok(7) && ENGINES[7]->block && !strcmp(ENGINES[7]->name, "WHEEL") &&
-                 eng_state_size(7) == sizeof(drw_part_t));
-    int same = 1, heard = 1;
+                 rc == MS_LOADED && eng_ok(7) && plays(7, &mod_wheel) && ENGINES[7]->block &&
+                 !strcmp(ENGINES[7]->name, "WHEEL") && eng_state_size(7) == sizeof(drw_part_t));
+    int same = 1, heard = 1, tw_golden = 0, tw = 0;
     for (uint32_t e = 6; e <= 7u; e++)
     for (uint32_t pi = 0; pi < 5u; pi++)
         for (uint32_t mono = 0; mono < 2u; mono++) {
             const engine_t *mod_eng = ENGINES[e];
             uint8_t at = mod_at[e];
             phrase(phrase_a, e, pi, mono);
+            tw_golden += mpr_fnv(phrase_a, sizeof phrase_a, 0x811C9DC5u) == TW_GOLDEN[tw++];
             ENGINES[e] = e == 6u ? &ENG_TRIO : &ENG_WHEEL; mod_at[e] = 0;   /* the same phrase, built in */
             phrase(phrase_b, e, pi, mono);
             ENGINES[e] = mod_eng; mod_at[e] = at;
@@ -262,8 +274,10 @@ int main(int argc, char **argv)
                     }
             }
         }
-    bad += check("TRIO and WHEEL modules render bit for bit what the built-in engines render (5 presets x POLY/LEGATO)",
-                 same && heard);
+    printf("persist: TRIO / WHEEL %u phrases, %u as b8b3e092 rendered them\n", tw, tw_golden);
+    bad += check("TRIO and WHEEL, rewritten on ABI 3 from the contract alone, render bit for bit what the built-in engines "
+                 "render and what their ABI 1 modules rendered (5 presets x POLY/LEGATO)",
+                 same && heard && tw_golden == 20u);
     (void)mod_delete(2);
 
     /* refusals */
@@ -271,16 +285,16 @@ int main(int argc, char **argv)
     file2[0] ^= 1u;                                 /* not a module file: never published */
     rc = put(1, file2, n);
     bad += check("not a module file: refused before it is published", rc == -2 && !st_exists(ST_MFILE0 + 1));
-    n = make_file(file2, ENGI_MIDI, "MIDI?", 1024, 4);   /* a built-in engine's number (the MIDI Track's) */
+    n = make_file(file2, ENGI_MIDI, "MIDI?", 1024, 4, 0, 0, 0);   /* a built-in engine's number (the MIDI Track's) */
     bad += check("a built-in engine's number: refused", put(1, file2, n) == -2);
-    n = make_file(file2, 6, "TRIO B", 1024, 4);      /* the same number as slot 0 */
+    n = make_file(file2, 6, "TRIO B", 1024, 4, 0, 5, "trio");   /* the same number as slot 0 */
     bad += check("a number another slot has: refused", put(1, file2, n) == -3 && !st_exists(ST_MFILE0 + 1));
-    n = make_file(file2, 22, "TRIO2", 1024, 4);
-    file2[sizeof(mod_file_t) + 100] ^= 0x40u;        /* the body damaged after its CRC */
+    n = make_file(file2, 22, "TRIO2", 1024, 4, 0, 5, "trio");
+    file2[MOD3_HEAD + 100] ^= 0x40u;                 /* the body damaged after its CRC */
     rc = put(1, file2, n);
     bad += check("a damaged body (CRC): stored but not loaded, the arena block given back",
                  rc == MS_BAD && mods[1].state == MS_BAD && !resource[RES_MODULE0 + 1].size && !eng_ok(22));
-    n = make_file(file2, 22, "TRIO2", 1024, 4);
+    n = make_file(file2, 22, "TRIO2", 1024, 4, 0, 5, "trio");
     rc = put(1, file2, n);
     bad += check("a new number (22): loaded beside TRIO, both browsable",
                  rc == MS_LOADED && eng_ok(22) && listed(22) && listed(6) && eng_nshown == NENG_SHOWN + 2 &&
@@ -312,7 +326,7 @@ int main(int argc, char **argv)
     /* picking an engine loads it on the spot, with its preset */
     set_engine_of(&trk[2], 6);
     bad += check("lazy: picking a stored module loads it at once and applies its first preset",
-                 mods[0].state == MS_LOADED && trk[2].eng_req == 6 && trk[2].p[P_E0] == mod_trio.presets[0].e[0] &&
+                 mods[0].state == MS_LOADED && trk[2].eng_req == 6 && trk[2].p[P_E0] == ENG_TRIO.presets[0].e[0] &&
                  resource[RES_MODULE0].size);
     /* nothing on it any more: out of SRAM after MOD_IDLE_MS, listed still */
     engine_block(&trk[2]);
@@ -358,55 +372,54 @@ int main(int argc, char **argv)
     for (uint32_t i = 0; i < CTL; i++) silent &= buf[i] == 0;
     bad += check("its track renders silence", silent);
 
-    /* native modules: SID, DRUM, CZ-1, FM6 and the Prophet, the engines themselves (module_native.h) */
+    /* the engine-source modules: SID, DRUM, CZ-1, FM6 and the Prophet (mod_engine.h: the engines' own sources) */
     {
         static uint8_t nf[5][MOD_FILE_MAX];
         const engine_t *sid_in = ENGINES[3], *drum_in = ENGINES[ENGI_DRUM], *cz_in = ENGINES[ENGI_CZ],
                        *fm6_in = ENGINES[ENGI_FM6], *p5_in = ENGINES[ENGI_PROPHET];   /* (built in on the host, or
                                                                                      * retired) */
         for (uint32_t k = 0; k < NMOD; k++) mod_delete(k);
-        mod_host_nmod = nmods;
         ENGINES[3] = ENGINES[ENGI_DRUM] = ENGINES[ENGI_CZ] = ENGINES[ENGI_FM6] = ENGINES[ENGI_PROPHET] =
             &ENG_RETIRED;                                /* (the numbers free for the modules) */
-        uint32_t ns = make_nfile(nf[0], 3, "SID", 12000, MOD_NATIVE_KEY, MP_SID_PRESETS, "sid");
-        mod_file_t sid_head;
+        uint32_t ns = make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
+        mod_file3_t sid_head;
         memcpy(&sid_head, nf[0], sizeof sid_head);
-        uint32_t nd = make_nfile(nf[1], ENGI_DRUM, "DRUM", 48000, MOD_NATIVE_KEY, MP_DRUM_PRESETS, "drum");
-        uint32_t nc = make_nfile(nf[2], ENGI_CZ, "CZ-1", 9000, MOD_NATIVE_KEY, MP_CZ_PRESETS, "cz");
-        uint32_t nm = make_nfile(nf[3], ENGI_FM6, "FM6", 20000, MOD_NATIVE_KEY, MP_FM6_PRESETS, "fm6");
-        uint32_t np = make_nfile(nf[4], ENGI_PROPHET, "PROPHET", 16000, MOD_NATIVE_KEY, MP_P5_PRESETS, "prophet");
+        uint32_t nd = make_file(nf[1], ENGI_DRUM, "DRUM", 48000, 12, MOD3_LEGACY_KEY, MP_DRUM_PRESETS, "drum");
+        uint32_t nc = make_file(nf[2], ENGI_CZ, "CZ-1", 9000, 12, MOD3_LEGACY_KEY, MP_CZ_PRESETS, "cz");
+        uint32_t nm = make_file(nf[3], ENGI_FM6, "FM6", 20000, 12, MOD3_LEGACY_KEY, MP_FM6_PRESETS, "fm6");
+        uint32_t np = make_file(nf[4], ENGI_PROPHET, "PROPHET", 16000, 12, MOD3_LEGACY_KEY, MP_P5_PRESETS, "prophet");
         bad += check("the device build's module files carry their factory presets (build/modules/*.mmod: a PRST chunk "
                      "each, tools/mod_build.py)",
-                     sid_head.flags == MOD_FILE_CHUNKS && ((const mod_file_t *)(const void *)nf[1])->flags &&
-                     ((const mod_file_t *)(const void *)nf[2])->flags && ((const mod_file_t *)(const void *)nf[3])->flags &&
-                     ((const mod_file_t *)(const void *)nf[4])->flags);
+                     sid_head.flags == MOD3_FILE_CHUNKS && ((const mod_file3_t *)(const void *)nf[1])->flags &&
+                     ((const mod_file3_t *)(const void *)nf[2])->flags && ((const mod_file3_t *)(const void *)nf[3])->flags &&
+                     ((const mod_file3_t *)(const void *)nf[4])->flags);
         int rs = put(4, nf[0], ns), rd = put(5, nf[1], nd), rc7 = put(7, nf[2], nc), rf3 = put(3, nf[3], nm),
             rp2 = put(2, nf[4], np);
         if (rs != MS_LOADED || rd != MS_LOADED || rc7 != MS_LOADED || rf3 != MS_LOADED || rp2 != MS_LOADED)
             printf("  put: SID %d DRUM %d CZ-1 %d FM6 %d PROPHET %d\n", rs, rd, rc7, rf3, rp2);
-        bad += check("native SID and DRUM files: committed and loaded, DRUM in two records (longer than one)",
-                     rs == MS_LOADED && rd == MS_LOADED && mods[4].abi == MOD_ABI_NATIVE && mods[5].len == nd &&
+        bad += check("SID and DRUM files: committed and loaded, DRUM in two records (longer than one)",
+                     rs == MS_LOADED && rd == MS_LOADED && mods[4].abi == MOD3_ABI && mods[5].len == nd &&
                      nd > ST_PROJECT_MAX && st_exists(ST_MFILE0 + 5) && st_exists(ST_MXFILE0 + 5) &&
                      !st_exists(ST_MXFILE0 + 4));
-        bad += check("native modules play as engines 3 and 10 with their own engine_t (no copy, no ABI 1 glue)",
-                     ENGINES[3] == mod_native_sid.eng && ENGINES[ENGI_DRUM] == mod_native_drum.eng &&
+        bad += check("SID and DRUM play as engines 3 and 10 with their own callbacks (their engines copied into their blocks)",
+                     plays(3, &mod_sid) && plays(ENGI_DRUM, &mod_drum) &&
                      !strcmp(eng_name(3), "SID") && !strcmp(eng_name(ENGI_DRUM), "DRUM") && eng_ok(3) &&
                      eng_ok(ENGI_DRUM) && ENGINES[3]->wclass == 4 && ENGINES[ENGI_DRUM]->wclass == 5 &&
                      ENGINES[3]->env_q15 && ENGINES[3]->chord && ENGINES[ENGI_DRUM]->reuse &&
                      ENGINES[ENGI_DRUM]->oneshot && ENGINES[3]->npresets == MP_SID_PRESETS &&
                      ENGINES[ENGI_DRUM]->npresets == MP_DRUM_PRESETS && eng_state_size(3) == ENGINES[3]->state(0) &&
                      listed(3) && listed(ENGI_DRUM));
-        bad += check("CZ-1 as a native module: engine 15 with its own engine_t (DCA as the matrix's ENV, CPU1, its presets "
+        bad += check("CZ-1 as a module: engine 15 with its own callbacks (DCA as the matrix's ENV, CPU1, its presets "
                      "Casio's tones from its file)",
-                     rc7 == MS_LOADED && ENGINES[ENGI_CZ] == mod_native_cz.eng && !strcmp(eng_name(ENGI_CZ), "CZ-1") &&
+                     rc7 == MS_LOADED && plays(ENGI_CZ, &mod_cz) && !strcmp(eng_name(ENGI_CZ), "CZ-1") &&
                      eng_ok(ENGI_CZ) && ENGINES[ENGI_CZ]->wclass == 2 && ENGINES[ENGI_CZ]->menv &&
                      ENGINES[ENGI_CZ]->batch && ENGINES[ENGI_CZ]->npresets == MP_CZ_PRESETS &&
                      eng_state_size(ENGI_CZ) == ENGINES[ENGI_CZ]->state(0) && listed(ENGI_CZ) &&
                      !strcmp(eng_preset(ENGINES[ENGI_CZ], 0)->name, "INIT TONE") &&
                      !strcmp(eng_preset(ENGINES[ENGI_CZ], 30)->name, "FUNKY CLAV 1"));
-        bad += check("FM6 as a native module: engine 12 with its own engine_t (its envelopes, Dexed's voices, DC filter, "
+        bad += check("FM6 as a module: engine 12 with its own callbacks (its envelopes, Dexed's voices, DC filter, "
                      "its own CPU1 jobs, the reserve), its presets; the patches the firmware's",
-                     rf3 == MS_LOADED && ENGINES[ENGI_FM6] == mod_native_fm6.eng && !strcmp(eng_name(ENGI_FM6), "FM6") &&
+                     rf3 == MS_LOADED && plays(ENGI_FM6, &mod_fm6) && !strcmp(eng_name(ENGI_FM6), "FM6") &&
                      eng_ok(ENGI_FM6) && ENGINES[ENGI_FM6]->wclass == 3 && ENGINES[ENGI_FM6]->ownenv &&
                      ENGINES[ENGI_FM6]->alloc && ENGINES[ENGI_FM6]->legato && ENGINES[ENGI_FM6]->mono_key &&
                      ENGINES[ENGI_FM6]->post && ENGINES[ENGI_FM6]->block && ENGINES[ENGI_FM6]->reserve &&
@@ -418,10 +431,10 @@ int main(int argc, char **argv)
             char nm1[21], nm200[21];
             eng_preset_name(ENGI_PROPHET, 1, nm1, sizeof nm1);
             eng_preset_name(ENGI_PROPHET, 200, nm200, sizeof nm200);
-            bad += check("the Prophet as a native module: engine 19 with its own engine_t (its envelopes, the amp envelope "
+            bad += check("the Prophet as a module: engine 19 with its own callbacks (its envelopes, the amp envelope "
                          "as the matrix's ENV, the coupling capacitor, its own CPU1 jobs, its voice count), the first "
                          "engine; its presets Sequential's programs from its file, the parts' programs the firmware's",
-                         rp2 == MS_LOADED && ENGINES[ENGI_PROPHET] == mod_native_p5.eng &&
+                         rp2 == MS_LOADED && plays(ENGI_PROPHET, &mod_p5) &&
                          !strcmp(eng_name(ENGI_PROPHET), "PROPHET") && eng_ok(ENGI_PROPHET) &&
                          ENGINES[ENGI_PROPHET]->wclass == 1 && ENGINES[ENGI_PROPHET]->ownenv &&
                          ENGINES[ENGI_PROPHET]->menv && !ENGINES[ENGI_PROPHET]->env_q15 && ENGINES[ENGI_PROPHET]->post &&
@@ -500,22 +513,62 @@ int main(int argc, char **argv)
                          "file; host builds' makers the same",
                          !fe && !fp && !fb && !be && !bp && !bb && inits);
         }
-        /* the layout key: a module built for another firmware is refused before it is published */
-        uint32_t nk = make_nfile(nf[0], 3, "SID", 12000, MOD_NATIVE_KEY + 1u, MP_SID_PRESETS, "sid");
-        int rk = put(6, nf[0], nk);
-        bad += check("a native module of another firmware (layout key): refused, not published",
-                     rk == -2 && !st_exists(ST_MFILE0 + 6));
+        /* the capabilities that replaced the engine-number checks in voice.c, mix.c and main.c: declared by the modules */
+        bad += check("capabilities: the Prophet sets its own bend range (its BEND) and plays the wheel itself, FM6 plays the "
+                     "wheel itself and keeps CPU0's reserve, cost classes 1..5 (Prophet, CZ-1, FM6, SID, DRUM), no other "
+                     "engine claims one",
+                     ENGINES[ENGI_PROPHET]->bend_range && (ENGINES[ENGI_PROPHET]->caps & MOD3_CAP_WHEEL) &&
+                     (ENGINES[ENGI_FM6]->caps & MOD3_CAP_WHEEL) && ENGINES[ENGI_FM6]->reserve && !ENGINES[ENGI_FM6]->bend_range &&
+                     !ENGINES[3]->caps && !ENGINES[3]->bend_range && !ENGINES[ENGI_DRUM]->caps && !ENGINES[ENGI_CZ]->caps &&
+                     !ENGINES[ENGI_CZ]->bend_range && !ENGINES[ENGI_DRUM]->reserve && !ENGINES[ENGI_PROPHET]->reserve &&
+                     ENGINES[ENGI_PROPHET]->wclass == 1 && ENGINES[ENGI_CZ]->wclass == 2 && ENGINES[ENGI_FM6]->wclass == 3 &&
+                     ENGINES[3]->wclass == 4 && ENGINES[ENGI_DRUM]->wclass == 5 && !ENGINES[ENGI_MIDI]->caps);
+        {   /* the Prophet's bend: the wheel's target from its program's BEND (voice.c trk_bend_own), as before */
+            host_preset(&trk[2], ENGI_PROPHET, 3);
+            p5_patch_of(&trk[2])->raw[P5_BEND] = 7;
+            trk[2].bend_raw = -4096;
+            int32_t pb[CTL];
+            track_render(&trk[2], pb, CTL);
+            int32_t want = -4096 * 8 * 256 / 8192;
+            bad += check("the Prophet's pitch wheel: its target from its program's BEND at its block (bend_range)",
+                         midi_bend_target[2] == want);
+            trk[2].bend_raw = 0;
+            track_render(&trk[2], pb, CTL);
+        }
+        /* another firmware's module is refused before it is published: an older ABI (1, native 2), the legacy data of
+         * another layout (its key), a newer host table */
+        int rk = 0;
+        for (uint32_t w = 0; w < 4u; w++) {
+            uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
+            make_other(nf[0], w == 0 ? 1u : w == 1 ? 2u : MOD3_ABI, w == 2 ? MOD3_LEGACY_KEY + 1u : MOD3_LEGACY_KEY,
+                       w == 3 ? MOD3_HOST + 1u : MOD3_HOST);
+            rk += put(6, nf[0], nk) == -2 && !st_exists(ST_MFILE0 + 6);
+        }
+        bad += check("another firmware's module (ABI 1, ABI 2, another legacy key, a newer host table): refused, not published",
+                     rk == 4);
+        uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY + 1u, MP_SID_PRESETS, "sid");
         /* .. and one stored before the firmware changed (a record already there): known by engine and name, not
          * played, not counted as the engine's module; the installer (web/fm1mods.js) replaces it in its slot */
         int shipped = SHIPPED_OK();
         int saved = !st_project_save(ST_MFILE0 + 6, nf[0], nk);
         int rs6 = mod_catalog(6);
-        bad += check("a stored native module of another firmware: MS_STALE, its engine and name kept, not listed",
+        make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
+        make_other(nf[0], 2u, 0x6b73df3fu, 0);          /* (b8b3e092's native SID: ABI 2, its layout key at 52) */
+        int saved2 = !st_project_save(ST_MFILE0 + 0, nf[0], nk), rs0 = mod_catalog(0);
+        make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
+        make_other(nf[0], MOD3_ABI, MOD3_LEGACY_KEY, MOD3_HOST + 1u);
+        int saved3 = !st_project_save(ST_MFILE0 + 1, nf[0], nk), rs1 = mod_catalog(1);
+        bad += check("stored modules of another firmware: an older one (another legacy key, ABI 2) MS_STALE, a newer one "
+                     "MS_NEWER; each keeps its engine and name, none listed or played",
                      saved && rs6 == MS_STALE && mods[6].engine == 3 && !strcmp(mods[6].name, "SID") &&
-                     mods[6].key == MOD_NATIVE_KEY + 1u && mod_slot_of(3) == 4 && ENGINES[3] == mod_native_sid.eng);
+                     mods[6].key == MOD3_LEGACY_KEY + 1u && saved2 && rs0 == MS_STALE && mods[0].abi == 2u &&
+                     mods[0].key == 0x6b73df3fu && saved3 && rs1 == MS_NEWER && mods[1].host == MOD3_HOST + 1u &&
+                     !strcmp(mods[1].name, "SID") && mod_slot_of(3) == 4 && plays(3, &mod_sid));
+        (void)mod_delete(0);
+        (void)mod_delete(1);
         bad += check("the slots report what the installer compares: each file's CRC and layout key (editor command 84 op 5)",
                      mods[4].crc == sid_head.crc && mods[4].len == sid_head.total &&
-                     mods[5].key == MOD_NATIVE_KEY && mods[4].key == MOD_NATIVE_KEY && mods[5].abi == MOD_ABI_NATIVE);
+                     mods[5].key == MOD3_LEGACY_KEY && mods[4].key == MOD3_LEGACY_KEY && mods[5].abi == MOD3_ABI);
         (void)mod_delete(6);
         bad += check("SID, DRUM, CZ-1, FM6 and the Prophet on the device: the start asks for no setup (main.c, ui_boot.c)",
                      shipped);
@@ -550,8 +603,8 @@ int main(int argc, char **argv)
                          idle && names && bass == MPR_BASS && none_loaded && preset_init(ENGI_FM6) == 24u);
         }
         mod_want(ENGI_DRUM);
-        bad += check("native modules at power-on: listed unloaded; DRUM loaded from its two records when wanted",
-                     idle && mods[5].state == MS_LOADED && ENGINES[ENGI_DRUM] == mod_native_drum.eng &&
+        bad += check("modules at power-on: listed unloaded; DRUM loaded from its two records when wanted",
+                     idle && mods[5].state == MS_LOADED && plays(ENGI_DRUM, &mod_drum) &&
                      mods[4].state == MS_STORED);
         /* the Prophet, the first engine shown: at power-on listed from its head; without its module retired as any
          * other (its tracks keep the number, silent; its programs and their names the firmware's), the next engine
@@ -562,7 +615,7 @@ int main(int argc, char **argv)
                           eng_npresets(ENGI_PROPHET) == MP_P5_PRESETS && eng_ok(ENGI_PROPHET) &&
                           !strcmp(eng_name(ENGI_PROPHET), "PROPHET") && SHIPPED_OK();
             mod_want(ENGI_PROPHET);
-            int p5_back = mods[2].state == MS_LOADED && ENGINES[ENGI_PROPHET] == mod_native_p5.eng &&
+            int p5_back = mods[2].state == MS_LOADED && plays(ENGI_PROPHET, &mod_p5) &&
                           eng_rank(ENGI_PROPHET) == 0;
             eng_preset_name(ENGI_PROPHET, 5, nm, sizeof nm);
             host_preset(&trk[1], ENGI_PROPHET, 5);
@@ -584,7 +637,7 @@ int main(int argc, char **argv)
                          (MELODEE_P5_BUILTIN || (!eng_ok(ENGI_PROPHET) && !listed(ENGI_PROPHET) &&
                                                  eng_vis(0) != ENGI_PROPHET && eng_rank(ENGI_PROPHET) == 0)) &&
                          SHIPPED_OK() == MELODEE_P5_BUILTIN && put(2, nf[4], np) == MS_LOADED &&
-                         ENGINES[ENGI_PROPHET] == mod_native_p5.eng && eng_rank(ENGI_PROPHET) == 0 && SHIPPED_OK());
+                         plays(ENGI_PROPHET, &mod_p5) && eng_rank(ENGI_PROPHET) == 0 && SHIPPED_OK());
         }
         {
             static cz_bank_t bk;
@@ -601,7 +654,7 @@ int main(int argc, char **argv)
         int fm6_idle = mods[3].state == MS_STORED && ENGINES[ENGI_FM6] == &ENG_MOD_IDLE &&
                        eng_npresets(ENGI_FM6) == MP_FM6_PRESETS && eng_ok(ENGI_FM6) && SHIPPED_OK() == MELODEE_CZ_BUILTIN;
         mod_want(ENGI_FM6);
-        int fm6_back = mods[3].state == MS_LOADED && ENGINES[ENGI_FM6] == mod_native_fm6.eng && eng_rank(4) == 1;
+        int fm6_back = mods[3].state == MS_LOADED && plays(ENGI_FM6, &mod_fm6) && eng_rank(4) == 1;
         host_preset(&trk[1], ENGI_FM6, 10);
         trk_note_on(&trk[1], 48, 100);
         int32_t fb[CTL];
@@ -631,20 +684,25 @@ int main(int argc, char **argv)
     if (fp) {
         n = (uint32_t)fread(file, 1, sizeof file, fp);
         fclose(fp);
-        mod_file_t f;
+        mod_file3_t f;
         memcpy(&f, file, sizeof f);
         mod_delete(0);
         rc = put(0, file, n);
         blk = resource[RES_MODULE0].ptr;
-        uint32_t base = (uint32_t)(uintptr_t)blk, w[64], ok = rc == MS_LOADED && blk;
+        uint32_t base = (uint32_t)(uintptr_t)blk, w[8], ok = rc == MS_LOADED && blk && f.abi == MOD3_ABI && !f.key;
         if (ok) {
-            memcpy(w, blk + f.desc, sizeof w);
-            const char *name = (const char *)blk + (w[2] - base), *label = (const char *)blk + (w[5] - base);
-            ok = w[0] == MOD_DESC_MAGIC && w[2] - base < f.image && !strcmp(name, "TRIO") && !strcmp(label, "WAVE") &&
-                 w[51] - base < f.image && w[52] - base < f.image && w[50] - base >= f.image &&
-                 w[50] - base < f.image + f.bss && blk[f.desc + 191] == 6;
+            memcpy(w, blk, sizeof w);
+            uint32_t eng = w[6] - base, lab, non, ren;
+            ok = w[0] == MOD3_MAGIC && w[5] - base < f.image && !strcmp((const char *)blk + (w[5] - base), "TRIO") &&
+                 eng + 196u <= f.image && w[7] - base < f.image && blk[12] == 6 && blk[13] == 5;
+            if (ok) {
+                memcpy(&lab, blk + eng + 12u, 4); memcpy(&non, blk + eng + 188u, 4); memcpy(&ren, blk + eng + 192u, 4);
+                ok = lab - base < f.image && !strcmp((const char *)blk + (lab - base), "WAVE") && non - base < f.image &&
+                     ren - base < f.image && eng_npresets(6) == 5 && !strcmp(eng_preset(ENGINES[6], 3)->name, "RING BELL");
+            }
         }
-        bad += check("pi32v2 TRIO file: CRC, every address word moved, descriptor and strings found through them", ok);
+        bad += check("pi32v2 TRIO file (ABI 3): CRC, every address word moved, descriptor, engine and strings found through "
+                     "them, its presets from its PRST chunk", ok);
     } else
         printf("persist: (no build/modules/trio.mmod: tools/mod_build.py firmware/modules/trio/trio.c)\n");
 

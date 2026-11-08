@@ -74,19 +74,14 @@ static const engine_t ENG_RETIRED = {         /* 13 without MELODEE_SLICE: reser
 #include "resources.c"
 #if MELODEE_MODULES
 static uint8_t mod_at[NENGINES];                    /* engine -> its module's slot + 1, 0: none (eng_module.c) */
-static uint32_t mod_part_bytes(uint32_t e);
 static int mod_idle(uint32_t e);                    /* e: a stored module not in SRAM (eng_module.c) */
 #endif
 static const engine_t *eng_of(uint32_t e);
 static uint32_t eng_state_size(uint32_t e)
 {
     const engine_t *g = eng_of(e);
-    if (g->state)                                   /* (the engine's own: SID, DRUM, a native module) */
+    if (g->state)                                   /* (the engine's own: a synth module's) */
         return g->state(0);
-#if MELODEE_MODULES
-    if (e < NENGINES && mod_at[e])
-        return mod_part_bytes(e);
-#endif
     switch (e) {
 #if MELODEE_LEGACY_EXTRAS
     case ENGI_PHYS: return sizeof(phys_slot_t) * PHYS_POLY;

@@ -33,7 +33,7 @@ static uint32_t drum_lane(uint32_t note);
 static uint32_t drum_gm(const int16_t *p,uint32_t note,int32_t *st);
 /* a hit's pitch and length as the sequencer plays it (seq.c), for the note_on it calls; lanes hit since the UI last
  * looked, a bit per lane (drum_lane) and track: Stage flashes their names (ui_stage.c) */
-#if MOD_NATIVE_SIDE                              /* (DRUM as a module: the firmware's) */
+#if MOD_SIDE                              /* (DRUM as a module: the firmware's) */
 static int32_t *mod_imp_drum_event_pitch;
 static uint32_t *mod_imp_drum_event_length;
 static volatile uint8_t *mod_imp_drum_flash;

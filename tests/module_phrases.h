@@ -332,7 +332,7 @@ static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
 /* the Prophet: program pi (0 INIT, Sequential's 200); mode 0 POLY, 1 UNISON (the program's unison, its voice count and
  * detune by pi). Before the first key, by pi: Lo Freq B (a fresh voice's free-running B), glide, vintage (each voice's
  * own mismatch), a filter oscillating behind a shut mixer (its seeded state), sync. As it plays: the mod wheel and
- * aftertouch, pitch bend both ways over the program's range (voice.c p5_update_bend), the E1..E8 offsets, then the
+ * aftertouch, pitch bend both ways over the program's range (its bend_range: voice.c trk_bend_own), the E1..E8 offsets, then the
  * program edited as the panel edits it: the filter model swapped (Curtis / SSI: its saturating stages, the SSM
  * envelope), cutoff, resonance, key tracking, both envelopes, velocity, Poly-Mod (the filter envelope and oscillator B
  * on frequency A, PW A, the filter), the LFO (waves, rate, the noise mix; the wheel on both frequencies, both widths,

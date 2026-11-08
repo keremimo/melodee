@@ -245,10 +245,10 @@ static __attribute__((noinline)) void mix_prepare_batch(uint32_t n,uint32_t nt) 
     memset(batch_posted,0,sizeof batch_posted);
     /* Keep the measured CPU0 service reserve for native FM6 workloads (engine_t.reserve: FM6's voices sounding or
      * running on). Per-voice controls and ghosts themselves are costed queue jobs. */
-    audio_batch_native_fm6=0;
-    for(uint32_t p=0;p<nt && !audio_batch_native_fm6;p++){
+    audio_batch_reserve=0;
+    for(uint32_t p=0;p<nt && !audio_batch_reserve;p++){
         const engine_t *g=eng_of(trk[p].engine);
-        if(g->reserve && g->reserve(resource[RES_ENGINE0+p].ptr,resource[RES_ENGINE0+p].size))audio_batch_native_fm6=1;
+        if(g->reserve && g->reserve(resource[RES_ENGINE0+p].ptr,resource[RES_ENGINE0+p].size))audio_batch_reserve=1;
     }
 #endif
     for(uint32_t p=0;p<nt;p++){

@@ -6,7 +6,7 @@
 #include "cz_patch.h"
 #define CZ_FACTORY_N 64u                         /* Casio's tones: the CZ-1's presets after INIT TONE (its module's
                                                   * file; melodee_cz1.h on host builds) */
-#if MOD_NATIVE_SIDE                              /* (a native synth module: the firmware's, module_native.h) */
+#if MOD_SIDE                              /* (a synth module: the firmware's, module_legacy.h) */
 static cz_patch_t *mod_imp_cz_patch, *mod_imp_cz_patch_none;
 #define cz_patch mod_imp_cz_patch
 #define cz_patch_none (*mod_imp_cz_patch_none)
@@ -15,6 +15,6 @@ static cz_patch_t cz_patch[NPART] __attribute__((section(".pool"))), cz_patch_no
 #endif
 /* track k's CZ-1 tone; a MIDI-only track's is none: read, written, never heard */
 static cz_patch_t *cz_patch_of(uint32_t k) { return k < NPART ? &cz_patch[k] : &cz_patch_none; }
-#if !MOD_NATIVE_SIDE
+#if !MOD_SIDE
 static void cz_init(void) { for (uint32_t k = 0; k <= NPART; k++) cz_patch_init(cz_patch_of(k)->raw); }
 #endif

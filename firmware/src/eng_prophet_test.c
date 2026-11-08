@@ -6,7 +6,7 @@
  * MELODEE_PROPHET_PROTOTYPE additionally aliases ID 0 for measurement rigs.
  * The engine only (a synth module on the device: firmware/modules/prophet): the parts' programs, their format and
  * the voice count are the firmware's (p5_parts.h), Sequential's programs and the presets made from them too
- * (prophet_programs.c); the pitch wheel's target is voice.c's (p5_update_bend) */
+ * (prophet_programs.c); the pitch wheel's range is the program's (p5_bend_range: voice.c sets its target) */
 #include "x0x/fastmath.h"
 typedef struct { float value; uint8_t stage; } p5_env_t;
 typedef struct {
@@ -30,8 +30,8 @@ typedef struct { p5_voice_t voice[P5_POLY]; uint32_t lfo; int32_t lfo_value, las
 static p5_part_t *p5_part(uint32_t part);
 static inline __attribute__((always_inline)) p5_voice_t *p5_voice(track_t *t, voice_t *v)
 {
-    p5_part_t *part = p5_part((uint32_t)(t - trk));
-    return part ? &part->voice[(uint32_t)(v - t->v) % P5_POLY] : 0;
+    p5_part_t *part = p5_part(trk_ix(t));
+    return part ? &part->voice[voice_ix(t, v) % P5_POLY] : 0;
 }
 /* Integer phase counters retain low-frequency tuning precision. Everything
  * after phase conversion is normalized fp32, including BLEP and saturation. */
@@ -107,13 +107,13 @@ static void p5_note_on(track_t *t, voice_t *v)
              * VCA. Seed that state when waking an otherwise silent voice. */
             s->z[0]=0.5f;s->z[2]=-0.5f;
         }
-        s->noise = (int32_t)(0x5A1793u + v->age * 17u + (uint32_t)(v-t->v) * 101u);
+        s->noise = (int32_t)(0x5A1793u + v->age * 17u + voice_ix(t, v) * 101u);
     }
     if (!voice_was) {
-        p5_part_t *part=p5_part((uint32_t)(t-trk));
+        p5_part_t *part=p5_part(trk_ix(t));
         s->glide_pitch=part->last_pitch ? part->last_pitch : v->pitch16;
     }
-    p5_part((uint32_t)(t-trk))->last_pitch=v->pitch16;
+    p5_part(trk_ix(t))->last_pitch=v->pitch16;
     s->filter.stage = s->amp.stage = 1;
     /* 0 is the stable Rev 4 position, 127 the loose Rev 1: most factory
      * programs use 0, many 42 (Rev 3), few 127. */
@@ -218,15 +218,16 @@ static __attribute__((noinline)) void p5_cache_update(track_t *t,p5_part_t *s,co
     c->lb=(float)(clamp(q[P5_LEVEL_B]+t->p[P_E7],0,127)*258)/32768.0f;c->ln=(float)(q[P5_NOISE]*258)/32768.0f;
     c->wheel=s->wheel;c->wheel_pitch=s->wheel_pitch;
 }
-static void p5_update_bend(track_t *t);
+/* the pitch wheel's range: the program's BEND (voice.c trk_bend_own sets the wheel's target from it before p5_block) */
+static int32_t p5_bend_range(const track_t *t) { return (clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256; }
 static void p5_block(track_t *t)
 {
-    p5_part_t *s=p5_part((uint32_t)(t-trk));const uint8_t *p=p5_patch_of(t)->raw;
-    if(!s)return;p5_update_bend(t);
+    p5_part_t *s=p5_part(trk_ix(t));const uint8_t *p=p5_patch_of(t)->raw;
+    if(!s)return;
     /* Raw-to-DSP clamping is part-wide; envelopes and all voices share it. */
     p5_cache_update(t,s,p);
     uint32_t inc=P5_LFO_INC[p5_value(p,P5_LFO_RATE)]/P5_OVERSAMPLE;
-    uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=t->v[i].active;
+    uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=trk_voice(t, i)->active;
     if(!live){
         /* Keep the wheel clock and noise sequence exact while skipping
          * stateless modulation buffers that no voice can read. */
@@ -431,7 +432,7 @@ static void p5_post(track_t *t,int32_t *out,uint32_t n,uint32_t nr)
 #if MELODEE_DUAL_CORE
     p5_join();
 #endif
-    p5_part_t *P=p5_part((uint32_t)(t-trk)%NPART);
+    p5_part_t *P=p5_part(trk_ix(t)%NPART);
     if(!P)return;
     if(!nr){P->dc_x1=P->dc_y1=0;return;}
     void (*volatile run)(p5_part_t *,int32_t *,uint32_t)=p5_dc_samples;
@@ -443,7 +444,7 @@ static void p5_post(track_t *t,int32_t *out,uint32_t n,uint32_t nr)
 static void p5_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
     p5_voice_t *s=p5_voice(t,v);
-    p5_part_t *part=p5_part((uint32_t)(t-trk)%NPART);
+    p5_part_t *part=p5_part(trk_ix(t)%NPART);
     const uint8_t *p=p5_patch_of(t)->raw;
     if (!s || !part) return;
     /* A budget victim is already inactive when the common renderer delivers
@@ -465,8 +466,8 @@ static void p5_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     const uint8_t *q=part->value;
     float f0=s->filter_prev, a0=s->amp_prev;
     int curtis=!!p[P5_FILTER_REV];
-    float f1=p5_env_tick(&s->filter,v->gate,p,P5_ATTACK_FILTER,P5_DECAY_FILTER,P5_SUSTAIN_FILTER,P5_RELEASE_FILTER,s->env_drift,q,!curtis,midi_verb[t-trk]);
-    float a1=p5_env_tick(&s->amp,v->gate,p,P5_ATTACK_AMP,P5_DECAY_AMP,P5_SUSTAIN_AMP,P5_RELEASE_AMP,s->env_drift,q,0,midi_verb[t-trk]);
+    float f1=p5_env_tick(&s->filter,v->gate,p,P5_ATTACK_FILTER,P5_DECAY_FILTER,P5_SUSTAIN_FILTER,P5_RELEASE_FILTER,s->env_drift,q,!curtis,midi_verb[trk_ix(t)]);
+    float a1=p5_env_tick(&s->amp,v->gate,p,P5_ATTACK_AMP,P5_DECAY_AMP,P5_SUSTAIN_AMP,P5_RELEASE_AMP,s->env_drift,q,0,midi_verb[trk_ix(t)]);
     s->filter_prev=f1; s->amp_prev=a1;
     int32_t glide=0;
     if(p[P5_GLIDE]){
@@ -507,8 +508,8 @@ static void p5_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     /* An indirect call crosses the XIP/RAM distance beyond direct branch range. */
     void (*volatile run)(p5_voice_t *,const uint8_t *,int32_t *,uint32_t,const vmod_t *,const p5_render_params_t *)=p5_samples;
 #if MELODEE_DUAL_CORE
-    uint32_t next=(uint32_t)(v-t->v)+1u;
-    while(next<NVOICE && !t->v[next].active)next++;
+    uint32_t next=voice_ix(t, v)+1u;
+    while(next<NVOICE && !trk_voice(t, next)->active)next++;
     if(!p5_pending && audio_worker_online && n<=CTL && next<NVOICE){
         p5_job.voice=s;p5_job.patch=p;p5_job.params=c;p5_job.modulation=*m;p5_job.n=n;
         if(audio_worker_submit(p5_worker_kernel,0)){
@@ -540,7 +541,7 @@ static const engine_t ENG_P5_TEST = {
            {"TUNA",F_SEMI,-24,24,0,0,0},{"TUNB",F_SEMI,-24,24,0,0,0},
            {"PWA",F_INT,-63,63,0,0,0},{"PWB",F_INT,-63,63,0,0,0},
            {"MIXA",F_INT,-63,63,0,0,0},{"MIXB",F_INT,-63,63,0,0,0}},
-#if !MOD_NATIVE_SIDE
+#if !MOD_SIDE
     .preset_make=p5_preset_make,       /* (host builds; a synth module's presets are in its file) */
 #endif
     .npresets=P5_FACTORY_N+1u,.poly=P5_POLY,.ownenv=1,
@@ -549,5 +550,7 @@ static const engine_t ENG_P5_TEST = {
     .knob={P_E0,P_E1,P_RESERVED34,P_RESERVED36},
     .state=p5_state,
     .wclass=1,
-    .menv=p5_env_source            /* (the matrix's ENV: the amp envelope as it was last rendered) */
+    .menv=p5_env_source,           /* (the matrix's ENV: the amp envelope as it was last rendered) */
+    .caps=MOD3_CAP_WHEEL,          /* (its LFO amount and Poly-Mod read the wheel: no SMK-37 vibrato) */
+    .bend_range=p5_bend_range
 };

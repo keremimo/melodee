@@ -14,111 +14,71 @@
 
 /* ---- loading: a file's bytes through rd (off, dst, n -> 0 ok) into slot k. Returns MS_LOADED or why not */
 typedef int (*mod_read_t)(uint32_t off, void *dst, uint32_t n);
-#define MOD_IMAGE_MAX 24576u                        /* code + data of one module */
-#define MOD_BSS_MAX 8192u
-static const mod_desc_t *(*mod_host_native)(uint32_t engine);   /* host tests: the module built for the host */
-static const mod_native_t *(*mod_host_nmod)(uint32_t engine);    /* .. a native one */
-typedef struct { mod_file_t f; uint32_t key; } mod_head_t;       /* a head as read: ABI 1's 52 bytes, a native's 56 */
-static uint32_t mod_head_len(const mod_file_t *f) { return f->abi == MOD_ABI_NATIVE ? MOD_NHEAD : sizeof(mod_file_t); }
+static const mod_desc_v3 *(*mod_host_desc)(uint32_t engine);   /* host tests: the module built for the host */
 
-/* the relocated descriptor (target: its addresses moved to the block): the numbers in range, and every address
- * word (MOD_PTRS: word indices of mod_desc_t on the 32-bit target) inside the block, the ones that must be set set */
-#ifdef FM1_IRQ_TARGET
-static const uint8_t MOD_PTRS[32] = {2, 3, 4, 5, 8, 9, 10, 13, 14, 15, 18, 19, 20, 23, 24, 25, 28, 29, 30, 33, 34, 35,
-                                     38, 39, 40, 43, 44, 45, 50, 51, 52, 53};
-#define MOD_PTR_NEEDED 0x7124924Fu                  /* bit i: MOD_PTRS[i] must be set (name, titles, labels, host, calls) */
-#endif
-static int mod_check(const mod_desc_t *d, const uint8_t *p, uint32_t len, uint32_t engine)
+/* the file's head, as far as it can be checked without its body (any ABI's: an older firmware's module is known by
+ * its engine and name); 0 when bad */
+static int mod_head_ok(const mod_file3_t *f, uint32_t len)
 {
-    if (d->magic != MOD_DESC_MAGIC || d->abi != MOD_ABI || d->size != sizeof(mod_desc_t) || d->engine != engine ||
-        d->poly > NVOICE || d->part_bytes > 32768u || !d->note_on || !d->render)
+    uint32_t body = MOD3_HEAD + f->image + 4u * f->nrel;   /* (then the chunks, if any: module_presets.h) */
+    if (f->magic != MOD3_FILE_MAGIC || f->total != len || !mod_engine_ok(f->engine) || !f->name[0])
         return 0;
-#ifdef FM1_IRQ_TARGET
-    const uint32_t *w = (const uint32_t *)(const void *)d;
-    uint32_t base = (uint32_t)(uintptr_t)p;
-    for (uint32_t i = 0; i < sizeof MOD_PTRS; i++) {
-        uint32_t v = w[MOD_PTRS[i]];
-        if (v ? v - base >= len : (MOD_PTR_NEEDED >> i) & 1u)
-            return 0;
-    }
-    if (d->npresets && (!d->presets || (uint32_t)(uintptr_t)(d->presets + d->npresets) - base > len))
-        return 0;
-    for (uint32_t k = 0; k < d->npresets; k++)
-        if ((uint32_t)(uintptr_t)d->presets[k].name - base >= len)
-            return 0;
-#else
-    (void)p; (void)len;
-#endif
-    for (uint32_t k = 0; k < 4u; k++)
-        if (d->knob[k] >= 12u)
-            return 0;
-    for (uint32_t k = 0; k < 8u; k++) {
-        const mod_param_t *q = &d->edit[k];
-        if (q->fmt > MF_ONOFF || q->min > q->max || q->def < q->min || q->def > q->max ||
-            (q->fmt == MF_ENUM && (q->min < 0 || q->max > 63 || !q->names)))
-            return 0;
-    }
-    return 1;
+    if (f->abi != MOD3_ABI)
+        return f->abi == 1u || f->abi == 2u;        /* (ABI 1, ABI 2: an older firmware's, MS_STALE) */
+    return !(f->image % 4u) && f->nrel <= f->image / 4u && f->image <= len && f->nrel <= len &&
+           !(f->flags & ~MOD3_FILE_CHUNKS) &&
+           (f->flags & MOD3_FILE_CHUNKS ? f->total >= body + 8u && !((f->total - body) % 4u) : f->total == body) &&
+           !f->desc && f->image >= sizeof(mod_desc_v3) && f->image <= MOD3_IMAGE_MAX && f->bss <= MOD3_BSS_MAX;
 }
-/* the file's head, as far as it can be checked without its body; 0 when bad. A native module: built for this
- * firmware (its layout key), its descriptor first */
-static int mod_head_ok(const mod_head_t *h, uint32_t len)
+/* a file this firmware plays: ABI 3, a host table it has, the legacy data as it lays it out (or none) */
+static int mod_head_mine(const mod_file3_t *f)
 {
-    const mod_file_t *f = &h->f;
-    uint32_t body = mod_head_len(f) + f->image + 4u * f->nrel;   /* (then the chunks, if any: module_presets.h) */
-    if (f->magic != MOD_FILE_MAGIC || f->total != len || !mod_engine_ok(f->engine) || f->image % 4u ||
-        f->nrel > f->image / 4u || f->image > len || f->nrel > len || (f->flags & ~MOD_FILE_CHUNKS) ||
-        (f->flags & MOD_FILE_CHUNKS ? f->total < body + 8u || (f->total - body) % 4u : f->total != body) || !f->name[0])
-        return 0;
-    if (f->abi == MOD_ABI_NATIVE)
-        return h->key == MOD_NATIVE_KEY && f->desc == 0 && f->image >= sizeof(mod_native_t) &&
-               f->image <= MOD_NIMAGE_MAX && f->bss <= MOD_NBSS_MAX;
-    return f->abi == MOD_ABI && f->image >= sizeof(mod_desc_t) && f->image <= MOD_IMAGE_MAX && f->bss <= MOD_BSS_MAX &&
-           f->desc % 4u == 0 && f->desc <= f->image - sizeof(mod_desc_t);
+    return f->abi == MOD3_ABI && f->host <= MOD3_HOST && (!f->key || f->key == MOD3_LEGACY_KEY);
 }
-/* a native module's descriptor (relocated): this firmware's, its engine number, its addresses in the block */
-static int mod_ncheck(const mod_native_t *d, const uint8_t *p, uint32_t len, uint32_t engine)
+/* the relocated descriptor: this ABI, its file's head, every address it holds inside the block (target), the calls
+ * the firmware needs set */
+static int mod_dcheck(const mod_desc_v3 *d, const mod_file3_t *f, const uint8_t *p, uint32_t len)
 {
-    if (d->magic != MOD_NDESC_MAGIC || d->abi != MOD_ABI_NATIVE || d->size != sizeof(mod_native_t) ||
-        d->key != MOD_NATIVE_KEY || d->engine != engine || !d->eng || !d->bind || !d->name)
+    if (d->magic != MOD3_MAGIC || d->abi != MOD3_ABI || d->size != sizeof(mod_desc_v3) || d->host != f->host ||
+        d->host > MOD3_HOST || d->engine != f->engine || d->npresets != f->npresets || d->key != f->key ||
+        d->eng_size < __builtin_offsetof(mod_engine_v3, caps) || d->eng_size > len || !d->eng || !d->bind || !d->name)
         return 0;
 #ifdef FM1_IRQ_TARGET
     uint32_t base = (uint32_t)(uintptr_t)p;
-    const engine_t *e = d->eng;
-    if ((uint32_t)(uintptr_t)d->eng - base > len - sizeof(engine_t) || (uint32_t)(uintptr_t)d->bind - base >= len ||
+    const mod_engine_v3 *e = d->eng;
+    if ((uint32_t)(uintptr_t)d->eng - base > len - d->eng_size || (uint32_t)(uintptr_t)d->bind - base >= len ||
         (uint32_t)(uintptr_t)d->name - base >= len || !e->note_on || !e->render ||
         (uint32_t)(uintptr_t)e->note_on - base >= len || (uint32_t)(uintptr_t)e->render - base >= len)
         return 0;
 #else
     (void)p; (void)len;
+    if (!d->eng->note_on || !d->eng->render)
+        return 0;
 #endif
-    return d->eng->npresets == d->npresets;
+    return 1;
 }
 /* slot k (catalogued) into SRAM: MS_LOADED, MS_NORAM (still listed), or MS_BAD (no longer listed) */
 static int mod_load(uint32_t k, mod_read_t rd)
 {
-    mod_head_t h;
-    mod_file_t f;
+    mod_file3_t f;
     mod_slot_t *s = &mods[k];
     if (s->state == MS_LOADED || (s->state != MS_STORED && s->state != MS_NORAM))
         return s->state;
-    if (rd(0, &h, sizeof h) || !mod_head_ok(&h, s->len) || h.f.engine != s->engine)
+    if (rd(0, &f, sizeof f) || !mod_head_ok(&f, s->len) || !mod_head_mine(&f) || f.engine != s->engine)
         goto gone;
-    f = h.f;
-    uint32_t hl = mod_head_len(&f), native = f.abi == MOD_ABI_NATIVE;
-    uint32_t body = (f.image + f.bss + 3u) & ~3u;
-    uint32_t g = mod_guard();                       /* (ABI 1: the engine_t made for it after its bytes) */
-    uint8_t *p = resource_allocate_code(RES_MODULE0 + k, body + (native ? 0u : (uint32_t)sizeof(engine_t)));
+    uint32_t body = (f.image + f.bss + 7u) & ~7u;   /* (then its engine_t: mod_register) */
+    uint32_t g = mod_guard();
+    uint8_t *p = resource_allocate_code(RES_MODULE0 + k, body + (uint32_t)sizeof(engine_t));
     mod_unguard(g);
     if (!p)
         return s->state = MS_NORAM;
     uint32_t crc = 0xFFFFFFFFu, w[32], base = (uint32_t)(uintptr_t)p;
-    if (rd(hl, p, f.image))
+    if (rd(MOD3_HEAD, p, f.image))
         goto bad;
     crc = st_crc32_update(crc, p, f.image);
     for (uint32_t r = 0; r < f.nrel; r += 32u) {    /* the address words, 32 at a time */
         uint32_t m = f.nrel - r < 32u ? f.nrel - r : 32u;
-        if (rd(hl + f.image + 4u * r, w, 4u * m))
+        if (rd(MOD3_HEAD + f.image + 4u * r, w, 4u * m))
             goto bad;
         crc = st_crc32_update(crc, w, 4u * m);
         for (uint32_t j = 0; j < m; j++) {
@@ -129,7 +89,7 @@ static int mod_load(uint32_t k, mod_read_t rd)
             a[0] = (uint8_t)v; a[1] = (uint8_t)(v >> 8); a[2] = (uint8_t)(v >> 16); a[3] = (uint8_t)(v >> 24);
         }
     }
-    for (uint32_t at = hl + f.image + 4u * f.nrel; at < f.total; ) {   /* the chunks: in the CRC, never in SRAM */
+    for (uint32_t at = MOD3_HEAD + f.image + 4u * f.nrel; at < f.total; ) {   /* the chunks: in the CRC, never in SRAM */
         uint32_t m = f.total - at < sizeof w ? f.total - at : (uint32_t)sizeof w;
         if (rd(at, w, m))
             goto bad;
@@ -138,32 +98,18 @@ static int mod_load(uint32_t k, mod_read_t rd)
     }
     if (~crc != f.crc)
         goto bad;                                   /* (.bss: the arena's blocks come zeroed) */
-    if (native) {
 #ifdef FM1_IRQ_TARGET
-        const mod_native_t *nd = (const mod_native_t *)(const void *)p;
+    const mod_desc_v3 *d = (const mod_desc_v3 *)(const void *)p;
 #else
-        const mod_native_t *nd = mod_host_nmod ? mod_host_nmod(f.engine) : 0;
+    const mod_desc_v3 *d = mod_host_desc ? mod_host_desc(f.engine) : 0;
 #endif
-        if (!nd || !mod_ncheck(nd, p, body, f.engine))
-            goto bad;
-#ifdef FM1_IRQ_TARGET
-        fm1_code_sync();                            /* the new code, before anything calls it */
-#endif
-        nd->bind(&MOD_IMPORTS);                     /* (the module's first call: the firmware's data) */
-        mod_register_native(k, nd);
-        return MS_LOADED;
-    }
-#ifdef FM1_IRQ_TARGET
-    const mod_desc_t *d = (const mod_desc_t *)(const void *)(p + f.desc);
-#else
-    const mod_desc_t *d = mod_host_native ? mod_host_native(f.engine) : 0;
-#endif
-    if (!d || !mod_check(d, p, body, f.engine))
+    if (!d || !mod_dcheck(d, &f, p, f.image + f.bss))
         goto bad;
-    *d->host = &MOD_HOST;
 #ifdef FM1_IRQ_TARGET
     fm1_code_sync();                                /* the new code, before anything calls it */
 #endif
+    if (d->bind(&MOD_HOST3, k))                     /* (the module's first call: the host table) */
+        goto bad;
     mod_register(k, d, (engine_t *)(void *)(p + body));
     return MS_LOADED;
 bad:
@@ -212,14 +158,14 @@ static uint32_t mod_open(uint32_t k)                /* slot k's records for mod_
 /* slot k's factory presets (module_presets.h): its PRST chunk found among the chunks, checked (head, CRC: the lists read
  * it from here on), its categories into mod_cat. 1, or 0 (none: the file has no presets, or not as this firmware reads
  * them) */
-static int mod_pst_find(uint32_t k, const mod_file_t *f)
+static int mod_pst_find(uint32_t k, const mod_file3_t *f)
 {
     mod_slot_t *s = &mods[k];
-    uint32_t at = mod_head_len(f) + f->image + 4u * f->nrel, c[2] = {0, 0}, crc = 0xFFFFFFFFu, n = f->npresets, off, m;
+    uint32_t at = MOD3_HEAD + f->image + 4u * f->nrel, c[2] = {0, 0}, crc = 0xFFFFFFFFu, n = f->npresets, off, m;
     mod_pst_head_t ph;
     uint8_t r[MOD_PST_REC];
     for (;; at += 8u + ((c[1] + 3u) & ~3u)) {      /* (mod_head_ok: the chunks fill the file to its end) */
-        if (!(f->flags & MOD_FILE_CHUNKS) || at + 8u > f->total || mod_rd(k, at, c, 8u) || c[1] > f->total - at - 8u)
+        if (!(f->flags & MOD3_FILE_CHUNKS) || at + 8u > f->total || mod_rd(k, at, c, 8u) || c[1] > f->total - at - 8u)
             return 0;
         if (c[0] == MOD_PST_TAG)
             break;
@@ -261,7 +207,7 @@ static int mod_pst_find(uint32_t k, const mod_file_t *f)
 /* slot k listed from its record's head, nothing loaded (power-on, an upload): MS_STORED or why not */
 static int mod_catalog(uint32_t k)
 {
-    mod_head_t h;
+    mod_file3_t f;
     mod_slot_t *s = &mods[k];
     mod_unregister(k, 0);
     memset(s, 0, sizeof *s);
@@ -270,31 +216,28 @@ static int mod_catalog(uint32_t k)
     if (!len)
         return MS_EMPTY;
     s->len = len;
-    if (len < sizeof h || mod_flash_read(0, &h, sizeof h))
+    if (len < sizeof f || mod_flash_read(0, &f, sizeof f) || !mod_head_ok(&f, len))
         return s->state = MS_BAD;
-    mod_head_t hk = h;                              /* (a native module of another firmware: known, not played) */
-    if (hk.f.abi == MOD_ABI_NATIVE)
-        hk.key = MOD_NATIVE_KEY;
-    if (!mod_head_ok(&hk, len))
-        return s->state = MS_BAD;
-    const mod_file_t f = h.f;
     s->engine = f.engine;
     s->version = f.version;
     s->npresets = f.npresets;
     s->abi = (uint8_t)f.abi;
+    s->host = f.abi == MOD3_ABI ? f.host : 0u;
     s->crc = f.crc;
-    s->key = f.abi == MOD_ABI_NATIVE ? h.key : 0u;
-    memcpy(s->name, f.name, MOD_NAME_MAX);
-    if (hk.key != h.key)
-        return s->state = MS_STALE;                 /* (the installer replaces it: editor_module.c) */
+    s->key = f.abi == 1u ? 0u : f.key;              /* (a native ABI 2 file's layout key sits where ABI 3's key is) */
+    memcpy(s->name, f.name, MOD3_NAME_MAX);
+    if (f.abi != MOD3_ABI || (f.key && f.key != MOD3_LEGACY_KEY))
+        return s->state = MS_STALE;                 /* (an older firmware's: the installer replaces it, editor_module.c) */
+    if (f.host > MOD3_HOST)
+        return s->state = MS_NEWER;                 /* (a later firmware's: it needs Melodee's newer host table) */
     if (mod_slot_of(f.engine) < NMOD)
         return s->state = MS_CLASH;                 /* two modules for one number: the first one plays */
     if (mod_skipped)
         return s->state = MS_SKIPPED;
     if (ENGINES[f.engine] != &ENG_RETIRED)
         return s->state = MS_CLASH;                 /* a built-in engine has the number */
-    if (!mod_pst_find(k, &f) && f.abi == MOD_ABI_NATIVE) {
-        s->npresets = 0;                            /* (a native module's presets are its file's) */
+    if (!mod_pst_find(k, &f)) {
+        s->npresets = 0;                            /* (a module's presets are its file's) */
         if (f.npresets)
             return s->state = MS_BAD;
     }
@@ -374,14 +317,14 @@ static void mod_service(uint32_t now)
  * than a record: its first record is checked and published when its bytes are in, then the rest streams on into
  * the second (one stream at a time: storage_stream.c); until that one is published the slot reads as a bad file */
 static st_stream_t mod_up;
-static mod_head_t mod_up_head;                      /* (the file's head, kept from its first record) */
+static mod_file3_t mod_up_head;                     /* (the file's head, kept from its first record) */
 static uint8_t mod_up_slot = 0xFFu, mod_up_part;    /* the slot written; 1: into its second record */
 static uint32_t mod_up_len;
 #define MOD_FILE_MAX (2u * ST_PROJECT_MAX)
 static int mod_put_begin(uint32_t k, uint32_t len)
 {
     mod_up_slot = 0xFFu;
-    if (k >= NMOD || len < sizeof(mod_file_t) + sizeof(mod_desc_t) || len > MOD_FILE_MAX)
+    if (k >= NMOD || len < MOD3_HEAD + sizeof(mod_desc_v3) || len > MOD_FILE_MAX)
         return -1;
     int rc = st_stream_begin(&mod_up, mod_obj(k), len < ST_PROJECT_MAX ? len : ST_PROJECT_MAX);
     if (!rc) {
@@ -423,11 +366,12 @@ static int mod_put_check(uint32_t k, uint32_t len)
     int rc = st_stream_check(&mod_up);
     if (rc)
         return rc;
-    if (st_stream_read(&mod_up, 0, &mod_up_head, sizeof mod_up_head) || !mod_head_ok(&mod_up_head, len))
-        return -2;
+    if (st_stream_read(&mod_up, 0, &mod_up_head, sizeof mod_up_head) || !mod_head_ok(&mod_up_head, len) ||
+        !mod_head_mine(&mod_up_head))
+        return -2;                                  /* (not a module, or not one this firmware plays) */
     for (uint32_t j = 0; j < NMOD; j++)
-        if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].state != MS_STALE &&
-            mods[j].engine == mod_up_head.f.engine)
+        if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].state != MS_STALE && mods[j].state != MS_NEWER &&
+            mods[j].engine == mod_up_head.engine)
             return -3;
     return 0;
 }

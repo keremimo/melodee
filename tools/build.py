@@ -295,7 +295,7 @@ def build_app(stub):
     flags.append(f'-DMELODEE_ID="{PRODUCT}"')
     if VERSION:
         flags.append(f'-DMELODEE_VERSION="{VERSION}"')
-    global APP_DEFS                 # (the native synth modules build with the image's options: tools/mod_build.py)
+    global APP_DEFS                 # (the engine-source synth modules build with the image's options: tools/mod_build.py)
     APP_DEFS = [f for f in flags if f.startswith("-D") and not f.startswith(("-DMELODEE_ID=", "-DMELODEE_VERSION="))]
     # melodee.c goes to LLVM IR without the optimizer, the main-loop functions (UI, stores, editor) are
     # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. MELODEE_SIZE=0: -Os everywhere
@@ -726,12 +726,12 @@ def main():
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
     # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py);
-    # the native ones (SID, DRUM) with the image's options: tied to this build by their layout key
+    # (ABI 3; the engine-source ones, SID DRUM CZ-1 FM6 and the Prophet, with the image's options: per board)
     shipped = []
     for src in sorted((FW / "modules").glob("*/*.c")):
         if src.parent.name != "sdk" and src.stem == src.parent.name:
             subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src, *APP_DEFS], check=True)
-            if '#include "mod_native.h"' in src.read_text():
+            if '#include "mod_engine.h"' in src.read_text():   # (the engines the image left to modules)
                 shipped.append(OUT / "modules" / (src.stem + ".mmod"))
     # the engines the image left to modules, as the installers write them after it (web/fm1mods.js): one file, the
     # .mmod files one after another (build/melodee-mods.bin; web/make_site.py publishes it as <package>-mods.bin)

@@ -10,7 +10,7 @@
 // apart by their first bytes, as the real one reads their headers. Nothing is written anywhere.
 //
 // Once it runs the package's firmware it also answers the editor's resource command (82, firmware/src/editor_res.c)
-// and its synth module command (84, firmware/src/editor_module.c: eight slots, a native file taken when its layout key
+// and its synth module command (84, firmware/src/editor_module.c: eight slots, an ABI 3 file taken when its legacy key
 // is the firmware's).
 //
 //   fakeAccess({ images, identity, after, state, interruptAt, stride, timers, resInstalled, resRefuse, modKey,
@@ -19,7 +19,7 @@
 //                  region file the firmware wants (res optional: without it command 82 goes unanswered)
 //     resInstalled the region is already in place
 //     resRefuse    begin's rc (4 busy, 3 no room), once
-//     modKey       the firmware's layout key for native synth modules (default 0x13572468)
+//     modKey       the firmware's legacy key for its synth modules (default 0x13572468)
 //     modRoom      the bytes of module files the storage has room for (default: plenty)
 //     identity     what the running firmware reports ("FM-1_016": M-VAVE's own)
 //     after        what it reports after a write (the package's identity)
@@ -231,7 +231,7 @@ class Device {
 }
 
 // the synth module command (editor_module.c): [0] list, [1 k len] begin, [2 k off x3 packed] write, [3 k] commit
-// (a native file's key must be the firmware's, the storage's room enough), [4 k] delete, [5 k] its file
+// (an ABI 3 file whose legacy key is the firmware's or none, the storage's room enough), [4 k] delete, [5 k] its file
 Device.prototype.modules = function (a) {
   const m = this.mods, k = a[1], s = m.slot[k], x7 = (v) => [0, 7, 14, 21, 28].map((sh) => (v >>> sh) & 127);
   const head = (b) => b && new DataView(b.buffer, b.byteOffset, b.byteLength);
@@ -249,7 +249,7 @@ Device.prototype.modules = function (a) {
   if (a[0] === 5) {
     const h = head(s.bytes), abi = h ? h.getUint16(4, true) : 0;
     return out([0, s.state, s.bytes ? s.bytes[6] : 0, abi, ...x7(h ? h.getUint32(28, true) : 0),
-                ...x7(abi === 2 ? h.getUint32(52, true) : 0), ...x7(m.key)]);
+                ...x7(abi >= 2 ? h.getUint32(52, true) : 0), ...x7(m.key)]);
   }
   if (a[0] === 1) { const len = a.slice(2, 7).reduce((n, b, j) => n + b * 2 ** (7 * j), 0); s.up = { len, buf: new Uint8Array(len), pos: 0 }; return out([0]); }
   if (a[0] === 2 && s.up) {
@@ -261,7 +261,8 @@ Device.prototype.modules = function (a) {
   if (a[0] === 3 && s.up) {
     const b = s.up.buf, h = head(b);
     s.up = null;
-    if (h.getUint32(0, true) !== 0x31444d4d || (h.getUint16(4, true) === 2 && h.getUint32(52, true) !== m.key)) return out([5, s.state, 0]);
+    if (h.getUint32(0, true) !== 0x31444d4d || h.getUint16(4, true) !== 3 || (h.getUint32(52, true) && h.getUint32(52, true) !== m.key))
+      return out([5, s.state, 0]);   /* (ABI 3 only: its legacy key this firmware's, or none) */
     if (used() - (s.bytes ? s.bytes.length : 0) + b.length > m.room) return out([2, s.state, 0]);
     s.bytes = b; s.state = 1;
     this.log.push(`module ${String.fromCharCode(...b.subarray(32, 48)).replace(/\0.*$/, "")} installed in slot ${k + 1}`);

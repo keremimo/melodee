@@ -1531,9 +1531,11 @@ const nativeBank = {
   async load(rq,engine,slot,track) { const info=parse[CMD.INFO](await rq(req.info()));if(info.shared)return bank.load(rq,slot,info,track);return parse[CMD.NATIVE](await rq(req.native(engine,4,slot,track))).rc; },
   async erase(rq,engine,slot) { const info=parse[CMD.INFO](await rq(req.info()));if(info.shared)return bank.erase(rq,slot,info);return parse[CMD.NATIVE](await rq(req.native(engine,5,slot),FLASH_OPT)).rc; },
 };
-/* Synth modules (src/module_abi.h, tools/mod_build.py): the device's slots, a .mmod file's head, an upload */
+/* Synth modules (ABI 3: firmware/modules/sdk/mod_abi3.h, tools/mod_build.py): the device's slots, a .mmod file's head,
+ * an upload */
 const MODS = {
-  STATE: ["empty", "in RAM", "stored (loads when used)", "bad file", "no RAM", "number taken", "skipped this boot", "for another firmware"],
+  STATE: ["empty", "in RAM", "stored (loads when used)", "bad file", "no RAM", "number taken", "skipped this boot", "for an older firmware",
+          "needs a newer firmware"],
   RC: ["ok", "bad request", "storage full", "flash error", "busy", "not a module for this firmware", "engine number taken", "no RAM"],
   parseList(a) {
     const r = new Reader(a), o = { rc: r.b(), skipped: !!r.b(), slots: [] }, n = r.b();
@@ -1544,16 +1546,18 @@ const MODS = {
     }
     return o;
   },
-  /* the head of a module file (mod_file_t, 52 bytes) or an Error */
+  /* the head of a module file (mod_file3_t, 60 bytes) or an Error. key: the firmware's legacy data it was built
+   * against (0 none: it plays on any firmware with its host table), host: the host table version it needs; the device
+   * checks both (an older ABI's file: built for an older firmware) */
   head(bytes) {
     const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), v = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    if (b.length < 52 || v.getUint32(0, true) !== 0x31444D4D) throw new Error("not a module file (.mmod)");
-    const abi = v.getUint16(4, true);                /* 1; 2: native (src/module_native.h), its head 56 bytes with the */
-    if (abi !== 1 && abi !== 2) throw new Error("module ABI " + abi + ": this editor knows ABI 1 and native");
-    const total = v.getUint32(8, true);              /* firmware's layout key: the device checks it */
+    if (b.length < 60 || v.getUint32(0, true) !== 0x31444D4D) throw new Error("not a module file (.mmod)");
+    const abi = v.getUint16(4, true);
+    if (abi !== 3) throw new Error("module ABI " + abi + ": built for an older firmware (this editor knows ABI 3)");
+    const total = v.getUint32(8, true);
     if (total !== b.length) throw new Error("module file length " + b.length + ", its head says " + total);
     return { engine: b[6], total, image: v.getUint32(12, true), name: String.fromCharCode(...b.slice(32, 48)).replace(/\0.*$/, ""),
-      version: v.getUint16(48, true), npresets: b[50], native: abi === 2, key: abi === 2 && b.length >= 56 ? v.getUint32(52, true) : null };
+      version: v.getUint16(48, true), npresets: b[50], key: v.getUint32(52, true), host: v.getUint16(56, true) };
   },
   async list(rq, opt) { return MODS.parseList(await rq(req.moduleList(), opt)); },
   /* into slot k (or the slot holding its engine, else the first empty one); progress(done, total) */

@@ -118,11 +118,11 @@ static uint32_t trk_vmode(const track_t *t)
 #if MELODEE_ADMISSION
 static const track_t *voice_admitting;
 static uint8_t voice_admitting_p5parts;
-static uint32_t voice_p5_parts(void)
+static uint32_t voice_p5_parts(void)                  /* parts of cost class 1 (engine_t.wclass: the Prophet's) */
 {
     if(voice_admitting)return voice_admitting_p5parts;
     uint32_t parts=0;
-    for(uint32_t p=0;p<NPART;p++)if(trk[p].engine==ENGI_PROPHET){
+    for(uint32_t p=0;p<NPART;p++)if(eng_of(trk[p].engine)->wclass==1u){
         uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=trk[p].v[i].active && trk[p].v[i].stage!=4u;
         parts+=live!=0;
     }
@@ -550,7 +550,7 @@ static void trk_note_on_engine(track_t *t,uint32_t note,uint32_t vel)
 #if MELODEE_ADMISSION
     const track_t *previous=voice_admitting;uint8_t previous_parts=voice_admitting_p5parts;
     voice_admitting=0;uint32_t parts=voice_p5_parts();
-    if(t->engine==ENGI_PROPHET){uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=t->v[i].active && t->v[i].stage!=4u;parts+=!live;}
+    if(eng_of(t->engine)->wclass==1u){uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=t->v[i].active && t->v[i].stage!=4u;parts+=!live;}
     voice_admitting=t;voice_admitting_p5parts=(uint8_t)parts;
     trk_note_on_work(t,note,vel);voice_admitting=previous;voice_admitting_p5parts=previous_parts;
 #else
@@ -743,8 +743,8 @@ static int32_t smk_vibrato(const track_t *t)   /* Q8 semitones */
 {
     uint32_t ph, i;
     int32_t tri;
-    if (!smk_modw || t != &trk[smk_wheel_trk % NTRK] || t->eng_req == ENGI_PROPHET || t->eng_req == ENGI_FM6)
-        return 0;
+    if (!smk_modw || t != &trk[smk_wheel_trk % NTRK] || (eng_of(t->eng_req)->caps & MOD3_CAP_WHEEL))
+        return 0;                               /* (an engine that plays the wheel itself: the Prophet, FM6) */
     for (i = 0; i < NMSLOT; i++)
         if (t->p[P_M1SRC + 3u * i] == MS_MODW)
             return 0;                           /* the wheel is routed in the matrix: that is its job */
@@ -754,15 +754,16 @@ static int32_t smk_vibrato(const track_t *t)   /* Q8 semitones */
     return (tri * smk_modw) >> 14;
 }
 #endif
-/* (the Prophet's p5_block calls it: on the device through its module's imports, module_native.h) */
-static __attribute__((noinline)) void p5_update_bend(track_t *t)
+/* an engine with its own pitch wheel range (engine_t.bend_range: the Prophet's program BEND): the wheel's target from
+ * it, at the part's block before the engine's (track_render_audio) */
+static __attribute__((noinline)) void trk_bend_own(track_t *t, const engine_t *e)
 {
 #if MELODEE_CONTROL_FAST
     /* A centered wheel has an exact zero target at every native bend range.
-     * Smoothing still advances above p5_block, including on silent tracks. */
+     * Smoothing still advances above the engine's block, including on silent tracks. */
     if(!t->bend_raw){midi_bend_target[(uint32_t)(t-trk)]=0;return;}
 #endif
-    uint32_t ti=(uint32_t)(t-trk);int32_t range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
+    uint32_t ti=(uint32_t)(t-trk);int32_t range=e->bend_range(t);
     midi_bend_target[ti]=t->bend_raw*range/(t->bend_raw<0?8192:8191);
 }
 static struct { int16_t cents; uint8_t valid; int32_t pitch, fine; } tune_cache;
@@ -840,6 +841,8 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
         }
     AP_START(control_start);
     track_lfo_tick(t);
+    if (e->bend_range)                                  /* (the Prophet: its program's BEND) */
+        trk_bend_own(t, e);
     if (e->block)                                       /* the engine's per-part work (WHEEL: bars, rotor) */
         e->block(t);
     AP_END(AP_TRACK_CONTROL,control_start);

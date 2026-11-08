@@ -863,12 +863,7 @@ static void entry_label(uint32_t e, uint32_t k, char *tag, char *nm)
     } else if (e == USER_GENERAL) {
         up_slot_label(tag, k);
         up_name(k, nm);
-    } else {
-#if MELODEE_MODULES
-        if (mod_pst_of(e % NENGINES) >= NMOD)
-            mod_want(e % NENGINES);                 /* (an ABI 1 module's presets: loaded to name them; a native
-                                                     * module's are named from its file, not loaded) */
-#endif
+    } else {                                        /* (a synth module's presets: named from its file, not loaded) */
         str_cpy(tag, eng_abbr(eng_name(e)), 6);
         eng_preset_name(e, k, nm, 13);
     }

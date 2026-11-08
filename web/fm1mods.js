@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-// The synth modules a build ships (SID, DRUM: firmware/src/module_native.h), written after an update through editor
-// command 84 into the device's module slots: pool records, taken first come first served like projects and preset
-// banks. The file is build/melodee-mods.bin: the build's .mmod files one after another (each head gives its length).
-// A module is for the firmware it was built with (its layout key): a slot holding a module for the same engine (from
-// an older firmware, damaged, or this one) is emptied and written again; one already holding the very file is left.
+// The synth modules a build ships (SID, DRUM, CZ-1, FM6, the Prophet: ABI 3, firmware/modules/sdk/mod_abi3.h), written
+// after an update through editor command 84 into the device's module slots: pool records, taken first come first served
+// like projects and preset banks. The file is build/melodee-mods.bin: the build's .mmod files one after another (each
+// head gives its length). A shipped module reads the firmware's own synth data (its legacy key, the head's u32 at 52:
+// firmware/src/module_legacy.h): a slot holding a module for the same engine (from an older firmware, damaged, or this
+// one) is emptied and written again; one already holding the very file is left.
 // Errors carry a code for the installer's words: modfile (not a whole bundle), modnocmd (the firmware has no
 // command 84), modbuild (another build's), modbusy (playing), modroom (the storage is full), modslots (no free slot),
 // modwrite, modcheck.
@@ -28,7 +29,7 @@ export function modBundle(bundle) {
       throw modError("modfile", "Not a Melodee synth module file");
     const bytes = bundle.subarray(at, at + total);
     files.push({ engine: bytes[6], abi, name: String.fromCharCode(...bytes.subarray(32, 48)).replace(/\0.*$/, ""),
-                 crc: v.getUint32(28, true), key: abi === 2 ? v.getUint32(52, true) : 0, bytes });
+                 crc: v.getUint32(28, true), key: abi >= 2 ? v.getUint32(52, true) : 0, bytes });
     at += total;
   }
   return files;
@@ -68,7 +69,7 @@ export async function installModules(request, bundle, onProgress = () => {}) {
   if (!files.length) return "current";
   const ask = (args, timeout) => request([MOD_COMMAND, args], { timeout });
   let { list, own } = await modSlots(ask);
-  if (files.some((f) => f.abi === 2 && f.key !== own))
+  if (files.some((f) => f.abi >= 2 && f.key && f.key !== own))
     throw modError("modbuild", "These synth modules belong to another firmware build");
   const playing = (s) => [MOD_MS.LOADED, MOD_MS.STORED, MOD_MS.NORAM, MOD_MS.SKIPPED].includes(s.state);
   const todo = files.filter((f) => !list.some((s) => s.engine === f.engine && playing(s) && s.crc === f.crc && s.key === f.key));

@@ -5,8 +5,9 @@
  *       version (u14), length (u35), name (string)
  *   [1, slot, length u35] begin an upload; [2, slot, offset in 3 x 7 bits, packed bytes (at most 256)] its next bytes;
  *   [3, slot] commit: rc, the slot's state and engine; [4, slot] delete;
- *   [5, slot] its file: rc, state, engine, ABI, CRC (u35), layout key (u35; a native module's, else 0), this
- *       firmware's layout key (u35): the installer's check (web/fm1mods.js) whether a slot holds its file already.
+ *   [5, slot] its file: rc, state, engine, ABI, CRC (u35), key (u35: the legacy data's it was built against, 0 none;
+ *       an older ABI 2 file's layout key), this firmware's legacy key (u35, module_legacy.h): the installer's check
+ *       (web/fm1mods.js) whether a slot holds its file already.
  * rc: 0 ok, 1 bad request, 2 storage full, 3 flash error, 4 busy (the transport would not stop), 5 not a module for
  * this firmware, 6 its engine number is taken, 7 no room in RAM (stored, not loaded). */
 #define ED_MODULE 84u
@@ -14,7 +15,7 @@ static uint32_t ed_mod_rc(int rc)
 {
     return rc == MS_LOADED || rc == MS_EMPTY ? 0u : rc == -5 ? 2u : rc == -2 || rc == MS_BAD ? 5u :
            rc == -3 || rc == MS_CLASH ? 6u : rc == MS_NORAM ? 7u : rc == MS_SKIPPED ? 0u : rc == -1 ? 1u :
-           rc == MS_STALE ? 5u : 3u;
+           rc == MS_STALE || rc == MS_NEWER ? 5u : 3u;
 }
 static int ed_module_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 {
@@ -24,13 +25,13 @@ static int ed_module_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         ed_b(0); ed_b(mod_skipped); ed_b(NMOD);
         for (k = 0; k < NMOD; k++) {
             ed_b(mods[k].state); ed_b(mods[k].engine); ed_u14(mods[k].version); ed_u35(mods[k].len);
-            ed_str(mods[k].name, MOD_NAME_MAX);
+            ed_str(mods[k].name, MOD3_NAME_MAX);
         }
         return 1;
     }
     if (k < NMOD && op == 5u && n == 2u) {
         ed_b(0); ed_b(mods[k].state); ed_b(mods[k].engine); ed_b(mods[k].abi);
-        ed_u35(mods[k].crc); ed_u35(mods[k].key); ed_u35(MOD_NATIVE_KEY);
+        ed_u35(mods[k].crc); ed_u35(mods[k].key); ed_u35(MOD3_LEGACY_KEY);
         return 1;
     }
     if (k < NMOD && op >= 1u && op <= 4u) {

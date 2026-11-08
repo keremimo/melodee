@@ -112,7 +112,7 @@ static int dsk_done(const dsk_ch_t *c) { return c->e.state == SID_RELEASE && !c-
 
 static dsk_part_t *dsk_of(const track_t *t)
 {
-    dsk_part_t *K = dsk_part((uint32_t)(t - trk));
+    dsk_part_t *K = dsk_part(trk_ix(t));
     if (K && !K->ready) {                      /* a chip after reset: voices released at zero */
         for (uint32_t k = 0; k < DSK_NCH; k++) {
             K->ch[k].e.state = SID_RELEASE;
@@ -196,7 +196,7 @@ static void dsk_hit(track_t *t, uint32_t note, uint32_t vel)
     role = drum_gm(t->p, note, &st);
     lane = DV_TYPE_LANE[role];
     sound = drum_sound_of(t, note) & 15u;
-    pc = drum_patch_of(t - trk)->c[sound];
+    pc = drum_patch_of(trk_ix(t))->c[sound];
     tune = clamp((st + pc[0] + drum_event_pitch) * 16 + (t->p[P_E1] - 64) * 3, -576, 576);
     K->quiet = 0;
     if (t->p[P_E6] && sound <= D9_SD) {
@@ -337,7 +337,7 @@ static int32_t dsk_level(const int16_t *p, uint32_t lane, uint32_t level)
 static __attribute__((noinline)) void dsk_render(track_t *t, int32_t *out, uint32_t n, const vmod_t *m,
                                                  const int16_t *p)
 {
-    dsk_part_t *K = dsk_part((uint32_t)(t - trk) % NPART);
+    dsk_part_t *K = dsk_part(trk_ix(t) % NPART);
     const int16_t (*dac)[64] = SID_WDAC[SID_6581];
     const uint16_t *gt = SID_FC_G[SID_6581];
     int32_t a0[DSK_NCH], a1[DSK_NCH], zero = SID_ZERO[SID_6581], knee = SID_KNEE[SID_6581];

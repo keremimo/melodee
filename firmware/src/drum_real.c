@@ -71,7 +71,7 @@ static void drk_user_take(drk_part_t *K, uint32_t u, uint32_t g)
 
 static drk_part_t *drk_of(const track_t *t)
 {
-    drk_part_t *K = drk_part((uint32_t)(t - trk));
+    drk_part_t *K = drk_part(trk_ix(t));
     uint32_t g = drk_user_gen;
     if (K && (!K->ready || K->kit != t->p[P_E0] || K->gen != g)) {
         __typeof__(&memset) volatile clear = memset;
@@ -129,7 +129,7 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
     if (!K || K->kit < DK_USER0 || K->kit > DK_KIT_MAX || !K->H)
         return;
     uint32_t sound = drum909_ins(note) & 15u, lane = drum_lane(note);
-    const int8_t *pc = drum_patch_of(t - trk)->c[sound];
+    const int8_t *pc = drum_patch_of(trk_ix(t))->c[sound];
     const drk_map_t *m = &K->H->map[sound];
     uint32_t take = m->sample;
     if (take == 0xFFu)                           /* a pad with nothing recorded */
@@ -184,7 +184,7 @@ static int drk_live(const drk_part_t *K, const int16_t *p)
 
 static int drk_tick(track_t *t)
 {
-    drk_part_t *K = drk_part((uint32_t)(t - trk));
+    drk_part_t *K = drk_part(trk_ix(t));
     if (!drk_live(K, t->p))
         return 0;
     for (uint32_t k = 0; k < DRK_NCH; k++)
@@ -302,7 +302,7 @@ static inline __attribute__((always_inline)) void drk_tone(drk_ch_t *restrict c,
 /* the kit, one block: each channel at its level, steps easing out, then the lane kits' output stage */
 static __attribute__((noinline)) void drk_render(track_t *t, int32_t *out, uint32_t n, const vmod_t *m, const int16_t *p)
 {
-    drk_part_t *K = drk_part((uint32_t)(t - trk) % NPART);
+    drk_part_t *K = drk_part(trk_ix(t) % NPART);
     int32_t y[CTL] = {0}, x[CTL];
     if (!drk_live(K, p))
         return;

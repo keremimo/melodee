@@ -183,8 +183,8 @@ static void assignment_tests(void)
     failures+=check("every selectable unison count allocates the requested voices",count);
     for(uint32_t range=0;range<12;range++){
         control_setup(P5_BEND);control_turn(P5_BEND,range);
-        TSEL->bend_raw=8191;p5_update_bend(TSEL);bend &= midi_bend_target[0]==(int32_t)(range+1)*256;
-        TSEL->bend_raw=-8192;p5_update_bend(TSEL);bend &= midi_bend_target[0]==-(int32_t)(range+1)*256;
+        TSEL->bend_raw=8191;trk_bend_own(TSEL,eng_of(TSEL->engine));bend &= midi_bend_target[0]==(int32_t)(range+1)*256;
+        TSEL->bend_raw=-8192;trk_bend_own(TSEL,eng_of(TSEL->engine));bend &= midi_bend_target[0]==-(int32_t)(range+1)*256;
     }
     failures+=check("all twelve bend ranges reach their exact positive/negative endpoints",bend);
 }

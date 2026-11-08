@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
-"""Write a build's synth modules (SID, DRUM: firmware/src/module_native.h) into the connected FM-1's module slots
+"""Write a build's synth modules (ABI 3: SID, DRUM, CZ-1, FM6, the Prophet) into the connected FM-1's module slots
 through USB editor command 84, as the web installer does (web/fm1mods.js): pool records, first come first served like
 projects and preset banks. A slot holding the very file stays; one holding a module for the same engine (another
 firmware's, damaged) is emptied and written again. tools/fm1_install.py runs this after the resources when
@@ -47,7 +47,7 @@ def bundle(data):
             raise RuntimeError("not a Melodee synth module file")
         b = data[at:at + total]
         out.append(dict(engine=engine, abi=abi, name=b[32:48].split(b"\0")[0].decode("ascii", "replace"),
-                        crc=struct.unpack_from("<I", b, 28)[0], key=struct.unpack_from("<I", b, 52)[0] if abi == 2 else 0,
+                        crc=struct.unpack_from("<I", b, 28)[0], key=struct.unpack_from("<I", b, 52)[0] if abi >= 2 else 0,
                         bytes=b))
         at += total
     return out
@@ -83,7 +83,7 @@ def push(device, data, say=print):
     if not files:
         return "current"
     lst, own = slots(device)
-    if any(f["abi"] == 2 and f["key"] != own for f in files):
+    if any(f["abi"] >= 2 and f["key"] and f["key"] != own for f in files):
         raise RuntimeError("these synth modules belong to another firmware build than the FM-1 runs")
     todo = [f for f in files if not any(s["engine"] == f["engine"] and s["state"] in PLAYING and s["crc"] == f["crc"]
                                         and s["key"] == f["key"] for s in lst)]

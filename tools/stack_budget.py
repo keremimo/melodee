@@ -63,18 +63,11 @@ def analyze(ir, dis, src):
                 calls.add(m[1])
         frames[name] = total
         direct[name] = calls
-    # A synth module's callbacks (module_abi.h) are not in the image: one stand-in node with the stack a module may
-    # use (MOD_STACK_MAX; tools/mod_build.py refuses a module whose own call paths need more).
-    abi = src / 'module_abi.h'
-    module_budget = re.search(r'#define MOD_STACK_MAX (\d+)u', abi.read_text()) if abi.exists() else None
-    MODULE = '(synth module)'
-    if module_budget:
-        asm[MODULE], frames[MODULE], direct[MODULE] = [], int(module_budget[1]), set()
-    # A native module (module_native.h) is an engine_t of its own: any engine callback may be one of its functions,
-    # with the stack MOD_NSTACK_MAX allows (tools/mod_build.py --native refuses a module whose paths need more)
-    native = src / 'module_native.h'
-    native_budget = re.search(r'#define MOD_NSTACK_MAX (\d+)u', native.read_text()) if native.exists() else None
-    NATIVE = '(native synth module)'
+    # A synth module (ABI 3: firmware/modules/sdk/mod_abi3.h) is an engine of its own: any engine callback may be one
+    # of its functions, with the stack MOD3_STACK_MAX allows (tools/mod_build.py refuses a module whose paths need more)
+    abi = src.parent / 'modules' / 'sdk' / 'mod_abi3.h'
+    native_budget = re.search(r'#define MOD3_STACK_MAX (\d+)u', abi.read_text()) if abi.exists() else None
+    NATIVE = '(synth module)'
     if native_budget:
         asm[NATIVE], frames[NATIVE], direct[NATIVE] = [], int(native_budget[1]), set()
     # Possible function-pointer values: globals and local function-address uses.
@@ -182,10 +175,8 @@ def analyze(ir, dis, src):
                 targets = {n for n in worker_entries if n in asm}
             if name == 'audio_batch_worker':
                 targets = {n for n in batch_entries if n in asm}
-            if not targets and module_budget and '%struct.mod_ctx_t*' in typ:
-                targets = {MODULE}
-            if not targets and native_budget and '%struct.mod_imports_t*' in typ:
-                targets = {NATIVE}                     # (module_store.c: a native module's bind)
+            if not targets and native_budget and '%struct.mod_host_v3*' in typ:
+                targets = {NATIVE}                     # (module_store.c: a module's bind)
             indirect.setdefault(name, set()).update(targets)
             if not targets:
                 missing.append((name, typ, line.strip()))

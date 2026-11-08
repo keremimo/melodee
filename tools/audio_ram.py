@@ -19,11 +19,12 @@ CALL = re.compile(r'\bcall\b[^\n@]*@([\w.]+)\(')
 ROOTS = {'fm1_alnk0_irq', 'audio_block', 'mix_block', 'ua_audio', 'click_render',
          'p5_worker_kernel', 'fm6_worker_kernel', 'audio_batch_worker', 'audio_batch_parallel', 'p5_batch_kernel', 'fm6_batch_kernel', 'engine_batch_kernel', 'fm1_timer5_irq',
          'mod_part_mem', 'voice_scale_pitch', 'trk_nvoice', 'audio_batch_push', 'audio_batch_push_cost',
-         'audio_worker_submit', 'audio_worker_join', 'audio_profile_add', 'p5_update_bend'}   # (the firmware's calls a native synth module
-                                                                         # makes: module_native.h)
+         'audio_worker_submit', 'audio_worker_join', 'audio_profile_add', 'mod_h_pitch_inc', 'mod_h_octave',
+         'mod_h_no_submit', 'mod_h_no_join', 'mod_h_no_profile'}   # (the host table's calls a synth module makes from the
+                                                                   # audio: eng_module.c MOD_HOST3)
 CALLBACKS = {'note_on', 'render', 'amp', 'block', 'done', 'alloc', 'legato',
              'mono_key', 'post', 'units', 'cap', 'keys', 'desc',
-             'state', 'env_q15', 'chord', 'reuse', 'batch', 'render_p', 'menv', 'join', 'reserve'}
+             'state', 'env_q15', 'chord', 'reuse', 'batch', 'render_p', 'menv', 'join', 'reserve', 'bend_range'}
 COLD_CALLBACKS = {'preset_make'}
 
 
