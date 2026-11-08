@@ -22,6 +22,10 @@
 #define MOD_NELEM(a) (sizeof(a) / sizeof((a)[0]))
 #define md_e(t) ((t)->p + MOD3_P_E0)              /* E1..E8 of part t */
 
+#ifndef MOD3_SDK_HOST
+#define MOD3_SDK_HOST MOD3_HOST_MIN              /* the lowest host table version the module needs (define it before
+                                                  * this header for more); a later member only when mh->version has it */
+#endif
 static const mod_host_v3 *mh;                    /* the firmware's table (md_bind) */
 static const int16_t *md_sine_tab, *md_tanh_tab; /* its tables the helpers read */
 static const uint16_t *md_svf_tab;
@@ -29,7 +33,7 @@ static const uint16_t *md_svf_tab;
 static int md_bind(const mod_host_v3 *h, uint32_t self)
 {
     (void)self;
-    if (h->version < MOD3_HOST || h->size < sizeof(mod_host_v3))
+    if (h->version < MOD3_SDK_HOST || h->size < MOD3_HOST_SIZE(MOD3_SDK_HOST))
         return 1;
     mh = h;
     md_sine_tab = (const int16_t *)h->table(MOD3_T_SINE);
@@ -42,7 +46,7 @@ static int md_bind(const mod_host_v3 *h, uint32_t self)
 #else
 #define MOD3_EXPORT(sym) __attribute__((used, section(".mod_desc"))) const mod_desc_v3 sym
 #endif
-#define MOD3_SDK_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
+#define MOD3_SDK_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_SDK_HOST, \
     .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = md_bind
 /* its factory presets, the first one its INIT: rows the builder packs into the file's PRST chunk (never in the image)
  *     MOD3_PRESETS = {{"FAT BASS", 8, {e1..e8}, {atk, dec, sus, rel}, fenv, mono}, ...};

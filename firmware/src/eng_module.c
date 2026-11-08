@@ -155,6 +155,7 @@ static const void *mod_h_table(uint32_t id)
     }
 }
 static int mod_h_file_read(uint32_t self, uint32_t off, void *dst, uint32_t n);   /* eng_module_main.c */
+static int32_t *mix_h_stereo(const track_t *t);                                   /* mix.c: host 5's stereo */
 /* the host's drawing for a module's own widget (schema.c sch_draw sets the canvas it draws into) */
 static uint16_t mod_h_color(uint32_t role);
 static void mod_h_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c);
@@ -221,6 +222,7 @@ static const mod_host_v3 MOD_HOST3 = {
     .note_pitch = &note_hit_pitch, .note_len = &note_hit_len, .rec = rec_tab, .rec_gen = &rec_gen, .rec_base = REC_BASE,
     .rec_begin = mod_h4_rec_begin, .rec_write = mod_h4_rec_write, .rec_commit = mod_h4_rec_commit,
     .rec_delete = mod_h4_rec_delete, .wdt = mod_h4_wdt,
+    .stereo = MOD3_CALL(int32_t *(*)(const mod_part_v3 *), mix_h_stereo),
 };
 
 /* a stored module's engine while it is not in SRAM: its lists' names come from its file (eng_name), its sounds keep

@@ -86,7 +86,7 @@ static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_
 {
     mod_file3_t h;
     memset(&h, 0, sizeof h);
-    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)engine; h.host = MOD3_HOST;
+    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)engine; h.host = MOD3_HOST_MIN;
     h.image = image; h.bss = 128; h.nrel = nrel; h.version = 3; h.npresets = (uint8_t)npresets; h.key = key;
     strncpy(h.name, name, sizeof h.name);
     for (uint32_t i = 0; i < image; i++) b[MOD3_HEAD + i] = (uint8_t)(i * 13u + 5u);
@@ -569,7 +569,7 @@ int main(int argc, char **argv)
         for (uint32_t w = 0; w < 4u; w++) {
             uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
             make_other(nf[0], w == 0 ? 1u : w == 1 ? 2u : MOD3_ABI, w == 2 ? MT_OLD_KEY : 0u,
-                       w == 3 ? MOD3_HOST + 1u : MOD3_HOST);
+                       w == 3 ? MOD3_HOST + 1u : MOD3_HOST_MIN);
             rk += put(6, nf[0], nk) == -2 && !st_exists(ST_MFILE0 + 6);
         }
         bad += check("another firmware's module (ABI 1, ABI 2, another legacy key, a newer host table): refused, not published",

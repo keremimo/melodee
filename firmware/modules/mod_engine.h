@@ -67,7 +67,7 @@ static const uint8_t *mod_imp_rec_base;
 /* the host table into the pointers: 0, or why not (a table or the pads data this firmware does not have) */
 static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 {
-    if (h->version < MOD3_HOST || h->size < sizeof(mod_host_v3))
+    if (h->version < MOD3_HOST_MIN || h->size < MOD3_HOST_SIZE(MOD3_HOST_MIN))
         return 1;
     mod_host = h;
     mod_self = self;
@@ -114,6 +114,6 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 #else
 #define MOD3_ENGINE_EXPORT(sym) const mod_desc_v3 sym      /* (host tests: the descriptor by its name) */
 #endif
-#define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
+#define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST_MIN, \
     .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = mod_engine_bind
 

@@ -10,7 +10,8 @@
  *    array of mod_voice_v3. A voice's modulation (mod_vmod_v3) is built for each call.
  *  - The host table (mod_host_v3): the firmware's data and calls, handed to bind() once. Append only: a later firmware
  *    adds members at its end and counts version up; a module names the lowest version it needs (mod_desc_v3.host) and
- *    an older firmware refuses it before loading it (module_store.c: MS_NEWER, its engine and name kept).
+ *    an older firmware refuses it before loading it (module_store.c: MS_NEWER, its engine and name kept). A member
+ *    after that version is optional: the module reads it only when the table's version has it.
  *  - The engine (mod_engine_v3): today's engine callbacks, flags and capabilities. The firmware copies it at load
  *    (eng_size bytes; a field a module is too old to have reads 0).
  *  - Frozen numbers: the parameter numbers (P_*, mod_part_v3.p), the global ones (G_*, mod_host_v3.song_g), the cost
@@ -30,9 +31,11 @@
 #include <stdint.h>
 
 #define MOD3_ABI 3u
-#define MOD3_HOST 4u                             /* the host table version this contract describes (2: the patch, its
+#define MOD3_HOST 5u                             /* the host table version this contract describes (2: the patch, its
                                                   * schema's callbacks, the host's drawing; 3: SysEx; 4: pads, data
-                                                  * records) */
+                                                  * records; 5: a part's stereo output) */
+#define MOD3_HOST_MIN 4u                         /* the version a module built from this file needs unless it says more
+                                                  * (mod_sdk.h MOD3_SDK_HOST): host 5's member is optional */
 #define MOD3_FILE_MAGIC 0x31444D4Du              /* "MMD1": every module file's (ABI 1 and 2: older firmware's) */
 #define MOD3_MAGIC 0x33444F4Du                   /* "MOD3": the descriptor, the image's first bytes */
 #define MOD3_FILE_CHUNKS 1u                      /* mod_file3_t.flags: chunks follow the address words */
@@ -356,7 +359,13 @@ typedef struct mod_host_v3 {
     int (*rec_commit)(uint32_t slot);            /* checked (rec_check), published: 0; -2 not playable */
     int (*rec_delete)(uint32_t slot);
     void (*wdt)(void);                           /* (main loop) a long call keeps the device's watchdog fed */
+    /* host 5: a part's stereo output. In post (from the mixer), the part's left side for this block (n samples, the
+     * module writes them all) and out then holds L + R: the mixer keeps the sides apart to the master (PAN a balance,
+     * the FX sends post balance). 0: not now (a render outside the mixer's): out alone, mono */
+    int32_t *(*stereo)(const mod_part_v3 *t);
 } mod_host_v3;
+/* a host table's size at version v (4 or later): what bind checks the table's size against */
+#define MOD3_HOST_SIZE(v) ((v) >= 5u ? sizeof(mod_host_v3) : __builtin_offsetof(mod_host_v3, stereo))
 #define MOD3_SX_SEL 0xFFu
 enum { MOD3_C_BG, MOD3_C_INK, MOD3_C_DIM, MOD3_C_ACCENT, MOD3_C_THEME, MOD3_C_SURF, MOD3_C_RAISE, MOD3_C_COUNT };
 enum { MOD3_FONT_SMALL, MOD3_FONT_LABEL, MOD3_FONT_VALUE };

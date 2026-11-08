@@ -52,7 +52,7 @@ static uint32_t make(const char *vendor, const char *name, uint32_t want, uint32
     memcpy(id.tag, name, strlen(name) < 4u ? strlen(name) : 4u);
     memcpy(id.vendor, vendor, strlen(vendor));
     chunk(file, &at, MOD3_IDNT_TAG, &id, sizeof id);
-    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)want; h.host = MOD3_HOST; h.flags = MOD3_FILE_CHUNKS;
+    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)want; h.host = MOD3_HOST_MIN; h.flags = MOD3_FILE_CHUNKS;
     h.image = image; h.bss = 16; h.version = 1; h.uid = id.uid; h.total = at;
     strncpy(h.name, name, sizeof h.name);
     h.crc = st_crc32(file + MOD3_HEAD, at - MOD3_HEAD);

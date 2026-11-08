@@ -158,6 +158,43 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
     }
     t->peak=pk;
 }
+#if MELODEE_MODULES
+/* host 5 (mod_abi3.h stereo, eng_module.c MOD_HOST3): mix_part names the part it renders; its module's post, on this
+ * core after the part's voices, may take the part's left side (spread_buf, the batch's or the part's own) and leave
+ * L + R in its block. A render outside mix_part's gets 0 and stays mono */
+static const track_t *mix_st_part;
+static uint8_t mix_st_on;
+static int32_t *mix_h_stereo(const track_t *t)
+{
+    if(t!=mix_st_part)return 0;
+    mix_st_on=1;
+    return spread_buf;
+}
+/* .. such a part, b its L + R, spread_buf its L: each side levelled on its own (its own dither place, as SPREAD's two),
+ * then PAN as a balance, the mono law's gains one a side (centre: L and R as they are; right: the left side fades).
+ * The FX sends take the sides post balance, as a mono part's post pan; its meter the louder side, its stem (USB
+ * capture) their middle */
+static __attribute__((noinline)) void mix_stereo(track_t *t,const int32_t *b,uint32_t n)
+{
+    mix_cache_t *mc=&mix_cache[(uint32_t)(t-trk)];
+    if(!mc->valid || mc->level!=t->p[P_LEVEL] || mc->pan!=t->p[P_PAN])mix_cache_update(t,mc);
+    uint32_t send=fx_send_on?fx_send_gain(t):0u;
+    const int32_t *d=spread_buf;
+    int32_t lvl=mc->lvl,gl=mc->gl,gr=mc->gr,pk=t->peak;
+    uint32_t dk=(uint32_t)(t-trk)*8u;
+    for(uint32_t i=0;i<n;i++){
+        int32_t l=mix_level(d[i],lvl,i+dk),r=mix_level(b[i]-d[i],lvl,i+dk+4u);
+        int32_t al=l<0?-l:l,ar=r<0?-r:r;
+#if MELODEE_USB_AUDIO
+        if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=(l+r)>>1;
+#endif
+        if(al>pk)pk=al;
+        if(ar>pk)pk=ar;
+        mix_add((l*gl)>>12,(r*gr)>>12,i,send);
+    }
+    t->peak=pk;
+}
+#endif
 #if MELODEE_MIX_FAST
 #define MIX_MONO_GENERAL mix_mono_general
 #else
@@ -277,6 +314,10 @@ static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
      * stay unchanged and zero extra sends need no extra mixing pass. */
     if(extra){memcpy(fx_bus_sum_l,mix_l,n*sizeof *mix_l);memcpy(fx_bus_sum_r,mix_r,n*sizeof *mix_r);}
     int rendered;
+    uint32_t st=0;
+#if MELODEE_MODULES
+    mix_st_part=t;mix_st_on=0;
+#endif
 #if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
     if(batch_ready){
         uint32_t p=(uint32_t)(t-trk);mod=batch_mod[p];
@@ -299,12 +340,21 @@ static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
         spread_on=t->p[P_SPRD]>0 && (trk_vmode(t)==V_POLY || trk_vmode(t)==V_UNISON);
         rendered=(int)track_render_audio(t,part_buf,n,0);
     }
+#if MELODEE_MODULES
+    mix_st_part=0;
+    st=rendered && mix_st_on;
+    if(st)spread_on=1;                                  /* (mix_solo's ramp on both sides) */
+#endif
 #if defined(MELODEE_FX_PROFILE) && MELODEE_FX_PROFILE && defined(FM1_IRQ_TARGET)
-    if(fx_profile_control>>30u && fx_profile_track((uint32_t)(t-trk))){for(uint32_t i=0;i<n;i++)part_buf[i]=((i&8u)?-8000:8000)+(int32_t)i*97;rendered=1;spread_on=0;}
+    if(fx_profile_control>>30u && fx_profile_track((uint32_t)(t-trk))){for(uint32_t i=0;i<n;i++)part_buf[i]=((i&8u)?-8000:8000)+(int32_t)i*97;rendered=1;spread_on=0;st=0;}
 #endif
     AP_START(mix_start);
     if(rendered){
         mix_solo(t,part_buf,n);
+#if MELODEE_MODULES
+        if(st)mix_stereo(t,part_buf,n);
+        else
+#endif
         if(spread_on)mix_spread(t,part_buf,n);
         else{
             mix_cache_t *mc=&mix_cache[(uint32_t)(t-trk)];

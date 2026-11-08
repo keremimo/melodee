@@ -21,8 +21,8 @@ ROOTS = {'fm1_alnk0_irq', 'audio_block', 'mix_block', 'ua_audio', 'click_render'
          'mod_part_mem', 'voice_scale_pitch', 'trk_nvoice', 'audio_batch_push', 'audio_batch_push_cost',
          'audio_worker_submit', 'audio_worker_join', 'audio_profile_add', 'mod_h_pitch_inc', 'mod_h_octave',
          'mod_h_no_submit', 'mod_h_no_join', 'mod_h_no_profile',
-         'patch_play'}   # (the host table's calls a synth module makes from the audio: eng_module.c MOD_HOST3; patch: the
-                         # part's patch, patch.c)
+         'patch_play', 'mix_h_stereo'}   # (the host table's calls a synth module makes from the audio: eng_module.c
+                         # MOD_HOST3; patch: the part's patch, patch.c; stereo: host 5's, mix.c)
 CALLBACKS = {'note_on', 'render', 'amp', 'block', 'done', 'alloc', 'legato',
              'mono_key', 'post', 'units', 'cap', 'keys', 'desc',
              'state', 'env_q15', 'chord', 'reuse', 'batch', 'render_p', 'menv', 'join', 'reserve', 'bend_range',
