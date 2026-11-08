@@ -77,6 +77,9 @@ static uint32_t eng_map_free(void)                  /* the first free handle, NE
 static uint32_t eng_map_take(uint64_t uid, const char *name)
 {
     uint32_t e = eng_map_find(uid);
+    if (e < NENGINES && !eng_map[e].name[0])    /* (lent with no name, a preset bank's IDs: a store's entry names it) */
+        for (uint32_t i = 0; i < MOD3_NAME_MAX && name[i]; i++)
+            eng_map[e].name[i] = name[i];
     if (e < NENGINES || !uid)
         return e;
     if ((e = eng_map_free()) >= NENGINES && eng_map_spare) {
@@ -151,6 +154,19 @@ static int eng_remap_read(const uint8_t *b, uint32_t n)
         eng_remap[from] = (uint8_t)(to < NENGINES ? to + 1u : 0u);   /* (no handle left: none, silent) */
     }
     return 0;
+}
+/* n IDs at b (8 bytes each: a preset bank's, upreset.c) for the places 1..n: remap them (an ID not installed here lent a
+ * handle with no name; 0 or none left: none) */
+static void eng_remap_ids(const uint8_t *b, uint32_t n)
+{
+    eng_remap_reset();
+    for (uint32_t k = 0; k < n && k + 1u < NENGINES; k++, b += 8) {
+        uint64_t uid = mod_le64(b);
+        uint32_t to = uid ? eng_map_take(uid, "") : NENGINES;
+        if (to < NENGINES)
+            eng_map_reading |= 1u << to;
+        eng_remap[k + 1u] = (uint8_t)(to < NENGINES ? to + 1u : 0u);
+    }
 }
 static uint32_t eng_in(uint32_t e) { return e < NENGINES && eng_remap[e] ? eng_remap[e] - 1u : ENG_H_NONE; }
 #ifndef FM1_IRQ_TARGET

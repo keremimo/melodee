@@ -133,6 +133,16 @@ static int compact_save_parity(void)
         if((disk.r[i].head[0]&~UP_STAR)==UP_USED)
             disk.r[i].head[0]=(uint8_t)(UP_USED|(i&1u?UP_STAR:0));
     }
+    {   /* (2.0: a used record's engine byte on flash is its synth's place in the bank's IDs + 1, 0 for none) */
+        uint8_t place[NENGINES]={0},n=0;
+        for(uint32_t i=0;i<UP_PER_BANK;i++){
+            uint8_t *h=disk.r[i].head;
+            if(!h[0])continue;
+            if(!eng_map_own(h[2])){h[2]=0;continue;}
+            if(!place[h[2]])place[h[2]]=++n;
+            h[2]=place[h[2]];
+        }
+    }
     success=original;
     for(uint32_t i=0;i<UP_PER_BANK;i++)success.r[i].used=disk.r[i].head[0];
     static uint8_t flash_before[sizeof nor];memcpy(flash_before,nor,sizeof nor);
@@ -155,9 +165,23 @@ static int compact_save_parity(void)
     bad+=check("in-place save matches original bytes; all page/erase/readback cuts restore cache",safe);
     return bad;
 }
+/* 2.0: a bank names its records' synths by ID after them, ten at most (upreset.c UP_IDS_MAX) */
+static int bank_many_synths(void)
+{
+    int bad=0,ok=1;reset();up_boot();
+    for(uint32_t i=0;i<10u;i++){set_engine_of(TSEL,ENGI_PROPHET+i);if(up_store(i,"MANY"))return check("a bank holds the presets of ten synths",0);}
+    up_cache_reset();up_boot();
+    for(uint32_t i=0;i<10u;i++)ok&=up_used(i)&&up_engine(i)==ENGI_PROPHET+i;
+    bad+=check("a bank holds the presets of ten synths, by ID",ok);
+    up_rec_t r=*up_rec(0);r.engine=(uint8_t)eng_map_take(0x1122334455667788ULL,"ELEVEN");
+    bad+=check("an eleventh synth's preset is refused, the bank as it was",up_put(10,&r)==2&&!up_used(10)&&up_engine(0)==ENGI_PROPHET);
+    up_cache_reset();up_boot();
+    bad+=check(".. and after a reboot",!up_used(10)&&up_used(9)&&up_engine(9)==ENGI_PROPHET+9u);
+    return bad;
+}
 int main(void)
 {
-    int bad=compact_save_parity()+fill(ENGI_CZ)+fill(ENGI_PROPHET)+fill(ENGI_FM6);
+    int bad=compact_save_parity()+bank_many_synths()+fill(ENGI_CZ)+fill(ENGI_PROPHET)+fill(ENGI_FM6);
     reset();up_boot();p5_patch_t p;p5_patch_init(&p);uint8_t cz[CZ_BYTES];cz_patch_init(cz);
     bad+=check("Prophet occupies a shared slot",!native_put(ENGI_PROPHET,383,(uint8_t *)&p));
     bad+=check("CZ replaces Prophet in the identical slot",!native_put(ENGI_CZ,383,cz)&&native_used(ENGI_CZ,383)&&!native_used(ENGI_PROPHET,383));

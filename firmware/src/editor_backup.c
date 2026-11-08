@@ -185,9 +185,9 @@ static int ed_bk_panel_valid(const panel_t *p)
 static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
 {
     const up_bank_t *h=(const up_bank_t *)raw;
-    const uint8_t *m=raw+sizeof(up_disk_bank_t);         /* (its engine map entries after its records: upreset.c) */
+    const uint8_t *m=raw+sizeof(up_disk_bank_t);         /* (its synths' IDs after its records: upreset.c) */
     if(len>sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && (len<sizeof(up_disk_bank_t)+8u ||
-       mod_le32(m)!=UP_MAP_MAGIC || len!=sizeof(up_disk_bank_t)+8u+m[4]*EMAP_ENTRY))return 0;
+       mod_le32(m)!=UP_IDS_MAGIC || m[4]>UP_IDS_MAX || len!=sizeof(up_disk_bank_t)+8u+8u*m[4]))return 0;
     if(len>=sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && h->rsize==sizeof(up_disk_rec_t) && h->nslot==UP_PER_BANK){
         const up_disk_bank_t *d=(const up_disk_bank_t *)raw;
         for(uint32_t j=0;j<UP_PER_BANK;j++){up_rec_t r;memset(&r,0,sizeof r);memcpy(&r,d->r[j].head,160u);memcpy(r.tone_extra,d->r[j].extra,46u);

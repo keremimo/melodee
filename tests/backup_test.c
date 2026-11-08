@@ -225,9 +225,9 @@ static int full_pattern_archive(void)
 }
 static int native_archive(void)
 {
-    reset();up_boot();int ok=1;static uint8_t saved[UP_BANKS][sizeof(up_disk_bank_t)+8u+EMAP_ENTRY];uint8_t fm[FM6_PACKED];fm6_factory(3,fm);
+    reset();up_boot();int ok=1;static uint8_t saved[UP_BANKS][sizeof(up_disk_bank_t)+8u+8u];uint8_t fm[FM6_PACKED];fm6_factory(3,fm);
     for(uint32_t b=0;b<UP_BANKS;b++)ok &= !native_put(ENGI_FM6,b*UP_PER_BANK,fm);
-    for(uint32_t id=6;id<ED_BK_N;id++){                 /* (2.0: a bank's synths' entries after its records: FM6's) */
+    for(uint32_t id=6;id<ED_BK_N;id++){                 /* (2.0: a bank's synths' IDs after its records: FM6's) */
         uint32_t b=ed_bk_preset_bank(id),len;if(b>=UP_BANKS)continue;
         const uint8_t *raw=ed_bk_object(id,&len);ok &= len==sizeof saved[b];memcpy(saved[b],raw,sizeof saved[b]);
         ok &= !put_all(id,0,0,0);ok &= !put_all(id,saved[b],sizeof saved[b],st_crc32(saved[b],sizeof saved[b]));
@@ -461,12 +461,12 @@ int main(void)
                      put_all(5, old, sizeof old, st_crc32(old, sizeof old)) == 2u && !st_exists(OBJ_BANK0 + 3u));
     }
     {   /* Native voices now travel inside their shared record object. */
-        static uint8_t got[sizeof(up_disk_bank_t)+8u+EMAP_ENTRY];static uint8_t owned[4240];uint8_t pk[FM6_PACKED];
+        static uint8_t got[sizeof(up_disk_bank_t)+8u+8u];static uint8_t owned[4240];uint8_t pk[FM6_PACKED];
         bad+=check("retired bank id 8 refuses a payload",put_begin(8,3612,0)==1u);
         bad+=check("retired bank id 8 is listed empty",list(8,&len,&crc)==0&&!len);
         bad+=check("obsolete oversized owned-voice archive is refused",put_begin(19,sizeof owned,st_crc32(owned,sizeof owned))==1u);
         fm6_factory(5,pk);native_put(ENGI_FM6,383,pk);
-        const uint8_t *raw=ed_bk_object(28,&len);memcpy(got,raw,sizeof got);   /* (its records, FM6's entry) */
+        const uint8_t *raw=ed_bk_object(28,&len);memcpy(got,raw,sizeof got);   /* (its records, FM6's ID) */
         bad+=check("U384's shared bank lists with its compact CRC",list(28,&len,&crc)==0&&len==sizeof got&&crc==st_crc32(got,sizeof got));
         native_put(ENGI_FM6,383,0);
         bad+=check("highest shared voice restores through object 28",put_all(28,got,sizeof got,st_crc32(got,sizeof got))==0&&native_used(ENGI_FM6,383)&&!memcmp(native_raw(ENGI_FM6,383),pk,sizeof pk));

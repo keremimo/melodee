@@ -43,10 +43,11 @@ int main(void)
     reset(); up_bank_t bank = {0}; bank.magic = UP_BANK_MAGIC; bank.rsize = sizeof(up_rec_t); bank.nslot = UP_PER_BANK;
     bank.r[0] = rec; bank.r[0].ver = 1;
     up_disk_bank_t disk;memset(&disk,0,sizeof disk);disk.magic=UP_DISK_MAGIC;disk.rsize=sizeof(up_disk_rec_t);disk.nslot=UP_PER_BANK;memcpy(disk.r[0].head,&bank.r[0],160u);memcpy(disk.r[0].extra,bank.r[0].tone_extra,46u);
-    {   /* (as 2.0 writes a bank: its synths' entries after the records, UP_MAP_MAGIC) */
-        static uint8_t withmap[sizeof disk + 8u + EMAP_ENTRY];
-        memcpy(withmap, &disk, sizeof disk); memcpy(withmap + sizeof disk, &(uint32_t){UP_MAP_MAGIC}, 4);
-        withmap[sizeof disk + 4u] = 1; eng_map_put(withmap + sizeof disk + 8u, ENGI_SID);
+    {   /* (as 2.0 writes a bank: its synths' IDs after the records, UP_IDS_MAGIC; the record's engine byte its place) */
+        static uint8_t withmap[sizeof disk + 8u + 8u];
+        disk.r[0].head[2] = 1u;
+        memcpy(withmap, &disk, sizeof disk); memcpy(withmap + sizeof disk, &(uint32_t){UP_IDS_MAGIC}, 4);
+        withmap[sizeof disk + 4u] = 1; mod_put64(withmap + sizeof disk + 8u, eng_map[ENGI_SID].uid);
         st_save(OBJ_UPRESET0, withmap, sizeof withmap); up_cache_reset();
     }
     bad += check("unknown record inside current bank stays occupied", up_old(0) && !up_used(0) && !up_old(1));

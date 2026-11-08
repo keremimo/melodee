@@ -23,7 +23,7 @@
 #define UP_PER_BANK 18u
 #endif
 #define UP_BANKS ((UP_SLOTS+UP_PER_BANK-1u)/UP_PER_BANK)
-#define UP_DISK_MAGIC 0x33425055u             /* "UPB3": Melodee 2.0, the synths it names in its EMA2 entries (UPB2 and before: 1.x) */
+#define UP_DISK_MAGIC 0x33425055u             /* "UPB3": Melodee 2.0, its synths by ID after its records (UPB2 and before: 1.x) */
 #define UP_VER_FM 11u
 #define UP_VER_P5 12u
 #define UP_VER_NATIVE_CZ 13u
@@ -115,41 +115,54 @@ static uint32_t up_obj(uint32_t b)
 typedef struct { uint8_t head[160], extra[46]; } up_disk_rec_t;
 typedef struct { uint32_t magic; uint16_t rsize,nslot; up_disk_rec_t r[UP_PER_BANK]; } up_disk_bank_t;
 _Static_assert(sizeof(up_disk_bank_t)<=3808u,"unified presets fit every A/B sector");
-/* A bank whose records name synths that are not Melodee's defaults here (eng_map.c) carries their entries after its
- * records: "EMA2", the count, 0 x 3, the entries (their IDs). A bank of Melodee's own synths is the record it always
- * was */
-#define UP_MAP_MAGIC 0x32414D45u
-static uint32_t up_map_write(uint8_t *b, const uint8_t *disk)   /* (disk: its records packed) its bytes, 0 none */
+/* A bank names its records' synths by ID after its records (Melodee 2.0: handles live in RAM only): "UIDS", the count n,
+ * 0 x 3, then n IDs, 8 bytes each (little endian); a used record's engine byte is its synth's place there + 1 (0: none).
+ * UP_IDS_MAX of them fit the smallest bank object; a bank of no used record has none */
+#define UP_IDS_MAGIC 0x53444955u
+#define UP_IDS_MAX 10u
+_Static_assert(sizeof(up_disk_bank_t) + 8u + UP_IDS_MAX * 8u <= 3808u, "a bank's synths' IDs fit every bank object");
+#define UP_IDS_FULL 0xFFFFFFFFu
+/* (disk: its records packed: their engine bytes become places) the table's bytes at b, 0 none, UP_IDS_FULL: more
+ * synths than UP_IDS_MAX */
+static uint32_t up_map_write(uint8_t *b, uint8_t *disk)
 {
+    uint8_t place[NENGINES];
     uint32_t n = 0;
-    for (uint32_t e = 0; e < NENGINES; e++) {
-        uint32_t named = 0;
-        for (uint32_t i = 0; i < UP_PER_BANK; i++)   /* (a record's head: used, version, engine, ..) */
-            named |= disk[i * sizeof(up_disk_rec_t)] && disk[i * sizeof(up_disk_rec_t) + 2u] == e;
-        if (named && eng_map_own(e))
-            eng_map_put(b + 8u + EMAP_ENTRY * n++, e);
+    memset(place, 0, sizeof place);
+    for (uint32_t i = 0; i < UP_PER_BANK; i++) {   /* (a record's head: used, version, engine, ..) */
+        uint8_t *h = disk + i * sizeof(up_disk_rec_t);
+        uint32_t e = h[2];
+        if (!h[0]) continue;
+        if (!eng_map_own(e)) { h[2] = 0; continue; }
+        if (!place[e]) {
+            if (n == UP_IDS_MAX) return UP_IDS_FULL;
+            mod_put64(b + 8u + 8u * n, eng_map[e].uid);
+            place[e] = (uint8_t)++n;
+        }
+        h[2] = place[e];
     }
     if (!n)
         return 0;
-    memcpy(b, &(uint32_t){UP_MAP_MAGIC}, 4);
+    memcpy(b, &(uint32_t){UP_IDS_MAGIC}, 4);
     b[4] = (uint8_t)n; b[5] = b[6] = b[7] = 0;
-    return 8u + n * EMAP_ENTRY;
+    return 8u + 8u * n;
 }
-/* the bank just read: its records' engine numbers as this device has them (up_map_read's remap) */
+/* the bank just read: its records' synths as this device has them (up_map_read's remap) */
 static __attribute__((noinline)) void up_remap_cache(void)
 {
     for (uint32_t j = 0; j < UP_PER_BANK; j++)
         if (up_cache.r[j].used) up_cache.r[j].engine = (uint8_t)eng_in(up_cache.r[j].engine);
 }
-/* a stored bank of n bytes: its entries read (the remap for its records' numbers, eng_in), the bank's own length */
+/* a stored bank of n bytes: its IDs read (the remap for its records' places, eng_in), the bank's own length */
 static int up_map_read(int n)
 {
     const uint8_t *m = (const uint8_t *)&up_cache + sizeof(up_disk_bank_t);
     uint32_t c;
     eng_remap_reset();
-    if (n <= (int)sizeof(up_disk_bank_t) || mod_le32(m) != UP_MAP_MAGIC || m[5] || m[6] || m[7] ||
-        (uint32_t)n != sizeof(up_disk_bank_t) + 8u + (c = m[4]) * EMAP_ENTRY || eng_remap_read(m + 8, c))
+    if (n <= (int)sizeof(up_disk_bank_t) || mod_le32(m) != UP_IDS_MAGIC || m[5] || m[6] || m[7] ||
+        (c = m[4]) > UP_IDS_MAX || (uint32_t)n != sizeof(up_disk_bank_t) + 8u + 8u * c)
         return n;
+    eng_remap_ids(m + 8, c);
     return (int)sizeof(up_disk_bank_t);
 }
 /* The bank cache has one foreground owner; audio holds independent patches.
@@ -159,10 +172,11 @@ static int up_map_read(int n)
 static __attribute__((noinline)) int up_save_bank(uint32_t b)
 {
     up_bank_t *bank=up_cache_bank(b);
-    struct {uint8_t phrase[32],used;} saved[UP_PER_BANK];
+    struct {uint8_t phrase[32],used,engine;} saved[UP_PER_BANK];
     uint8_t header[8];memcpy(header,bank,sizeof header);
     for(uint32_t i=0;i<UP_PER_BANK;i++){
         memcpy(saved[i].phrase,bank->r[i].note,16u);memcpy(saved[i].phrase+16u,bank->r[i].flags,16u);saved[i].used=bank->r[i].used;
+        saved[i].engine=bank->r[i].engine;
     }
     for(uint32_t i=0;i<UP_PER_BANK;i++){
         up_disk_rec_t r;
@@ -174,11 +188,14 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
     }
     struct {uint32_t magic;uint16_t size,count;} disk_head={UP_DISK_MAGIC,sizeof(up_disk_rec_t),UP_PER_BANK};
     memcpy(bank,&disk_head,sizeof disk_head);
-    int rc=st_save(up_obj(b),bank,sizeof(up_disk_bank_t)+up_map_write((uint8_t *)bank+sizeof(up_disk_bank_t),(const uint8_t *)bank+8u));
+    uint32_t ids=up_map_write((uint8_t *)bank+sizeof(up_disk_bank_t),(uint8_t *)bank+8u);   /* (its engine bytes: places) */
+    if(ids==UP_IDS_FULL)ui_message("BANK HAS 10 SYNTHS");   /* (a preset of an 11th: kept in another bank) */
+    int rc=ids==UP_IDS_FULL?-1:st_save(up_obj(b),bank,sizeof(up_disk_bank_t)+ids);
     for(uint32_t i=UP_PER_BANK;i--;){
         up_disk_rec_t r;memcpy(&r,(uint8_t *)bank+8u+i*sizeof r,sizeof r);
         memcpy(&bank->r[i],r.head,160u);memcpy(bank->r[i].tone_extra,r.extra,46u);
         memcpy(bank->r[i].note,saved[i].phrase,16u);memcpy(bank->r[i].flags,saved[i].phrase+16u,16u);
+        bank->r[i].engine=saved[i].engine;
         if(rc)bank->r[i].used=saved[i].used;
     }
     memcpy(bank,header,sizeof header);
