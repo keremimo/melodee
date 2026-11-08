@@ -115,6 +115,11 @@ static int st_stream_read(st_stream_t *w,uint32_t off,void *dst,uint32_t n)
     }
     return 0;
 }
+/* A stream's programs, ST_GENTLE bytes at most: the interrupts held for one ~30 us + 2.5 us a byte (NOR byte
+ * programming), so the 5 kHz tick that services USB audio is never late by a frame (1 ms). A page's program (~0.7 ms,
+ * up to 3) lost a fifth of the packets while a save ran (FM-1_900: 273 frames in 1.4 s), and a take recorded while its
+ * slices were written came out torn */
+#define ST_GENTLE 32u
 /* Input must be RAM: the flash-program window cannot fetch from XIP. Calls
  * may use arbitrary packet lengths; split at physical pages and extents. */
 static int st_stream_write_at(st_stream_t *w,uint32_t off,const void *data,uint32_t n)
@@ -129,6 +134,7 @@ static int st_stream_write_at(st_stream_t *w,uint32_t off,const void *data,uint3
         uint32_t span,at=w->lazy?st_stream_address(w,off,&span):st_address_at(w->obj,w->head.slot,off,&span,ST_PAYLOAD_OFF);
         if(!span)return w->error=-1;
         uint32_t k=256u-(at&255u);if(k>span)k=span;if(k>n)k=n;
+        if(k>ST_GENTLE)k=ST_GENTLE;              /* (a page's program holds the interrupts ~0.7 ms, USB audio's too) */
         int rc=st_prog(at,p,k);if(rc)return w->error=rc;
         off+=k;p+=k;n-=k;
     }

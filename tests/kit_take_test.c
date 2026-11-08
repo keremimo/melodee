@@ -21,6 +21,7 @@ static unsigned char nor[0x100000];
 static void fm1_wdt_feed(void) {}
 static uint8_t flash_ok = 1;
 static uint32_t erases;                          /* sector erases counted */
+static uint32_t prog_max;                        /* the longest program since it was zeroed (bytes) */
 static int prog_fail = -1;                       /* a program fails after this many (-1 never) */
 static int st_read(uint32_t off, void *dst, uint32_t n) { memcpy(dst, nor + off, n); return 0; }
 static int st_erase(uint32_t off) { erases++; memset(nor + off, 0xFF, 4096); return 0; }
@@ -28,6 +29,7 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
     if (prog_fail == 0) return -9;
     if (prog_fail > 0) prog_fail--;
+    if (n > prog_max) prog_max = n;
     for (uint32_t i = 0; i < n; i++) nor[off + i] &= ((const uint8_t *)src)[i];
     return 0;
 }
@@ -90,6 +92,7 @@ static uint32_t stream(uint32_t u, uint32_t pad, const int16_t *x, uint32_t n, u
 {
     return ENGINES[ENGI_SAMPLER]->rec_stream(u, pad, x, n, op);
 }
+static uint32_t feed_prog_max;                   /* the longest program while the last take was fed */
 /* a whole take into kit u's pad: the store made ready (its room in *room), the samples in pieces of 1..max, ended.
  * MOD3_TK_*; *fed the samples it took, *during the erases from the first piece to the end */
 static uint32_t take(uint32_t u, uint32_t pad, const int16_t *x, uint32_t n, uint32_t max, int *room, uint32_t *fed,
@@ -100,12 +103,14 @@ static uint32_t take(uint32_t u, uint32_t pad, const int16_t *x, uint32_t n, uin
     if (*room < 0) return MOD3_TK_ROOM;
     stream(u, pad, 0, (uint32_t)*room, MOD3_TS_BEGIN);
     e0 = erases;
+    prog_max = 0;
     while (at < n && st == MOD3_TK_NONE) {
         uint32_t k = 1u + (uint32_t)(noise() & 0x7FFF) % max;
         if (k > n - at) k = n - at;
         st = stream(u, pad, x + at, k, MOD3_TS_FEED);
         at += k;
     }
+    feed_prog_max = prog_max;
     if (fed) *fed = at;
     st = stream(u, pad, 0, at, MOD3_TS_END);
     if (during) *during = erases - e0;
@@ -267,6 +272,8 @@ int main(int argc, char **argv)
         check("its slices are the whole take's encoding byte for byte (fed in pieces of 1..700)", sb == bytes &&
               !memcmp(words, words + bytes / 4u, bytes));
         check("the dirty free sectors erased before the take, none while it was recorded", erases - e0 >= dirty - 1u && !during);
+        check("... and no program longer than 32 bytes while it was recorded (USB audio's tick never a frame late)",
+              feed_prog_max && feed_prog_max <= 32u);
         uint32_t kn = decode(1, y);
         check("... it decodes through the player near its SNR", kn == H->n && snr_db(src, y, kn) > 20.0);
         check("the store less its sectors", pool_free() == f0 - rec_tab[1].n);
