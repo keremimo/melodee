@@ -206,19 +206,15 @@ static void drum_pads(void)
                 for (uint32_t n = 0; n < 128u; n++) {
                     uint32_t want = KB_SILENT;
                     for (uint32_t p = 0; p < 16u; p++)
-                        if (n == MPC_PAD_NOTES[k][p]) want = notes[kit == DK_909][p];
+                        if (n == MPC_PAD_NOTES[k][p]) want = kit >= DK_USER0 ? 60u + p : notes[kit == DK_909][p];   /* (SAMPLER: C4 ..) */
                     assert(midi_map(t, n) == want);
                 }
-                /* Native keys retain their chromatic drum map and bank octave; a user kit: white key n is pad n
-                 * (F3 .. G5), the black keys silent, at any octave. */
-                static const uint8_t WHITE[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
+                /* Native keys retain their chromatic drum map and bank octave; a user kit: C4 .. D#5 (keys 7 .. 22) are
+                 * pads 1..16 on their own notes, the rest silent, at any octave. */
                 for (uint32_t key = 0; key < 27u; key++) {
                     uint32_t want = (uint32_t)clamp(29 + 12 * oct + (int32_t)key, 0, 127);
-                    if (kit >= DK_USER0) {
-                        want = KB_SILENT;
-                        for (uint32_t p = 0; p < 16u; p++)
-                            if (key == WHITE[p]) want = notes[0][p];   /* (SAMPLER: the 808's sixteen) */
-                    }
+                    if (kit >= DK_USER0)
+                        want = key >= 7u && key <= 22u ? 53u + key : KB_SILENT;
                     assert(kb_map(t, key) == want);
                 }
             }
@@ -236,7 +232,7 @@ static void drum_pads(void)
                 t->p[P_QUANT] = Q_MPC; t->mpc_octave = 3;
                 for (uint32_t p = 0; p < 16u; p++) {
                     seq_stop(); memset(t->step, 0, sizeof t->step); song.rec = (uint8_t)(1u << k);
-                    uint32_t src = MPC_PAD_NOTES[k][p], want = notes[kit == DK_909][p];
+                    uint32_t src = MPC_PAD_NOTES[k][p], want = kit >= DK_USER0 ? 60u + p : notes[kit == DK_909][p];
                     if (source == 1u) midi_in_event(0x09u | 0x90u << 8 | src << 16 | 100u << 24);
                     else { um_byte(0x90); um_byte((uint8_t)src); um_byte(100); }
                     events_block(CTL); frame();

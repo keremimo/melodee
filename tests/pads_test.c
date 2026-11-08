@@ -5,7 +5,7 @@
  * tests/fixtures/pads-70111e91-fm1.txt (-smk37.txt) was written from 70111e91's own drum_map.c and ui_draw.c (every
  * KIT value 0..16: the pads' notes, names, abbreviations, third labels and knob order, the MPC pads, the lanes' names,
  * abbreviations and notes, each note's lane and pad, a user kit's keys; KIT 9..16 rewritten when SAMPLER's kits took the
- * 808's sixteen pads, PADS_WRITE=1). Here DRUM's pads block, read by the firmware
+ * 808's sixteen pads, again when they moved to C4 .. D#5 chromatic, PADS_WRITE=1). Here DRUM's pads block, read by the firmware
  * as any synth's, gives the same, line for line; a synth without pads is never a kit; the stored packing (MOD3_R_PACK)
  * is Melodee 1.x's KIT wire; and each mutation of the block (a note's lane, a map's selector, an MPC pad, a name, a
  * label, the record names, the lanes' notes, a flag) is caught. */
@@ -121,6 +121,21 @@ int main(int argc, char **argv)
              pads_rec_value(&ENGINES[ENGI_SAMPLER]->edit[0], 8) < 0 && pads_rec_value(&ENGINES[ENGI_SID]->edit[0], 9) < 0 &&
              pads_rec_names(&ENGINES[ENGI_SAMPLER]->edit[0]) == 9;
         check("SAMPLER's KIT card's values 9..16 name records 0..7 (another synth's values never)", ok);
+    }
+    {   /* SAMPLER's pads: pad n on C4 + n (60 .. 75), the MPC pads and the knob in that order, the keys C4 .. D#5; every
+         * note's pad and lane as its engine plays it (drum_real.c drk_hit: drum_user_pad, drum_user_lane) */
+        track_t *u = &trk[1];
+        int ok = 1;
+        host_preset(u, ENGI_SAMPLER, 0);
+        for (uint32_t k = 0; k < 16u; k++)
+            ok &= pads_note(u, k) == 60u + k && pads_mpc_note(u, k) == 60u + k && pads_pad_of(u, 60u + k) == k &&
+                  pads_step(u, k, 1) == (k < 15u ? k + 1u : 15u);
+        for (uint32_t n = 0; n < 128u; n++)
+            ok &= pads_pad_of(u, n) == drum_user_pad(u, n) && pads_lane(u, n) == drum_user_lane(u, n);
+        for (int ks = -5; ks < 32; ks++)
+            ok &= drum_user_key(u, ks) == (ks >= 7 && ks <= 22 ? (uint32_t)(53 + ks) : DRUM_SILENT);
+        check("SAMPLER's pads on C4 .. D#5 chromatic (the MPC pads, the knob, the keys too); every note's pad and lane as its "
+              "engine plays it, the rest the 808's GM map", ok);
     }
     {   /* Melodee 1.x's KIT wire (core.h kit_wire_pack before the schemas): 16 pads x 6 + 7 + 7 + 7 bits */
         uint8_t p[64], q[64], a[MOD_SCH_KIT_PACKED], b[MOD_SCH_KIT_PACKED];

@@ -111,21 +111,6 @@ static uint32_t drum909_ins(uint32_t note)
 static const uint8_t DRUM_SOUND_NOTE[16]={36,38,41,45,50,37,39,42,46,49,51,64,61,60,75,70};
 static uint32_t drum_sound_count(const track_t *t){return drum_map11(t)?D9_NUM:16u;}
 static uint32_t drum_sound_note(const track_t *t,uint32_t sound){return !drum_map11(t) && sound==D9_RD?56u:DRUM_SOUND_NOTE[sound];}
-/* MPC pads 01..16, left to right from the bottom row. Keep the main beat under the fingers;
- * the 909 repeats useful hits where the 808/SID have extra percussion. These are sound identities,
- * independent of scale, transpose and input octave, just like a recorded GM drum hit. */
-static uint32_t drum_mpc_note(const track_t *t, uint32_t pad)
-{
-    static const uint8_t PAD_808[16] = {
-        D9_BD, D9_SD, D9_CP, D9_RS, D9_CH, D9_OH, D9_RD, D9_CR,
-        D9_LT, D9_MT, D9_HT, 15, 11, 12, 13, 14,
-    };
-    static const uint8_t PAD_909[16] = {
-        D9_BD, D9_SD, D9_CP, D9_RS, D9_CH, D9_OH, D9_RD, D9_CR,
-        D9_LT, D9_MT, D9_HT, D9_RD, D9_BD, D9_SD, D9_CH, D9_OH,
-    };
-    return drum_sound_note(t, (drum_map11(t) ? PAD_909 : PAD_808)[pad & 15u]);
-}
 static uint32_t drum_sound_of(const track_t *t,uint32_t note)
 {
     if(drum_map11(t))return drum909_ins(note);
@@ -139,22 +124,26 @@ static uint32_t drum_lane(uint32_t note)
     return DV_TYPE_LANE[DRUM_GM[n - 35u][0]];
 }
 
-/* A user kit (KIT 1..8) on the keys: white key n plays MPC pad n (drum_mpc_note: its sixteen pads), from
- * the first white key (the FM-1's F3, the SMK-37's lowest C, so its sixteen reach D5); the black keys and the white
- * keys past the sixteenth are silent, the octave is not followed. ks: the key from F3 (the SMK-37's outer keys:
- * -5..-1 below, 27..31 above). DRUM_SILENT: seq.c's KB_SILENT (asserted there) */
+/* A user kit (KIT 1..8, SAMPLER) on the notes: pad n on C4 + n (60 .. 75, chromatic, pad 1 first: a sampler's layout,
+ * a DAW's drum rack's), any other note the pad the 808's GM map gives it (the lanes' notes, a GM beat); its lane the
+ * pad's 808 drum's (DRUM MIX's lane levels), the GM note's own off the sixteen. drum_schema.h's SAMPLER tables the same
+ * (tests/pads_test.c) */
+#define DRUM_USER_C4 60u
+static uint32_t drum_user_pad(const track_t *t, uint32_t note)
+{
+    return note - DRUM_USER_C4 < 16u ? note - DRUM_USER_C4 : drum_sound_of(t, note) & 15u;
+}
+static uint32_t drum_user_lane(const track_t *t, uint32_t note)
+{
+    return drum_lane(note - DRUM_USER_C4 < 16u ? drum_sound_note(t, note - DRUM_USER_C4) : note);
+}
+/* .. on the keys: C4 .. D#5 play the sixteen (the FM-1's C4 is its eighth key), the rest are silent, the octave is not
+ * followed. ks: the key from F3 (53; the SMK-37's outer keys: -5..-1 below, 27..31 above). DRUM_SILENT: seq.c's
+ * KB_SILENT (asserted there) */
 #define DRUM_SILENT 255u
-#if BOARD_SMK37
-#define DRUM_WHITE0 0                                /* the first white key's place from C3: the SMK-37's C3 */
-#else
-#define DRUM_WHITE0 3                                /* (the FM-1's F3) */
-#endif
 static uint32_t drum_user_key(const track_t *t, int32_t ks)
 {
-    static const int8_t W[12] = {0, -1, 1, -1, 2, 3, -1, 4, -1, 5, -1, 6};   /* C .. B: a white key's place */
-    int32_t c = ks + 5, w;                                                   /* (from C3) */
-    if (c < 0 || W[c % 12] < 0)
-        return DRUM_SILENT;
-    w = 7 * (c / 12) + W[c % 12] - DRUM_WHITE0;
-    return w >= 0 && w < 16 ? drum_mpc_note(t, (uint32_t)w) : DRUM_SILENT;
+    uint32_t n = (uint32_t)(53 + ks);
+    (void)t;
+    return n - DRUM_USER_C4 < 16u ? n : DRUM_SILENT;
 }

@@ -145,7 +145,7 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
     int16_t q[8];
     if (!K || K->kit < DK_USER0 || K->kit > DK_KIT_MAX || !K->any)
         return;
-    uint32_t sound = drum_sound_of(t, note) & 15u, lane = drum_lane(note);
+    uint32_t sound = drum_user_pad(t, note), lane = drum_user_lane(t, note);   /* (C4 .. D#5: the sixteen) */
     const int8_t *pc = drum_offs(t)->c[sound];
     const drk_pad_t *s = K->H[sound];
     if (!s)                                      /* a pad with nothing recorded */
