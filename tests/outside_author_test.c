@@ -82,7 +82,7 @@ int main(int argc, char **argv)
     ui.msg[0] = 0;
     int rc = put(3, file[0], file_n[0]);
     bad += check("the outside folder's file installs (an upload into slot 3), its number its own (6: TRIO's ID), loaded",
-                 rc == MS_LOADED && mods[3].engine == 6u && mods[3].uid == 0x2CF92788u && eng_ok(6) &&
+                 rc == MS_LOADED && mods[3].engine == 6u && mods[3].uid == 0xC273261A2CF92788ULL && eng_ok(6) &&
                  !strcmp(eng_name(6), "TRIO"));
     bad += check(".. Melodee's synth, one of Melodee's keys signing (the host's test key): no warning",
                  mods[3].sig == MOD_SIG_MELODEE && !ui.msg[0]);

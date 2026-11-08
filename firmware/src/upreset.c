@@ -74,13 +74,15 @@ static up_bank_t *bank_up(void);
 #define up_cache (*bank_up())
 static uint8_t up_cached = 255;
 /* Main-loop index only, never serialized. Readiness belongs to a whole bank;
- * its entries are indexed together. Three flags and the bounded engine ID
- * share a byte; names retain all twelve bytes and need no flash reads. */
+ * its entries are indexed together. Two flags and the bounded engine number
+ * share a byte (OLD FORMAT: a bit of its own); names retain all twelve bytes
+ * and need no flash reads. */
 static struct {
-    uint8_t used:1, old:1, favorite:1, engine:5;
+    uint8_t used:1, favorite:1, engine:6;
     char name[12];
 } up_meta[UP_SLOTS] MELODEE_BIG_BSS;
-_Static_assert(sizeof up_meta[0] == 13u && NENGINES <= 32u && UP_BANKS <= 32u, "compact preset index");
+static uint32_t up_meta_old[(UP_SLOTS + 31u) / 32u];
+_Static_assert(sizeof up_meta[0] == 13u && NENGINES <= 64u && UP_BANKS <= 32u, "compact preset index");
 static uint32_t up_index_ready;
 static uint32_t up_migrate;
 static uint8_t up_migration_error,up_converting;
@@ -117,8 +119,9 @@ typedef struct { uint8_t head[160], extra[46]; } up_disk_rec_t;
 typedef struct { uint32_t magic; uint16_t rsize,nslot; up_disk_rec_t r[UP_PER_BANK]; } up_disk_bank_t;
 _Static_assert(sizeof(up_disk_bank_t)<=3808u,"unified presets fit every A/B sector");
 /* A bank whose records name synths that are not Melodee's defaults here (eng_map.c) carries their entries after its
- * records: "EMAP", the count, 0 x 3, the entries. A bank of Melodee's own synths is the record it always was */
-#define UP_MAP_MAGIC 0x50414D45u
+ * records: "EMA2", the count, 0 x 3, the entries (their IDs). A bank of Melodee's own synths is the record it always
+ * was */
+#define UP_MAP_MAGIC 0x32414D45u
 static uint32_t up_map_write(uint8_t *b, const uint8_t *disk)   /* (disk: its records packed) its bytes, 0 none */
 {
     uint32_t n = 0;
@@ -263,7 +266,7 @@ static int up_old(uint32_t k)
 #if MELODEE_FLASH && !defined(UP_HOST)
     if (!(up_index_ready>>(k/UP_PER_BANK)&1u)) (void)up_cache_bank(k / UP_PER_BANK);
     if (up_cached == k / UP_PER_BANK) return ((up_bank_old >> up_cached) & 1u) || (up_rec(k)->used != 0 && !up_valid(up_rec(k)));
-    return up_meta[k].old;
+    return (up_meta_old[k >> 5] >> (k & 31u)) & 1u;
 #else
     return up_rec(k)->used != 0 && !up_valid(up_rec(k));
 #endif
@@ -300,7 +303,8 @@ static void up_cache_index(uint32_t b)
         uint32_t k=b*UP_PER_BANK+j; if(k>=UP_SLOTS)break; const up_rec_t *r=&up_cache.r[j];
         int valid = up_valid(r);
         up_meta[k].used=(uint8_t)valid;if(!(up_fav_dirty>>b&1u))up_meta[k].favorite=(uint8_t)(!!(r->used&UP_STAR) && valid);
-        up_meta[k].old=(uint8_t)(((up_bank_old >> b) & 1u) || (r->used != 0 && !valid));
+        if(((up_bank_old >> b) & 1u) || (r->used != 0 && !valid))up_meta_old[k>>5]|=1u<<(k&31u);
+        else up_meta_old[k>>5]&=~(1u<<(k&31u));
         up_meta[k].engine=eng_sound_idx(r->engine);
         uint32_t n=0;
         for(;n<12u && r->name[n];n++)up_meta[k].name[n]=r->name[n]>='a' && r->name[n]<='z'?(char)(r->name[n]-32):r->name[n];
@@ -691,6 +695,18 @@ static int up_load_to(uint32_t k,uint32_t tr)
 
 static int up_load(uint32_t k){return up_load_to(k,song.sel);}
 
+/* a used, indexed slot's sound plays on engine e (eng_map.c: a lent number one of them still names) */
+static int up_names(uint32_t e)
+{
+    for (uint32_t k = 0; k < UP_SLOTS; k++)
+#if MELODEE_FLASH && !defined(UP_HOST)
+        if (up_meta[k].used && up_meta[k].engine == e && (up_index_ready >> (k / UP_PER_BANK) & 1u))
+#else
+        if (up_rec(k)->used && up_rec(k)->engine == e)   /* (the slots in RAM: every one read) */
+#endif
+            return 1;
+    return 0;
+}
 /* the engine a used slot's sound plays on */
 static uint32_t up_engine(uint32_t k) {
 #if MELODEE_FLASH && !defined(UP_HOST)
@@ -771,8 +787,13 @@ static void bank_claim(uint32_t kind)
 #endif
 
 #ifndef UP_HOST
-/* Melodee user-preset files: F0 7D 4D 4C 01 pack7(record) checksum F7.
- * Native engines export their manufacturer's voice format instead. */
+/* Melodee user-preset files: F0 7D 4D 4C 02 pack7(record, its synth's map entry: eng_map.c) checksum F7 (01: the
+ * record alone, its engine number the writing device's, read as it is). Native engines export their manufacturer's
+ * voice format instead. */
+static void up_pack7(uint8_t *frame, uint32_t *n, const uint8_t *raw, uint32_t len)
+{
+    for(uint32_t pos=0;pos<len;){uint32_t count=len-pos;if(count>7u)count=7;uint32_t mask=(*n)++;frame[mask]=0;for(uint32_t j=0;j<count;j++,pos++){frame[mask]|=(raw[pos]>>7)<<j;frame[(*n)++]=raw[pos]&127u;}}
+}
 static int general_sysex_save(uint32_t k,const uint8_t *raw)
 {
     up_rec_t r;memcpy(&r,raw,sizeof r);
@@ -783,9 +804,9 @@ static int general_sysex_send(uint32_t k)
 {
 #if MELODEE_OTA
     if(!usb.config || !up_used(k))return 1;
-    up_rec_t r=*up_rec(k);const uint8_t *raw=(const uint8_t *)&r;
-    uint8_t frame[280];memcpy(frame,(uint8_t[]){0xf0,0x7d,0x4d,0x4c,1},5);uint32_t n=5;
-    for(uint32_t pos=0;pos<sizeof r;){uint32_t count=sizeof r-pos;if(count>7u)count=7;uint32_t mask=n++;frame[mask]=0;for(uint32_t j=0;j<count;j++,pos++){frame[mask]|=(raw[pos]>>7)<<j;frame[n++]=raw[pos]&127u;}}
+    struct { up_rec_t r; uint8_t entry[EMAP_ENTRY]; } x;x.r=*up_rec(k);eng_map_put(x.entry,x.r.engine);
+    uint8_t frame[5u+(sizeof x+6u)/7u*8u+2u];memcpy(frame,(uint8_t[]){0xf0,0x7d,0x4d,0x4c,2},5);uint32_t n=5;
+    up_pack7(frame,&n,(const uint8_t *)&x,sizeof x);
     frame[n]=sx_checksum(frame+1,n-1u);n++;frame[n++]=0xf7;
     return ota_wire_send(frame,n);
 #else
@@ -795,11 +816,17 @@ static int general_sysex_send(uint32_t k)
 static int general_sysex_frame(const uint8_t *body,uint32_t n)
 {
     if(n<4u || body[0]!=0x7d || body[1]!=0x4d || body[2]!=0x4c)return 0;
-    if(body[3]!=1u || n!=4u+sizeof(up_rec_t)+(sizeof(up_rec_t)+6u)/7u+1u){ui_message("INVALID PRESET SYSEX");return 1;}
+    struct { up_rec_t r; uint8_t entry[EMAP_ENTRY]; } x;
+    uint32_t len=body[3]==2u?(uint32_t)sizeof x:(uint32_t)sizeof x.r;
+    if((body[3]!=1u && body[3]!=2u) || n!=4u+len+(len+6u)/7u+1u){ui_message("INVALID PRESET SYSEX");return 1;}
     for(uint32_t i=0;i<n;i++)if(body[i]>127u){ui_message("INVALID PRESET SYSEX");return 1;}
     if(sx_checksum(body,n)){ui_message("INVALID PRESET SYSEX");return 1;}
-    up_rec_t r;uint8_t *raw=(uint8_t *)&r;uint32_t pos=0;
-    for(uint32_t i=4;i<n-1u;){uint32_t count=sizeof r-pos;if(count>7u)count=7;uint32_t mask=body[i++];if(!count || mask>>count){ui_message("INVALID PRESET SYSEX");return 1;}for(uint32_t j=0;j<count;j++)raw[pos++]=(uint8_t)(body[i++]|((mask>>j)&1u)<<7);}
+    up_rec_t r;uint8_t *raw=(uint8_t *)&x;uint32_t pos=0;
+    for(uint32_t i=4;i<n-1u;){uint32_t count=len-pos;if(count>7u)count=7;uint32_t mask=body[i++];if(!count || mask>>count){ui_message("INVALID PRESET SYSEX");return 1;}for(uint32_t j=0;j<count;j++)raw[pos++]=(uint8_t)(body[i++]|((mask>>j)&1u)<<7);}
+    r=x.r;
+    if(body[3]==2u && mod_le64(x.entry+4)){   /* (an entry with no ID: a number of Melodee's own history, as it is) */
+        uint32_t from,e=eng_map_get(x.entry,&from);if(from!=r.engine || e>=NENGINES){ui_message("INVALID PRESET SYSEX");return 1;}r.engine=(uint8_t)e;}
+    else if(body[3]==2u && x.entry[0]!=r.engine){ui_message("INVALID PRESET SYSEX");return 1;}
     if(!up_valid(&r)){ui_message("INVALID PRESET SYSEX");return 1;}
     sysex_stage(r.engine,(const uint8_t *)&r,1,sizeof r);return 1;
 }

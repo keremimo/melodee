@@ -204,7 +204,7 @@ static void motion_knob(uint32_t k, int32_t s)
             if (id & 256u) {
                 int32_t next = v;
                 while (next >= d->min && next <= d->max &&
-                       !motion_native_ok(id & 255u, (int16_t)(motion_native_tag(TSEL) << 8 | (uint32_t)next)))
+                       !motion_native_ok(id & 255u, (int16_t)(motion_native_tag(TSEL) << 8 | (uint32_t)next), 0))
                     next += s > 0 ? 1 : -1;
                 if (next < d->min || next > d->max) return;
                 wire = (int16_t)(motion_native_tag(TSEL) << 8 | (uint32_t)next);

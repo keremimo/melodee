@@ -68,9 +68,9 @@ DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE", "debian:bookworm-slim")
 R_ABS32, R_MOV_ABS32 = 8, 5
 BASE2 = 0x00100000                                    # the second link's base
 HOST_CALL = 160                                       # a call through the host table (its deepest callee and below)
-NENGINES, ENGI_MOD0 = 30, 22
-# the synths Melodee makes (firmware/modules/shipped.h): their numbers and UIDs, the device's default engine map
-SHIPPED = {int(m[1]): int(m[2], 16) for m in re.finditer(r"X\((\d+)u, 0x([0-9A-Fa-f]+)u,",
+NENGINES, ENGI_MOD0 = 48, 22
+# the synths Melodee makes (firmware/modules/shipped.h): their numbers and IDs, the device's default engine map
+SHIPPED = {int(m[1]): int(m[2], 16) for m in re.finditer(r"X\((\d+)u, 0x([0-9A-Fa-f]+)(?:ULL|u),",
                                                           (SDK.parent / "shipped.h").read_text())} \
     if (SDK.parent / "shipped.h").is_file() else {}
 IDNT_TAG = 0x544E4449                                # "IDNT": who the module is (mod_abi3.h mod_ident_v3)
@@ -382,9 +382,9 @@ def build(src, out, version, defs):
     if engine < ENGI_MOD0 and not SHIPPED and not melodee:
         raise SystemExit(f"mod_build: engine {engine} is one of Melodee's own synths' numbers: ask for "
                          f"{ENGI_MOD0}..{NENGINES - 1} (a device gives a module the number it asks for when it is free)")
-    if engine in SHIPPED and SHIPPED[engine] != uid:
-        raise SystemExit(f"mod_build: engine {engine} is {SHIPPED[engine]:08x}'s (firmware/modules/shipped.h), this "
-                         f"module is {vendor}/{slug} {uid:08x}" + ("" if ikey else " (unsigned)") +
+    if engine in SHIPPED and SHIPPED[engine] != struct.unpack("<Q", mid)[0]:
+        raise SystemExit(f"mod_build: engine {engine} is {SHIPPED[engine]:016x}'s (firmware/modules/shipped.h), this "
+                         f"module is {vendor}/{slug} {mid.hex()}" + ("" if ikey else " (unsigned)") +
                          f": ask for {ENGI_MOD0}..{NENGINES - 1}")
     body = img + b"".join(struct.pack("<I", w) for w in words)
     if engine_src:                                   # (the host firmware's makers and descriptions)

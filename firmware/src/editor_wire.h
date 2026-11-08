@@ -12,6 +12,11 @@ static void ed_n7(uint32_t v, uint32_t k)        /* v in k 7-bit groups, low fir
 }
 #define ed_u14(v) ed_n7((uint32_t)(v), 2u)
 #define ed_u35(v) ed_n7((uint32_t)(v), 5u)
+static void ed_u70(uint64_t v)                   /* a synth's ID (eng_map.c): 64 bits in 10 x 7, low first */
+{
+    for (uint32_t k = 0; k < 10u; k++, v >>= 7)
+        ed_b((uint32_t)v & 0x7Fu);
+}
 static void ed_u35s(const uint32_t *v, uint32_t n)   /* n words, 5 x 7 bits each (diagnostics' counters) */
 {
     while (n--)

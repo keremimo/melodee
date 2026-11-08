@@ -28,7 +28,7 @@
                                                  * not Melodee's defaults (eng_map.c), and the patches of its parts whose synth
                                                  * has no Melodee 1.x store format (bank_ext_*). Written only when needed: a
                                                  * project of Melodee's own synths is the FBKP / FBKQ it always was */
-#define BANKR_TAG 0x31584D45u                   /* "EMX1": the end block's last word */
+#define BANKR_TAG 0x32584D45u                   /* "EMX2": the end block's last word (its entries name synths by ID) */
 #define BANKR_TRAIL 12u                         /* its trailer: payload bytes u16, entries, patches, flags (1: FBKQ), 0 x 3,
                                                  * the tag */
 #define BANKQ_PATTERN_BYTES (NTRK * NPAT)

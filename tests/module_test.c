@@ -251,7 +251,7 @@ int main(int argc, char **argv)
 #endif
 
     bad += check("modules: numbers past the built-in engines, none loaded at first",
-                 NENGINES == 30 && ENGI_MOD0 == 22 && !eng_ok(6) && !eng_ok(22) && eng_nshown == NENG_SHOWN &&
+                 NENGINES == 48 && ENGI_MOD0 == 22 && !eng_ok(6) && !eng_ok(22) && eng_nshown == NENG_SHOWN &&
                  ENGINES[6] == &ENG_RETIRED && eng_extra_retired(22) && eng_sound_idx(22) == 22);
 
     /* a file into slot 0: published, loaded, playing as engine 6 */

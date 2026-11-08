@@ -146,9 +146,9 @@ static uint8_t *fm6_patch_of(uint32_t k)
     fm6_voice_of(k, b);
     return b;
 }
-#define MO_TAG_P5 patch_mtag(ENGI_PROPHET)
-#define MO_TAG_CZ patch_mtag(ENGI_CZ)
-#define MO_TAG_FM6 patch_mtag(ENGI_FM6)
+#define MO_TAG_P5 motion_tag_of(ENGI_PROPHET)      /* (Motion's tag of a synth: motion.c) */
+#define MO_TAG_CZ motion_tag_of(ENGI_CZ)
+#define MO_TAG_FM6 motion_tag_of(ENGI_FM6)
 /* the parts whose patch is engine e's back to its start (its schema's default), Melodee 1.x's cz_init / clearing
  * p5_ready (the bytes written, nothing accepted: an edit told), fm6_init (the init voice loaded: a new sound); for the
  * parts playing that synth (another engine's patch comes with the engine) */

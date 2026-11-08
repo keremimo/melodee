@@ -13,7 +13,7 @@ _Static_assert(MOD3_REC_PAYLOAD == ST_LIN_PAYLOAD_MAX && MOD3_REC_OFF == ST_POOL
 static uint16_t rec_len[ST_NREC];                /* each slot's payload bytes as rec_tab lists it (0: none) */
 static uint8_t rec_pend;                         /* slots whose stored record waits for its module's check */
 static uint32_t rec_obj(uint32_t u) { return ST_RFILE0 + u; }
-static uint32_t rec_put_owner;                    /* the record being written: its owner's UID (rec_put_begin) */
+static uint64_t rec_put_owner;                    /* the record being written: its owner's ID (rec_put_begin) */
 /* slot u's record's bounds (its owner's pads): its sectors at most (0: no owner), its bytes at least */
 static uint32_t rec_bounds(uint32_t u, uint32_t *rmin)
 {
@@ -124,12 +124,13 @@ static int rec_delete(uint32_t u)
  * commit; any other save meanwhile makes it stale (-6). -1: not a record its module could hold */
 static int rec_put_begin(st_stream_t *w, uint32_t u, uint32_t len)
 {
-    uint32_t rmin, max, owner = mod_running_uid();     /* (a module's call: its own record; else the slot's) */
+    uint32_t rmin, max;
+    uint64_t owner = mod_running_uid();             /* (a module's call: its own record; else the slot's) */
     if (u >= ST_NREC)
         return -1;
     rec_put_owner = owner ? owner : rec_owner_uid(u);
     {
-        uint32_t keep = rec_uid[u];
+        uint64_t keep = rec_uid[u];
         rec_uid[u] = rec_put_owner;                      /* (its bounds: the writer's pads) */
         max = rec_bounds(u, &rmin);
         rec_uid[u] = keep;
@@ -148,7 +149,8 @@ static int rec_put_commit(st_stream_t *w, uint32_t u)
     int rc = st_stream_check(w);
     if (rc)
         return rc;
-    uint32_t keep = rec_uid[u], n;
+    uint64_t keep = rec_uid[u];
+    uint32_t n;
     rec_uid[u] = rec_put_owner;                     /* (checked by the writer's module) */
     n = rec_sectors(u, &w->head, sec, p);
     if (!n || rec_checked(u, p, n, w->head.len) > 0 || (rc = st_stream_publish(w)) != 0) {
@@ -158,7 +160,7 @@ static int rec_put_commit(st_stream_t *w, uint32_t u)
     if (rec_put_owner == rec_owner_uid(MOD3_NREC))
         rec_uid[u] = 0;                             /* (the default owner's: nothing for the map record to keep) */
     if (rec_uid[u] != keep)
-        eng_map_dirty = 1;                          /* (its owner kept in the map record) */
+        eng_map_dirty = 1;                          /* (its owner kept in the owners record) */
     (void)rec_scan_slot(u);
     rec_settle();
     return 0;

@@ -56,7 +56,7 @@ static void save_file(const char *name, const void *p, uint32_t n)
     FILE *f = fopen(path, "wb");
     if (f) { fwrite(p, 1, n, f); fclose(f); }
 }
-static uint32_t other_uid;                          /* (acme/OTHER's: install_other) */
+static uint64_t other_uid;                          /* (acme/OTHER's ID: install_other) */
 static int put(uint32_t k, const uint8_t *b, uint32_t n)   /* (as editor_module.c: begin, 256-byte writes, commit) */
 {
     int rc = mod_put_begin(k, n);
@@ -72,7 +72,9 @@ static void install_other(uint32_t k)
     memset(other, 0, sizeof other);
     memset(&h, 0, sizeof h);
     for (uint32_t i = 0; i < image; i++) other[MOD3_HEAD + i] = (uint8_t)(i * 7u + 1u);
-    other_uid = h.uid = test_idnt(other, &at, "acme", "other", "OTHE", 0, 0);   /* (unsigned) */
+    mod_ident_v3 oid;
+    h.uid = test_idnt(other, &at, "acme", "other", "OTHE", 0, &oid);   /* (unsigned) */
+    other_uid = mod_le64(oid.id);
     h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = 22; h.host = MOD3_HOST_MIN; h.flags = MOD3_FILE_CHUNKS;
     h.image = image; h.bss = 16; h.version = 1; h.total = at;
     strncpy(h.name, "OTHER", sizeof h.name);
@@ -262,8 +264,11 @@ static int run(void)
                  !strcmp(eng_name(22), "OTHER"));
     ui.msg[0] = 0;
     int rc = put(3, file, file_n);
-    uint32_t e = mods[3].engine, uid;
-    memcpy(&uid, file + 24, 4);                     /* (its ID's first 4 bytes: its head's uid) */
+    uint32_t e = mods[3].engine, idnt = 0;
+    uint64_t uid = 0;
+    for (uint32_t at = MOD3_HEAD + ((mod_file3_t *)(void *)file)->image + 4u * ((mod_file3_t *)(void *)file)->nrel;
+         at + 8u <= file_n && !uid; at += 8u + ((file[at + 4] | (uint32_t)file[at + 5] << 8) + 3u & ~3u))
+        if (mod_le32(file + at) == MOD3_IDNT_TAG && (idnt = at + 8u)) uid = mod_le64(file + idnt);   /* (its ID: IDNT's) */
     bad += check("JUNO-106 installs as an upload (slot 3), its code in SRAM; it asked for 22 too: the first free number, 23",
                  rc == MS_LOADED && e == 23u && eng_ok(e) && !strcmp(eng_name(e), "JUNO-106") && mod_at[e] == 4u);
     bad += check(".. who it is: its ID (its author's key and juno-106), in the device's engine map", mods[3].uid == uid &&

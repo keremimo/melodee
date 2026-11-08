@@ -155,11 +155,11 @@ static int pads_rec_names(const param_desc_t *d)  /* d names its synth's records
 }
 
 /* ---- the data records' synth (rec_store.c keeps the records; pads.h rec_tab lists the ones it checked) */
-/* the synth whose record slot u is (its owner's UID in the device's map, eng_map.c; slot MOD3_NREC: the default
+/* the synth whose record slot u is (its owner's ID in the device's map, eng_map.c; slot MOD3_NREC: the default
  * owner's), its pads: the one whose pads name records; 0 none */
 static const pads_c_t *rec_owner(uint32_t u)
 {
-    uint32_t uid = rec_owner_uid(u);
+    uint64_t uid = rec_owner_uid(u);
     SCH_INFO();
     for (uint32_t i = 0; i < pads_nc; i++)
         if (pads_c[i].nrec && pads_c[i].eng < NENGINES && eng_map[pads_c[i].eng].uid == uid)

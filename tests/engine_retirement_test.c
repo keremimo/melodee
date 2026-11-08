@@ -5,7 +5,7 @@
 int main(void)
 {
     int bad=0; reset(); up_boot();
-    bad+=check("engine and native collection IDs remain unchanged",NENGINES==30 && ENGI_MOD0==22 && ENGI_MIDI==21 && !eng_ok(20) && USER_GENERAL==16 && USER_NATIVE_FM==17 && USER_NATIVE_CZ==18 && ENGI_PROPHET==19 && USER_NATIVE_P5==20);
+    bad+=check("engine and native collection IDs remain unchanged (48 numbers since synths are named by ID: 22..47 modules')",NENGINES==48 && ENGI_MOD0==22 && ENGI_MIDI==21 && !eng_ok(20) && USER_GENERAL==16 && USER_NATIVE_FM==17 && USER_NATIVE_CZ==18 && ENGI_PROPHET==19 && USER_NATIVE_P5==20);
     const uint8_t retired[]={2,5,6,7,9,11};
     for(uint32_t j=0;j<NELEM(retired);j++) {
         uint32_t e=retired[j];

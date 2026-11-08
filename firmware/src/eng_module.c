@@ -21,7 +21,7 @@ typedef struct {
     uint8_t state, engine;                          /* MS_*; its engine number here (eng_map.c: the device's map) */
     uint8_t want;                                   /* the number its file asks for */
     char tag[4];                                    /* its four-letter tag (its IDNT chunk's), 0-padded */
-    uint32_t uid;                                   /* who it is (its IDNT chunk's; mod_abi3.h mod_ident_v3) */
+    uint64_t uid;                                   /* who it is: its ID (its IDNT chunk's; mod_abi3.h mod_ident_v3) */
     uint16_t version;
     uint32_t len;                                   /* the file's length (0: empty) */
     char name[MOD3_NAME_MAX + 1u];
@@ -62,7 +62,7 @@ static void mod_main_leave(uint32_t was) { mod_run.loop = (uint8_t)was; }
 #define MOD_MAIN(e, x) ({ uint32_t mm_ = mod_main_enter(e); __typeof__(x) mr_ = (x); mod_main_leave(mm_); mr_; })
 #define MOD_MAIN_V(e, x) do { uint32_t mm_ = mod_main_enter(e); x; mod_main_leave(mm_); } while (0)
 /* the module whose main-loop call this is (its UID; 0: none: the firmware's own) */
-static uint32_t mod_running_uid(void)
+static uint64_t mod_running_uid(void)
 {
     uint32_t k = mod_run.loop;
     return k && k <= NMOD ? mods[k - 1u].uid : 0u;

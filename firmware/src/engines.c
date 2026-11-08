@@ -162,7 +162,7 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     ENGI_MIDI,
 };
 /* the manifest's rows (../modules/shipped.h): the synths Melodee makes, by number */
-typedef struct { uint8_t num, wclass, store, ns, flags; uint32_t uid; const char *name, *tag; } ship_t;
+typedef struct { uint8_t num, wclass, store, ns, flags; uint64_t uid; const char *name, *tag; } ship_t;
 #define SHIP_ROW(n, u, nm, tg, wc, st, ns, f) {n, wc, st, ns, f, u, nm, tg},
 static const ship_t SHIP[] = {SHIP_ROWS(SHIP_ROW)};
 #undef SHIP_ROW

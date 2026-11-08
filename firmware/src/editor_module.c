@@ -7,11 +7,12 @@
  *   [3, slot] commit: rc, the slot's state and engine; [4, slot] delete;
  *   [5, slot] its file: rc, state, engine, ABI, CRC (u35), key (u35: the legacy data's it was built against, 0 none;
  *       an older ABI 2 file's layout key), this firmware's legacy key (u35, module_legacy.h): the installer's check
- *       (web/fm1mods.js) whether a slot holds its file already; its UID (u35: its ID's first 4 bytes), its signature
- *       (0 not checked this run, 1 Melodee's, 2 none, 3 its author's: mod_sign.c).
- *   [6] the device's engine map (eng_map.c): rc, NENGINES, per number: UID (u35, 0 free), how (0 free, 1 Melodee's
- *       default, 2 a module here, 3 a module a store named, not here), name (string); then MOD3_NREC data record
- *       owners' UIDs (u35). A client maps stored engine numbers to synths with it (Studio, the web editor).
+ *       (web/fm1mods.js) whether a slot holds its file already; its ID (u70: 8 bytes little endian in 10 x 7 bits, the
+ *       installer's match), its signature (0 not checked this run, 1 Melodee's, 2 none, 3 its author's: mod_sign.c).
+ *   [6] the device's engine map (eng_map.c): rc, NENGINES, per number: ID (u70, 0 free), how (0 free, 1 Melodee's
+ *       default, 2 a module here, 3 a synth a store named, not here), name (string); then MOD3_NREC data record
+ *       owners' IDs (u70). The numbers are this device's, for this connection: a client maps the numbers a device
+ *       answers with to synths with it (Studio, the web editor).
  * rc: 0 ok, 1 bad request, 2 storage full, 3 flash error, 4 busy (the transport would not stop), 5 not a module for
  * this firmware, 6 the same module is in another slot (or no engine number is left), 7 no room in RAM (stored, not
  * loaded), 8 its ID or signature is not its own (refused, deleted). [3] commit answers its signature too (as [5]). */
@@ -37,21 +38,22 @@ static int ed_module_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
     if (k < NMOD && op == 5u && n == 2u) {
         ed_b(0); ed_b(mods[k].state); ed_b(mods[k].engine); ed_b(mods[k].abi);
         ed_u35(mods[k].crc); ed_u35(mods[k].key); ed_u35(0);   /* (its own key: none since host 4) */
-        ed_u35(mods[k].uid); ed_b(mods[k].sig);
+        ed_u70(mods[k].uid); ed_b(mods[k].sig);
         return 1;
     }
     if (op == 6u && n == 1u) {
         ed_b(0); ed_b(NENGINES);
         for (uint32_t e = 0; e < NENGINES; e++) {
-            uint32_t uid = eng_map[e].uid, how = !uid ? 0u : uid == eng_map_default(e) ? 1u : 3u;
+            uint64_t uid = eng_map[e].uid;
+            uint32_t how = !uid ? 0u : uid == eng_map_default(e) ? 1u : 3u;
             for (k = 0; uid && k < NMOD; k++)
                 if (mods[k].len && mods[k].uid == uid && how == 3u)
                     how = 2u;
-            ed_u35(uid); ed_b(how);
+            ed_u70(uid); ed_b(how);
             ed_str(uid ? eng_map[e].name : "", MOD3_NAME_MAX);
         }
         for (uint32_t u = 0; u < MOD3_NREC; u++)
-            ed_u35(rec_owner_uid(u));
+            ed_u70(rec_owner_uid(u));
         return 1;
     }
     if (k < NMOD && op >= 1u && op <= 4u) {

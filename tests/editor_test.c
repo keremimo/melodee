@@ -743,7 +743,7 @@ static int library_transfers(void)
     reset();up_store(2,"NAMED GENERAL");up_rec_t saved=*up_rec(2);int16_t level=TSEL->p[P_LEVEL];
     bad+=check("general slot exports a complete 7-bit USB frame",!library_send(TSEL->eng_req,2));host_drain();
     n=host_wire_n;memcpy(frame,host_wire,n);
-    bad+=check("general export has a valid checksum and exact bounded length",n==279u&&frame[0]==240&&frame[n-1]==247&&!sx_checksum(frame+1,n-2));
+    bad+=check("general export has a valid checksum and exact bounded length (02: the record and its synth's entry)",n==311u&&frame[4]==2u&&frame[0]==240&&frame[n-1]==247&&!sx_checksum(frame+1,n-2));
     frame[15]^=1;receive_library(frame,n);
     bad+=check("bad general checksum cannot stage or mutate a saved preset",!sx_import.count&&!memcmp(up_rec(2),&saved,sizeof saved));
     frame[15]^=1;receive_library(frame,n);

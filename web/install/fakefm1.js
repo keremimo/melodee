@@ -246,10 +246,10 @@ Device.prototype.modules = function (a) {
     return out(list);
   }
   if (!s) return out([1]);
-  if (a[0] === 5) {
+  if (a[0] === 5) {   /* (the ID u70 and the signer after the keys, as since the synths have IDs: none here) */
     const h = head(s.bytes), abi = h ? h.getUint16(4, true) : 0;
     return out([0, s.state, s.bytes ? s.bytes[6] : 0, abi, ...x7(h ? h.getUint32(28, true) : 0),
-                ...x7(abi >= 2 ? h.getUint32(52, true) : 0), ...x7(m.key)]);
+                ...x7(abi >= 2 ? h.getUint32(52, true) : 0), ...x7(m.key), ...new Array(10).fill(0), 0]);
   }
   if (a[0] === 1) { const len = a.slice(2, 7).reduce((n, b, j) => n + b * 2 ** (7 * j), 0); s.up = { len, buf: new Uint8Array(len), pos: 0 }; return out([0]); }
   if (a[0] === 2 && s.up) {

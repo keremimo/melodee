@@ -15,6 +15,20 @@ export const MOD_COMMAND = 84;
 const MOD_FILE_MAGIC = 0x31444d4d;                       /* "MMD1" */
 const mod_r35 = (a, at) => (a[at] | a[at + 1] << 7 | a[at + 2] << 14 | a[at + 3] << 21 | a[at + 4] << 28) >>> 0;
 const mod_u35 = (n) => [0, 7, 14, 21, 28].map((sh) => (n >>> sh) & 0x7f);
+/* a synth's ID (mod_abi3.h: 8 bytes, little endian) as 16 hex digits, the high first; u70: 10 x 7 bits, low first */
+const mod_hex = (v) => v.toString(16).padStart(16, "0");
+const mod_r70 = (a, at) => mod_hex([...Array(10).keys()].reduce((v, j) => v | BigInt(a[at + j]) << BigInt(7 * j), 0n));
+/* a file's ID from its IDNT chunk (version 2), "" none */
+function mod_id(b) {
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  if (!(b[7] & 1)) return "";
+  for (let at = 60 + v.getUint32(12, true) + 4 * v.getUint32(20, true); at + 8 <= b.length;) {
+    const tag = v.getUint32(at, true), n = v.getUint32(at + 4, true);
+    if (tag === 0x544E4449 && n === 96 && b[at + 16] === 2) return mod_hex(v.getBigUint64(at + 8, true));
+    at += 8 + ((n + 3) & ~3);
+  }
+  return "";
+}
 const modError = (code, msg, rc) => Object.assign(new Error(msg), { code, rc });
 /* module_store.c MS_*: a slot whose module plays (or will) */
 const MOD_MS = { EMPTY: 0, LOADED: 1, STORED: 2, BAD: 3, NORAM: 4, CLASH: 5, SKIPPED: 6, STALE: 7 };
@@ -29,13 +43,15 @@ export function modBundle(bundle) {
       throw modError("modfile", "Not a Melodee synth module file");
     const bytes = bundle.subarray(at, at + total);
     files.push({ engine: bytes[6], abi, name: String.fromCharCode(...bytes.subarray(32, 48)).replace(/\0.*$/, ""),
-                 crc: v.getUint32(28, true), key: abi >= 2 ? v.getUint32(52, true) : 0, bytes });
+                 crc: v.getUint32(28, true), key: abi >= 2 ? v.getUint32(52, true) : 0, id: mod_id(bytes), bytes });
     at += total;
   }
   return files;
 }
 
-// the device's slots (op 0), then each one's file (op 5): [{ slot, state, engine, len, crc, key }], and its own key
+// the device's slots (op 0), then each one's file (op 5): [{ slot, state, engine, len, crc, key, id }], and its own key.
+// op 5's reply: rc, state, engine, ABI, CRC u35, key u35, the firmware's key u35, then (since its synths have IDs) the ID
+// u70 and the signer: 30 bytes (19 from a firmware before)
 async function modSlots(ask) {
   const a = await ask([0], 3000);
   if (!a || a.length < 3 || a[0]) throw modError("modnocmd", "This firmware has no synth module command");
@@ -46,22 +62,24 @@ async function modSlots(ask) {
     p += 9;
     while (a[p] !== 0 && p < a.length) p++;               /* (the name: a 0-terminated string) */
     p++;
-    out.push({ slot: k, state, engine, len, crc: 0, key: 0 });
+    out.push({ slot: k, state, engine, len, crc: 0, key: 0, id: "" });
   }
   for (const s of out) {
     if (!s.len) continue;
     const b = await ask([5, s.slot], 3000);
-    if (!b || b.length !== 19 || b[0]) throw modError("modnocmd", "This firmware cannot report its synth modules");
-    s.crc = mod_r35(b, 4); s.key = mod_r35(b, 9); own = mod_r35(b, 14);
+    if (!b || (b.length !== 19 && b.length !== 30) || b[0]) throw modError("modnocmd", "This firmware cannot report its synth modules");
+    s.crc = mod_r35(b, 4); s.key = mod_r35(b, 9); own = mod_r35(b, 14); s.id = b.length === 30 ? mod_r70(b, 19) : "";
   }
   if (own === null) {                                    /* (every slot empty: ask slot 0 for the firmware's key) */
     const b = await ask([5, 0], 3000);
-    if (!b || b.length !== 19 || b[0]) throw modError("modnocmd", "This firmware cannot report its synth modules");
+    if (!b || (b.length !== 19 && b.length !== 30) || b[0]) throw modError("modnocmd", "This firmware cannot report its synth modules");
     own = mod_r35(b, 14);
   }
   return { list: out, own };
 }
 
+/* a slot holding a file's synth: by their IDs when both have one (a synth's number is the device's), else the number */
+const mod_same = (s, f) => (s.id && f.id ? s.id === f.id : s.engine === f.engine);
 // request([cmd, args], {timeout}) -> reply bytes (fm1backup.js BackupConnection). Resolves "current" when every module
 // is on the device already, "written" after the missing ones were written and loaded or stored.
 export async function installModules(request, bundle, onProgress = () => {}) {
@@ -72,21 +90,21 @@ export async function installModules(request, bundle, onProgress = () => {}) {
   if (files.some((f) => f.abi >= 2 && f.key && f.key !== own))
     throw modError("modbuild", "These synth modules belong to another firmware build");
   const playing = (s) => [MOD_MS.LOADED, MOD_MS.STORED, MOD_MS.NORAM, MOD_MS.SKIPPED].includes(s.state);
-  const todo = files.filter((f) => !list.some((s) => s.engine === f.engine && playing(s) && s.crc === f.crc && s.key === f.key));
+  const todo = files.filter((f) => !list.some((s) => mod_same(s, f) && playing(s) && s.crc === f.crc && s.key === f.key));
   if (!todo.length) return "current";
   const total = todo.reduce((n, f) => n + f.bytes.length, 0);
   let done = 0;
   for (const f of todo) {
     /* its engine's slot (an older or damaged copy: emptied first, so its room is free again), else a free one; a
        damaged file in any slot goes too (no firmware plays it) */
-    let s = list.find((x) => x.len && x.engine === f.engine) || list.find((x) => x.len && x.state === MOD_MS.BAD) ||
+    let s = list.find((x) => x.len && mod_same(x, f)) || list.find((x) => x.len && x.state === MOD_MS.BAD) ||
             list.find((x) => !x.len);
     if (!s) throw modError("modslots", "Every synth module slot is in use");
     if (s.len) {
       const rc = (await ask([4, s.slot], 10000))[0];
       if (rc === 4) throw modError("modbusy", "Stop playback, then retry", rc);
       if (rc) throw modError("modwrite", `Could not empty slot ${s.slot + 1} (${rc})`, rc);
-      s.len = 0; s.engine = 0; s.state = MOD_MS.EMPTY;
+      s.len = 0; s.engine = 0; s.id = ""; s.state = MOD_MS.EMPTY;
     }
     let rc = (await ask([1, s.slot, ...mod_u35(f.bytes.length)], 10000))[0];
     for (let off = 0; !rc && off < f.bytes.length; off += 256) {
@@ -100,7 +118,7 @@ export async function installModules(request, bundle, onProgress = () => {}) {
     if (c[0] === 2) throw modError("modroom", `No room for ${f.name}`, c[0]);
     if (c[0] === 5) throw modError("modbuild", `${f.name} is not for this firmware`, c[0]);
     if (c[0] && c[0] !== 7) throw modError("modcheck", `${f.name}: check failed (${c[0]})`, c[0]);   /* (7: stored, no RAM now) */
-    s.len = f.bytes.length; s.engine = f.engine; s.state = c[1];
+    s.len = f.bytes.length; s.engine = f.engine; s.id = f.id; s.state = c[1];
     done += f.bytes.length;
   }
   return "written";
@@ -112,7 +130,7 @@ export async function modulesMissing(request, bundle) {
     const files = modBundle(bundle);
     if (!files.length) return false;
     const { list } = await modSlots((args, timeout) => request([MOD_COMMAND, args], { timeout }));
-    return files.some((f) => !list.some((s) => s.engine === f.engine && s.crc === f.crc && s.key === f.key &&
+    return files.some((f) => !list.some((s) => mod_same(s, f) && s.crc === f.crc && s.key === f.key &&
                                                [MOD_MS.LOADED, MOD_MS.STORED, MOD_MS.NORAM, MOD_MS.SKIPPED].includes(s.state)));
   } catch (_) { return null; }
 }

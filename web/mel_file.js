@@ -210,17 +210,20 @@ const FUN_AT = 8, FUN_BYTES = 13212, TAIL_AT = FUN_AT + FUN_BYTES;
 const FUN_MAGIC = 0x46554E49, FBKP = 0x504B4246, FBKQ = 0x514B4246, FBKR = 0x524B4246, KIT_MAGIC = 0x3154494B, PJ_MAGIC = 0x314A5048, PZ_MAGIC = 0x324A5048, PZ_RAW = 0x80000000;
 const NPART = 4, NTRK = 8, NPAT = 16, NSTEP = 64, MOTION_MAX = 64, CHAIN_ROWS = 64, CHAIN_OLD_ROWS = 16, CHAIN_OLD_BYTES = 36, FM6_NFN = 16;
 const ENGI_DRUM = 10, NAME_LEN = 12;
-// the kits' synth by its UID (firmware/modules/shipped.h: DRUM, "melodee/DRUM"; the engine map's default number 10)
-const KIT_OWNER_UID = 0x7D998FFE, EMX_TAG = 0x31584D45, EMX_TRAIL = 12, EMAP_ENTRY = 24;
-// FBKR (pattern_store.c): FBKP / FBKQ plus an end block before the sum, the engine map's entries for the numbers the
-// project names that are not Melodee's defaults (eng_map.c), the patches of parts whose synth has no 1.x format
+// the kits' synth by its ID (firmware/modules/shipped.h: DRUM's, Melodee's key and "drum"; the engine map's default
+// number 10). A synth's ID: its 8 bytes little endian as 16 hex digits, the high first (as firmware's uint64_t prints)
+const KIT_OWNER_UID = "241aacc57d998ffe", EMX_TAG = 0x32584D45, EMX_TRAIL = 12, EMAP_ENTRY = 28;
+export const synthId = (b, at) => Array.from(b.subarray(at, at + 8)).reverse().map((x) => x.toString(16).padStart(2, "0")).join("");
+// FBKR (pattern_store.c): FBKP / FBKQ plus an end block before the sum ("EMX2"), the engine map's entries for the
+// numbers the project names that are not Melodee's defaults (eng_map.c: number, 0 x 3, ID, name), the patches of parts
+// whose synth has no 1.x format
 export function recMap(rec) {
   const t = REC_BYTES - 4 - EMX_TRAIL, plen = rec[t] | rec[t + 1] << 8, n = rec[t + 2];
   if (u32(rec, 0) !== FBKR || u32(rec, t + 8) !== EMX_TAG || n * EMAP_ENTRY > plen || rec[t + 4] > 1)
     return { entries: [], patterns: u32(rec, 0) === FBKQ, end: REC_BYTES - 4 };
   const entries = [];
   for (let k = 0, at = t - plen; k < n; k++, at += EMAP_ENTRY)
-    entries.push({ number: rec[at], uid: u32(rec, at + 4), name: String.fromCharCode(...rec.subarray(at + 8, at + 24)).replace(/\0+$/, "") });
+    entries.push({ number: rec[at], uid: synthId(rec, at + 4), name: String.fromCharCode(...rec.subarray(at + 12, at + 28)).replace(/\0+$/, "") });
   return { entries, patterns: rec[t + 4] === 1, end: t - plen };
 }
 // the engine numbers a record's kits are played by: DRUM's number there (its entries'; none: the default 10)

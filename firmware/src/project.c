@@ -459,6 +459,7 @@ static int proj_unpack(project_t *q, const uint8_t *b)
         for(t=0;t<PROJ_TRK;t++){uint32_t origin=b[pos+2u+t];if(origin && origin<=128u){uint32_t slot=origin-1u,bank=slot/26u,k=slot%26u,spill=bank*8u+k-18u;q->user[t]=(uint16_t)(1u+(k<18u?(16u+bank)*18u+k:spill<32u?spill/2u*18u+16u+spill%2u:378u+spill-32u));}}
     }
     proj_motion_ids(&q->motion, np);
+    motion_tags_in(&q->motion);                        /* (its synths' tags as this device numbers them: eng_map.c) */
     if (magic == PROJ_MAGIC && np == P_COUNT) {
         int8_t oct[PROJ_TRK];
         if (!mpc_octaves_unpack(oct, b[PROJ_MPC_OCT_WIRE] | (uint32_t)b[PROJ_MPC_OCT_WIRE+1u] << 8)) return 0;
@@ -1592,6 +1593,28 @@ static void proj_boot_scan(void)
     proj_space();
 }
 #endif
+/* engine e, lent to a synth a store named that is not on the device (eng_map.c), named by nothing in RAM any more: the
+ * tracks, the song's sounds, the indexed user presets, the template. 1: eng_map.c may give it to another synth */
+static int proj_engine_spare(uint32_t e)
+{
+    if (e < ENGI_MOD0 || e >= NENGINES || !eng_map[e].uid || mod_slot_of(e) < NMOD)
+        return 0;
+    for (uint32_t t = 0; t < NTRK; t++)
+        if (trk[t].engine == e || trk[t].eng_req == e)
+            return 0;
+    for (uint32_t id = 1; id <= song_sound_count; id++)
+        if (song_sound_get(id)->engine == e)
+            return 0;
+    if (resource[RES_SONG_BASE].ptr)
+        for (uint32_t t = 0; t < NTRK; t++)
+            if (((const song_sound_t *)resource[RES_SONG_BASE].ptr)[t].engine == e)
+                return 0;
+    if (template_used())
+        for (uint32_t t = 0; t < PROJ_TRK; t++)
+            if (tmpl.t[t].engine == e)
+                return 0;
+    return !up_names(e);
+}
 static void persist_boot(void)                    /* before settings_init / panel_init */
 {
 #if MELODEE_FLASH
@@ -1628,6 +1651,7 @@ static void persist_boot(void)                    /* before settings_init / pane
 #ifdef REC_STORE
     rec_scan();                                    /* the synths' data records, for the audio (rec_store.c) */
 #endif
+    eng_map_spare = proj_engine_spare;             /* (a lent engine number given back when another is needed) */
 #ifdef MODULE_STORE
     mod_boot();                                    /* the synth modules, before the boot project names one */
 #endif

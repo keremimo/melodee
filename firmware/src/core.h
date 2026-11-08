@@ -113,9 +113,10 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #define USER_GENERAL 16u
 #define USER_NATIVE_P5 20u
 #define ENGI_MIDI 21u            /* 20 reserved for the Prophet user-preset namespace */
-#define NENGINES 30               /* append engines without reusing preset namespaces */
-#define ENGI_MOD0 22u            /* 22..NENGINES-1: synth modules' own numbers (eng_module.c); a module may also take a
-                                  * retired engine's number when it is that engine again (TRIO = 6) */
+#define NENGINES 48               /* append engines without reusing preset namespaces */
+#define ENGI_MOD0 22u            /* 22..NENGINES-1 (26): synth modules' numbers on this device, the installed ones' (NMOD)
+                                  * and the ones lent to synths a store names that are not here (eng_map.c); a module may
+                                  * also take a retired engine's number when it is that engine again (TRIO = 6) */
 #ifndef MELODEE_MODULES
 #define MELODEE_MODULES 1        /* synth modules: engines loaded from the pool into SRAM (eng_module.c) */
 #endif

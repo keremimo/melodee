@@ -287,17 +287,17 @@ static uint32_t mod_chunk(uint32_t k, const mod_file3_t *f, uint32_t tag, uint32
         }
     }
 }
-/* who slot k's module is (its IDNT chunk, as installed: mod_sig_check made sure its ID is its own): its UID (the ID's
- * first 4 bytes, the head's) and tag into the slot. 0, or 1 (no chunk, a bad one) */
+/* who slot k's module is (its IDNT chunk, as installed: mod_sig_check made sure its ID is its own): its ID (its first 4
+ * bytes the head's uid) and tag into the slot. 0, or 1 (no chunk, a bad one) */
 static int mod_id_find(uint32_t k, const mod_file3_t *f)
 {
     mod_slot_t *s = &mods[k];
     uint8_t id[16];                                 /* (mod_ident_v3's first 16 bytes: id, version, flags, rsv, tag) */
     uint32_t len = 0, at = mod_chunk(k, f, MOD3_IDNT_TAG, &len);
-    s->uid = f->uid;
     if (!at || len != sizeof(mod_ident_v3) || mod_rd(k, at, id, sizeof id) || id[8] != MOD3_IDNT_VERSION || !f->uid ||
-        ((uint32_t)id[0] | (uint32_t)id[1] << 8 | (uint32_t)id[2] << 16 | (uint32_t)id[3] << 24) != f->uid)
+        mod_le32(id) != f->uid)
         return 1;                                   /* (the chunk and the head say who it is: they agree) */
+    s->uid = mod_le64(id);
     memcpy(s->tag, id + 12, sizeof s->tag);
     return 0;
 }
@@ -372,51 +372,33 @@ static int mod_bring(uint32_t k)
     }
     return rc;
 }
-/* ---- the device's engine map in the pool (eng_map.c): the record ST_MAPOBJ */
-static uint8_t *wire_take(void);                    /* (project.c: the main loop's staging RAM) */
+/* ---- the data records' owners in the pool (eng_map.c): the record ST_MAPOBJ, "OWN1", MOD3_NREC, 0, 0, then the
+ * owners' IDs (8 bytes each; none of them but the default's: no record). The engine numbers are made again at every
+ * power-on: nothing stored names one without the ID it is */
 static void mod_map_load(void)
 {
     uint8_t *b = wire_take();
     int n = st_load(ST_MAPOBJ, b, ST_SECTOR);
-    eng_remap_reset();
-    if (n < 8 || mod_le32(b) != EMAP_MAGIC || b[4] > NENGINES || b[5] != MOD3_NREC ||
-        (uint32_t)n != 8u + b[4] * EMAP_ENTRY + 4u * MOD3_NREC)
-        return;
-    for (uint32_t k = 0, e; k < b[4]; k++) {
-        const uint8_t *q = b + 8u + k * EMAP_ENTRY;
-        e = q[0];
-        if (e >= NENGINES || e < ENGI_MOD0)
-            continue;                               /* (Melodee's own numbers: always the defaults) */
-        eng_map[e].uid = mod_le32(q + 4);
-        memcpy(eng_map[e].name, q + 8, MOD3_NAME_MAX);
-    }
+    if (n != (int)(8u + 8u * MOD3_NREC) || mod_le32(b) != EMAP_MAGIC || b[4] != MOD3_NREC)
+        return;                                     /* (none, or another layout: the default owner for every slot) */
     for (uint32_t u = 0; u < MOD3_NREC; u++)
-        rec_uid[u] = mod_le32(b + 8u + b[4] * EMAP_ENTRY + 4u * u);
+        rec_uid[u] = mod_le64(b + 8u + 8u * u);
 }
 static int mod_map_save(void)
 {
     uint8_t *b = wire_take();
-    uint32_t n = 0, any = 0;
-    for (uint32_t e = ENGI_MOD0; e < NENGINES; e++) {   /* (the modules on the device: the numbers they keep; one
-                                                         * only a store named gets one again when it is read) */
-        uint32_t held = 0;
-        for (uint32_t k = 0; k < NMOD; k++)
-            held |= mods[k].len && mods[k].uid == eng_map[e].uid && mods[k].state != MS_BAD;
-        if (eng_map_own(e) && held)
-            eng_map_put(b + 8u + EMAP_ENTRY * n++, e);
-    }
+    uint64_t any = 0;
     for (uint32_t u = 0; u < MOD3_NREC; u++) {
-        for (uint32_t i = 0; i < 4u; i++)
-            b[8u + EMAP_ENTRY * n + 4u * u + i] = (uint8_t)(rec_uid[u] >> (8u * i));
+        mod_put64(b + 8u + 8u * u, rec_uid[u]);
         any |= rec_uid[u];
     }
     eng_map_dirty = 0;
-    if (!n && !any)
+    if (!any)
         return st_exists(ST_MAPOBJ) ? st_project_delete(ST_MAPOBJ) : 0;
     b[0] = (uint8_t)EMAP_MAGIC; b[1] = (uint8_t)(EMAP_MAGIC >> 8); b[2] = (uint8_t)(EMAP_MAGIC >> 16);
     b[3] = (uint8_t)(EMAP_MAGIC >> 24);
-    b[4] = (uint8_t)n; b[5] = MOD3_NREC; b[6] = b[7] = 0;
-    int rc = st_save(ST_MAPOBJ, b, 8u + n * EMAP_ENTRY + 4u * MOD3_NREC);
+    b[4] = MOD3_NREC; b[5] = b[6] = b[7] = 0;
+    int rc = st_save(ST_MAPOBJ, b, 8u + 8u * MOD3_NREC);
     if (rc)
         eng_map_dirty = 1;
     return rc;
@@ -446,7 +428,7 @@ static void mod_boot(void)
     mod_fetch = mod_bring;
     eng_map_saver = mod_map_save;
     eng_map_defaults();
-    mod_map_load();                                 /* (the numbers this device gave its modules) */
+    mod_map_load();                                 /* (the data records' owners) */
     mod_cat_n = 0;
     for (uint32_t k = 0; k < NMOD; k++)
         (void)mod_catalog(k);
@@ -571,7 +553,7 @@ static int mod_put_check(uint32_t k, uint32_t len)
         return -2;                                  /* (not a module, or not one this firmware plays) */
     for (uint32_t j = 0, uid = mod_up_head.uid; j < NMOD; j++)   /* (the same module: its UID) */
         if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].state != MS_STALE && mods[j].state != MS_NEWER &&
-            mods[j].uid == uid)
+            (uint32_t)mods[j].uid == uid)
             return -3;
     return 0;
 }
@@ -638,7 +620,6 @@ static int mod_delete(uint32_t k)
         return -1;
     mod_unregister(k, 0);                           /* unloaded, the slot empty */
     memset(&mods[k], 0, sizeof mods[k]);
-    eng_map_dirty = 1;                              /* (its number: no longer kept past this run) */
     mod_win_drop(k);
     for (uint32_t j = MOD_RECS; j-- > 1u;)          /* (the rest first: a cut leaves a first record, a bad file) */
         if (st_exists(mod_obj(k, j)))

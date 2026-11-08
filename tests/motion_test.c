@@ -262,11 +262,11 @@ static int native_motion_test(void)
     motion_set_event(TSEL, 0, MO_NATIVE + P5_CUTOFF, MO_TAG_P5 << 8 | 60);
     bad += check("another engine's native events cannot expose an empty motion page", !page_visible(page));
     motion_clear(TSEL);
-    bad += check("invalid native tags, fields and values are refused", !motion_native_ok(MO_NATIVE, 0) &&
-        !motion_native_ok(MO_NATIVE + P5_UNISON, MO_TAG_P5 << 8 | 1) &&
-        !motion_native_ok(MO_NATIVE + P5_SAW_A, MO_TAG_P5 << 8 | 127) &&
-        !motion_native_ok(MO_NATIVE + FP_TRNSP, MO_TAG_FM6 << 8) &&
-        !motion_native_ok(MO_NATIVE + FP_DET, MO_TAG_FM6 << 8 | 99));
+    bad += check("invalid native tags, fields and values are refused", !motion_native_ok(MO_NATIVE, 0, 0) &&
+        !motion_native_ok(MO_NATIVE + P5_UNISON, MO_TAG_P5 << 8 | 1, 0) &&
+        !motion_native_ok(MO_NATIVE + P5_SAW_A, MO_TAG_P5 << 8 | 127, 0) &&
+        !motion_native_ok(MO_NATIVE + FP_TRNSP, MO_TAG_FM6 << 8, 0) &&
+        !motion_native_ok(MO_NATIVE + FP_DET, MO_TAG_FM6 << 8 | 99, 0));
     ui_power_on(); set_engine_of(TSEL, ENGI_CZ); apply_preset_to(TSEL, 0);
     for (uint32_t j = 0; j < MOTION_MAX - 1u; j++) motion_set_event(TSEL, j, P_LEVEL, 30);
     song.rec = 1; seq_start(); seq_tick(TSEL, CTL); uint8_t old[MO_NATIVE_N]; motion_native_peek(TSEL, old);
