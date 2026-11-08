@@ -1202,6 +1202,9 @@ static void confirm_text(char *a, char *b)
         str_cpy(b, "Again: delete \xB7 other: copy\n" PAT_DLG_WORD ": half \xB7 double", CF_DETAIL);
         break;
     }
+    case CF_DEL_ITEM:                                   /* GLO > SYNTHS / STORAGE (storage_items.c) */
+        sti_question(k, a, b);
+        break;
 #if REC_TAKES
     case CF_DEL_KIT:                                    /* Record kit's sheet: a recorded kit, all its takes */
         str_cpy(a, "DELETE KIT 1?", 24);

@@ -165,6 +165,7 @@ static struct { uint32_t stage; } melodee_dbg;
 #include "../firmware/src/ui_layer.c"
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
+#include "../firmware/src/storage_items.c"
 #include "../firmware/src/sysex_route.c"
 #include "demo_steps.h"
 #include "synth_compat.h"                     /* (the synths' patches by their schemas, for the checks) */
@@ -852,6 +853,30 @@ static void go_title(const char *title)
     ui.home = 0;
     ui.page = (uint8_t)i;
     page_entered();
+}
+/* GLO > SYNTHS and STORAGE (ui_slots.c, storage_items.c): three synth files as the device lists them (the host's own
+ * engines play; these stand on numbers nothing else uses but the first, the track's), their RAM, the tracks on them,
+ * the Delete sheet and its question */
+static void storage_fake_synths(void)
+{
+    static const struct { uint8_t state, eng; const char *name, *tag; uint32_t len, need; } F[3] = {
+        {MS_LOADED, 0, "PROPHET", "P5", 41416u, 17104u}, {MS_NORAM, 25, "PPG", "PPG", 49792u, 34992u},
+        {MS_STORED, 26, "HYDRA", "HYDR", 59592u, 48344u}};
+    memset(mods, 0, sizeof mods);
+    for (uint32_t k = 0; k < 3u; k++) {
+        mods[k].state = F[k].state;
+        mods[k].engine = mods[k].want = k ? F[k].eng : (uint8_t)trk[0].eng_req;
+        str_cpy(mods[k].name, F[k].name, sizeof mods[k].name);
+        memcpy(mods[k].tag, F[k].tag, str_len(F[k].tag));
+        mods[k].len = F[k].len;
+        mods[k].need = F[k].need;
+    }
+    (void)resource_allocate_code(RES_MODULE0, mods[0].need);
+}
+static void storage_fake_clear(void)
+{
+    resource_release(RES_MODULE0);
+    memset(mods, 0, sizeof mods);
 }
 static uint32_t oct_leds_seen(int all)            /* over 1 s: the OCT LED bits lit at some point (all: throughout) */
 {
@@ -2885,8 +2910,10 @@ static int test_product_ux(void)
     press(B_GLO); ok &= str_eq(cur_page()->title, "SYSTEM");
     press(B_GLO); ok &= str_eq(cur_page()->title, "WEIGHTS");
     press(B_GLO); ok &= str_eq(cur_page()->title, "WEIGHTS 2");
+    press(B_GLO); ok &= str_eq(cur_page()->title, "SYNTHS");
+    press(B_GLO); ok &= str_eq(cur_page()->title, "STORAGE");
     press(B_GLO); ok &= cur_page()->graph == GR_TRK;
-    bad += check("GLO cycles MIXER > GLOBAL > SYSTEM > WEIGHTS > WEIGHTS 2 > MIXER", ok);
+    bad += check("GLO cycles MIXER > GLOBAL > SYSTEM > WEIGHTS > WEIGHTS 2 > SYNTHS > STORAGE > MIXER", ok);
     go_home(); hold(B_SEQ);
     bad += check("long SEQ goes directly to PATTERNS (the song under it) with no tap on release", cur_page()->graph == GR_PATGRID);
     turn(EN_SELECT, 1);
@@ -3651,10 +3678,14 @@ static int test_tempo_select(void)
     turn(EN_SELECT, 1);
     ok &= str_eq(cur_page()->title, "WEIGHTS 2");
     turn(EN_SELECT, 1);
+    ok &= str_eq(cur_page()->title, "SYNTHS");
+    turn(EN_SELECT, 1);
+    ok &= str_eq(cur_page()->title, "STORAGE");
+    turn(EN_SELECT, 1);
     ok &= str_eq(cur_page()->title, "GLOBAL");
     turn(EN_SELECT, -1);
-    bad += check("SELECT on GLO: GLOBAL -> SYSTEM -> WEIGHTS -> WEIGHTS 2 -> GLOBAL (wraps), back the other way; the BPM untouched",
-                 ok && str_eq(cur_page()->title, "WEIGHTS 2") && song.g[G_BPM] == 120);
+    bad += check("SELECT on GLO: GLOBAL -> SYSTEM -> WEIGHTS -> WEIGHTS 2 -> SYNTHS -> STORAGE -> GLOBAL (wraps), back the other way; the BPM untouched",
+                 ok && str_eq(cur_page()->title, "STORAGE") && song.g[G_BPM] == 120);
     go_title("NOTES");
     cursor_set(4);
     turn(EN_SELECT, 1);
@@ -6042,7 +6073,7 @@ static int test_smk_banks(void)
                  song.g[G_ROUTE] != chan && pop.on == POP_PICK && p5_patch_of(TSEL)->raw[P5_CUTOFF] == cut);
     song.g[G_ROUTE] = chan;
     pop_close(); frame();
-    press(B_GLO); press(B_GLO); press(B_GLO);
+    press(B_GLO); press(B_GLO); press(B_GLO); press(B_GLO); press(B_GLO);   /* (WEIGHTS, WEIGHTS 2, SYNTHS, STORAGE) */
     bad += check("  MIXER: the page's own", cur_page()->graph == GR_TRK && strip_bank() == BK_PAGE && !smk_head_tag()[0]);
     go_title("PATTERN"); frame();
     bad += check("  SEQ > PATTERN: the page's own (LEN DIV SWING GATE)", strip_bank() == BK_PAGE && !knob_bank_page());
@@ -6276,6 +6307,87 @@ static uint32_t free_take_len(const recorded_note_t *r)   /* its length, RECORD_
 {
     return (uint32_t)r->duration << recorded_exponent(r);
 }
+/* GLO > SYNTHS and STORAGE: the pages' checks (the synth files: storage_fake_synths, above) */
+static int test_storage_pages(void)
+{
+    int bad = 0, ok;
+    char tag[6], nm[24], d[24], a[24], b[64];
+    ui_power_on();
+    storage_fake_synths();
+    go_title("SYNTHS");
+    ui_draw();
+    ok = slot_kind() == SK_SYNTH && slot_count(SK_SYNTH) == 4u && slot_cur(SK_SYNTH) == 0u;
+    slot_row(SK_SYNTH, 0, tag, nm);
+    slot_detail(SK_SYNTH, 0, 1, d);
+    ok &= str_eq(tag, "RAM") && str_len(nm) > 5u && str_eq(nm + str_len(nm) - 5u, " free") && str_eq(d, "Synths use 17 KB");
+    bad += check("SYNTHS: a row a synth file after RAM's (its room left, what the synths take)", ok);
+    turn(EN_K1, 1);
+    ui_draw();
+    slot_row(SK_SYNTH, 1, tag, nm);
+    slot_detail(SK_SYNTH, 1, 1, d);
+    {
+        uint32_t parts;
+        char rt[16];
+        slot_right(SK_SYNTH, 1, 0, rt, &parts);
+        ok = slot_cur(SK_SYNTH) == 1u && str_eq(tag, "P5") && str_eq(nm, "PROPHET") && str_eq(d, "In RAM, 17 KB") &&
+             parts == 1u && str_eq(rt, "1");
+    }
+    bad += check("  KNOB 1: the synth's card, the RAM it takes, the track on it (its digit)", ok);
+    turn(EN_K2, 1);
+    slot_detail(SK_SYNTH, 2, 1, d);
+    ok = slot_cur(SK_SYNTH) == 2u && str_eq(d, "Needs 35 KB RAM") && slot_tag_c(SK_SYNTH, 2, 0) == T_REC;
+    slot_detail(SK_SYNTH, 3, 1, d);
+    ok &= str_eq(d, "Not loaded, 48 KB") && slot_tag_c(SK_SYNTH, 3, 7) == 7;
+    turn(EN_K1, 5);
+    ok &= slot_cur(SK_SYNTH) == 3u;
+    bad += check("  KNOB 2 too; a synth waiting for RAM: how much, its tag red; one not loaded; the last row stays", ok);
+    turn(EN_K1, -2);
+    press(B_OCTUP);
+    ok = pop.on == POP_SHEET && pop.n == 1u && str_eq(pop.rows[0].label, "Delete") && str_eq(pop.title, "P5 \xB7 PROPHET") &&
+         str_eq(pop.sub, "In RAM, 17 KB");
+    bad += check("  OCT+: its sheet, Delete", ok);
+    press(B_OCTUP);
+    confirm_text(a, b);
+    ok = ui.confirm == CF_DEL_ITEM && ui.confirm_trk == (STI_SYNTH << 8 | 0u) && str_eq(a, "DELETE SYNTH?") &&
+         str_eq(b, "PROPHET, track 1 silent");
+    bad += check("  Delete asks first: which synth, the track it leaves silent", ok);
+    press(B_OCTDN);
+    ok = !ui.confirm;
+    slv.syn = 0;
+    press(B_OCTUP);
+    ok &= !pop.on && !ui.confirm;
+    bad += check("  No; OCT+ on RAM's row: nothing to do", ok);
+    song.playing = 1;
+    sti_ask(STI_SYNTH << 8 | 1u);
+    ok = !ui.confirm && msg_is("STOP TO DELETE");
+    song.playing = 0;
+    bad += check("  playing: STOP TO DELETE, no question", ok);
+    press(B_GLO);
+    ui_draw();
+    ok = str_eq(cur_page()->title, "STORAGE") && slot_kind() == SK_FLASH && sti_count() >= 4u && sti_at(0) == STI_FREE << 8;
+    {
+        uint32_t syn = 0;
+        for (uint32_t r = 1; r < sti_count(); r++)
+            syn += sti_at(r) >> 8 == STI_SYNTH;
+        ok &= syn == 3u && !sti_erasable(sti_at(0));
+    }
+    bad += check("STORAGE: the room row, then every thing kept (the three synth files)", ok);
+    project_save(0);
+    ok = sti_at(1) == (STI_PROJECT << 8 | 0u);
+    slot_row(SK_FLASH, 1, tag, nm);
+    slot_detail(SK_FLASH, 1, 1, d);
+    ok &= str_eq(tag, "01") && str_eq(d, "Project") && slot_tag_c(SK_FLASH, 1, 0) == T_TRK(0);
+    slv.fl = 1;
+    press(B_OCTUP);
+    press(B_OCTUP);
+    ok &= ui.confirm == CF_ERASE_PROJ && ui.confirm_trk == 0u;
+    press(B_OCTUP);
+    ok &= !project_used(0) && !ui.confirm && sti_at(1) >> 8 != STI_PROJECT;
+    bad += check("  a saved project: its row first (its slot, the projects' colour); Delete is PROJECT's Erase, the row goes", ok);
+    storage_fake_clear();
+    go_home();
+    return bad;
+}
 static int test_free_take(void)
 {
     int bad = 0;
@@ -6427,6 +6539,7 @@ int main(void)
     bad += test_select_octave();
     bad += test_capture_undo();
     bad += test_free_take();
+    bad += test_storage_pages();
 
     if (getenv("UI_SCREEN_DIR")) chain_screens(getenv("UI_SCREEN_DIR"));
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);

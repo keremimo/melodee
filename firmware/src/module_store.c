@@ -320,6 +320,7 @@ static int mod_catalog(uint32_t k)
         return s->state = MS_BAD;
     s->engine = s->want = f.engine;                 /* (the number it asks for, until the map gives it one) */
     s->version = f.version;
+    s->need = ((f.image + f.bss + 7u) & ~7u) + (uint32_t)sizeof(engine_t);   /* (as mod_load allocates it) */
     s->npresets = f.npresets;
     s->abi = (uint8_t)f.abi;
     s->host = f.abi == MOD3_ABI ? f.host : 0u;
@@ -463,16 +464,27 @@ static int mod_used(uint32_t k)
 static void mod_service(uint32_t now)
 {
     static uint32_t tried;
+    static uint16_t noram, told;                    /* a used synth the arena had no room for: once, then after a
+                                                     * second try (the part's old synth gone by then), said once */
     sch_info_sync();                                /* (the synths' patches in RAM for the audio: schema.c) */
     sch_part_sync();
     for (uint32_t k = 0; k < NMOD; k++) {
+        uint16_t bit = (uint16_t)(1u << k);
+        if (!mod_listed(k) || !mod_used(k) || mods[k].state == MS_LOADED)
+            noram &= (uint16_t)~bit, told &= (uint16_t)~bit;
         if (!mod_listed(k))
             continue;
         if (mod_used(k)) {
             mod_last[k] = now;
             if (mods[k].state == MS_STORED || (mods[k].state == MS_NORAM && now - tried >= 1000u)) {
                 tried = now;
-                (void)mod_bring(k);
+                if (mod_bring(k) == MS_NORAM && !(told & bit)) {
+                    if (noram & bit) {              /* (GLO > SYNTHS shows what holds the RAM) */
+                        ui_say("NO RAM FOR ", mods[k].name);
+                        told |= bit;
+                    }
+                    noram |= bit;
+                }
             }
         } else if (mods[k].state == MS_LOADED && now - mod_last[k] >= MOD_IDLE_MS) {
             mod_unregister(k, 1);
@@ -632,6 +644,8 @@ static int mod_delete(uint32_t k)
     mod_unregister(k, 0);                           /* unloaded, the slot empty */
     memset(&mods[k], 0, sizeof mods[k]);
     mod_win_drop(k);
+    sch_win_drop(k);                                /* (its schema's pages and presets with it, as mod_catalog) */
+    sch_gen++;
     for (uint32_t j = MOD_RECS; j-- > 1u;)          /* (the rest first: a cut leaves a first record, a bad file) */
         if (st_exists(mod_obj(k, j)))
             (void)st_project_delete(mod_obj(k, j));

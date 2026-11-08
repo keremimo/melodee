@@ -24,6 +24,7 @@ typedef struct {
     uint64_t uid;                                   /* who it is: its ID (its IDNT chunk's; mod_abi3.h mod_ident_v3) */
     uint16_t version;
     uint32_t len;                                   /* the file's length (0: empty) */
+    uint32_t need;                                  /* the SRAM its load takes (its head: code, data, its engine_t) */
     char name[MOD3_NAME_MAX + 1u];
     uint8_t npresets;                               /* (its head: the browser's list without loading it; its PRST
                                                      * chunk's, 0 without one) */

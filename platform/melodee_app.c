@@ -392,6 +392,7 @@ static const uint8_t *fm1_xip_ptr(uint32_t off) { return ml_flash(off); }
 static void smkx_check(void) {}
 #endif
 #include "../firmware/src/project.c"
+#include "../firmware/src/storage_items.c"
 #include "../firmware/src/cz_store.c"
 #include "../firmware/src/fm6_store.c"
 
