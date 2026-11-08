@@ -312,16 +312,19 @@ static uint32_t lg_settings(const uint8_t *in, uint32_t n, uint8_t *out)
     return sizeof p + sizeof(v2_tmpl_t);
 }
 /* ---- the user preset banks (ids 6..28): as 1.x reads them (up_cache_bank: its records, this device's numbers) -> UPB3,
- * every record's values in today's P_COUNT, each synth it names with an entry after its records */
+ * every record's values in today's P_COUNT; after the records the synths they name by ID ("UIDS", n, 0 x 3, n IDs of 8
+ * bytes), a record's engine byte its synth's place there + 1. At most V2_UP_IDS synths a bank */
 #define V2_UPB3 0x33425055u
+#define V2_UP_IDS_MAGIC 0x53444955u
+#define V2_UP_IDS 10u
 static uint32_t lg_bank(uint32_t b, uint8_t *out)   /* bank b -> UPB3 in out: its length (0: an empty bank) */
 {
     up_bank_t *B = up_cache_bank(b);
-    uint32_t used = 0, at = 0, ne = 0;
+    uint32_t used = 0, n = 0;
+    uint64_t ids[V2_UP_IDS];
     struct { uint32_t magic; uint16_t rsize, nslot; } head = {V2_UPB3, 206u, UP_PER_BANK};
     uint8_t *disk = out + sizeof head, *m;
-    lg_handles_reset();
-    memset(out, 0, sizeof head + UP_PER_BANK * 206u + 8u + V2_NENG * EMAP_ENTRY);
+    memset(out, 0, sizeof head + UP_PER_BANK * 206u + 8u + V2_UP_IDS * 8u);
     memcpy(out, &head, sizeof head);
     for (uint32_t j = 0; j < UP_PER_BANK; j++) {
         up_rec_t r = B->r[j];
@@ -330,10 +333,11 @@ static uint32_t lg_bank(uint32_t b, uint8_t *out)   /* bank b -> UPB3 in out: it
         if ((r.used & ~UP_STAR) != UP_USED) continue;
         snprintf(what, sizeof what, "user preset %u %.12s", (unsigned)(b * UP_PER_BANK + j + 1u), r.name);
         if (!up_valid(&r) && r.ver != UP_VER_CZ) { lg_note("  %s: unreadable, left out\n", what); continue; }
-        uint32_t e = r.engine, f;
+        uint32_t e = r.engine, f, h;
+        lg_handles_reset();
         if (up_native(&r) || r.ver == UP_VER_CZ) {      /* (its patch as it is; UP_VER_CZ: the native CZ-1 form since) */
             if (r.ver == UP_VER_CZ) { r.ver = UP_VER_NATIVE_CZ; r.np = 0; memset(r.tone_extra, 0, sizeof r.tone_extra); }
-            r.engine = (uint8_t)lg_sound(e, 0, &f, what);
+            h = lg_sound(e, 0, &f, what);
         } else {                                        /* (the values by today's ids, the KIT bits after them) */
             int16_t v[P_COUNT], def[P_COUNT];
             uint8_t kb[MOD_SCH_KIT_PACKED];
@@ -341,29 +345,32 @@ static uint32_t lg_bank(uint32_t b, uint8_t *out)   /* bank b -> UPB3 in out: it
             if (kit_rec && !up_kit_wire(&r, kb)) { lg_note("  %s: unreadable, left out\n", what); continue; }
             for (uint32_t i = 0; i < P_COUNT; i++) def[i] = param_desc_of(e % NENGINES, i)->def;
             up_params(&r, v, def);
-            r.engine = (uint8_t)lg_sound(e, v[P_E0], &f, what);
+            h = lg_sound(e, v[P_E0], &f, what);
             if (f < KF_N) v[P_E0] = (int16_t)lg_kit_value(v[P_E0]);
             memset(r.packed, 0, sizeof r.packed);
             for (uint32_t i = 0; i < P_COUNT; i++) r.packed[i] = (uint8_t)(v[i] + 64);
             r.np = P_COUNT;
             if (kit_rec) { memcpy(r.tone_extra, kb, sizeof r.tone_extra); memcpy(r.packed + P_COUNT, kb + sizeof r.tone_extra, 8u); }
         }
-        if (!r.engine) { lg_note("  %s: left out (its synth is retired)\n", what); continue; }
+        if (!h) { lg_note("  %s: left out (its synth is retired)\n", what); continue; }
+        uint64_t uid = lg_who[h].uid;
+        uint32_t place = 0;
+        while (place < n && ids[place] != uid) place++;
+        if (place == n) {
+            if (n == V2_UP_IDS) { lg_note("  %s: left out (a bank names %u synths at most)\n", what, (unsigned)V2_UP_IDS); continue; }
+            ids[n++] = uid;
+        }
+        r.engine = (uint8_t)(place + 1u);
         memcpy(d, &r, 160u);
         memcpy(d + 160u, r.tone_extra, 46u);
         used++;
     }
     if (!used) return 0;
     m = disk + UP_PER_BANK * 206u;
-    for (uint32_t h = 2; h < V2_NENG; h++)
-        if (lg_who[h].uid) {
-            uint8_t *x = m + 8u + EMAP_ENTRY * ne++;
-            x[0] = (uint8_t)h; mod_put64(x + 4, lg_who[h].uid); memcpy(x + 12, lg_who[h].name, MOD3_NAME_MAX);
-        }
-    memcpy(m, &(uint32_t){UP_MAP_MAGIC}, 4);
-    m[4] = (uint8_t)ne;
-    at = sizeof head + UP_PER_BANK * 206u + 8u + ne * EMAP_ENTRY;
-    return at;
+    memcpy(m, &(uint32_t){V2_UP_IDS_MAGIC}, 4);
+    m[4] = (uint8_t)n;
+    for (uint32_t i = 0; i < n; i++) mod_put64(m + 8u + 8u * i, ids[i]);
+    return sizeof head + UP_PER_BANK * 206u + 8u + 8u * n;
 }
 /* a 1.x project object (any form its readers take) -> a 2.0 FBKS record in out (BANK_STORE_SIZE): rc 0 ok */
 static uint32_t lg_project(const uint8_t *in, uint32_t n, uint8_t *out)
@@ -377,6 +384,9 @@ static uint32_t lg_project(const uint8_t *in, uint32_t n, uint8_t *out)
 }
 
 #ifdef LEGACY_NATIVE_MAIN
+#define PP_ID(t) ((t)->eng_req == lg_drum() ? V2_KIT[lg_kit_family((t)->p[P_E0])].uid : (t)->eng_req == ENGI_MIDI ? V2_ID_MIDI : eng_map[(t)->eng_req].uid)
+#define PP_E0(t, v) ((t)->eng_req == lg_drum() ? lg_kit_value(v) : (v))
+#include "preset_play.h"
 extern const mod_desc_v3 mod_sid, mod_drum, mod_cz, mod_fm6, mod_p5;   /* (the module objects, linked beside) */
 static int lg_boot_modules(const char *dir)
 {
@@ -659,6 +669,18 @@ int main(int argc, char **argv)
     if (argc == 5 && !strcmp(argv[2], "convert")) return lg_convert_dir(argv[3], argv[4]);
     if (argc == 4 && !strcmp(argv[2], "fixtures")) return lg_fixtures(argv[3]);
     if (argc == 4 && !strcmp(argv[2], "store")) return lg_store_fixture(argv[3]);
+    if (argc == 5 && !strcmp(argv[2], "presets")) {     /* a 1.x backup's banks in, each user preset played, the stars */
+        for (uint32_t id = 6; id <= 28u; id++) {
+            char path[600];
+            snprintf(path, sizeof path, "%s/%u.bin", argv[3], (unsigned)id);
+            uint32_t n = lg_read(path, lg_buf, sizeof lg_buf);
+            if (n && lg_bk_put(id, lg_buf, n)) { printf("legacy: put %u refused\n", (unsigned)id); return 1; }
+        }
+        up_cache_reset(); up_boot(); core_poll(200);
+        for (uint32_t k = 0; k < UP_SLOTS; k++)
+            if (up_used(k) && pp_state(k, stdout)) printf("preset %u: not loaded\n", (unsigned)k);
+        return 0;
+    }
     if (argc == 6 && !strcmp(argv[2], "render")) return lg_render(argv[3], (uint32_t)atoi(argv[4]), argv[5]);
     return 2;
 }

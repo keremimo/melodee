@@ -7,6 +7,9 @@
  *   check_native MODDIR render REC S OUT  a 2.0 project record in slot 1, played S seconds (interleaved float) */
 #include "melodee_core.c"
 #include "bk_client.h"
+#define PP_ID(t) (eng_map[(t)->eng_req % NENGINES].uid)
+#define PP_E0(t, v) (v)
+#include "preset_play.h"
 
 extern const mod_desc_v3 mod_sid, mod_808, mod_909, mod_sidkit, mod_cr78, mod_fmkit, mod_sampler, mod_cz, mod_fm6, mod_p5;
 static int ck_boot_modules(const char *dir)
@@ -42,7 +45,7 @@ static uint32_t ck_read(const char *path, uint8_t *b, uint32_t max)
 }
 int main(int argc, char **argv)
 {
-    if (argc < 3 || ck_boot_modules(argv[1])) { printf("usage: check_native MODDIR put DIR | render REC S OUT\n"); return 2; }
+    if (argc < 3 || ck_boot_modules(argv[1])) { printf("usage: check_native MODDIR put DIR | presets DIR OUT | render REC S OUT\n"); return 2; }
     if (argc == 4 && !strcmp(argv[2], "put")) {
         uint32_t bad = 0;
         for (uint32_t id = 0; id < 100u; id++) {
@@ -60,6 +63,21 @@ int main(int argc, char **argv)
         for (uint32_t id = 0; id < 256u; id++)
             if (lg_list[id] > 1u) printf("  %u: %u B\n", (unsigned)id, (unsigned)lg_list[id] - 1u);
         return bad || rc;
+    }
+    if (argc == 5 && !strcmp(argv[2], "presets")) {   /* DIR's objects in, each user preset played to OUT-k.f32, the stars */
+        for (uint32_t id = 1; id < 100u; id++) {
+            char path[600];
+            snprintf(path, sizeof path, "%s/v2-%u.bin", argv[3], (unsigned)id);
+            uint32_t n = ck_read(path, ck_buf, sizeof ck_buf);
+            if (n && lg_bk_put(id, ck_buf, n)) { printf("check: put %u refused\n", (unsigned)id); return 1; }
+        }
+        core_poll(100);
+        for (uint32_t k = 0; k < UP_SLOTS; k++)
+            if (up_used(k) && pp_state(k, stdout)) printf("preset %u: not loaded\n", (unsigned)k);
+        for (uint32_t e = 0; e < NENGINES; e++)
+            for (uint32_t p = 0; e && eng_map[e].uid && p < 256u; p++)
+                if (favorite_has(e, p)) printf("star %.16s %u\n", eng_map[e].name, (unsigned)p);
+        return 0;
     }
     if (argc == 6 && !strcmp(argv[2], "render")) {
         uint32_t n = ck_read(argv[3], ck_buf, sizeof ck_buf), rc, secs = (uint32_t)atoi(argv[4]);
