@@ -373,9 +373,9 @@ static void page_sheet_open(void)
     case 1:
         sound_name(TSEL, nm);
         if (ui.home)
-            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_STAGE, NELEM(SHEET_STAGE) - KIT_ROWS_OFF);
+            sheet_open(nm[0] ? nm : "Sound", eng_name(eng_idx(TSEL->eng_req)), SHEET_STAGE, NELEM(SHEET_STAGE) - KIT_ROWS_OFF);
         else
-            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_SOUND, NELEM(SHEET_SOUND) - KIT_ROWS_OFF);
+            sheet_open(nm[0] ? nm : "Sound", eng_name(eng_idx(TSEL->eng_req)), SHEET_SOUND, NELEM(SHEET_SOUND) - KIT_ROWS_OFF);
         break;
     case 2:
         fmt_int(nm, chain_config.count);
@@ -823,7 +823,7 @@ static void preset_pick_draw(void)
         cv_rrect(1, 1, POP_W - 2, 102, 9, T_SURF, T_LINE);
         cv_text_on(12, ty_y(16, TY_LB), TY_LB, title, T_THEME, T_SURF);
         cv_free_text(12, ty_y(40, TY_TX), TY_TX, nm[0] ? nm : tag, T_TEXT, T_SURF, POP_W - 24);
-        cv_text_on(12, ty_y(64, TY_LB), TY_LB, ENGINES[eng_idx(e)]->name, T_THEME, T_SURF);
+        cv_text_on(12, ty_y(64, TY_LB), TY_LB, eng_name(eng_idx(e)), T_THEME, T_SURF);
         cv_text_on(12, ty_y(88, TY_LB), TY_LB, "PLAY KEYS TO TRY", T_MID, T_SURF);
         GFX_HOOK_COVER(POP_X, Y_GRAPH, POP_X + POP_W, Y_GRAPH + 104);
         cv_blit_band(POP_X, Y_GRAPH);

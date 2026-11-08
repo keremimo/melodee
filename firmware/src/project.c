@@ -934,6 +934,7 @@ static int project_restore_runtime(const project_t *input)
     if (!proj_ok(input)) return 1;
     if(designer_on() && designer_quit)designer_quit(0);   /* a loaded project owns the new sound */
     if (p != input) memcpy(p, input, sizeof *p);
+    for (k = 0; k < PROJ_TRK; k++) mod_want(p->t[k].engine % NENGINES);   /* (its synth modules: into SRAM first) */
     transport_req = 2;
     panic_req = (1u << NTRK) - 1u;
     fm1_irq_off();                                      /* the audio ISR must not see half a project */

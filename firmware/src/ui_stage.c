@@ -497,7 +497,7 @@ static void stage_row(uint32_t k)
         if (!nm[0]) str_cpy(nm, tag, sizeof nm);
     } else {
         sound_name(t, nm);
-        if (!nm[0]) str_cpy(nm, ENGINES[eng_idx(t->eng_req)]->name, sizeof nm);
+        if (!nm[0]) str_cpy(nm, eng_name(eng_idx(t->eng_req)), sizeof nm);
         stage_entry(k, &src, &kk);
     }
     cat = entry_cat(src, kk) % CAT_N;

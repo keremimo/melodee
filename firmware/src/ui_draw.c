@@ -186,9 +186,9 @@ static void head_chip_text(char *b)
     } else if (ui.home) {                               /* Stage: the engine (a kit: its name, "909 KIT") */
         if (browse_pending()) { uint32_t kk, s = browse_shown(&kk); e = src_engine(s, kk); }
         if (ENGINES[eng_idx(e)] == &ENG_DRUM && !browse_pending()) sound_name(TSEL, b);
-        else str_cpy(b, ENGINES[eng_idx(e)]->name, 16);
+        else str_cpy(b, eng_name(eng_idx(e)), 16);
     } else if (sec_map_on()) {                          /* the map: the engine */
-        str_cpy(b, ENGINES[e]->name, 16);
+        str_cpy(b, eng_name(e), 16);
     } else if (pg->graph == GR_ROLL && grid_on()) {     /* the drum grid */
         str_cpy(b, "STEP", 16);
     } else if (pg->graph == GR_FMEG) {                  /* FM6's EG RATE / LVL: "OP3 EG" */

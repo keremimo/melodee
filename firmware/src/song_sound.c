@@ -61,6 +61,7 @@ static int song_sound_valid(const song_sound_t *s)
     for (uint32_t i = 0; i < P_COUNT; i++) {
         int32_t v = (int32_t)s->p[i] - 64;
         const param_desc_t *d = param_desc_of(s->engine, i);
+        if (i >= P_E0 && eng_extra_retired(s->engine)) continue;   /* (a synth module not in SRAM: kept as it is) */
         if (v < d->min || v > d->max) return 0;
     }
     for (uint32_t i = 0; s->name[i]; i++) if ((uint8_t)s->name[i] < 32u || (uint8_t)s->name[i] > 126u) return 0;

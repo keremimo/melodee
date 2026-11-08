@@ -2,8 +2,10 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Synth modules (src/eng_module.c, src/module_store.c, src/module_abi.h): TRIO built as a module renders bit for bit
  * what the built-in TRIO rendered; module files into the pool's slots (head, CRC, address words moved to the block),
- * loaded at commit and at power-on, listed after the built-in engines, refused when bad or when their number is
- * taken, left out after a boot that died early, deleted; a track keeps a module's number when it goes. With
+ * loaded once at commit, listed at power-on without loading, loaded when picked or used and out of SRAM again when
+ * idle, a part kept on its engine while its module is on its way, listed after the built-in engines, refused when
+ * bad or when their number is taken, left out after a boot that died early, deleted; a track keeps a module's number
+ * when it goes. With
  * build/modules/trio.mmod (tools/mod_build.py) the real pi32v2 file is relocated too and its descriptor read back.
  *   module_test [build/modules/trio.mmod] */
 #define PERSISTENCE_TEST_NO_MAIN
@@ -23,7 +25,7 @@ static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_
     mod_file_t f;
     memset(&f, 0, sizeof f);
     f.magic = MOD_FILE_MAGIC; f.abi = MOD_ABI; f.engine = (uint8_t)engine;
-    f.image = image; f.bss = 64; f.nrel = nrel; f.version = 3;
+    f.image = image; f.bss = 64; f.nrel = nrel; f.version = 3; f.npresets = 5;
     f.total = (uint32_t)sizeof f + image + 4u * nrel;
     strncpy(f.name, name, sizeof f.name);
     for (uint32_t i = 0; i < image; i++) b[sizeof f + i] = (uint8_t)(i * 7u + 1u);
@@ -165,14 +167,54 @@ int main(int argc, char **argv)
                  !strcmp(ENGINES[22]->name, "TRIO2"));
 
     /* power-on: every slot again; after a boot that died early, none */
-    for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k), memset(&mods[k], 0, sizeof mods[k]);
+    for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k, 0), memset(&mods[k], 0, sizeof mods[k]);
     bad += check("unloaded: the engines retired again, the browser without them",
                  !eng_ok(6) && !eng_ok(22) && eng_nshown == NENG_SHOWN && ENGINES[22] == &ENG_RETIRED);
     bootguard.failed = 0;
     mod_boot();
-    bad += check("power-on: both stored modules loaded", eng_ok(6) && eng_ok(22) && mods[0].state == MS_LOADED &&
-                 mods[1].state == MS_LOADED && !mod_skipped);
-    for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k), memset(&mods[k], 0, sizeof mods[k]);
+    bad += check("power-on: both stored modules listed by name and preset count, nothing in SRAM",
+                 eng_ok(6) && eng_ok(22) && mods[0].state == MS_STORED && mods[1].state == MS_STORED && !mod_skipped &&
+                 ENGINES[6] == &ENG_MOD_IDLE && !resource[RES_MODULE0].size && !resource[RES_MODULE0 + 1].size &&
+                 !strcmp(eng_name(22), "TRIO2") && eng_npresets(6) == 5 && listed(6) && listed(22) &&
+                 eng_extra_retired(6) && !mod_at[6]);
+
+    /* lazy: a part told to switch (as from an interrupt) keeps its engine until the main loop has the module */
+    host_preset(&trk[1], ENGI_PROPHET, 1);
+    trk[1].eng_req = 22;
+    engine_block(&trk[1]);                          /* (the audio's switch: seq.c, every block) */
+    int kept = trk[1].engine == ENGI_PROPHET && mod_waiting(22);
+    fm1_ms = 1000;
+    mod_service(fm1_ms);
+    engine_block(&trk[1]);
+    bad += check("lazy: a part switching to a stored module keeps its engine until mod_service loads it, then switches",
+                 kept && mods[1].state == MS_LOADED && trk[1].engine == 22 && ENGINES[22] != &ENG_MOD_IDLE &&
+                 mods[0].state == MS_STORED);
+    /* picking an engine loads it on the spot, with its preset */
+    set_engine_of(&trk[2], 6);
+    bad += check("lazy: picking a stored module loads it at once and applies its first preset",
+                 mods[0].state == MS_LOADED && trk[2].eng_req == 6 && trk[2].p[P_E0] == mod_trio.presets[0].e[0] &&
+                 resource[RES_MODULE0].size);
+    /* nothing on it any more: out of SRAM after MOD_IDLE_MS, listed still */
+    engine_block(&trk[2]);
+    int on6 = trk[2].engine == 6;
+    set_engine_of(&trk[2], ENGI_FM6);
+    engine_block(&trk[2]);
+    mod_service(fm1_ms += 100u);
+    int grace = mods[0].state == MS_LOADED;
+    mod_service(fm1_ms += MOD_IDLE_MS);
+    bad += check("lazy: an unused module stays MOD_IDLE_MS, then leaves SRAM, its engine still listed",
+                 on6 && grace && mods[0].state == MS_STORED && !resource[RES_MODULE0].size && ENGINES[6] == &ENG_MOD_IDLE &&
+                 eng_ok(6) && listed(6) && mods[1].state == MS_LOADED);
+    /* the browser lists a stored module's presets from its head; naming one (ui_graph.c entry_label) loads it */
+    {
+        int in_list = entry_ok(6, 4) && !entry_ok(6, 5) && mods[0].state == MS_STORED;
+        mod_want(6);
+        bad += check("lazy: the browser lists a stored module's presets unloaded; wanting one loads it",
+                     in_list && mods[0].state == MS_LOADED && !strcmp(eng_preset(ENGINES[6], 3)->name, "RING BELL"));
+    }
+    set_engine_of(&trk[1], ENGI_FM6);
+    engine_block(&trk[1]);
+    for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k, 0), memset(&mods[k], 0, sizeof mods[k]);
     bootguard.failed = 1;
     mod_boot();
     bad += check("power-on after a boot that died early: modules listed but left out",
@@ -182,6 +224,7 @@ int main(int argc, char **argv)
     mod_boot();
 
     /* a track on a module whose module goes: it keeps the number, silent */
+    mod_want(22);
     host_preset(&trk[1], 22, 2);
     trk_note_on(&trk[1], 60, 100);
     int32_t buf[CTL];

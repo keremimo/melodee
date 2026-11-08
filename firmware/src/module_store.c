@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Synth modules in the pool (eng_module.c plays them): slot k is the record ST_MFILE0 + k holding a module file as
- * tools/mod_build.py wrote it. Every stored module is loaded at power-on (the boot project may play it), unless the
- * last boot died early (bootguard: a module that crashes the device must not keep it from starting); an upload is
- * loaded when it is committed. The loader checks the file's head, copies the image into the audio working arena,
- * checks the CRC while it moves the address words, then the descriptor, and only then registers the engine. */
+ * tools/mod_build.py wrote it. At power-on only the heads are read (mod_catalog: the engines listed, nothing in
+ * SRAM), unless the last boot died early (bootguard: a module that crashes the device must not keep it from
+ * starting). A module is loaded when it is wanted (eng_module.c mod_want, mod_service below) and goes back to the
+ * flash when nothing has used it for a while; an upload is loaded once when it is committed (its check). The loader
+ * checks the file's head, copies the image into the audio working arena, checks the CRC while it moves the address
+ * words, then the descriptor, and only then registers the engine. */
 #define MODULE_STORE 1
 
 /* ---- loading: a file's bytes through rd (off, dst, n -> 0 ok) into slot k. Returns MS_LOADED or why not */
@@ -62,35 +64,21 @@ static int mod_head_ok(const mod_file_t *f, uint32_t len)
         return 0;
     return f->name[0] != 0;
 }
-static int mod_load(uint32_t k, uint32_t len, mod_read_t rd)
+/* slot k (catalogued) into SRAM: MS_LOADED, MS_NORAM (still listed), or MS_BAD (no longer listed) */
+static int mod_load(uint32_t k, mod_read_t rd)
 {
     mod_file_t f;
     mod_slot_t *s = &mods[k];
-    if (s->state == MS_LOADED)
-        mod_unregister(k);
-    memset(s, 0, sizeof *s);
-    if (!len)
-        return MS_EMPTY;
-    s->len = len;
-    if (len < sizeof f || rd(0, &f, sizeof f) || !mod_head_ok(&f, len))
-        return s->state = MS_BAD;
-    s->engine = f.engine;
-    s->version = (uint16_t)f.version;
-    memcpy(s->name, f.name, MOD_NAME_MAX);
-    for (uint32_t j = 0; j < NMOD; j++)
-        if (j != k && mods[j].state == MS_LOADED && mods[j].engine == f.engine)
-            return s->state = MS_CLASH;             /* two modules for one number: the first one plays */
-    if (mod_skipped)
-        return s->state = MS_SKIPPED;
-    if (mod_at[f.engine] || ENGINES[f.engine] != &ENG_RETIRED)
-        return s->state = MS_CLASH;                 /* a built-in engine has the number */
+    if (s->state == MS_LOADED || (s->state != MS_STORED && s->state != MS_NORAM))
+        return s->state;
+    if (rd(0, &f, sizeof f) || !mod_head_ok(&f, s->len) || f.engine != s->engine)
+        goto gone;
     uint32_t body = (f.image + f.bss + 3u) & ~3u;
     uint32_t g = mod_guard();
     uint8_t *p = resource_allocate_code(RES_MODULE0 + k, body + (uint32_t)sizeof(engine_t));
     mod_unguard(g);
     if (!p)
         return s->state = MS_NORAM;
-    s->state = MS_BAD;
     uint32_t crc = 0xFFFFFFFFu, w[32], base = (uint32_t)(uintptr_t)p;
     if (rd(sizeof f, p, f.image))
         goto bad;
@@ -127,6 +115,8 @@ bad:
     g = mod_guard();
     resource_release(RES_MODULE0 + k);
     mod_unguard(g);
+gone:
+    mod_unregister(k, 0);                           /* (a track on it keeps the number, retired) */
     return s->state = MS_BAD;
 }
 
@@ -137,23 +127,108 @@ static int mod_flash_read(uint32_t off, void *dst, uint32_t n)
 {
     return st_read_range(mod_rd_obj, mod_rd_copy, off, dst, n) ? 1 : 0;
 }
-/* slot k (again) from its record; MS_* */
-static int mod_slot_load(uint32_t k)
+static uint32_t mod_open(uint32_t k)                /* slot k's record for mod_flash_read: its length, 0 none */
 {
     st_hdr_t h;
     int copy = st_current(mod_obj(k), &h);
     if (copy < 0)
-        return mod_load(k, 0, mod_flash_read);
+        return 0;
     mod_rd_obj = mod_obj(k);
     mod_rd_copy = (uint32_t)copy;
-    return mod_load(k, h.len, mod_flash_read);
+    return h.len;
 }
-/* power-on (persist_boot, before the settings and the boot project): every slot */
+/* slot k listed from its record's head, nothing loaded (power-on, an upload): MS_STORED or why not */
+static int mod_catalog(uint32_t k)
+{
+    mod_file_t f;
+    mod_slot_t *s = &mods[k];
+    mod_unregister(k, 0);
+    memset(s, 0, sizeof *s);
+    uint32_t len = mod_open(k);
+    if (!len)
+        return MS_EMPTY;
+    s->len = len;
+    if (len < sizeof f || mod_flash_read(0, &f, sizeof f) || !mod_head_ok(&f, len))
+        return s->state = MS_BAD;
+    s->engine = f.engine;
+    s->version = f.version;
+    s->npresets = f.npresets;
+    memcpy(s->name, f.name, MOD_NAME_MAX);
+    if (mod_slot_of(f.engine) < NMOD)
+        return s->state = MS_CLASH;                 /* two modules for one number: the first one plays */
+    if (mod_skipped)
+        return s->state = MS_SKIPPED;
+    if (ENGINES[f.engine] != &ENG_RETIRED)
+        return s->state = MS_CLASH;                 /* a built-in engine has the number */
+    mod_list_idle(k);
+    return MS_STORED;
+}
+/* slot k into SRAM (eng_module.c mod_fetch): when the arena is full, the modules nothing uses go first */
+static int mod_used(uint32_t k);
+static int mod_bring(uint32_t k)
+{
+    if (mods[k].state == MS_LOADED || !mod_open(k))
+        return mods[k].state;
+    int rc = mod_load(k, mod_flash_read);
+    if (rc == MS_NORAM) {
+        for (uint32_t j = 0; j < NMOD; j++)
+            if (j != k && mods[j].state == MS_LOADED && !mod_used(j)) {
+                mod_unregister(j, 1);
+                mods[j].state = MS_STORED;
+            }
+        rc = mod_load(k, mod_flash_read);
+    }
+    return rc;
+}
+/* power-on (persist_boot, before the settings and the boot project): every slot's head */
 static void mod_boot(void)
 {
     mod_skipped = bootguard.failed != 0;            /* the last boot died in its first 30 s */
+    mod_fetch = mod_bring;
     for (uint32_t k = 0; k < NMOD; k++)
-        (void)mod_slot_load(k);
+        (void)mod_catalog(k);
+}
+
+/* ---- lazy loading (main loop): a part, a song section or a pattern's sound on slot k's engine */
+static int mod_used(uint32_t k)
+{
+    uint32_t n = mods[k].engine;
+    for (uint32_t p = 0; p < NPART; p++)
+        if (trk[p].engine == n || trk[p].eng_req == n)
+            return 1;
+    for (uint32_t t = 0; t < NTRK; t++) {
+        for (uint32_t r = 0; r < chain_config.count; r++) {
+            const song_sound_t *s = song_sound_get(chain_config.sound[r][t]);
+            if (s && s->engine == n)
+                return 1;
+        }
+        for (uint32_t b = 0; b < NPAT; b++) {
+            const song_sound_t *s = song_sound_get(pattern_sound[t][b]);
+            if (s && s->engine == n)
+                return 1;
+        }
+    }
+    return 0;
+}
+/* the used modules in SRAM, the others out after MOD_IDLE_MS (a module the arena had no room for: tried again
+ * each second) */
+static void mod_service(uint32_t now)
+{
+    static uint32_t tried;
+    for (uint32_t k = 0; k < NMOD; k++) {
+        if (!mod_listed(k))
+            continue;
+        if (mod_used(k)) {
+            mod_last[k] = now;
+            if (mods[k].state == MS_STORED || (mods[k].state == MS_NORAM && now - tried >= 1000u)) {
+                tried = now;
+                (void)mod_bring(k);
+            }
+        } else if (mods[k].state == MS_LOADED && now - mod_last[k] >= MOD_IDLE_MS) {
+            mod_unregister(k, 1);
+            mods[k].state = MS_STORED;
+        }
+    }
 }
 
 /* ---- an upload (editor_module.c): begin with the file's length, write its bytes in order, commit */
@@ -189,16 +264,22 @@ static int mod_put_commit(uint32_t k)
     if (st_stream_read(&mod_up, 0, &f, sizeof f) || !mod_head_ok(&f, mod_up.head.len))
         return -2;
     for (uint32_t j = 0; j < NMOD; j++)
-        if (j != k && mods[j].len && mods[j].engine == f.engine)
+        if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].engine == f.engine)
             return -3;
     if ((rc = st_stream_publish(&mod_up)) != 0)
         return rc;
-    return mod_slot_load(k);
+    rc = mod_catalog(k);
+    if (rc != MS_STORED)
+        return rc;
+    mod_fetch = mod_bring;
+    mod_last[k] = fm1_ms;                           /* loaded once (its check); out again when nothing uses it */
+    return mod_bring(k);
 }
 static int mod_delete(uint32_t k)
 {
     if (k >= NMOD)
         return -1;
-    (void)mod_load(k, 0, mod_flash_read);           /* unloaded, the slot empty */
+    mod_unregister(k, 0);                           /* unloaded, the slot empty */
+    memset(&mods[k], 0, sizeof mods[k]);
     return st_project_delete(mod_obj(k));
 }

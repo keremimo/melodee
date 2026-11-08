@@ -1301,17 +1301,17 @@ async function editorModules() {
   const file = (engine, name, n) => {
     const b = new Uint8Array(52 + n), v = new DataView(b.buffer);
     v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 1, true); b[6] = engine; v.setUint32(8, b.length, true);
-    v.setUint32(12, n, true); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); }); v.setUint32(48, 2, true);
+    v.setUint32(12, n, true); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); }); v.setUint16(48, 2, true); b[50] = 5;
     for (let i = 52; i < b.length; i++) b[i] = (i * 37) & 255;
     return b;
   };
   let bad = 0; try { E.MODS.head(new Uint8Array(60)); } catch (e) { bad++; }
   const f = file(6, "TRIO", 1000), h = E.MODS.head(f);
-  ok(bad === 1 && h.engine === 6 && h.name === "TRIO" && h.version === 2 && h.total === 1052, "modules: a .mmod head read, a foreign file refused");
+  ok(bad === 1 && h.engine === 6 && h.name === "TRIO" && h.version === 2 && h.npresets === 5 && h.total === 1052, "modules: a .mmod head read, a foreign file refused");
   const built = join(HERE, "..", "build", "modules", "trio.mmod");   /* (tools/mod_build.py: the C head's layout) */
   if (existsSync(built)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(built)));
-    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1, "modules: the built TRIO file's head reads as the firmware's");
+    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5, "modules: the built TRIO file's head reads as the firmware's");
   }
   let list = await E.MODS.list(rq);
   ok(!list.rc && !list.skipped && list.slots.length === 4 && list.slots.every((x) => !x.len), "modules: four empty slots listed");

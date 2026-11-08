@@ -215,11 +215,11 @@ static void new_role_row(uint32_t k)
     cv_text_c(19, ty_y(h / 2, TY_TX), TY_TX, d, T_INK, tc);
     cv_text_on(x, ty_y(14, TY_TX), TY_TX, none ? "No track" : NR_NAME[nw.role[k]], on ? tc : none ? T_DIM : T_SEC, bg);
     if (!none) {
-        ex = e != 0xFFu ? BOX_W - 8 - text_w(TY_LB, ENGINES[eng_idx(e)]->name) : BOX_W - 8;
+        ex = e != 0xFFu ? BOX_W - 8 - text_w(TY_LB, eng_name(eng_idx(e))) : BOX_W - 8;
         if (text_w(TY_LB, w) > ex - 8 - x)              /* (the engine goes before the sound's name is cut) */
             e = 0xFFu, ex = BOX_W - 8;
         if (e != 0xFFu)
-            cv_text_on(ex, ty_y(32, TY_LB), TY_LB, ENGINES[eng_idx(e)]->name, T_MID, bg);
+            cv_text_on(ex, ty_y(32, TY_LB), TY_LB, eng_name(eng_idx(e)), T_MID, bg);
         cv_free_text(x, ty_y(32, TY_LB), TY_LB, w, on ? T_TEXT : T_SEC, bg, ex - 8 - x);
     }
     cv_blit(BOX_X, (uint32_t)(NW_ROW_Y + (int32_t)k * NW_ROW));

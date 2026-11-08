@@ -250,7 +250,7 @@ static void pv_sound_bar(int32_t y, uint32_t k, const char *en, const char *nm, 
 static void pv_sound(void)
 {
     char nm[20];
-    const char *en = ENGINES[eng_idx(TSEL->eng_req)]->name;
+    const char *en = eng_name(eng_idx(TSEL->eng_req));
     uint32_t sig;
     if (designer_on() && designer_foot())                /* the sound designer: its keys (ui_designer.c) */
         return;

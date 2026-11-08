@@ -393,6 +393,9 @@ static void fm1_main(void)
         wire_release();                                 /* last turn's jobs are done with the scratch */
         fm1_wdt_feed();
         pattern_poll();
+#ifdef MODULE_STORE
+        mod_service(fm1_ms);                            /* synth modules: the used ones in SRAM, the idle ones out */
+#endif
 #if MELODEE_USB_HOST
         uh_task(fm1_ms);                                /* before usb_retry: a host port is not retried as a device */
         if (uh.msg) {

@@ -49,6 +49,7 @@ static const engine_t ENG_RETIRED = {         /* 13 without MELODEE_SLICE: reser
 #if MELODEE_MODULES
 static uint8_t mod_at[NENGINES];                    /* engine -> its module's slot + 1, 0: none (eng_module.c) */
 static uint32_t mod_part_bytes(uint32_t e);
+static int mod_idle(uint32_t e);                    /* e: a stored module not in SRAM (eng_module.c) */
 #endif
 static uint32_t eng_state_size(uint32_t e)
 {
@@ -188,7 +189,8 @@ static const preset_t *eng_preset(const engine_t *e, uint32_t k)
     memset(&made[turn], 0, sizeof made[turn]);
     made_name[turn][0] = 0;
     made[turn].name = made_name[turn];
-    e->preset_make(k, &made[turn], made_name[turn]);
+    if (e->preset_make)                             /* (a synth module not in SRAM has neither) */
+        e->preset_make(k, &made[turn], made_name[turn]);
     return &made[turn];
 }
 
@@ -237,6 +239,10 @@ static int eng_extra_retired(uint32_t e)
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 static int eng_ok(uint32_t e)
 {
+#if MELODEE_MODULES
+    if (e < NENGINES && mod_idle(e))
+        return 1;                                   /* picking it loads it (mod_want) */
+#endif
     return e < NENGINES && e != USER_NATIVE_P5 && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != 14u && (MELODEE_SLICE || e != ENGI_SLICE);
 }
 static uint32_t eng_sound_idx(uint32_t e)
@@ -267,4 +273,10 @@ static uint32_t trk_def_engine(uint32_t k) { return k < NPART ? TRK_DEF[k][0] : 
 static uint32_t trk_def_preset(uint32_t k) { return k < NPART ? TRK_DEF[k][1] : 0u; }
 #if MELODEE_MODULES
 #include "eng_module.c"         /* synth modules: engines loaded into SRAM (module_store.c keeps them) */
+#include "eng_module_main.c"    /* (their lists, loading, registration: main loop) */
+#else
+static const char *eng_name(uint32_t e) { return ENGINES[e % NENGINES]->name; }
+static uint32_t eng_npresets(uint32_t e) { return ENGINES[e % NENGINES]->npresets; }
+static void mod_want(uint32_t e) { (void)e; }
+static int mod_waiting(uint32_t e) { (void)e; return 0; }
 #endif

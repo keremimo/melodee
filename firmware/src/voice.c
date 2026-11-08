@@ -633,7 +633,7 @@ static void trk_all_off(track_t *t)
 static void engine_block(track_t *t)
 {
     uint32_t i, any = 0;
-    if (t->xf_on || t->eng_req != t->engine) {
+    if (t->xf_on || (t->eng_req != t->engine && !mod_waiting(t->eng_req))) {   /* (a module on its way: not yet) */
         if (!t->xf_on) {
             for (i = 0; i < NVOICE; i++)
                 any |= t->v[i].active;

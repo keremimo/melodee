@@ -164,7 +164,7 @@ static int entry_ok(uint32_t src, uint32_t k)              /* (a RECENT entry ma
         return up_used(k);
     if (src_slot(src))
         return native_used(src_engine(src, k), k);
-    return src < NENGINES && eng_ok(src) && k < ENGINES[src]->npresets;
+    return src < NENGINES && eng_ok(src) && k < eng_npresets(src);
 }
 
 /* the entry track t plays (USER_GENERAL, UP_SLOTS: none of the list's) */
@@ -267,7 +267,7 @@ static int list_keep(uint32_t m, uint32_t src, uint32_t k)
  * the user presets */
 #define LSEG_USER (2u * (uint32_t)eng_nshown)
 static uint32_t lseg_src(uint32_t seg){return seg&1u?USER_GENERAL:eng_vis(seg/2u);}
-static uint32_t lseg_len(uint32_t seg){return seg&1u?UP_SLOTS:ENGINES[eng_vis(seg/2u)]->npresets;}
+static uint32_t lseg_len(uint32_t seg){return seg&1u?UP_SLOTS:eng_npresets(eng_vis(seg/2u));}
 static uint32_t list_scan(uint32_t m, uint32_t ws, uint32_t wk, uint32_t n, uint32_t *as, uint32_t *ak,
                           uint32_t *total)
 {

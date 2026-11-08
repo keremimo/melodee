@@ -759,7 +759,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_str("MELODEE " MELODEE_VERSION, 24);
         ed_bytes(info, 5u);
         for (i = 0; i < NENGINES; i++)
-            ed_str(ENGINES[i]->name, 8);
+            ed_str(eng_name(i), 8);
         ed_bytes(info + 5, 4u);
         ed_b(ed_ui_caps());
         ed_bytes(info + 9, sizeof info - 9u);

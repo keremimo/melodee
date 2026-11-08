@@ -38,7 +38,9 @@ typedef struct {                                 /* the file's head (52 bytes) *
     uint32_t desc;                               /* the descriptor's offset in the image */
     uint32_t crc;                                /* CRC-32 of the bytes after this head */
     char name[MOD_NAME_MAX];                     /* the engine's name, 0-padded (lists without loading) */
-    uint32_t version;                            /* the module's own */
+    uint16_t version;                            /* the module's own */
+    uint8_t npresets;                            /* the descriptor's (the browser's list without loading) */
+    uint8_t rsv;                                 /* 0 */
 } mod_file_t;
 
 /* the parameter formats of the EDIT pages (the firmware's F_* numbers, frozen for ABI 1) */

@@ -1045,6 +1045,7 @@ static void scale_share(const track_t *from)
 /* preset pi of the engine the track asked for: the sound only (not the steps, not param_kept) */
 static void apply_preset_to(track_t *t, uint32_t pi)
 {
+    mod_want(t->eng_req % NENGINES);                  /* (a synth module: into SRAM first) */
     const engine_t *e = ENGINES[t->eng_req % NENGINES];
     uint32_t i;
     load_begin(t, UNDO_SOUND);
@@ -1090,6 +1091,7 @@ static void apply_preset_to(track_t *t, uint32_t pi)
 static void engine_load_of(track_t *t, uint32_t ei, uint32_t pi)
 {
     if (t >= &trk[NPART] && t < &trk[NTRK]) { ei = ENGI_MIDI; pi = 0; }   /* (tracks 5..8: MIDI Track only) */
+    mod_want(ei % NENGINES);                          /* (a synth module: into SRAM first) */
     const engine_t *e = ENGINES[ei % NENGINES];
     uint32_t i;
     load_begin(t, UNDO_SOUND);
@@ -1137,7 +1139,7 @@ static void track_defaults(track_t *t)
 static void select_engine(uint32_t e)
 {
     sound_init_of(TSEL, e);
-    ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
+    ui_say("ENGINE ", eng_name(TSEL->eng_req));
     ui.force = 1;
 }
 
@@ -1170,7 +1172,7 @@ static void preset_go(uint32_t n)                    /* load list index n into t
     } else {
         if (e != TSEL->eng_req) {
             set_engine(e);
-            ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
+            ui_say("ENGINE ", eng_name(TSEL->eng_req));
         }
         apply_preset(k);
     }

@@ -85,7 +85,7 @@ static void slot_detail(uint32_t k, uint32_t r, int used, char *b)   /* the card
     else if (!used)
         str_cpy(b, "Empty", 24);
     else
-        str_cpy(b, ENGINES[eng_idx(up_engine(r))]->name, 24);
+        str_cpy(b, eng_name(eng_idx(up_engine(r))), 24);
 }
 
 /* ------------------------------------------------------- the sheets --- */

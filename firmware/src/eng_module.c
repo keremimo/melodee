@@ -6,9 +6,12 @@
  * (in the block, after the module's own bytes) whose callbacks are the ones below. They hand the module its part,
  * a copy of the voice and the voice's modulation, and copy the voice back.
  *
- * NMOD slots. A slot's module stays in SRAM while it is loaded (modules are small: TRIO is 3.6 KB); unloading
- * points its engine back at ENG_RETIRED first (a track on it goes silent, keeps its number and values), so no audio
- * block can be inside the module when its block is released. */
+ * NMOD slots, loaded lazily: at power-on only the files' heads are read (module_store.c mod_catalog), and a stored
+ * module's engine is ENG_MOD_IDLE: the lists show its name (eng_name), its sounds keep their values (retired
+ * semantics), and a part asked to switch to it keeps its old engine until the module is in SRAM (mod_waiting).
+ * Picking it (mod_want) or a part, a song section or a pattern using it (module_store.c mod_service) loads it; one
+ * nothing has used for MOD_IDLE_MS goes back to the flash. Unloading points its engine at ENG_MOD_IDLE first, so no
+ * audio block can be inside the module when its block is released. */
 #include "module_abi.h"
 
 enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED };   /* mod_slot_t.state */
@@ -17,10 +20,23 @@ typedef struct {
     uint16_t version;
     uint32_t len;                                   /* the file's length (0: empty) */
     char name[MOD_NAME_MAX + 1u];
+    uint8_t npresets;                               /* (its head: the browser's list without loading it) */
     const mod_desc_t *d;                            /* MS_LOADED: the descriptor in the block */
 } mod_slot_t;
 static mod_slot_t mods[NMOD];
 static uint8_t mod_skipped;                         /* this boot did not load modules (mod_guard: last boot crashed) */
+static uint32_t mod_last[NMOD];                     /* fm1_ms: when something last used slot k's engine */
+static int (*mod_fetch)(uint32_t k);                /* module_store.c mod_bring: slot k into SRAM, MS_* */
+#define MOD_IDLE_MS 3000u
+/* a catalogued slot: its engine number points at its module (MS_LOADED) or at ENG_MOD_IDLE */
+static int mod_listed(uint32_t k) { return mods[k].state == MS_LOADED || mods[k].state == MS_STORED || mods[k].state == MS_NORAM; }
+static uint32_t mod_slot_of(uint32_t e)            /* the slot playing as engine e, NMOD: none */
+{
+    for (uint32_t k = 0; k < NMOD; k++)
+        if (mod_listed(k) && mods[k].engine == e)
+            return k;
+    return NMOD;
+}
 
 /* ---- the host side of the contract */
 static uint32_t mod_pitch_inc(uint32_t p) { return tuned_pitch_inc(p > 2047u ? 2047u : p); }
@@ -114,105 +130,24 @@ static void modg_block(track_t *t)
     if (d && d->block && (c = modg_ctx(t, d)))
         d->block(c);
 }
-/* what a module's engine_t starts from (tools/audio_ram.py roots these callbacks in SRAM) */
+/* what a module's engine_t starts from (mod_engine_make), and a stored module's engine while it is not in SRAM
+ * (ENG_MOD_IDLE: its callbacks find no descriptor, silent). tools/audio_ram.py roots these callbacks in SRAM */
 static const engine_t ENG_MODULE = {
     .name = "-",
     .page_title = {"-", "-"},
+    .edit = {{"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
+             {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
+             {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}},
     .note_on = modg_note_on,
     .render = modg_render,
     .block = modg_block,
     .knob = {P_E4, P_E5, P_E6, P_REL},
 };
-
-/* ---- registration (main loop). The arena and the tables the audio reads change with the audio interrupt held off
- * (resources.c: the arena is the audio's; the main loop changes it guarded) */
-static uint32_t mod_guard(void)                    /* (the interrupt state restored as it was: also at power-on) */
+#define ENG_MOD_IDLE ENG_MODULE
+static int mod_idle(uint32_t e) { return ENGINES[e] == &ENG_MOD_IDLE; }
+/* the audio (voice.c engine_block): a part asked to switch to e keeps its engine while e's module is on its way */
+static int mod_waiting(uint32_t e)
 {
-#ifdef FM1_IRQ_TARGET
-    uint32_t f = fm1_icfg();
-    fm1_irq_off();
-    return f;
-#else
-    return 0;
-#endif
-}
-static void mod_unguard(uint32_t f)
-{
-#ifdef FM1_IRQ_TARGET
-    fm1_icfg_set(f);
-#else
-    (void)f;
-#endif
-}
-static int mod_engine_ok(uint32_t e)               /* a number a module may play as */
-{
-    return (e >= ENGI_MOD0 && e < NENGINES) || e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u;
-}
-static void mod_order_add(uint32_t e)
-{
-    for (uint32_t n = 0; n < eng_nshown; n++)
-        if (ENGINE_ORDER[n] == e)
-            return;
-    if (eng_nshown < NENG_SHOWN_MAX)
-        ENGINE_ORDER[eng_nshown++] = (uint8_t)e;
-}
-static void mod_order_remove(uint32_t e)
-{
-    uint32_t j = 0;
-    for (uint32_t n = 0; n < eng_nshown; n++)
-        if (ENGINE_ORDER[n] != e)
-            ENGINE_ORDER[j++] = ENGINE_ORDER[n];
-    eng_nshown = (uint8_t)j;
-}
-static void mod_engine_make(engine_t *e, const mod_desc_t *d)
-{
-    static const uint8_t KNOB[12] = {P_E0, P_E0 + 1, P_E0 + 2, P_E0 + 3, P_E0 + 4, P_E0 + 5, P_E0 + 6, P_E0 + 7,
-                                     P_ATK, P_DEC, P_SUS, P_REL};
-    memcpy(e, &ENG_MODULE, sizeof *e);
-    e->name = d->name;
-    e->page_title[0] = d->page_title[0];
-    e->page_title[1] = d->page_title[1];
-    memcpy(e->edit, d->edit, sizeof e->edit);
-    e->presets = (const preset_t *)d->presets;
-    e->npresets = d->npresets;
-    for (uint32_t k = 0; k < 4u; k++)
-        e->knob[k] = KNOB[d->knob[k] % 12u];
-    e->poly = d->poly > NVOICE ? NVOICE : d->poly;
-    e->keep = d->keep;
-    if (!d->block)
-        e->block = 0;                               /* (no block: idle parts need no state) */
-}
-/* slot k's module into its engine number: the descriptor first, then the number, then the table entry the audio
- * reads (each step a single store: a block in between sees the engine retired) */
-static void mod_register(uint32_t k, const mod_desc_t *d, engine_t *e)
-{
-    uint32_t n = mods[k].engine;
-    mod_engine_make(e, d);
-    uint32_t g = mod_guard();
-    mods[k].d = d;
-    mod_at[n] = (uint8_t)(k + 1u);
-    __asm__ volatile("" ::: "memory");
-    ENGINES[n] = e;
-    mods[k].state = MS_LOADED;
-    mod_order_add(n);
-    mod_unguard(g);
-}
-static void mod_unregister(uint32_t k)
-{
-    uint32_t n = mods[k].engine, g = mod_guard();
-    if (mods[k].state == MS_LOADED && n < NENGINES && mod_at[n] == k + 1u) {
-        mod_order_remove(n);
-        ENGINES[n] = &ENG_RETIRED;
-        __asm__ volatile("" ::: "memory");
-        mod_at[n] = 0;
-        for (uint32_t p = 0; p < NPART; p++)        /* its parts: voices ended, state gone (another module may come) */
-            if (trk[p].engine == n || trk[p].eng_req == n) {
-                for (uint32_t i = 0; i < NVOICE; i++)
-                    trk[p].v[i].active = trk[p].v[i].gate = 0;
-                eng_state_clear(p);
-            }
-    }
-    mods[k].d = 0;
-    resource_release(RES_MODULE0 + k);
-    mod_unguard(g);
+    uint32_t k = e < NENGINES && ENGINES[e] == &ENG_MOD_IDLE ? mod_slot_of(e) : NMOD;
+    return k < NMOD && mods[k].state == MS_STORED;
 }

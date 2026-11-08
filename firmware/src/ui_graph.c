@@ -864,8 +864,9 @@ static void entry_label(uint32_t e, uint32_t k, char *tag, char *nm)
         up_slot_label(tag, k);
         up_name(k, nm);
     } else {
-        str_cpy(tag, eng_abbr(ENGINES[e % NENGINES]->name), 6);
-        str_cpy(nm, eng_preset(ENGINES[e % NENGINES], k)->name, 13);
+        mod_want(e % NENGINES);                     /* (a synth module's presets: loaded to name them) */
+        str_cpy(tag, eng_abbr(eng_name(e)), 6);
+        str_cpy(nm, k < ENGINES[e % NENGINES]->npresets ? eng_preset(ENGINES[e % NENGINES], k)->name : "-", 13);
     }
 }
 static void p5_short_name(const track_t *t,char *out,uint32_t size)

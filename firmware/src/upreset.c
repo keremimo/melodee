@@ -516,7 +516,7 @@ static void up_auto_name(char *b, uint32_t e, uint32_t k)
 {
     char l[5];
     e %= NENGINES;
-    str_cpy(b, ENGINES[eng_sound_idx(e)]->name, 9);
+    str_cpy(b, eng_name(eng_sound_idx(e)), 9);
     up_slot_label(l, k);
     str_cpy(b + str_len(b), " ", 2);
     str_cpy(b + str_len(b), l + 1, 4);
@@ -602,6 +602,7 @@ static int up_load_to(uint32_t k,uint32_t tr)
     if (trk_midi_slot(tr) && rec.engine != ENGI_MIDI)  /* (tracks 5..8: MIDI Track only) */
         return 1;
     up_values(r, v);
+    mod_want(r->engine % NENGINES);                     /* (a synth module: into SRAM first) */
     load_begin(t, UNDO_SOUND);                          /* (ui.c: the copy for EDIT held = undo) */
     panic_req |= (uint8_t)(1u << tr);
     {

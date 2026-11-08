@@ -29,7 +29,7 @@ CFLAGS = ["-mcpu=r3", "-mfprev1", "-ffp-contract=off", "-Werror=double-promotion
 DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE", "debian:bookworm-slim")
 R_ABS32, R_MOV_ABS32 = 8, 5
 FILE_MAGIC, DESC_MAGIC, ABI = 0x31444D4D, 0x4353444D, 1
-HEAD = struct.Struct("<IHBBIIIIII16sI")             # mod_file_t, 52 bytes
+HEAD = struct.Struct("<IHBBIIIIII16sHBB")           # mod_file_t, 52 bytes
 DESC_SIZE = 216                                       # sizeof(mod_desc_t) on pi32v2
 BASE2 = 0x00100000                                    # the second link's base
 STACK_MAX = int(re.search(r"#define MOD_STACK_MAX (\d+)u", (SRC / "firmware/src/module_abi.h").read_text())[1])
@@ -162,7 +162,7 @@ def describe(img, words, desc=0, bss=0):
         if pre + 20 * k not in ws:
             raise SystemExit(f"mod_build: preset {k} has no name address")
         cstr(img, u32(img, pre + 20 * k))
-    return engine, name
+    return engine, name, npre
 
 
 def stack_need(dis):
@@ -227,10 +227,10 @@ def build(src, out, version):
     if words != words1:
         raise SystemExit("mod_build: the two links list different address words")
     check_pair(img, img1, words)
-    engine, name = describe(img, words, 0, nbss)
+    engine, name, npre = describe(img, words, 0, nbss)
     body = img + b"".join(struct.pack("<I", w) for w in words)
     head = HEAD.pack(FILE_MAGIC, ABI, engine, 0, HEAD.size + len(body), len(img), nbss, len(words), 0,
-                     zlib.crc32(body), name.encode()[:16].ljust(16, b"\0"), version)
+                     zlib.crc32(body), name.encode()[:16].ljust(16, b"\0"), version, npre, 0)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(head + body)
     print(f"module {name}: engine {engine}, image {len(img)} B, bss {nbss} B, {len(words)} address words, "
@@ -239,16 +239,16 @@ def build(src, out, version):
 
 def check(path):
     b = path.read_bytes()
-    magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version = HEAD.unpack_from(b)
+    magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, _ = HEAD.unpack_from(b)
     if magic != FILE_MAGIC or abi != ABI or total != len(b) or total != HEAD.size + image + 4 * nrel:
         raise SystemExit(f"{path}: not an ABI {ABI} module file")
     if zlib.crc32(b[HEAD.size:]) != crc:
         raise SystemExit(f"{path}: CRC mismatch")
     img = b[HEAD.size: HEAD.size + image]
     words = [u32(b, HEAD.size + image + 4 * k) for k in range(nrel)]
-    e, n = describe(img, words, desc, bss)
-    if e != engine or n.encode()[:16] != name.rstrip(b"\0"):
-        raise SystemExit(f"{path}: head ({engine}, {name}) and descriptor ({e}, {n}) differ")
+    e, n, k = describe(img, words, desc, bss)
+    if e != engine or n.encode()[:16] != name.rstrip(b"\0") or k != npre:
+        raise SystemExit(f"{path}: head ({engine}, {name}, {npre} presets) and descriptor ({e}, {n}, {k}) differ")
     print(f"{path}: {n} engine {engine}, image {image} B, bss {bss} B, {nrel} address words, version {version}: ok")
 
 

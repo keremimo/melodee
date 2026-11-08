@@ -48,6 +48,7 @@ static void designer_snapshot(designer_sound_t *s)
 static void designer_restore(const designer_sound_t *s)
 {
     track_t *t=TSEL;uint32_t k=song.sel;
+    mod_want(s->eng);
     panic_req|=(uint8_t)(1u<<k);
     t->eng_req=s->eng;t->preset=s->preset;t->user=s->user;t->user_native=s->native;
     for(uint32_t i=0;i<P_COUNT;i++)if(!param_kept(i))t->p[i]=s->p[i];
@@ -553,17 +554,17 @@ static void designer_start_draw(void)
     uint32_t st=designer_start();
     for(k=0;k<3u;k++){
         static const char *const LB[3]={"Engine","Start","Pages"};
-        if(k==0u)menu_words(b,ENGINES[ds.eng]->name,sizeof b);
+        if(k==0u)menu_words(b,eng_name(ds.eng),sizeof b);
         else if(k==1u){if(st<2u)str_cpy(b,st?"Init":"This sound",sizeof b);else{menu_words(b,DS_GOAL[ds.goal],16);str_cpy(b+str_len(b)," from Init",12);}}
         else str_cpy(b,ds.expert?"All":"Main",sizeof b);
         cv_begin(240,LIST_ROW,T_BG);
         row_draw(0,LB[k],b,T_TEXT,ui.hot_t && ui.hot_col==k,0,k);
         cv_blit(0,(uint32_t)(LIST_Y0+(int32_t)k*LIST_ROW));
     }
-    if(text_w(f,ENGINES[ds.eng]->name)>220 || !text_has(f,ENGINES[ds.eng]->name))f=TY_VL;
+    if(text_w(f,eng_name(ds.eng))>220 || !text_has(f,eng_name(ds.eng)))f=TY_VL;
     for (uint32_t band = 0; band < (uint32_t)(Y_FOOT-(LIST_Y0+3*LIST_ROW)); band += CV_MAX / (240)) {
         cv_begin_band(240,Y_FOOT-(LIST_Y0+3*LIST_ROW),T_BG,band);   /* (the engine: large) */
-        cv_text_c(120,ty_y((Y_FOOT-(LIST_Y0+3*LIST_ROW))/2,f),f,ENGINES[ds.eng]->name,T_THEME,T_BG);
+        cv_text_c(120,ty_y((Y_FOOT-(LIST_Y0+3*LIST_ROW))/2,f),f,eng_name(ds.eng),T_THEME,T_BG);
         cv_blit_band(0,LIST_Y0+3*LIST_ROW);
     }
     new_keys_row("Design",ICON_X_RIGHT);

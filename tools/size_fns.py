@@ -35,8 +35,8 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               # the user's drum kits: their store and record check, a take's processing, Record kit's sheet (drum_enc.c,
               # the take's encoder, stays at -Os: its speed is the wait on "Saving")
               "kit_store.c", "kit_take.c", "kit_rec_ui.c",
-              # the synth modules' loader, slots and editor command (their audio callbacks: eng_module.c, -Os)
-              "module_store.c", "editor_module.c"]
+              # the synth modules' loader, slots, editor command and registration (their audio callbacks: eng_module.c, -Os)
+              "module_store.c", "editor_module.c", "eng_module_main.c"]
 DEF = re.compile(
     r"^(?:static|void|int|uint\w*|int\w*|const)\b[^;=(]*?\b([A-Za-z_]\w*)\s*\(", re.M)
 # Stopped note transforms are infrequent main-loop work.
