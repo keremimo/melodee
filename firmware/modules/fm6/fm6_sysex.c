@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* FM6's DX7 SysEx (mod_engine_v3.sysex / sysex_dump, host 3): the frames the firmware routes here (its schema's
- * MOD3_R_SYSEX: F0 43) and the voice it sends. Accepted on any channel n:
+ * MOD3_R_SYSEX: F0 43) and the voice it sends; host 4's bank dump (MOD3_DUMP_BANK: user slots as a VMEM bank, the
+ * editor's bank export). Accepted on any channel n:
  *   F0 43 0n 00 01 1B <155 bytes> <checksum> F7    a voice (VCED) -> offered for a user slot
  *   F0 43 0n 09 20 00 <4096 bytes> <checksum> F7   32 voices (VMEM) -> offered for 32 user slots
  *   F0 43 0n 7D 04 08 <155 bytes> <69 bytes> F7   a voice from the 231-byte wrapper a MainStage file has (its opaque
@@ -36,9 +37,34 @@ static uint32_t fm6_sx_voice(const uint8_t *pk, uint32_t ch, uint8_t *out)
     out[162] = 0xF7;
     return 163;
 }
+/* 32 voices as a VMEM bank frame on channel ch into f (MOD3_SX_MAX bytes): voice k from user slot slots[k] (u16, low
+ * byte first; n of them) or, without slots, first + k; the init voice where a slot holds no FM6 voice and past the n.
+ * repack: each voice unpacked and packed again, as the old web editor's FM6.bankSysex wrote its banks (the editor's
+ * bank export, 88f4eb02); else as stored (the dump request's) */
+static uint32_t fm6_sx_bank(uint8_t *f, uint32_t ch, const uint8_t *slots, uint32_t n, uint32_t first, int repack)
+{
+    static const uint8_t H[6] = {0xF0, 0x43, 0x00, 0x09, 0x20, 0x00};
+    memcpy(f, H, 6);
+    f[2] = (uint8_t)(ch & 15u);
+    for (uint32_t k = 0; k < 32u; k++) {
+        uint8_t *pk = f + 6u + k * FM6_PACKED;
+        uint32_t s = slots ? (k < n ? slots[2u * k] | (uint32_t)slots[2u * k + 1u] << 8 : 0xFFFFu) : first + k;
+        if (s == 0xFFFFu || MOD_HOST3_CALL(slot_get)(ENGI_FM6, s, pk) != FM6_PACKED)
+            memcpy(pk, FM6_INIT, FM6_PACKED);
+        else if (repack) {
+            uint8_t v[FP_SIZE + 1u];
+            fm6_unpack(pk, v);
+            fm6_pack(v, pk);
+        }
+    }
+    f[4102] = fm6_sx_chk(f + 6, 4096);
+    f[4103] = 0xF7;
+    return MOD3_SX_MAX;
+}
 static uint32_t fm6_sysex_dump(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max)
 {
-    (void)what;
+    if ((what & 255u) == MOD3_DUMP_BANK)         /* (the editor's bank export: the first 32 slots given) */
+        return max < MOD3_SX_MAX || !(what >> 8) ? 0u : fm6_sx_bank(out, ch, patch, what >> 8, 0, 1);
     return max < 163u ? 0u : fm6_sx_voice(patch, ch, out);
 }
 /* part tr's whole patch into b (FM6_BLOB bytes): 1, or 0 (not FM6's) */
@@ -135,18 +161,9 @@ static uint32_t fm6_sysex(const uint8_t *b, uint32_t n, uint32_t ev)
         } else if (b[3] == 0x09) {               /* the STORE page's bank: its 32 slots, the init voice where empty */
             if (MOD_HOST3_CALL(sx_send)(0, 0))
                 rc = -1;
-            else {
-                uint32_t first = MOD_HOST3_CALL(store_slot)(ENGI_FM6) / 32u * 32u;
+            else {                               /* (a slot's stored voice: its packed 128 bytes) */
                 uint8_t *f = MOD_HOST3_CALL(sx_scratch)();
-                static const uint8_t H[6] = {0xF0, 0x43, 0x00, 0x09, 0x20, 0x00};
-                memcpy(f, H, 6);
-                f[2] = (uint8_t)ch;
-                for (uint32_t k = 0; k < 32u; k++)       /* (a slot's stored voice: its packed 128 bytes) */
-                    if (MOD_HOST3_CALL(slot_get)(ENGI_FM6, first + k, f + 6u + k * FM6_PACKED) != FM6_PACKED)
-                        memcpy(f + 6u + k * FM6_PACKED, FM6_INIT, FM6_PACKED);
-                f[4102] = fm6_sx_chk(f + 6, 4096);
-                f[4103] = 0xF7;
-                rc = MOD_HOST3_CALL(sx_send)(f, MOD3_SX_MAX);
+                rc = MOD_HOST3_CALL(sx_send)(f, fm6_sx_bank(f, ch, 0, 0, MOD_HOST3_CALL(store_slot)(ENGI_FM6) / 32u * 32u, 0));
             }
         }
         if (rc)

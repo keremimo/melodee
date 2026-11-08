@@ -14,6 +14,10 @@
  *                 sound, undoable), a user slot as engine's stored patch (named by the patch's own name)
  *              op 2 SEND: the patch out over USB as its synth's SysEx (as the STORE page's SEND, the user pages')
  *              op 3 DUMP -> length u14, the frame's bytes between F0 and F7 (its synth's SysEx)
+ *              op 4 BANK (target 1; index: an offset), user slots u14... -> length u14, count u14, the count bytes from
+ *                 the offset of the frame's between F0 and F7: the slots as engine's synth's bank dump (the bank export
+ *                 other tools take: a DX7's 32 voices), made again for each piece; rc 2: its synth has none (the
+ *                 client dumps them one by one)
  *              rc 1 bad, 2 not that engine's (or empty, or no synth), 3 busy
  *   87 SYSEX   op 0 begin: length u21 (F0 to F7) -> op, rc; op 1 data: offset u21, the bytes packed -> op, rc;
  *              op 2 end: user slot u14 (UP_SLOTS: the device asks) -> op, rc, engine, staged count: the frame goes to
@@ -24,6 +28,7 @@
  *              (as the device's pages set it: the synth told) */
 enum { ED_SCHEMA = 85, ED_PATCH, ED_SYSEX, ED_PARAM };
 #define ED_SCHEMA_MAX 840u                        /* a SCHEMA reply's bytes at most (packed: 960) */
+#define ED_BANK_SLOTS 64u                         /* a BANK request's slots at most (a synth's bank takes its own count) */
 static uint32_t ed_u21(const uint8_t *a) { return a[0] | (uint32_t)a[1] << 7 | (uint32_t)a[2] << 14; }
 static uint32_t ed_14(const uint8_t *a) { return a[0] | (uint32_t)a[1] << 7; }
 
@@ -160,7 +165,8 @@ static int ed_synth_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         t = ed_arg(a, n, 1);
         e = ed_arg(a, n, 2);
         k = n >= 5u ? ed_14(a + 3) : 0u;
-        if (n < 5u || op > 3u || t > 2u || (t == 2u && op) || (e >= NENGINES && e != 127u) || (op == 1u && e >= NENGINES))
+        if (n < 5u || op > 4u || t > 2u || (t == 2u && op) || (e >= NENGINES && e != 127u) || (op == 1u && e >= NENGINES) ||
+            (op == 4u && (t != 1u || e >= NENGINES)))
             rc = 1;
         else if (op == 0u) {
             len = ed_patch_get(t, e, k, p, &pe);
@@ -182,6 +188,32 @@ static int ed_synth_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
                 if (rc == 3u && !transport_busy())
                     rc = 0;                      /* (no flash: kept in RAM) */
             }
+        } else if (op == 4u) {                   /* BANK */
+            uint32_t m = (n - 5u) / 2u, total = 0, cnt;
+            uint8_t *f = 0;
+            if (n < 7u || (n - 5u) % 2u || m > ED_BANK_SLOTS)
+                rc = 1;
+            for (i = 0; !rc && i < m; i++) {     /* (the module's slots: u16, low byte first) */
+                uint32_t s = ed_14(a + 5u + 2u * i);
+                rc = s >= UP_SLOTS;
+                p[2u * i] = (uint8_t)s;
+                p[2u * i + 1u] = (uint8_t)(s >> 8);
+            }
+            if (!rc && (msx.ready || sx_import.count || (ed_sx.on && ed_sx.gen == proj_wire_gen)))
+                rc = 3;                          /* (the scratch holds a frame, an import or an upload) */
+            if (!rc) {
+                f = proj_wire_borrow();
+                total = msx_dump(e, p, MOD3_DUMP_BANK | m << 8, 0, f, WIRE_SCRATCH_BYTES);
+                rc = total < 2u ? 2u : k >= total - 2u ? 1u : 0u;
+            }
+            ed_echo(a, n, 3); ed_u14(k); ed_b(rc);
+            if (!rc) {
+                cnt = total - 2u - k;
+                if (cnt > ed_left() - 4u)
+                    cnt = ed_left() - 4u;
+                ed_u14(total - 2u); ed_u14(cnt); ed_bytes(f + 1u + k, cnt);
+            }
+            return 1;
         } else if (n != 5u) {
             rc = 1;
         } else if (op == 2u) {                   /* SEND */

@@ -473,6 +473,7 @@ const parse = {
     const o = { op: a[0], target: a[1], engine: a[2], index: a[3] | a[4] << 7, rc: a[5] };
     if (!o.rc && o.op === 0) { o.engine = a[6]; o.length = a[7] | a[8] << 7; o.bytes = bkUnpack(a.slice(9)); if (o.bytes.length !== o.length) throw Error("Invalid patch reply"); }
     if (!o.rc && o.op === 3) { o.length = a[6] | a[7] << 7; o.frame = [0xF0, ...a.slice(8, 8 + o.length), 0xF7]; }
+    if (!o.rc && o.op === 4) { o.length = a[6] | a[7] << 7; o.count = a[8] | a[9] << 7; o.bytes = a.slice(10, 10 + o.count); if (o.bytes.length !== o.count) throw Error("Invalid bank reply"); }
     return o;
   },
   [CMD.SYSEX](a) { return { op: a[0], rc: a[1], engine: a[2], staged: a[3] }; },
@@ -669,6 +670,7 @@ const req = {
      engine 127: the one there); a SysEx frame in parts; parameters by schema id */
   schema: (engine, what, off, n) => [CMD.SCHEMA, [engine & 127, what & 127, off & 127, off >> 7 & 127, off >> 14 & 127, n & 127, n >> 7 & 127]],
   patch: (op, target, engine, index, bytes = null) => [CMD.PATCH, [op, target, engine & 127, index & 127, index >> 7 & 127, ...(bytes ? bkPack(Uint8Array.from(bytes)) : [])]],
+  patchBank: (engine, off, slots) => [CMD.PATCH, [4, 1, engine & 127, off & 127, off >> 7 & 127, ...slots.flatMap((k) => [k & 127, k >> 7 & 127])]],
   sysexBegin: (len) => [CMD.SYSEX, [0, len & 127, len >> 7 & 127, len >> 14 & 127]],
   sysexData: (off, bytes) => [CMD.SYSEX, [1, off & 127, off >> 7 & 127, off >> 14 & 127, ...bkPack(Uint8Array.from(bytes))]],
   sysexEnd: (slot) => [CMD.SYSEX, [2, slot & 127, slot >> 7 & 127]],
@@ -1053,6 +1055,20 @@ async function sendSysex(rq, bytes, slot = 384) {
     if (slot < 384) slot += r.staged;
   }
   return out;
+}
+/* user slots as their synth's bank dump (a DX7's 32-voice bank: the first 32, the init voice after them), in pieces ->
+   the frame F0..F7, or null: the synth has none (its sounds go one by one: PATCH DUMP) */
+async function bankDump(rq, engine, slots) {
+  const body = [];
+  let total = 1;
+  while (body.length < total) {
+    const r = parse[CMD.PATCH](await rq(req.patchBank(engine, body.length, slots)));
+    if (r.rc === 2) return null;
+    if (r.rc || !r.count) throw Error(r.rc === 3 ? "The device is busy with a SysEx import" : "Bank export failed");
+    total = r.length;
+    body.push(...r.bytes);
+  }
+  return Uint8Array.from([0xF0, ...body, 0xF7]);
 }
 
 /* ------------------------------------------------------------- formatting --- */
@@ -2170,7 +2186,8 @@ function makeMockDevice(opt = {}) {
       case CMD.PATCH: {                           /* a part's or a slot's patch as bytes; a "SysEx" of the mock's own */
         const [op, t, e] = a, k = a[3] | a[4] << 7, tr = t === 0 ? st.tracks[k] : null, slot = t === 1 ? st.bank[k] : null;
         const own = t === 0 ? (tr && st.schemaParsed.has(tr.engine) ? tr.engine : -1) : t === 1 ? (slot?.native ? slot.engine : -1) : e;
-        let rc = a.length < 5 || op > 3 || t > 2 || (t === 2 && op) ? 1 : 0, bytes = null;
+        let rc = a.length < 5 || op > 4 || t > 2 || (t === 2 && op) ? 1 : 0, bytes = null;
+        if (!rc && op === 4) rc = t === 1 && a.length >= 7 ? 2 : 1;   /* (BANK: the mock's synths have no bank dump) */
         if (!rc && op !== 1 && (own < 0 || (e !== 127 && own !== e) || (t === 2 && !st.schemaParsed.has(e)))) rc = 2;
         if (!rc && op === 0) bytes = t === 0 ? tr.patch.slice() : t === 1 ? slot.native.slice() : SYNTH.sound(st.schemaParsed.get(e), st.schemaParsed.get(e).def);
         if (!rc && op === 1) {

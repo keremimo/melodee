@@ -4,9 +4,10 @@
  * same test built on that tree: `sysex_parity emit`): DX7 32-voice banks, single voices (VCED and the 231-byte wrapper),
  * voice and function parameters, dump requests; CZ-1 tones in (direct, both sizes, the handshake) and out (direct, the
  * handshake, the 128-byte form, a timeout); Prophet programs in (both commands, both sizes) and out (a part's, a user
- * slot's); the user pages' sends and STORE's SEND. Everything goes in as USB-MIDI packets (macOS's CIN 0xF bytes and
- * clocks between them) and through the main loop's services; what is compared: every user slot, every part's patch and
- * its engine, the parts' voice settings, the staged import, the screen's lines and every byte sent, at each step. */
+ * slot's); the user pages' sends and STORE's SEND; the editor's DX7 bank export (88f4eb02's was its client's). Everything
+ * goes in as USB-MIDI packets (macOS's CIN 0xF bytes and clocks between them) and through the main loop's services; what
+ * is compared: every user slot, every part's patch and its engine, the parts' voice settings, the staged import, the
+ * screen's lines and every byte sent, at each step. */
 #define EDITOR_TEST_NO_MAIN
 #include "editor_test.c"
 #if __has_include("../firmware/src/fm6_store.c")         /* (88f4eb02: the synths' SysEx in the firmware) */
@@ -119,6 +120,35 @@ static void sx_engine(uint32_t tr, uint32_t e, uint32_t preset)
 
 /* ------------------------------------------------------------------ DX7 */
 static uint8_t dx_frame[4200];
+/* the editor's bank export of user slots s (m of them) into host_wire, as the client saves it */
+static void sx_bank_export(const uint16_t *s, uint32_t m)
+{
+#if SX_OLD   /* 88f4eb02's: the client read each slot's voice (FM6_GET: none where empty), FM6.unpack, FM6.bankSysex */
+    uint8_t v[FP_SIZE + 1u];
+    memcpy(host_wire, (uint8_t[]){0xf0, 0x43, 0, 9, 0x20, 0}, 6);
+    for (uint32_t k = 0; k < 32u; k++) {
+        uint8_t *pk = host_wire + 6 + k * 128u;
+        if (k < m && native_used(ENGI_FM6, s[k])) { fm6_unpack(native_raw(ENGI_FM6, s[k]), v); fm6_pack(v, pk); }
+        else memcpy(pk, FM6_INIT, 128);
+    }
+    host_wire[4102] = sx_chk(host_wire + 6, 4096); host_wire[4103] = 0xf7; host_wire_n = 4104;
+#else        /* PATCH BANK piece by piece: the frame between F0 and F7 */
+    static uint8_t f[4200], a[200];
+    uint32_t off = 0, total = 0, cnt, i;
+    do {
+        a[0] = 4; a[1] = 1; a[2] = ENGI_FM6; a[3] = off & 127u; a[4] = (uint8_t)(off >> 7);
+        for (i = 0; i < m; i++) { a[5 + 2 * i] = s[i] & 127u; a[6 + 2 * i] = (uint8_t)(s[i] >> 7); }
+        request(ED_PATCH, a, 5u + 2u * m);
+        total = host_wire[11] | (uint32_t)host_wire[12] << 7;
+        cnt = host_wire[13] | (uint32_t)host_wire[14] << 7;
+        if (host_wire[10] || !cnt || total > sizeof f - 2u || cnt > total - off) { host_wire_n = 0; return; }
+        memcpy(f + 1 + off, host_wire + 15, cnt);
+        off += cnt;
+    } while (off < total);
+    f[0] = 0xf0; f[total + 1] = 0xf7;
+    memcpy(host_wire, f, total + 2u); host_wire_n = total + 2u;
+#endif
+}
 static void dx7(void)
 {
     uint32_t k, n;
@@ -191,6 +221,18 @@ static void dx7(void)
     bulk = (typeof(bulk)){.on = 1, .engine = ENGI_FM6, .anchor = 4, .end = 7}; host_wire_n = 0; bulk_send();
     sx_state("dx7 bulk send U005..U008");
     host_wire_n = 0; SX_STORE_SEND(ENGI_FM6, 0); sx_state("dx7 STORE SEND");
+    /* the editor's bank export (the old web editor's and Studio's FM6.bankSysex): the imported bank's 32 (its random
+     * voices among them, packed again), a few with an empty slot (the init voice there and after them), more than 32
+     * (the first 32) */
+    {
+        uint16_t s[40];
+        for (k = 0; k < 32u; k++) s[k] = (uint16_t)(32u + k);
+        sx_bank_export(s, 32); sx_state("dx7 bank export U033..U064");
+        s[0] = 5; s[1] = 0; s[2] = 6; s[3] = 47;
+        sx_bank_export(s, 4); sx_state("dx7 bank export U006 U001 U007 U048");
+        for (k = 0; k < 40u; k++) s[k] = (uint16_t)(k < 8u ? 63u - k : k);
+        sx_bank_export(s, 40); sx_state("dx7 bank export 40 slots");
+    }
 }
 
 /* ------------------------------------------------------------------ CZ-1 */

@@ -147,12 +147,17 @@ static void msx_hooks_set(void)                  /* (eng_module.c: the host tabl
     msx_hook.message = msx_h_message;
 }
 
-/* ---- the sends: a part's patch (the STORE page's SEND), a user slot's (the user pages'), as the synth's SysEx */
+/* ---- the sends: a part's patch (the STORE page's SEND), a user slot's (the user pages'), user slots as the synth's bank
+ * (the editor's bank export), as the synth's SysEx */
 static uint32_t msx_dump(uint32_t e, const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max)
 {
     const engine_t *g;
+    uint32_t k;
     if (e >= NENGINES)
         return 0;
+    k = mod_slot_of(e);
+    if ((what & 255u) == MOD3_DUMP_BANK && k < NMOD && mods[k].host < 4u)
+        return 0;                                /* (a bank is host 4's: an older module would read the slots as a patch) */
     if (ENGINES[e] == &ENG_MOD_IDLE)
         mod_want(e);
     g = ENGINES[e];

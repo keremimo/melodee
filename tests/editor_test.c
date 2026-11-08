@@ -636,6 +636,29 @@ static int synth_protocol(void)
                  host_wire[18] == (native_raw(ENGI_CZ, 9)[0] & 15u));
     a[0] = 0; a[1] = 1; a[3] = 10; synth_req(ED_PATCH, a, 5);
     bad += check("PATCH GET an empty slot: rc 2", host_wire[10] == 2);
+    /* PATCH BANK: user slots as their synth's bank dump, a piece at an offset (a DX7's 32 voices: the init voice where a
+     * slot holds no FM6 voice); a synth without one answers rc 2 (the client sends them one by one) */
+    a[0] = 4; a[1] = 1; a[2] = ENGI_FM6; a[3] = 0; a[4] = 0; a[5] = 9; a[6] = 0; a[7] = 10; a[8] = 0;
+    n = synth_req(ED_PATCH, a, 9);
+    {
+        uint32_t total = host_wire[11] | (uint32_t)host_wire[12] << 7, cnt = host_wire[13] | (uint32_t)host_wire[14] << 7;
+        bad += check("PATCH BANK: a DX7 32-voice bank (F0 43 00 09 20 00), the first piece filling the reply",
+                     !host_wire[10] && total == 4102u && cnt == n - 16u && n == 1024u && host_wire[15] == 0x43 &&
+                     !memcmp(host_wire + 16, (uint8_t[]){0, 9, 0x20, 0}, 4) && !memcmp(host_wire + 20, FM6_INIT, 128));
+        a[3] = 4100u & 127u; a[4] = 4100u >> 7; n = synth_req(ED_PATCH, a, 9);
+        uint32_t sum = 0;
+        for (i = 0; i < 4096u; i++) sum += FM6_INIT[i % 128u];
+        bad += check("PATCH BANK: the last piece from an offset, the checksum at its end", !host_wire[10] &&
+                     (host_wire[13] | host_wire[14] << 7) == 2u && host_wire[16] == (uint8_t)(-sum & 127u) && n == 18u);
+    }
+    a[3] = 0; a[4] = 0; a[2] = ENGI_CZ; synth_req(ED_PATCH, a, 9);
+    bad += check("PATCH BANK of a synth with no bank dump (the CZ-1): rc 2", host_wire[10] == 2);
+    a[2] = ENGI_FM6; a[6] = UP_SLOTS >> 7; synth_req(ED_PATCH, a, 9);
+    bad += check("PATCH BANK: a slot past the user slots, rc 1", host_wire[10] == 1);
+    a[6] = 0; a[1] = 0; synth_req(ED_PATCH, a, 9);
+    bad += check("PATCH BANK of a part, not user slots: rc 1", host_wire[10] == 1);
+    a[1] = 1; a[3] = 4102u & 127u; a[4] = 4102u >> 7; synth_req(ED_PATCH, a, 9);
+    bad += check("PATCH BANK: an offset at the end, rc 1", host_wire[10] == 1);
     /* SYSEX: a DX7 bank in parts, kept from U041 on, as the device's import keeps it */
     {
         static uint8_t f[4104];

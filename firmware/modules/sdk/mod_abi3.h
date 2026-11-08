@@ -126,7 +126,13 @@ enum {
 enum {
     MOD3_DUMP_PART,                              /* a part's sound, sent on its channel (the STORE page's SEND, the
                                                   * editor): the synth's edit buffer */
-    MOD3_DUMP_STORED                             /* a stored patch (a user slot: the user pages' send, the editor), ch 0 */
+    MOD3_DUMP_STORED,                            /* a stored patch (a user slot: the user pages' send, the editor), ch 0 */
+    MOD3_DUMP_BANK                               /* host 4: user slots as the synth's bank dump (the editor's bank export:
+                                                  * the bytes other tools take): patch = the slots, u16 low byte first,
+                                                  * their count in what >> 8; the synth reads them (host slot_get), its
+                                                  * empty patch where one holds none of its, the rest of its bank's
+                                                  * places the same. 0: it has no bank dump (the host sends them one by
+                                                  * one). Never asked of a module for an older host */
 };
 
 /* mod_engine_v3.rec_take: what became of a take (host 4). The host's take begins MOD3_TAKE_PRE samples before the
@@ -260,8 +266,8 @@ typedef struct mod_engine_v3 {
      * MOD3_SX_*, the answer MOD3_SXR_*. A module not in SRAM is loaded for its frame first; the host has its own
      * frames (the editor's, the updater's) */
     uint32_t (*sysex)(const uint8_t *f, uint32_t n, uint32_t ev);
-    /* the patch as the synth's SysEx, F0..F7 into out (max bytes): its length, 0 none (what: MOD3_DUMP_*; ch: the
-     * channel, 0..15) */
+    /* the patch as the synth's SysEx, F0..F7 into out (max bytes): its length, 0 none (what: MOD3_DUMP_*, a bank's
+     * count above its low byte; ch: the channel, 0..15) */
     uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
     /* host 4: its data records (a pads synth's recorded kits; mod_schema.h MOD3_R_PADS nrec), main loop. rec_check: a
      * record of len payload bytes in nsec sectors (secs: each one's payload, readable in place) is one it plays, 0;

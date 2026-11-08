@@ -34,7 +34,7 @@ const E = vm.runInNewContext(proto + `
 ;({ frame, unframe, parse, req, Link, MODS, parseWav, resample, normalize, takeSample, autoTrim, zoomView, rootFromName, buildSlot, makeMockDevice, CMD, SMP,
    UP, bank, capturePatch, auditionPatch, startWatch, libraryFile, readLibraryFile, paramKeys, patternFromSteps, stepsFromPattern, upName,
    mixer, parseNotes, parseHits, hitsText, gridFromSteps, LANE_NOTE, LANE_OF, isDevicePort, readDevicePreferences, devicePresetRows, engineOrder, ENGINE_ORDER, aliasOf, fmtValue, F,
-   readSysexLibrary, scaleRows, SCALE_INFO, SYNTH, synthSchema, sendSysex })`,
+   readSysexLibrary, scaleRows, SCALE_INFO, SYNTH, synthSchema, sendSysex, bankDump })`,
 { setTimeout, clearTimeout, setInterval, clearInterval, console });
 /* the synths' schemas, byte for byte as the firmware's SCHEMA sends them (tests/descdump.c -> build/host/desc.json) */
 const DESC_JSON = join(HERE, "../build/host/desc.json");
@@ -1009,6 +1009,9 @@ async function synthTests() {
   ok(eq((await E.bank.get(rq, info, 383)).native, voice), "synths: a user slot keeps a whole patch's sound");
   const dump = E.parse[E.CMD.PATCH](await rq(E.req.patch(3, 0, 127, part)));
   ok(!dump.rc && dump.frame[0] === 0xF0 && dump.frame.at(-1) === 0xF7, "synths: PATCH DUMP: the part's patch as its synth's SysEx");
+  ok(E.req.patchBank(12, 1008, [383, 5])[1].join() === [4, 1, 12, 1008 & 127, 1008 >> 7, 383 & 127, 383 >> 7, 5, 0].join() &&
+     E.parse[E.CMD.PATCH]([4, 1, 12, 0, 0, 0, 4102 & 127, 4102 >> 7, 3, 0, 0x43, 0, 9]).bytes.join() === "67,0,9" &&
+     (await E.bankDump(rq, 12, [383])) === null, "synths: PATCH BANK: its request, a piece's reply, null where the synth has no bank dump");
   const frame = [0xF0, ...fm.sysex[0], 0, 0x7F, 0xF7];
   const sx = await E.sendSysex(rq, frame, 384), unk = await E.sendSysex(rq, [0xF0, 0x7D, 1, 0xF7], 384);
   const into = await E.sendSysex(rq, [...frame, ...frame], 300);

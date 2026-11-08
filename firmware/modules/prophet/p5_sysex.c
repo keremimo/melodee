@@ -12,6 +12,8 @@ static uint32_t p5_sysex_dump(const uint8_t *patch, uint32_t what, uint32_t ch, 
 {
     p5_patch_t p;
     (void)ch;
+    if ((what & 255u) == MOD3_DUMP_BANK)         /* (no bank dump: its programs go one by one) */
+        return 0;
     memcpy(&p, patch, sizeof p);
     if (what == MOD3_DUMP_PART)
         p.command = 3;                           /* (a part's sound: the edit buffer) */

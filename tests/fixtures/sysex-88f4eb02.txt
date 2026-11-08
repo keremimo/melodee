@@ -20,6 +20,9 @@ dx7 with no FM6 part slots 393dca7a patches 87bdb61b params 2e0b0825 import 050c
 dx7 library send U034 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen cedb047f out 163 85825fa1
 dx7 bulk send U005..U008 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 8dda492f out 326 41ee6f73
 dx7 STORE SEND slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 163 451ca70d
+dx7 bank export U033..U064 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 4104 546f192e
+dx7 bank export U006 U001 U007 U048 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 4104 0fb2fd2e
+dx7 bank export 40 slots slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 4104 38724260
 cz start slots 25e26bc5 patches e4fae7eb params 584e153d import 050c5d1f screen 811c9dc5 out 0 811c9dc5
 cz direct 144 staged slots 25e26bc5 patches e4fae7eb params 584e153d import 45e916dc screen 94a1562a out 0 811c9dc5
 cz direct 144 into U008 slots 3ce98699 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 0 811c9dc5

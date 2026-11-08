@@ -56,7 +56,10 @@ static void cz_sx_send(int tr, uint32_t ch, int native, int continuation)   /* p
 }
 static uint32_t cz_sysex_dump(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max)
 {
-    uint32_t n = cz_sx_frame(patch, what == MOD3_DUMP_STORED ? 0x70u : 0x70u | (ch & 15u), 1);
+    uint32_t n;
+    if ((what & 255u) == MOD3_DUMP_BANK)         /* (no bank dump: its tones go one by one) */
+        return 0;
+    n = cz_sx_frame(patch, what == MOD3_DUMP_STORED ? 0x70u : 0x70u | (ch & 15u), 1);
     if (n > max)
         return 0;
     memcpy(out, cz_tx, n);
