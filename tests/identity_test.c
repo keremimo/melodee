@@ -93,6 +93,17 @@ static void boot(void)                              /* power-on: the map and the
     for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k, 0), memset(&mods[k], 0, sizeof mods[k]);
     mod_boot();
 }
+/* a power cycle with BOOT OFF: the modules, the settings record (the template after it: persist_boot), the template
+ * loaded as the new project (project_boot) */
+static void power(void)
+{
+    for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k, 0), memset(&mods[k], 0, sizeof mods[k]);
+    memset(&tmpl, 0, sizeof tmpl);
+    host_tracks_init();
+    mod_boot();
+    persist_boot();
+    project_boot();
+}
 /* ---- Ed25519 (RFC 8032 7.1) */
 static const uint8_t *sg_msg;
 static int sg_read(uint32_t off, void *dst, uint32_t n) { memcpy(dst, sg_msg + off, n); return 0; }
@@ -207,6 +218,45 @@ int main(void)
         (void)st_stream_publish(&w);                /* (the stream closed: published or refused) */
         mod_service(5300);
         bad += check(".. and once it is published, at once", !rc && held && !eng_map_dirty);
+    }
+    {   /* ---- the template (SAVE > PROJECT, SLOT TMPL): its end block (ST_TPLX) keeps an outside synth's number and patch */
+        uint8_t tp[16];
+        for (uint32_t i = 0; i < sizeof tp; i++) tp[i] = (uint8_t)(0x21u + 5u * i);
+        host_tracks_init();
+        for (uint32_t k = 0; k < NPART; k++) host_preset(&trk[k], TRK_DEF[k][0], TRK_DEF[k][1]);
+        persist_old = tmpl_old = 0;
+        template_save();
+        bad += check("template of Melodee's own synths: no end block (its settings record as it always was)",
+                     template_used() && !st_exists(ST_TPLX));
+        uint32_t other = mods[slot_of_name("OTHER")].engine;
+        trk[2].engine = trk[2].eng_req = (uint8_t)other;
+        patch_set(2, other, tp, sizeof tp, MOD3_PATCH_SET);
+        template_save();
+        bad += check("template with OTHER on track 3 (a 16-byte patch, no 1.x format): its end block", st_exists(ST_TPLX));
+        power();
+        bad += check(".. a power cycle: track 3 OTHER again, its patch", template_used() && trk[2].eng_req == other &&
+                     patch_eng_of(2) == other && !memcmp(patch_of(2), tp, sizeof tp));
+        for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
+        eng_map_service(1);
+        eng_map_defaults();
+        install(0, "zeta", "OTHER", 22, 16);
+        power();
+        uint32_t here = mods[0].engine;
+        bad += check(".. where OTHER has another number (22 here): that one, its patch", here == 22u && here != other &&
+                     trk[2].eng_req == here && patch_eng_of(2) == here && !memcmp(patch_of(2), tp, sizeof tp));
+        (void)mod_delete(0);
+        eng_map_service(1);
+        power();
+        uint32_t gone = eng_of_name("OTHER");
+        bad += check(".. OTHER not on the device: a number of its own, its name, its patch kept", gone < NENGINES &&
+                     trk[2].eng_req == gone && patch_eng_of(2) == gone && !memcmp(patch_of(2), tp, sizeof tp));
+        template_save();
+        power();
+        bad += check(".. saved again from there and a power cycle: the same", trk[2].eng_req == eng_of_name("OTHER") &&
+                     eng_of_name("OTHER") < NENGINES && !memcmp(patch_of(2), tp, sizeof tp));
+        install(1, "zeta", "OTHER", 22, 16);
+        install(0, "acme", "FIRST", 22, 0);
+        boot();
     }
     /* ---- the crash blame */
     mod_run.magic = MODRUN_MAGIC; mod_run.alive = 1; mod_run.crashed = 1; mod_run.loop = 2; mod_run.audio = 1;

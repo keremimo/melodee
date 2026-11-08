@@ -326,6 +326,10 @@ static uint32_t ed_bk_commit_inner(void)
         settings_import(&ed_bk_set.p, (int)ns);
         tmpl_take(raw + ns, ed_bk_len - ns);            /* (none in the backup: none now) */
         tmpl_dirty = 0;
+#if MELODEE_FLASH
+        if (st_exists(ST_TPLX))
+            (void)st_project_delete(ST_TPLX);           /* (the template here before: its end block goes with it) */
+#endif
         settings_old_accept();
         panel_init(); settings_init(); palette_set(settings.palette);
 #if MELODEE_FLASH

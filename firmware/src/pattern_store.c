@@ -227,31 +227,20 @@ static void bank_ext_write(uint8_t *raw, const project_t *q, int runtime)
     b[pos + 4u] = bank_patterns; b[pos + 5u] = b[pos + 6u] = b[pos + 7u] = 0;
     memcpy(b + pos + 8u, &(uint32_t){BANKR_TAG}, 4);
 }
-/* a record's end block (tail: its bank tail; fbkr: its magic was FBKR): checked, the engine map's remap set for the
- * record's engine bytes (eng_map.c eng_in: new numbers taken for synths this device has not got), its patches noted.
- * Any other record: no end block, the identity remap. 0 bad */
-static int bank_ext_read(const uint8_t *tail, int fbkr)
+/* an end block's trailer t (room: bytes before it at most): its length, entries' and patches' counts; 0 bad */
+static uint32_t bank_ext_head(const uint8_t *t, uint32_t room)
 {
-    const uint8_t *t = tail + BANK_TAIL_SIZE - 4u - BANKR_TRAIL, *b;
-    uint32_t tag, plen, ne, np, pos = 0;
-    eng_remap_reset();
-    bank_ext = 0;
-    bank_ext_len = 0;
-    for (uint32_t k = 0; k < PROJ_TRK; k++)
-        bank_blob[k] = 0;
-    if (!fbkr)
-        return 1;
+    uint32_t tag, plen = t[0] | (uint32_t)t[1] << 8;
     memcpy(&tag, t + 8, 4);
-    plen = t[0] | (uint32_t)t[1] << 8;
-    ne = t[2];
-    np = t[3];
-    if (tag != BANKR_TAG || t[4] > 1u || t[5] || t[6] || t[7] || plen > BANK_TAIL_SIZE / 2u || np > PROJ_TRK ||
-        ne * EMAP_ENTRY > plen)
-        return 0;
-    bank_patterns = t[4];
-    bank_ext = 1;
-    bank_ext_len = plen + BANKR_TRAIL;
-    b = t - plen;
+    return tag == BANKR_TAG && t[4] <= 1u && !t[5] && !t[6] && !t[7] && plen <= room && t[3] <= PROJ_TRK &&
+           t[2] * EMAP_ENTRY <= plen ? plen + BANKR_TRAIL : 0u;
+}
+/* its entries (the remap) and patches (bank_blob) from the trailer t that bank_ext_head passed; 0 bad. The template's
+ * end block (project.c tmpl_ext_load) is read here too */
+static int bank_ext_body(const uint8_t *t)
+{
+    uint32_t plen = t[0] | (uint32_t)t[1] << 8, ne = t[2], np = t[3], pos;
+    const uint8_t *b = t - plen;
     if (eng_remap_read(b, ne))
         return 0;
     pos = ne * EMAP_ENTRY;
@@ -266,6 +255,31 @@ static int bank_ext_read(const uint8_t *tail, int fbkr)
         pos += 4u + len;
     }
     return pos == plen;
+}
+static void bank_ext_none(void)                  /* no end block: the identity remap, no patches */
+{
+    eng_remap_reset();
+    bank_ext = 0;
+    bank_ext_len = 0;
+    for (uint32_t k = 0; k < PROJ_TRK; k++)
+        bank_blob[k] = 0;
+}
+/* a record's end block (tail: its bank tail; fbkr: its magic was FBKR): checked, the engine map's remap set for the
+ * record's engine bytes (eng_map.c eng_in: new numbers taken for synths this device has not got), its patches noted.
+ * Any other record: no end block, the identity remap. 0 bad */
+static int bank_ext_read(const uint8_t *tail, int fbkr)
+{
+    const uint8_t *t = tail + BANK_TAIL_SIZE - 4u - BANKR_TRAIL;
+    uint32_t n;
+    bank_ext_none();
+    if (!fbkr)
+        return 1;
+    if (!(n = bank_ext_head(t, BANK_TAIL_SIZE / 2u)))
+        return 0;
+    bank_patterns = t[4];
+    bank_ext = 1;
+    bank_ext_len = n;
+    return bank_ext_body(t);
 }
 static int bankl_pack_tail(uint8_t *raw, const project_t *q)   /* runtime only (cap_map) */
 {

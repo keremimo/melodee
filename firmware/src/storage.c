@@ -116,13 +116,15 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
 #define ST_MXFILE0 (ST_MFILE0 + 8u)
 #define ST_MAPOBJ (ST_MXFILE0 + 8u)            /* the device's engine map: number <-> UID, the data records' owners */
 #define ST_MNEW0 (ST_MAPOBJ + 1u)
-#define ST_OBJ_END (ST_MNEW0 + ST_NMOD * MOD_RECS)   /* every object number below this */
+#define ST_TPLX (ST_MNEW0 + ST_NMOD * MOD_RECS)     /* the template's end block (project.c tmpl_ext): only when needed */
+#define ST_OBJ_END (ST_TPLX + 1u)                   /* every object number below this */
 static uint32_t st_mod_obj(uint32_t k, uint32_t j)
 {
     return k < 8u && j < 2u ? ST_MFILE0 + 8u * j + k : ST_MNEW0 + k * MOD_RECS + j;
 }
 static uint32_t st_proj_obj(uint32_t slot) { return slot < 4u ? OBJ_BANK0 + slot : ST_PFILE0 + slot; }
-/* a record that lives only in the pool, never in a fixed pair: projects 5..32, the user kits, the synth modules */
+/* a record that lives only in the pool, never in a fixed pair: projects 5..32, the user kits, the synth modules, the
+ * engine map, the template's end block */
 static int st_pfile(uint32_t obj) { return (obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ) || (obj >= ST_RFILE0 && obj < ST_OBJ_END); }
 static int st_obj_ok(uint32_t obj) { return obj < OBJ_COUNT || st_pfile(obj); }
 

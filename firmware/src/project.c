@@ -1264,6 +1264,64 @@ static void glo_poll(void)
     }
 }
 
+/* The template's end block (pool record ST_TPLX), laid out as a project's FBKR end block (pattern_store.c bank_ext_*):
+ * the numbers its tracks name that are not Melodee's defaults (eng_map.c entries), the patches of its tracks' synths
+ * that have no Melodee 1.x store format; what the settings record's layout cannot keep. Only when needed: a template of
+ * Melodee's own synths has none (its settings record as it always was). Not in a backup (its settings record is) */
+#if MELODEE_FLASH
+static const uint8_t *tmpl_ext_patch(uint32_t k, uint32_t *len)   /* track k's patch it keeps (template_save), 0 none */
+{
+    uint32_t e = trk[k].eng_req, n = patch_len(e);
+    if (patch_eng_of(k) != e || patch_store_tag(e) != MOD_SCH_STORE_NONE)
+        return 0;
+    if (!n)
+        n = patch_kept(k);                          /* (a synth this device has not got: the bytes it came with) */
+    return n ? (*len = n, patch_of(k)) : 0;
+}
+static int tmpl_ext_save(void)                    /* template_save, the template in tmpl: 0 kept */
+{
+    uint8_t *b = wire_take(), ne = 0, np = 0;
+    uint32_t pos = 0, len;
+    for (uint32_t e = 0; e < NENGINES; e++)
+        for (uint32_t k = 0; k < PROJ_TRK; k++)
+            if (tmpl.t[k].engine == e && eng_map_own(e)) {
+                eng_map_put(b + pos, e);
+                pos += EMAP_ENTRY;
+                ne++;
+                break;
+            }
+    for (uint32_t k = 0; k < PROJ_TRK; k++) {
+        const uint8_t *q = tmpl_ext_patch(k, &len);
+        if (!q)
+            continue;
+        b[pos] = (uint8_t)k; b[pos + 1u] = tmpl.t[k].engine; b[pos + 2u] = (uint8_t)len; b[pos + 3u] = (uint8_t)(len >> 8);
+        memcpy(b + pos + 4u, q, len);
+        pos += 4u + len;
+        np++;
+    }
+    if (!pos)
+        return st_exists(ST_TPLX) ? st_project_delete(ST_TPLX) : 0;
+    b[pos] = (uint8_t)pos; b[pos + 1u] = (uint8_t)(pos >> 8); b[pos + 2u] = ne; b[pos + 3u] = np;
+    memset(b + pos + 4u, 0, 4);
+    memcpy(b + pos + 8u, &(uint32_t){BANKR_TAG}, 4);
+    return st_save(ST_TPLX, b, pos + BANKR_TRAIL);
+}
+/* template_load: its end block's remap and patches (bank_ext_body: bank_blob in the main loop's staging until the
+ * restore has taken them); none or a damaged one: the template as its settings record has it */
+static void tmpl_ext_load(void)
+{
+    uint8_t *b = wire_take();
+    int n = st_exists(ST_TPLX) ? st_load(ST_TPLX, b, sizeof proj_wire_u) : 0;
+    bank_ext_none();
+    if (n > (int)BANKR_TRAIL && (bank_ext_head(b + n - BANKR_TRAIL, (uint32_t)n - BANKR_TRAIL) != (uint32_t)n ||
+                                 !bank_ext_body(b + n - BANKR_TRAIL)))
+        bank_ext_none();
+}
+#else
+static int tmpl_ext_save(void) { return 0; }
+static void tmpl_ext_load(void) { bank_ext_none(); }
+#endif
+
 /* the music without its patterns -> the template, saved with the settings */
 static void template_save(void)
 {
@@ -1299,8 +1357,9 @@ static void template_save(void)
     tmpl_dirty = 1;
 #if MELODEE_FLASH
     if (flash_ok) {
+        int ext = tmpl_ext_save();                    /* (its end block first: the settings record says it is there) */
         settings_save();                              /* (stopped: written now) */
-        ui_message(tmpl_dirty ? "SAVE ERROR" : "TEMPLATE SAVED");
+        ui_message(tmpl_dirty || ext ? "SAVE ERROR" : "TEMPLATE SAVED");
         return;
     }
 #endif
@@ -1327,6 +1386,7 @@ static void template_load(void)
         ui_message("NO TEMPLATE");
         return;
     }
+    tmpl_ext_load();                                  /* (its numbers here, its patches) */
     memset(p, 0, sizeof *p);
     p->magic = PROJ_MAGIC;
     p->size = sizeof *p;
@@ -1343,7 +1403,7 @@ static void template_load(void)
     int8_t oct[PROJ_TRK];
     mpc_octaves_unpack(oct,(uint16_t)tmpl.g[TMPL_MPC_OCT_G]);
     for (k = 0; k < PROJ_TRK; k++) {
-        p->t[k].engine = tmpl.t[k].engine;
+        p->t[k].engine = (uint8_t)eng_in(tmpl.t[k].engine);
         p->t[k].mpc_octave = oct[k];
         p->t[k].preset = tmpl.t[k].preset;
         for (i = 0; i < P_COUNT; i++)
@@ -1357,7 +1417,9 @@ static void template_load(void)
     }
     p->voice_fn_ok = 1;
     p->sum = proj_sum(p);
-    if (project_restore_runtime(p))
+    int rc = project_restore_runtime(p);
+    bank_ext_none();                                  /* (the identity remap again; the patches are in the parts) */
+    if (rc)
         return;
     for (k = 0; k < NTRK; k++) {
         track_defaults_steps(&trk[k]);                /* every pattern empty */
