@@ -231,6 +231,8 @@ static void fm1_fault(const fm1_crash_t *c)
         fm1_core1_bar_set();                          /* one core on every boot until power-off */
 #endif
     fm1_audio_stop();
+    mod_run.crashed = 1;                              /* (the next boot leaves out the module whose code ran) */
+    mod_run.pc = c->pc;
     scr_wake_now();
     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
     draw_text_line(0, 10, 240, TY_TX, "Melodee crash", UI_CRASH_INK, UI_CRASH_BG, 1);   /* (large type) */
@@ -381,6 +383,12 @@ static void fm1_main(void)
     fm1_audio_unmute();                       /* the codec settled on silent I2S since audio_init: no cold-boot click */
     if (boot_work.state != 2u)
         lcd_fill(0, 0, 240, 240, T_BG);
+#if MELODEE_MODULES
+    if (mod_blamed && !boot_work.state) {     /* the last run crashed in a synth module's code: it is left out */
+        boot_work.state = 5u;
+        ui.force = 1;
+    }
+#endif
 #ifdef RES_BASE
     if (flash_ok && (!res_ok || !SHIPPED_OK()) && !boot_work.state) {   /* the resource region or a shipped synth
                                                       * module missing: ask for an install (ui_boot.c) */

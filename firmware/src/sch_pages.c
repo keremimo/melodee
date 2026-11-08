@@ -255,7 +255,7 @@ static const param_desc_t *sch_page_desc(const page_t *pg, uint32_t slot, int16_
         return 0;
     d = sch_desc_fill(slot, e, &p);
     if ((p.flags & MOD3_SF_DESC) && ENGINES[e]->desc && !mod_idle(e)) {   /* (its descriptor now: the module's) */
-        const param_desc_t *m = ENGINES[e]->desc(TSEL, MOD3_DESC_ID + id);
+        const param_desc_t *m = MOD_MAIN(e, ENGINES[e]->desc(TSEL, MOD3_DESC_ID + id));
         if (m) {
             sch_col[slot & 3u].d = *m;
             d = &sch_col[slot & 3u].d;
@@ -275,7 +275,7 @@ static int sch_format(const param_desc_t *d, int32_t v, char *val, const char **
         g = ENGINES[sch_col[c].eng % NENGINES];
         if (!g->pformat || mod_idle(sch_col[c].eng))
             return 0;
-        g->pformat(TSEL, patch_of(song.sel), sch_col[c].id, v, val, unit);
+        MOD_MAIN_V(sch_col[c].eng % NENGINES, g->pformat(TSEL, patch_of(song.sel), sch_col[c].id, v, val, unit));
         return 1;
     }
     return 0;
@@ -295,7 +295,7 @@ static int sch_col_dim(const page_t *pg, uint32_t slot)
     sch_param_t p;
     if (id == MOD_SCH_NONE || sch_param(e, id, &p) || !(p.flags & MOD3_SF_DIM) || !ENGINES[e]->pactive || mod_idle(e))
         return 0;
-    return !ENGINES[e]->pactive(TSEL, patch_of(song.sel), id);
+    return !MOD_MAIN(e, ENGINES[e]->pactive(TSEL, patch_of(song.sel), id));
 }
 static const char *eng_abbr_of(uint32_t e)
 {
@@ -368,7 +368,7 @@ static int sch_page_act(const page_t *pg, uint32_t slot)
 {
     uint32_t e = eng_idx(TSEL->eng_req), id = sch_col_id(pg, slot), k = song.sel % NTRK;
     const engine_t *g = ENGINES[e];
-    if (id == MOD_SCH_NONE || !g->pput || mod_idle(e) || !g->pput(TSEL, patch_of(k), id, 1))
+    if (id == MOD_SCH_NONE || !g->pput || mod_idle(e) || !MOD_MAIN(e, g->pput(TSEL, patch_of(k), id, 1)))
         return 0;
     patch_note(k, MOD3_PATCH_EDIT, id);
     return 1;

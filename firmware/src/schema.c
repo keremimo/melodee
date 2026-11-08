@@ -214,7 +214,7 @@ static int32_t sch_get(const track_t *t, uint32_t e, const uint8_t *patch, const
     switch (p->kind) {
     case MOD3_SK_FIELD: return sch_field_get(patch, p);
     case MOD3_SK_TRACK: return p->off < P_COUNT ? t->p[p->off] : 0;
-    default: return g->pget && !mod_idle(e % NENGINES) ? g->pget(t, patch, p->id) : 0;
+    default: return g->pget && !mod_idle(e % NENGINES) ? MOD_MAIN(e % NENGINES, g->pget(t, patch, p->id)) : 0;
     }
 }
 /* .. set to v (its range): 1 when it changed. The engine is not told (patch_note) */
@@ -224,7 +224,7 @@ static int sch_put(track_t *t, uint32_t e, uint8_t *patch, const sch_param_t *p,
     int32_t old, lo = p->min, hi = p->max;
     if ((p->flags & MOD3_SF_DESC) && g->desc && !mod_idle(e % NENGINES)) {   /* (its range as the synth shows it now:
                                                                              * the Prophet's FREQ B in semitones) */
-        const param_desc_t *d = g->desc(t, MOD3_DESC_ID + p->id);
+        const param_desc_t *d = MOD_MAIN(e % NENGINES, g->desc(t, MOD3_DESC_ID + p->id));
         if (d) {
             lo = d->min;
             hi = d->max;
@@ -242,7 +242,7 @@ static int sch_put(track_t *t, uint32_t e, uint8_t *patch, const sch_param_t *p,
         t->p[p->off] = (int16_t)v;
         return 1;
     default:
-        return g->pput && !mod_idle(e % NENGINES) ? g->pput(t, patch, p->id, v) : 0;
+        return g->pput && !mod_idle(e % NENGINES) ? MOD_MAIN(e % NENGINES, g->pput(t, patch, p->id, v)) : 0;
     }
 }
 
@@ -680,7 +680,7 @@ static void patch_note(uint32_t k, uint32_t how, uint32_t id)
     uint32_t e = k < NPART ? patch_eng[k] : NENGINES;
     const engine_t *g = e < NENGINES ? ENGINES[e] : 0;
     if (g && g->patch_changed && !mod_idle(e))
-        g->patch_changed(&trk[k], patch_of(k), how, id);
+        MOD_MAIN_V(e, g->patch_changed(&trk[k], patch_of(k), how, id));
     if (k < NTRK && how != MOD3_PATCH_EDIT && how != MOD3_PATCH_MOTION)
         patch_compare_drop(k);
 }

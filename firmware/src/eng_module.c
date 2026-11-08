@@ -18,7 +18,10 @@ enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
        MS_STALE,                                   /* an older ABI's module, or another firmware's legacy data (key) */
        MS_NEWER };                                 /* a module that needs a later host table than this firmware's */
 typedef struct {
-    uint8_t state, engine;                          /* MS_*; the engine number its file names */
+    uint8_t state, engine;                          /* MS_*; its engine number here (eng_map.c: the device's map) */
+    uint8_t want;                                   /* the number its file asks for */
+    char tag[4];                                    /* its four-letter tag (its IDNT chunk's), 0-padded */
+    uint32_t uid;                                   /* who it is (its IDNT chunk's; mod_abi3.h mod_ident_v3) */
     uint16_t version;
     uint32_t len;                                   /* the file's length (0: empty) */
     char name[MOD3_NAME_MAX + 1u];
@@ -28,8 +31,9 @@ typedef struct {
     uint16_t host;                                  /* the host table version it needs */
     uint32_t crc, key;                              /* its head's CRC and legacy key: what the installer compares with
                                                      * its own files (editor_module.c) */
-    uint32_t copy, xcopy, cut;                      /* where its file is (st_current's copies, the first record's
-                                                     * length: mod_open) */
+    uint16_t copy[MOD_RECS];                        /* where its file is: each record's current copy (mod_open; every
+                                                     * record but the last ST_PROJECT_MAX bytes) */
+    uint8_t parts;                                  /* .. its records */
     uint32_t pst, pst_len, pst_dat;                 /* its factory presets (module_presets.h): the PRST payload's place
                                                      * in the file, its length (0: none), its dictionary's place in it */
     uint16_t pst_init, pst_dict, pst_ulen;          /* .. its INIT, dictionary and entry bytes */
@@ -40,9 +44,27 @@ typedef struct {
 } mod_slot_t;
 static mod_slot_t mods[NMOD];
 static uint8_t mod_skipped;                         /* this boot did not load modules (mod_guard: last boot crashed) */
+static uint8_t mod_blamed;                          /* the slot + 1 this boot left out: the last run crashed in its code
+                                                     * (module_store.c mod_blame), 0 none */
 static uint32_t mod_last[NMOD];                     /* fm1_ms: when something last used slot k's engine */
 static int (*mod_fetch)(uint32_t k);                /* module_store.c mod_bring: slot k into SRAM, MS_* */
 #define MOD_IDLE_MS 3000u
+/* the module whose code the main loop calls (mod_run.loop: its slot + 1, for the crash blame): around each call */
+static uint32_t mod_main_enter(uint32_t e)
+{
+    uint32_t was = mod_run.loop;
+    mod_run.loop = e < NENGINES ? mod_at[e] : 0u;
+    return was;
+}
+static void mod_main_leave(uint32_t was) { mod_run.loop = (uint8_t)was; }
+#define MOD_MAIN(e, x) ({ uint32_t mm_ = mod_main_enter(e); __typeof__(x) mr_ = (x); mod_main_leave(mm_); mr_; })
+#define MOD_MAIN_V(e, x) do { uint32_t mm_ = mod_main_enter(e); x; mod_main_leave(mm_); } while (0)
+/* the module whose main-loop call this is (its UID; 0: none: the firmware's own) */
+static uint32_t mod_running_uid(void)
+{
+    uint32_t k = mod_run.loop;
+    return k && k <= NMOD ? mods[k - 1u].uid : 0u;
+}
 /* a catalogued slot: its engine number points at its module (MS_LOADED) or at ENG_MOD_IDLE */
 static int mod_listed(uint32_t k) { return mods[k].state == MS_LOADED || mods[k].state == MS_STORED || mods[k].state == MS_NORAM; }
 static uint32_t mod_slot_of(uint32_t e)            /* the slot playing as engine e, NMOD: none */

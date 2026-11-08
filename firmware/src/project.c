@@ -426,7 +426,7 @@ static int proj_unpack(project_t *q, const uint8_t *b)
                 if(value>(uint32_t)TP[i].max)return 0;values[i]=(int16_t)value;
             }else {if(b[pos]>191u)return 0;values[i]=(int16_t)b[pos++]-64;}
         }
-        q->t[t].engine = b[pos++]; q->t[t].preset = b[pos++];
+        q->t[t].engine = (uint8_t)eng_in(b[pos++]); q->t[t].preset = b[pos++];   /* (FBKR: the number here, eng_map.c) */
         if (q->t[t].engine >= NENGINES) return 0;  /* a fork's engine ID must not wrap into ours */
         for (i = 0; i < P_COUNT; i++) def[i] = param_desc_of(q->t[t].engine % NENGINES, i)->def;
         params_by_count(q->t[t].p, values, np, def);
@@ -631,7 +631,7 @@ static int proj_read_slot(uint32_t slot)
 #endif
 #if !MELODEE_FLASH
     bank_wide = bank_p16 = 0;
-    int valid = bank_full((uint32_t)n) ? bank_valid(proj_wire_u.raw, n) : proj_import(&proj_scratch, proj_wire_u.raw, n);
+    int valid = bank_full((uint32_t)n) ? bank_valid(proj_wire_u.raw, n) : (eng_remap_reset(), proj_import(&proj_scratch, proj_wire_u.raw, n));
 #endif
 #if MELODEE_FLASH && !defined(FM1_IRQ_TARGET)
     if (valid && slot < 4u) {                    /* (the host mirrors hold slots 1..4) */
@@ -745,7 +745,12 @@ static uint32_t proj_patch_get(const project_t *p, uint32_t k, uint32_t e, uint8
     case MOD_SCH_STORE_TONE: memcpy(v, p->cz[k], PROJ_TONE_BYTES); return PROJ_TONE_BYTES;
     case MOD_SCH_STORE_PROGRAM: memcpy(v, p->p5[k], PROJ_PROGRAM_BYTES); return PROJ_PROGRAM_BYTES;
     case MOD_SCH_STORE_KIT: memcpy(v, p->drum[k], PROJ_KIT_BYTES); return PROJ_KIT_BYTES;
-    default: return 0;
+    default:                                       /* (no 1.x format: the patch FBKR's end block kept, pattern_store.c) */
+        if (k < PROJ_TRK && bank_blob[k] && bank_blob_eng[k] == e && bank_blob_len[k] <= MOD3_PATCH_MAX) {
+            memcpy(v, bank_blob[k], bank_blob_len[k]);
+            return bank_blob_len[k];
+        }
+        return 0;
     }
 }
 static void project_capture(project_t *p)
@@ -1090,6 +1095,8 @@ static int project_restore_runtime(const project_t *input)
     undo_depth--;
     sync_reload = 1;
     ui.force = 1;
+    for (k = 0; k < PROJ_TRK; k++)
+        bank_blob[k] = 0;                           /* (the end block's patches are in the parts now) */
     ui_message("LOADED");
     return 0;
 }
@@ -1641,7 +1648,7 @@ static int project_used(uint32_t slot)
     slot &= 3u;
     int valid = bank_valid(proj_bank_slot[slot], BANK_STORE_SIZE) &&
         !memcmp(proj_bank_slot[slot] + 8u, &proj_slot[slot], sizeof proj_slot[slot]);
-    if (!valid) valid = proj_import(&proj_scratch, &proj_slot[slot], sizeof proj_slot[slot]);
+    if (!valid) valid = (eng_remap_reset(), proj_import(&proj_scratch, &proj_slot[slot], sizeof proj_slot[slot]));
     proj_meta[slot].used = (uint8_t)valid;
     if (valid) proj_name_get(proj_meta[slot].name, (const uint8_t *)proj_scratch.name);
 #endif

@@ -62,7 +62,7 @@ static void msx_service(void)
     if (ev == MOD3_SX_END)
         wire_job = 1;                            /* (the frame is this job's: a dump out may reuse the scratch) */
     msx_serving = 1;
-    r = g->sysex(proj_wire_u.raw, n, ev);
+    r = MOD_MAIN(e, g->sysex(proj_wire_u.raw, n, ev));
     msx_serving = 0;
     msx_fed = n;
     if (r == MOD3_SXR_DONE || ev == MOD3_SX_END || ev == MOD3_SX_ABORT)
@@ -161,7 +161,7 @@ static uint32_t msx_dump(uint32_t e, const uint8_t *patch, uint32_t what, uint32
     if (ENGINES[e] == &ENG_MOD_IDLE)
         mod_want(e);
     g = ENGINES[e];
-    return g != &ENG_MOD_IDLE && g->sysex_dump ? g->sysex_dump(patch, what, ch, out, max) : 0;
+    return g != &ENG_MOD_IDLE && g->sysex_dump ? MOD_MAIN(e, g->sysex_dump(patch, what, ch, out, max)) : 0;
 }
 /* synth e's STORE page's words for its SEND (MOD3_ST_SENDMSG: inames' second when it went, third when not), if it has
  * them */

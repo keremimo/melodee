@@ -264,12 +264,18 @@ static uint32_t trk_def_preset(uint32_t k) { return k < NPART ? TRK_DEF[k][1] : 
 #if MELODEE_MODULES
 #include "eng_module.c"         /* synth modules: engines loaded into SRAM (module_store.c keeps them) */
 #include "eng_module_main.c"    /* (their lists, loading, registration: main loop) */
+#include "eng_map.c"            /* the device's engine map: number <-> UID, the stores' entries */
 #include "schema.c"             /* a synth's schema (its file's or built in), the patches by it */
 #include "pads.c"               /* a synth's pads (its schema's MOD3_R_PADS) */
 #define SHIPPED_OK() mod_shipped_ok()  /* the synth modules the image needs are on the device (else: setup) */
 #else
 #define SHIPPED_OK() 1
 static int mod_idle(uint32_t e) { (void)e; return 0; }
+static uint32_t mod_le32(const uint8_t *b) { return b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24; }
+#define MOD_MAIN(e, x) (x)
+#define MOD_MAIN_V(e, x) x
+static uint32_t mod_running_uid(void) { return 0; }
+#include "eng_map.c"
 #include "schema.c"
 #include "pads.c"
 static const char *eng_name(uint32_t e) { return ENGINES[e % NENGINES]->name; }

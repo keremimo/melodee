@@ -112,7 +112,7 @@ static void kt_rec_v(char *b)
     else if (kt.state == KT_REC) { fmt_fix(b, (int32_t)(kt.n * 10u / FS), 1); str_cpy(b + str_len(b), " s", 3); }
     else if (kt.state == KT_DONE) str_cpy(b, "Saving", 10);
     else if (ks.msg) str_cpy(b, MSG[ks.msg], 10);
-    else str_cpy(b, !mod_idle(e) && g->rec_pad && g->rec_pad(ks.slot, ks.pad) ? "Taken" : "Empty", 10);
+    else str_cpy(b, !mod_idle(e) && g->rec_pad && MOD_MAIN(e, g->rec_pad(ks.slot, ks.pad)) ? "Taken" : "Empty", 10);
 }
 static int kt_go(void)                                  /* Record: waiting for the first hit */
 {
@@ -127,7 +127,7 @@ static uint32_t kt_take(int16_t *x, uint32_t n, uint32_t cap)   /* the synth's r
 {
     uint32_t e = eng_idx(trk[ks.trk].eng_req);
     const engine_t *g = ENGINES[e];
-    return mod_idle(e) || !g->rec_take ? MOD3_TK_FLASH : g->rec_take(ks.slot, ks.pad, x, n, cap);
+    return mod_idle(e) || !g->rec_take ? MOD3_TK_FLASH : MOD_MAIN(e, g->rec_take(ks.slot, ks.pad, x, n, cap));
 }
 static void kt_clear(void)
 {

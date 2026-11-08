@@ -25,6 +25,7 @@
 /* the part's working memory for SID's chip (eng_drum.c has its kits') */
 static sid_part_t *sid_part(uint32_t part) { return mod_part_mem(part, sizeof(sid_part_t)); }
 
+MOD3_IDENT("melodee", "DRUM");
 MOD3_ENGINE_EXPORT(mod_drum) = {
     MOD3_ENGINE_HEAD, .engine = ENGI_DRUM, .name = "DRUM", .npresets = DRUM_NPRESETS, .eng = &ENG_DRUM,
 };

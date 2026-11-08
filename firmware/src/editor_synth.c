@@ -347,7 +347,7 @@ static int ed_synth_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
                 const char *unit = 0;
                 const engine_t *g = ENGINES[e];
                 if (!sch_param(e, id, &q) && (q.flags & MOD3_SF_FORMAT) && g->pformat && !mod_idle(e))
-                    g->pformat(&trk[k], patch_of(k), id, v, s, &unit);
+                    MOD_MAIN_V(e, g->pformat(&trk[k], patch_of(k), id, v, s, &unit));
                 ed_str(s, 8);
             }
         }

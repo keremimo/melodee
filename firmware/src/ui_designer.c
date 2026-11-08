@@ -135,7 +135,7 @@ static void ds_vput(uint32_t id,int32_t v)
 static int ds_active(uint32_t id)                       /* the synth's control id does something (pactive) */
 {
     uint32_t e=eng_idx(TSEL->eng_req);
-    return !ENGINES[e]->pactive || mod_idle(e) || ENGINES[e]->pactive(TSEL,patch_of(song.sel),id);
+    return !ENGINES[e]->pactive || mod_idle(e) || MOD_MAIN(e, ENGINES[e]->pactive(TSEL,patch_of(song.sel),id));
 }
 static int ds_car(uint32_t op)                          /* operator op (0: the first) a carrier of the patch's algorithm */
 {

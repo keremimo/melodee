@@ -10,6 +10,7 @@
 
 static cz_part_t *cz_part(uint32_t part) { return mod_part_mem(part, sizeof(cz_part_t)); }   /* (engines.c's) */
 
+MOD3_IDENT("melodee", "CZ-1");
 MOD3_ENGINE_EXPORT(mod_cz) = {
     MOD3_ENGINE_HEAD, .engine = ENGI_CZ, .name = "CZ-1", .npresets = CZ_FACTORY_N + 1u, .eng = &ENG_CZ,
 };

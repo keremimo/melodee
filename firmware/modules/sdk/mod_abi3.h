@@ -19,7 +19,8 @@
  *
  * File: the head (mod_file3_t, 60 bytes), the image (code, constants, initialised data; linked at 0, the descriptor
  * first), `nrel` u32 offsets into the image (each an unaligned little-endian word the loader adds the block's address
- * to), then chunks if flags says so (module_presets.h: the factory presets, PRST). `bss` zero bytes follow the image in
+ * to), then chunks if flags says so (the factory presets PRST, the schema SCHM, who it is IDNT, its signature SIGN
+ * last). `bss` zero bytes follow the image in
  * RAM. crc = CRC-32 of every byte after the head. Little endian, 32-bit pointers (the host tests' own builds: 64-bit).
  *
  * Calls: note_on, render, block and the other voice and part callbacks from the audio interrupt (one part at a time;
@@ -366,13 +367,42 @@ typedef struct mod_desc_v3 {
     uint16_t abi, size;                          /* MOD3_ABI, sizeof(mod_desc_v3) */
     uint16_t host;                               /* the lowest host table version it needs */
     uint16_t eng_size;                           /* sizeof(mod_engine_v3) it was built with */
-    uint8_t engine, npresets;                    /* the engine number it plays as; its presets (the PRST chunk's) */
+    uint8_t engine, npresets;                    /* the engine number it would like (a device gives it its own: the
+                                                  * number its UID has there, else this one if free, else the first free;
+                                                  * bind's self says which); its presets (the PRST chunk's) */
     uint8_t flags, rsv;                          /* 0 */
     uint32_t key;                                /* (host 1..3: the legacy data's key it was built against) 0 */
     const char *name;                            /* its engine's */
     const mod_engine_v3 *eng;
-    int (*bind)(const mod_host_v3 *h, uint32_t self);   /* the first call: 0 ready, else refused */
+    int (*bind)(const mod_host_v3 *h, uint32_t self);   /* the first call: 0 ready, else refused. self: its slot in bits
+                                                         * 0..7 (host file_read takes self as it came), the engine number
+                                                         * the device gave it in bits 8..15 */
 } mod_desc_v3;
+#define MOD3_SELF_ENGINE(self) (((self) >> 8) & 0xFFu)
+
+/* ---- who a module is: its IDNT chunk (tools/mod_build.py writes it from MOD3_IDENT in the source) */
+#define MOD3_IDNT_TAG 0x544E4449u                /* "IDNT" */
+#define MOD3_IDNT_VERSION 1u
+typedef struct mod_ident_v3 {                    /* the IDNT chunk's payload, 40 bytes */
+    uint32_t uid;                                /* CRC-32 of "<vendor>/<name>" (zlib's): the module's identity on every
+                                                  * device (the engine map: projects, presets and songs name it by this) */
+    uint8_t version, flags;                      /* MOD3_IDNT_VERSION; 0 */
+    uint16_t rsv;
+    char tag[4];                                 /* the lists' four-letter tag, 0-padded ("": the name's first four) */
+    char vendor[MOD3_NAME_MAX];                  /* its author, 0-padded: lowercase letters, digits, '-' */
+    uint32_t rsv2[3];
+} mod_ident_v3;
+/* in a module's source: MOD3_IDENT("vendor", "TAG"); the builder takes it from the object (never in the image) */
+#ifdef __ELF__
+#define MOD3_IDENT_PLACE __attribute__((used, section(".mod_ident")))
+#else
+#define MOD3_IDENT_PLACE __attribute__((used))   /* (host and WebAssembly builds: no section, the same bytes) */
+#endif
+#define MOD3_IDENT(vendor, tag) \
+    MOD3_IDENT_PLACE static const struct { char v[MOD3_NAME_MAX], t[4]; } mod_ident_ = {vendor, tag}
+#define MOD3_SIGN_TAG 0x4E474953u                /* "SIGN": an Ed25519 signature (64 bytes) of every byte from the head's
+                                                  * end to this chunk's start, the file's last chunk (Melodee's key: a
+                                                  * module without one installs with a warning) */
 
 typedef struct mod_file3_t {                     /* the file's head (60 bytes) */
     uint32_t magic;                              /* MOD3_FILE_MAGIC */
@@ -381,7 +411,8 @@ typedef struct mod_file3_t {                     /* the file's head (60 bytes) *
     uint8_t flags;                               /* MOD3_FILE_CHUNKS or 0 */
     uint32_t total;                              /* the file's length */
     uint32_t image, bss, nrel;
-    uint32_t desc;                               /* 0 */
+    uint32_t uid;                                /* who it is: = its IDNT chunk's (0: a file from before the map, which
+                                                  * reads as "melodee/<name>") */
     uint32_t crc;                                /* CRC-32 of the bytes after the head */
     char name[MOD3_NAME_MAX];                    /* = the descriptor's, 0-padded (the lists without loading) */
     uint16_t version;                            /* the module's own */

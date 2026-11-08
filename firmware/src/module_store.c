@@ -28,7 +28,7 @@ static int mod_head_ok(const mod_file3_t *f, uint32_t len)
     return !(f->image % 4u) && f->nrel <= f->image / 4u && f->image <= len && f->nrel <= len &&
            !(f->flags & ~MOD3_FILE_CHUNKS) &&
            (f->flags & MOD3_FILE_CHUNKS ? f->total >= body + 8u && !((f->total - body) % 4u) : f->total == body) &&
-           !f->desc && f->image >= sizeof(mod_desc_v3) && f->image <= MOD3_IMAGE_MAX && f->bss <= MOD3_BSS_MAX;
+           f->image >= sizeof(mod_desc_v3) && f->image <= MOD3_IMAGE_MAX && f->bss <= MOD3_BSS_MAX;
 }
 /* a file this firmware plays: ABI 3, a host table it has, no legacy data (a nonzero key: host 1..3's firmware data,
  * gone since host 4) */
@@ -65,7 +65,7 @@ static int mod_load(uint32_t k, mod_read_t rd)
     mod_slot_t *s = &mods[k];
     if (s->state == MS_LOADED || (s->state != MS_STORED && s->state != MS_NORAM))
         return s->state;
-    if (rd(0, &f, sizeof f) || !mod_head_ok(&f, s->len) || !mod_head_mine(&f) || f.engine != s->engine)
+    if (rd(0, &f, sizeof f) || !mod_head_ok(&f, s->len) || !mod_head_mine(&f) || f.engine != s->want)
         goto gone;
     uint32_t body = (f.image + f.bss + 7u) & ~7u;   /* (then its engine_t: mod_register) */
     uint32_t g = mod_guard();
@@ -109,7 +109,10 @@ static int mod_load(uint32_t k, mod_read_t rd)
 #ifdef FM1_IRQ_TARGET
     fm1_code_sync();                                /* the new code, before anything calls it */
 #endif
-    if (d->bind(&MOD_HOST3, k))                     /* (the module's first call: the host table) */
+    mod_run.loop = (uint8_t)(k + 1u);              /* (the crash blame: its first call is its own) */
+    int brc = d->bind(&MOD_HOST3, k | (uint32_t)s->engine << 8);   /* (the host table; its slot, its number) */
+    mod_run.loop = 0;
+    if (brc)
         goto bad;
     mod_register(k, d, (engine_t *)(void *)(p + body));
     return MS_LOADED;
@@ -122,38 +125,49 @@ gone:
     return s->state = MS_BAD;
 }
 
-/* ---- the pool records: slot k's file in ST_MFILE0 + k, past ST_PROJECT_MAX bytes on in ST_MXFILE0 + k */
-static uint32_t mod_obj(uint32_t k) { return ST_MFILE0 + k; }
-static uint32_t mod_xobj(uint32_t k) { return ST_MXFILE0 + k; }
+/* ---- the pool records: slot k's file in records st_mod_obj(k, 0..), ST_PROJECT_MAX bytes each, the last the rest */
+static uint32_t mod_obj(uint32_t k, uint32_t j) { return st_mod_obj(k, j); }
 /* n bytes of slot k's file at off, from the records mod_open found */
 static int mod_rd(uint32_t k, uint32_t off, void *dst, uint32_t n)
 {
     const mod_slot_t *s = &mods[k];
     uint8_t *d = dst;
-    if (off < s->cut) {
-        uint32_t m = n < s->cut - off ? n : s->cut - off;
-        if (st_read_range(mod_obj(k), s->copy, off, d, m))
+    while (n) {
+        uint32_t j = off / ST_PROJECT_MAX, at = off % ST_PROJECT_MAX, m = ST_PROJECT_MAX - at;
+        if (j >= s->parts)
+            return 1;
+        m = n < m ? n : m;
+        if (st_read_range(mod_obj(k, j), s->copy[j], at, d, m))
             return 1;
         d += m; off += m; n -= m;
     }
-    return n && st_read_range(mod_xobj(k), s->xcopy, off - s->cut, d, n) ? 1 : 0;
+    return 0;
 }
 static uint32_t mod_rd_slot;                        /* the file mod_flash_read reads (the last mod_open) */
 static int mod_flash_read(uint32_t off, void *dst, uint32_t n) { return mod_rd(mod_rd_slot, off, dst, n); }
 static uint32_t mod_open(uint32_t k)                /* slot k's records for mod_rd: the file's length, 0 none */
 {
-    st_hdr_t h, x;
+    st_hdr_t h;
     mod_slot_t *s = &mods[k];
-    int copy = st_current(mod_obj(k), &h), xcopy = copy >= 0 && h.len == ST_PROJECT_MAX ? st_current(mod_xobj(k), &x) : -1;
-    if (copy < 0)
-        return 0;
+    uint32_t len = 0, j;
     mod_win_drop(k);
-    s->copy = (uint32_t)copy;
-    s->cut = h.len;
-    s->xcopy = xcopy < 0 ? 0u : (uint32_t)xcopy;
+    for (j = 0; j < MOD_RECS; j++) {                /* (a record short of ST_PROJECT_MAX is the last) */
+        int copy = st_current(mod_obj(k, j), &h);
+        if (copy < 0)
+            break;
+        s->copy[j] = (uint16_t)copy;
+        len += h.len;
+        if (h.len < ST_PROJECT_MAX) {
+            j++;
+            break;
+        }
+    }
+    s->parts = (uint8_t)j;
+    if (!j)
+        return 0;
     mod_rd_slot = k;
     mod_pread = mod_rd;                             /* (the presets' reader: eng_module_main.c) */
-    return h.len + (xcopy < 0 ? 0u : x.len);
+    return len;
 }
 
 /* slot k's factory presets (module_presets.h): its PRST chunk found among the chunks, checked (head, CRC: the lists read
@@ -235,6 +249,47 @@ static int mod_sch_find(uint32_t k, const mod_file3_t *f)
     s->sch_len = c[1];
     return 1;
 }
+/* who a file's head says it is: its UID, or (a file from before the map) "melodee/<name>"'s, the synths Melodee made */
+static uint32_t mod_head_uid(const mod_file3_t *f)
+{
+    char v[MOD3_NAME_MAX + 8u];
+    uint32_t n = 0;
+    if (f->uid)
+        return f->uid;
+    for (const char *p = SHIP_VENDOR "/"; *p; p++)
+        v[n++] = *p;
+    for (uint32_t i = 0; i < MOD3_NAME_MAX && f->name[i]; i++)
+        v[n++] = f->name[i];
+    return st_crc32(v, n);
+}
+/* slot k's chunk tag: its payload's place in the file (*len its length), 0: none */
+static uint32_t mod_chunk(uint32_t k, const mod_file3_t *f, uint32_t tag, uint32_t *len)
+{
+    uint32_t at = MOD3_HEAD + f->image + 4u * f->nrel, c[2] = {0, 0};
+    for (;; at += 8u + ((c[1] + 3u) & ~3u)) {
+        if (!(f->flags & MOD3_FILE_CHUNKS) || at + 8u > f->total || mod_rd(k, at, c, 8u) || c[1] > f->total - at - 8u)
+            return 0;
+        if (c[0] == tag) {
+            *len = c[1];
+            return at + 8u;
+        }
+    }
+}
+/* who slot k's module is (its IDNT chunk): its UID and tag into the slot; a file without one (built before the map):
+ * "melodee/<name>", the synths Melodee made then. 0, or 1 (a bad chunk) */
+static int mod_id_find(uint32_t k, const mod_file3_t *f)
+{
+    mod_slot_t *s = &mods[k];
+    mod_ident_v3 id;
+    uint32_t len = 0, at = mod_chunk(k, f, MOD3_IDNT_TAG, &len);
+    s->uid = mod_head_uid(f);
+    if (!at)
+        return 0;
+    if (len != sizeof id || mod_rd(k, at, &id, sizeof id) || id.version != MOD3_IDNT_VERSION || id.uid != s->uid)
+        return 1;                                   /* (the chunk and the head say who it is: they agree) */
+    memcpy(s->tag, id.tag, sizeof s->tag);
+    return 0;
+}
 /* slot k listed from its record's head, nothing loaded (power-on, an upload): MS_STORED or why not */
 static int mod_catalog(uint32_t k)
 {
@@ -251,7 +306,7 @@ static int mod_catalog(uint32_t k)
     s->len = len;
     if (len < sizeof f || mod_flash_read(0, &f, sizeof f) || !mod_head_ok(&f, len))
         return s->state = MS_BAD;
-    s->engine = f.engine;
+    s->engine = s->want = f.engine;                 /* (the number it asks for, until the map gives it one) */
     s->version = f.version;
     s->npresets = f.npresets;
     s->abi = (uint8_t)f.abi;
@@ -263,11 +318,19 @@ static int mod_catalog(uint32_t k)
         return s->state = MS_STALE;                 /* (an older firmware's: the installer replaces it, editor_module.c) */
     if (f.host > MOD3_HOST)
         return s->state = MS_NEWER;                 /* (a later firmware's: it needs Melodee's newer host table) */
-    if (mod_slot_of(f.engine) < NMOD)
-        return s->state = MS_CLASH;                 /* two modules for one number: the first one plays */
-    if (mod_skipped)
+    if (mod_id_find(k, &f))
+        return s->state = MS_BAD;
+    {
+        uint32_t e = eng_map_take(s->uid, s->name, f.engine);   /* its number here (eng_map.c) */
+        if (e >= NENGINES || (e < ENGI_MOD0 && eng_map_default(e) != s->uid))
+            return s->state = MS_CLASH;             /* no number left, or Melodee's own number for another UID */
+        s->engine = (uint8_t)e;
+    }
+    if (mod_slot_of(s->engine) < NMOD)
+        return s->state = MS_CLASH;                 /* two modules for one UID: the first one plays */
+    if (mod_skipped || mod_blamed == k + 1u)
         return s->state = MS_SKIPPED;
-    if (ENGINES[f.engine] != &ENG_RETIRED)
+    if (ENGINES[s->engine] != &ENG_RETIRED)
         return s->state = MS_CLASH;                 /* a built-in engine has the number */
     if (!mod_pst_find(k, &f)) {
         s->npresets = 0;                            /* (a module's presets are its file's) */
@@ -298,11 +361,81 @@ static int mod_bring(uint32_t k)
     }
     return rc;
 }
+/* ---- the device's engine map in the pool (eng_map.c): the record ST_MAPOBJ */
+static uint8_t *wire_take(void);                    /* (project.c: the main loop's staging RAM) */
+static void mod_map_load(void)
+{
+    uint8_t *b = wire_take();
+    int n = st_load(ST_MAPOBJ, b, ST_SECTOR);
+    eng_remap_reset();
+    if (n < 8 || mod_le32(b) != EMAP_MAGIC || b[4] > NENGINES || b[5] != MOD3_NREC ||
+        (uint32_t)n != 8u + b[4] * EMAP_ENTRY + 4u * MOD3_NREC)
+        return;
+    for (uint32_t k = 0, e; k < b[4]; k++) {
+        const uint8_t *q = b + 8u + k * EMAP_ENTRY;
+        e = q[0];
+        if (e >= NENGINES || e < ENGI_MOD0)
+            continue;                               /* (Melodee's own numbers: always the defaults) */
+        eng_map[e].uid = mod_le32(q + 4);
+        memcpy(eng_map[e].name, q + 8, MOD3_NAME_MAX);
+    }
+    for (uint32_t u = 0; u < MOD3_NREC; u++)
+        rec_uid[u] = mod_le32(b + 8u + b[4] * EMAP_ENTRY + 4u * u);
+}
+static int mod_map_save(void)
+{
+    uint8_t *b = wire_take();
+    uint32_t n = 0, any = 0;
+    for (uint32_t e = ENGI_MOD0; e < NENGINES; e++) {   /* (the modules on the device: the numbers they keep; one
+                                                         * only a store named gets one again when it is read) */
+        uint32_t held = 0;
+        for (uint32_t k = 0; k < NMOD; k++)
+            held |= mods[k].len && mods[k].uid == eng_map[e].uid && mods[k].state != MS_BAD;
+        if (eng_map_own(e) && held)
+            eng_map_put(b + 8u + EMAP_ENTRY * n++, e);
+    }
+    for (uint32_t u = 0; u < MOD3_NREC; u++) {
+        for (uint32_t i = 0; i < 4u; i++)
+            b[8u + EMAP_ENTRY * n + 4u * u + i] = (uint8_t)(rec_uid[u] >> (8u * i));
+        any |= rec_uid[u];
+    }
+    eng_map_dirty = 0;
+    if (!n && !any)
+        return st_exists(ST_MAPOBJ) ? st_project_delete(ST_MAPOBJ) : 0;
+    b[0] = (uint8_t)EMAP_MAGIC; b[1] = (uint8_t)(EMAP_MAGIC >> 8); b[2] = (uint8_t)(EMAP_MAGIC >> 16);
+    b[3] = (uint8_t)(EMAP_MAGIC >> 24);
+    b[4] = (uint8_t)n; b[5] = MOD3_NREC; b[6] = b[7] = 0;
+    int rc = st_save(ST_MAPOBJ, b, 8u + n * EMAP_ENTRY + 4u * MOD3_NREC);
+    if (rc)
+        eng_map_dirty = 1;
+    return rc;
+}
+/* the module the last run crashed in (core.h mod_run: a fault, or the watchdog, while its code ran): mod_blamed, which
+ * this boot leaves out (and says so: ui_boot.c). The marker starts over for this run */
+static void mod_blame(void)
+{
+    uint32_t b = 0, wd = 0;
+#ifdef FM1_IRQ_TARGET
+    wd = (fm1_boot.p3_rst & 4u) != 0;               /* (the watchdog: a hang) */
+#endif
+    if (mod_run.magic == MODRUN_MAGIC && mod_run.alive && (mod_run.crashed || wd))
+        b = mod_run.loop ? mod_run.loop : mod_run.audio;
+    mod_blamed = (uint8_t)(b <= NMOD ? b : 0u);
+    mod_run.magic = MODRUN_MAGIC;
+    mod_run.audio = mod_run.loop = mod_run.crashed = 0;
+    mod_run.pc = 0;
+    mod_run.alive = 1;
+}
 /* power-on (persist_boot, before the settings and the boot project): every slot's head */
 static void mod_boot(void)
 {
-    mod_skipped = bootguard.failed != 0;            /* the last boot died in its first 30 s */
+    mod_blame();
+    mod_skipped = bootguard.failed != 0 && !mod_blamed;   /* the last boot died in its first 30 s, in no module's code:
+                                                          * all of them out (one to blame: that one alone) */
     mod_fetch = mod_bring;
+    eng_map_saver = mod_map_save;
+    eng_map_defaults();
+    mod_map_load();                                 /* (the numbers this device gave its modules) */
     mod_cat_n = 0;
     for (uint32_t k = 0; k < NMOD; k++)
         (void)mod_catalog(k);
@@ -350,22 +483,29 @@ static void mod_service(uint32_t now)
             mods[k].state = MS_STORED;
         }
     }
+    eng_map_service(!transport_busy());             /* (a module's new number kept once nothing plays) */
 }
 
 /* ---- an upload (editor_module.c): begin with the file's length, write its bytes in order, commit. A file longer
- * than a record: its first record is checked and published when its bytes are in, then the rest streams on into
- * the second (one stream at a time: storage_stream.c); until that one is published the slot reads as a bad file */
+ * than a record: each record is published when its bytes are in (the first one checked first), the next one begun
+ * (one stream at a time: storage_stream.c); until the last one is published the slot reads as a bad file */
 static st_stream_t mod_up;
 static mod_file3_t mod_up_head;                     /* (the file's head, kept from its first record) */
-static uint8_t mod_up_slot = 0xFFu, mod_up_part;    /* the slot written; 1: into its second record */
+static uint8_t mod_up_slot = 0xFFu, mod_up_part;    /* the slot written; the record being written */
 static uint32_t mod_up_len;
-#define MOD_FILE_MAX (2u * ST_PROJECT_MAX)
+#define MOD_FILE_MAX (MOD_RECS * ST_PROJECT_MAX)
+static uint32_t mod_up_rec(uint32_t j)              /* the bytes record j of the upload holds */
+{
+    uint32_t at = j * ST_PROJECT_MAX;
+    return mod_up_len - at < ST_PROJECT_MAX ? mod_up_len - at : ST_PROJECT_MAX;
+}
 static int mod_put_begin(uint32_t k, uint32_t len)
 {
     mod_up_slot = 0xFFu;
     if (k >= NMOD || len < MOD3_HEAD + sizeof(mod_desc_v3) || len > MOD_FILE_MAX)
         return -1;
-    int rc = st_stream_begin(&mod_up, mod_obj(k), len < ST_PROJECT_MAX ? len : ST_PROJECT_MAX);
+    mod_up_len = len;
+    int rc = st_stream_begin(&mod_up, mod_obj(k, 0), mod_up_rec(0));
     if (!rc) {
         mods[k].pst = 0;                            /* (its presets: the new file's, once it is committed) */
         mods[k].sch = mods[k].sch_len = 0;          /* (its schema too) */
@@ -374,7 +514,6 @@ static int mod_put_begin(uint32_t k, uint32_t len)
         sch_gen++;
         mod_up_slot = (uint8_t)k;
         mod_up_part = 0;
-        mod_up_len = len;
     }
     return rc;
 }
@@ -382,7 +521,7 @@ static int mod_put_check(uint32_t k, uint32_t len);
 static int mod_put_write(uint32_t k, uint32_t off, const void *src, uint32_t n)
 {
     const uint8_t *b = src;
-    if (k != mod_up_slot || off != mod_up.pos + (mod_up_part ? ST_PROJECT_MAX : 0u) || n > mod_up_len - off)
+    if (k != mod_up_slot || off != mod_up.pos + mod_up_part * ST_PROJECT_MAX || n > mod_up_len - off)
         return -1;
     while (n) {
         uint32_t room = mod_up.head.len - mod_up.pos, m = n < room ? n : room;
@@ -390,19 +529,20 @@ static int mod_put_write(uint32_t k, uint32_t off, const void *src, uint32_t n)
         if (rc)
             return rc;
         b += m; n -= m;
-        if (!mod_up_part && mod_up.pos == ST_PROJECT_MAX && mod_up_len > ST_PROJECT_MAX) {
-            /* the first record full: checked and published, the second begun */
-            if ((rc = mod_put_check(k, mod_up_len)) != 0 || (rc = st_stream_publish(&mod_up)) != 0 ||
-                (rc = st_stream_begin(&mod_up, mod_xobj(k), mod_up_len - ST_PROJECT_MAX)) != 0) {
+        if (mod_up.pos == ST_PROJECT_MAX && mod_up_len > (mod_up_part + 1u) * ST_PROJECT_MAX) {
+            /* a record full and more to come: checked (the first one: the file's head) and published, the next begun */
+            if ((rc = mod_up_part ? st_stream_check(&mod_up) : mod_put_check(k, mod_up_len)) != 0 ||
+                (rc = st_stream_publish(&mod_up)) != 0 ||
+                (rc = st_stream_begin(&mod_up, mod_obj(k, mod_up_part + 1u), mod_up_rec(mod_up_part + 1u))) != 0) {
                 mod_up_slot = 0xFFu;
                 return rc;
             }
-            mod_up_part = 1;
+            mod_up_part++;
         }
     }
     return 0;
 }
-/* the first record's head (in mod_up): a module file of len bytes, no other slot playing as its number */
+/* the first record's head (in mod_up): a module file of len bytes, no other slot holding the same module */
 static int mod_put_check(uint32_t k, uint32_t len)
 {
     int rc = st_stream_check(&mod_up);
@@ -411,14 +551,14 @@ static int mod_put_check(uint32_t k, uint32_t len)
     if (st_stream_read(&mod_up, 0, &mod_up_head, sizeof mod_up_head) || !mod_head_ok(&mod_up_head, len) ||
         !mod_head_mine(&mod_up_head))
         return -2;                                  /* (not a module, or not one this firmware plays) */
-    for (uint32_t j = 0; j < NMOD; j++)
+    for (uint32_t j = 0, uid = mod_head_uid(&mod_up_head); j < NMOD; j++)   /* (the same module: its UID) */
         if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].state != MS_STALE && mods[j].state != MS_NEWER &&
-            mods[j].engine == mod_up_head.engine)
+            mods[j].uid == uid)
             return -3;
     return 0;
 }
-/* the file as written: its head checked, no other slot playing as its number, published, loaded. MS_* (>= 0), or
- * a storage error (< 0; -2: not a module file, -3: another slot has its number) */
+/* the file as written: its head checked, no other slot holding the same module, published, loaded. MS_* (>= 0), or
+ * a storage error (< 0; -2: not a module file, -3: another slot has this module) */
 static int mod_put_commit(uint32_t k)
 {
     if (k != mod_up_slot)
@@ -429,8 +569,9 @@ static int mod_put_commit(uint32_t k)
         return rc;
     if ((rc = st_stream_publish(&mod_up)) != 0)
         return rc;
-    if (!mod_up_part && st_exists(mod_xobj(k)))
-        (void)st_project_delete(mod_xobj(k));       /* (a longer file's rest: gone with it) */
+    for (uint32_t j = mod_up_part + 1u; j < MOD_RECS; j++)
+        if (st_exists(mod_obj(k, j)))
+            (void)st_project_delete(mod_obj(k, j));   /* (a longer file's rest: gone with it) */
     rc = mod_catalog(k);
     if (rc != MS_STORED)
         return rc;
@@ -444,8 +585,10 @@ static int mod_delete(uint32_t k)
         return -1;
     mod_unregister(k, 0);                           /* unloaded, the slot empty */
     memset(&mods[k], 0, sizeof mods[k]);
+    eng_map_dirty = 1;                              /* (its number: no longer kept past this run) */
     mod_win_drop(k);
-    if (st_exists(mod_xobj(k)))
-        (void)st_project_delete(mod_xobj(k));
-    return st_project_delete(mod_obj(k));
+    for (uint32_t j = MOD_RECS; j-- > 1u;)          /* (the rest first: a cut leaves a first record, a bad file) */
+        if (st_exists(mod_obj(k, j)))
+            (void)st_project_delete(mod_obj(k, j));
+    return st_project_delete(mod_obj(k, 0));
 }

@@ -821,6 +821,9 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
     const engine_t *e = ENGINES[t->engine];
     const int16_t *p = t->p;
     uint32_t i;
+#if MELODEE_MODULES
+    mod_run.audio = mod_at[eng_idx(t->engine)];        /* (the crash blame: the module this part plays) */
+#endif
     int32_t lfo = mulq15(t->lfo_val, t->lfo_fade);
     int32_t tune, tune_fine;
     int32_t bend, bend16, bend_fine;
@@ -940,6 +943,9 @@ track_render_done:
             t->p[P_E0 + i] = pe_new[i];
         t->xf--;
     }
+#if MELODEE_MODULES
+    mod_run.audio = 0;
+#endif
     return nr;
 }
 /* Direct callers receive a cleared buffer even for silence. The mixer can

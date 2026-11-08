@@ -119,8 +119,8 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #ifndef MELODEE_MODULES
 #define MELODEE_MODULES 1        /* synth modules: engines loaded from the pool into SRAM (eng_module.c) */
 #endif
-#define NMOD 8u                  /* module slots (pool records ST_MFILE0 + k, past a record's size ST_MXFILE0 + k too:
-                                  * storage.c) */
+#define NMOD 16u                 /* module slots (a file in up to MOD_RECS pool records: storage.c st_mod_obj) */
+#define MOD_RECS 4u
 #define USER_NATIVE_FM 17u
 #define USER_NATIVE_CZ 18u
 #define USER_NONE 65535u
@@ -744,9 +744,15 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 /* boot-loop guard (main.c): two boots in a row that die in the first 30 s -> UBOOT */
 #define BOOTGUARD_MAGIC 0x42475244u
 struct { uint32_t magic, failed, pending; } bootguard __attribute__((section(".noinit")));
+/* synth modules' crash blame (eng_module.c, module_store.c mod_boot): the slot + 1 of the module whose code the audio
+ * and the main loop are in (0: none), whether this run is alive (a reset on purpose clears it), a fault (main.c
+ * fm1_fault) and where */
+#define MODRUN_MAGIC 0x4E55524Du
+struct { uint32_t magic; volatile uint8_t audio, loop, alive, crashed; uint32_t pc; } mod_run __attribute__((section(".noinit")));
 static inline void reset_intended(void)         /* a reset on purpose (UBOOT, an update): not a failed boot */
 {
     bootguard.pending = 0;
+    mod_run.alive = 0;
 }
 
 /* GLO solo belongs to the mixer, independently of quick-layer effects. */

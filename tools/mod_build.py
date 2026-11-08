@@ -57,10 +57,30 @@ DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE", "debian:bookworm-slim")
 R_ABS32, R_MOV_ABS32 = 8, 5
 BASE2 = 0x00100000                                    # the second link's base
 HOST_CALL = 160                                       # a call through the host table (its deepest callee and below)
-NENGINES = 30
-# the numbers a module may play as (eng_module_main.c mod_engine_ok): retired engines' when it is that engine again,
-# the shipped synths', 22..29
-ENGINE_OK = {2, 5, 6, 7, 9, 11, 3, 10, 12, 15, 19} | set(range(22, NENGINES))
+NENGINES, ENGI_MOD0 = 30, 22
+# the synths Melodee makes (firmware/modules/shipped.h): their numbers and UIDs, the device's default engine map
+SHIPPED = {int(m[1]): int(m[2], 16) for m in re.finditer(r"X\((\d+)u, 0x([0-9A-Fa-f]+)u,",
+                                                          (SDK.parent / "shipped.h").read_text())}
+IDNT_TAG = 0x544E4449                                # "IDNT": who the module is (mod_abi3.h mod_ident_v3)
+IDNT = struct.Struct("<IBBH4s16s12x")
+
+
+def uid_of(vendor, name):
+    """a module's UID: CRC-32 of "<vendor>/<name>" (never 0)"""
+    return zlib.crc32(f"{vendor}/{name}".encode()) or 1
+
+
+def ident(elf, name):
+    """(vendor, tag) from the object's .mod_ident (MOD3_IDENT in the source)"""
+    d = elf.read_bytes()
+    sec = elf_sections(d).get(".mod_ident")
+    if not sec or sec["size"] != 20:
+        raise SystemExit("mod_build: no MOD3_IDENT(\"vendor\", \"TAG\") in the module's source (mod_abi3.h)")
+    raw = d[sec["off"]: sec["off"] + 20]
+    vendor, tag = raw[:16].rstrip(b"\0").decode("ascii"), raw[16:].rstrip(b"\0").decode("ascii")
+    if not re.fullmatch(r"[a-z0-9-]{1,16}", vendor) or "\0" in tag or not all(32 <= ord(c) < 127 for c in tag):
+        raise SystemExit(f"mod_build: MOD3_IDENT: vendor {vendor!r} (lowercase letters, digits, '-'), tag {tag!r}")
+    return vendor, tag
 
 
 def abi_num(name):
@@ -69,7 +89,7 @@ def abi_num(name):
 
 FILE_MAGIC, MAGIC, ABI, HOST = abi_num("MOD3_FILE_MAGIC"), abi_num("MOD3_MAGIC"), abi_num("MOD3_ABI"), abi_num("MOD3_HOST")
 STACK_MAX, IMAGE_MAX, BSS_MAX = abi_num("MOD3_STACK_MAX"), abi_num("MOD3_IMAGE_MAX"), abi_num("MOD3_BSS_MAX")
-HEAD = struct.Struct("<IHBBIIIIII16sHBBIHH")        # mod_file3_t, 60 bytes
+HEAD = struct.Struct("<IHBBIIIIII16sHBBIHH")        # mod_file3_t, 60 bytes (its uid where ABI 3 had desc 0)
 assert HEAD.size == abi_num("MOD3_HEAD")
 DESC = struct.Struct("<IHHHHBBBBIIII")              # mod_desc_v3 on pi32v2, 32 bytes (eng_module.c asserts it)
 ENG_NOTE_ON, ENG_RENDER = 188, 192                  # mod_engine_v3's note_on and render on pi32v2 (eng_module.c)
@@ -231,8 +251,9 @@ def describe(img, words, bss=0):
     for at in (ENG_NOTE_ON, ENG_RENDER):
         if eng + at not in ws or u32(img, eng + at) >= len(img):
             raise SystemExit("mod_build: the engine's note_on and render must be the module's own")
-    if engine not in ENGINE_OK:
-        raise SystemExit(f"mod_build: engine {engine}: a module plays as {sorted(ENGINE_OK)}")
+    if engine not in SHIPPED and not ENGI_MOD0 <= engine < NENGINES:
+        raise SystemExit(f"mod_build: engine {engine}: a module asks for {ENGI_MOD0}..{NENGINES - 1} (below: Melodee's "
+                         f"own synths, firmware/modules/shipped.h {sorted(SHIPPED)})")
     if key:
         raise SystemExit("mod_build: a module names no firmware data key (host 4: its pads and records are the host "
                          "table's)")
@@ -277,17 +298,24 @@ def build(src, out, version, defs):
     engine, name, npre, key, host = describe(img, words, nbss)
     if not engine_src and key:
         raise SystemExit("mod_build: an SDK module names no key (MOD3_SDK_HEAD)")
+    vendor, tag = ident(e0, name)
+    uid = uid_of(vendor, name)
+    if engine in SHIPPED and SHIPPED[engine] != uid:
+        raise SystemExit(f"mod_build: engine {engine} is {SHIPPED[engine]:08x}'s (firmware/modules/shipped.h), this "
+                         f"module is {vendor}/{name} {uid:08x}: ask for {ENGI_MOD0}..{NENGINES - 1}")
     body = img + b"".join(struct.pack("<I", w) for w in words)
     prst = presets_chunk(stem, engine, npre) if npre else b""
     schm = schema_chunk(stem, engine) if engine_src else b""
+    idnt = IDNT.pack(uid, 1, 0, 0, tag.encode().ljust(4, b"\0"), vendor.encode().ljust(16, b"\0"))
     chunks = (mod_presets.chunk(mod_presets.TAG, prst) if prst else b"") + \
-        (mod_presets.chunk(SCHM_TAG, schm) if schm else b"")
-    head = HEAD.pack(FILE_MAGIC, ABI, engine, 1 if chunks else 0, HEAD.size + len(body) + len(chunks), len(img), nbss,
-                     len(words), 0, zlib.crc32(body + chunks), name.encode()[:16].ljust(16, b"\0"), version, npre, 0,
+        (mod_presets.chunk(SCHM_TAG, schm) if schm else b"") + mod_presets.chunk(IDNT_TAG, idnt)
+    head = HEAD.pack(FILE_MAGIC, ABI, engine, 1, HEAD.size + len(body) + len(chunks), len(img), nbss,
+                     len(words), uid, zlib.crc32(body + chunks), name.encode()[:16].ljust(16, b"\0"), version, npre, 0,
                      key, host, 0)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(head + body + chunks)
-    print(f"module {name}: ABI {ABI} host {host}, engine {engine}, " + (f"key {key:08x}, " if key else "") +
+    print(f"module {name}: {vendor}/{name} uid {uid:08x} tag {tag!r}, ABI {ABI} host {host}, engine {engine}, " +
+          (f"key {key:08x}, " if key else "") +
           f"image {len(img)} B, bss {nbss} B, {len(words)} address words, stack {need} B, {npre} presets {len(prst)} B, "
           f"schema {len(schm)} B, "
           f"file {len(head) + len(body) + len(chunks)} B -> {out}")
@@ -337,9 +365,9 @@ def presets_chunk(stem, engine, npre):
 
 def check(path):
     b = path.read_bytes()
-    magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, _, key, host, _ = HEAD.unpack_from(b)
+    magic, abi, engine, flags, total, image, bss, nrel, huid, crc, name, version, npre, _, key, host, _ = HEAD.unpack_from(b)
     end = HEAD.size + image + 4 * nrel
-    if magic != FILE_MAGIC or abi != ABI or total != len(b) or desc or \
+    if magic != FILE_MAGIC or abi != ABI or total != len(b) or \
             (total != end if not flags else flags != 1 or total < end + 8):
         raise SystemExit(f"{path}: not an ABI {ABI} module file")
     if zlib.crc32(b[HEAD.size:]) != crc:
@@ -356,10 +384,16 @@ def check(path):
         init, presets = mod_presets.parse(chunks[mod_presets.TAG])
         if len(presets) != npre:
             raise SystemExit(f"{path}: PRST holds {len(presets)} presets, the head says {npre}")
+    idnt = chunks.get(IDNT_TAG, b"")
+    if not idnt or len(idnt) != IDNT.size:
+        raise SystemExit(f"{path}: no IDNT chunk (who it is)")
+    uid, iv, _, _, tag, vendor = IDNT.unpack(idnt)
+    if iv != 1 or uid != uid_of(vendor.rstrip(b"\0").decode(), n) or uid != huid:
+        raise SystemExit(f"{path}: its IDNT chunk's UID is not CRC-32 of vendor/name, or not the head's")
     schm = chunks.get(SCHM_TAG, b"")
     if schm and (len(schm) < 52 or zlib.crc32(schm[52:]) != struct.unpack_from("<I", schm, 48)[0]):
         raise SystemExit(f"{path}: its SCHM chunk does not check")
-    print(f"{path}: {n} engine {engine}, ABI {abi} host {host}" + (f", key {key:08x} (another firmware's)" if key else "") +
+    print(f"{path}: {vendor.rstrip(bytes(1)).decode()}/{n} uid {uid:08x}, engine {engine}, ABI {abi} host {host}" + (f", key {key:08x} (another firmware's)" if key else "") +
           f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
 
 

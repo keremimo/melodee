@@ -91,15 +91,25 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
 #endif
 #define ST_NREC 8u
 #define ST_RFILE0 (ST_PFILE0 + ST_NPROJ)
-/* Synth modules (module_store.c): NMOD slots, pool records of type ST_MFILE0 + slot, the module file as built; a file
- * longer than a record goes on in the record ST_MXFILE0 + slot */
+/* Synth modules (module_store.c): NMOD slots, a module file as built in up to MOD_RECS pool records (ST_PROJECT_MAX
+ * bytes each, the last one the rest): slot k's record j is st_mod_obj(k, j). Slots 0..7's first two keep the numbers
+ * they had (ST_MFILE0 + k, ST_MXFILE0 + k); the rest come after the device's engine map (eng_map.c) */
 #ifndef NMOD
-#define NMOD 8u                                /* (core.h; storage tests alone) */
+#define NMOD 16u                               /* (core.h; storage tests alone) */
+#endif
+#ifndef MOD_RECS
+#define MOD_RECS 4u
 #endif
 #define ST_NMOD NMOD
 #define ST_MFILE0 (ST_RFILE0 + ST_NREC)
-#define ST_MXFILE0 (ST_MFILE0 + ST_NMOD)
-#define ST_OBJ_END (ST_MXFILE0 + ST_NMOD)      /* every object number below this */
+#define ST_MXFILE0 (ST_MFILE0 + 8u)
+#define ST_MAPOBJ (ST_MXFILE0 + 8u)            /* the device's engine map: number <-> UID, the data records' owners */
+#define ST_MNEW0 (ST_MAPOBJ + 1u)
+#define ST_OBJ_END (ST_MNEW0 + ST_NMOD * MOD_RECS)   /* every object number below this */
+static uint32_t st_mod_obj(uint32_t k, uint32_t j)
+{
+    return k < 8u && j < 2u ? ST_MFILE0 + 8u * j + k : ST_MNEW0 + k * MOD_RECS + j;
+}
 static uint32_t st_proj_obj(uint32_t slot) { return slot < 4u ? OBJ_BANK0 + slot : ST_PFILE0 + slot; }
 /* a record that lives only in the pool, never in a fixed pair: projects 5..32, the user kits, the synth modules */
 static int st_pfile(uint32_t obj) { return (obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ) || (obj >= ST_RFILE0 && obj < ST_OBJ_END); }
@@ -621,15 +631,24 @@ static void st_project_used(uint32_t used[ST_LW], uint32_t obj, uint32_t copy, c
  * when it has none). Nonzero: a read failed, which is never evidence of free space */
 static int st_pool_used(uint32_t used[ST_LW], uint32_t obj, uint32_t *seq)
 {
+    uint8_t seen[(ST_OBJ_END + 7u) / 8u];
+    uint32_t skip = !st_old;                        /* (list records only: a pool object no sector's header names has none) */
     st_read_failed = 0;
     *seq = 1u;
     for (uint32_t w = 0; w < ST_LW; w++) used[w] = 0;
+    memset(seen, 0, sizeof seen);
+    for (uint32_t i = 0; skip && i < ST_LN; i++) {  /* every sector's header read once: the objects there are */
+        struct { uint32_t magic; uint16_t type, slot; } h;
+        uint32_t a = st_lin_at(i);
+        if (!a || st_fetch(a, &h, sizeof h)) { skip = 0; break; }
+        if (h.magic == ST_MAGIC && h.type < ST_OBJ_END) seen[h.type / 8u] |= (uint8_t)(1u << (h.type % 8u));
+    }
     for (uint32_t o = 0; o < ST_OBJ_END; o++) {
         uint32_t live = o < OBJ_COUNT ? st_listed(o) && !st_retired(o) : st_pfile(o);
 #if !MELODEE_RECORDS
         live &= o < ST_RFILE0 || o >= ST_MFILE0;
 #endif
-        if (!live) continue;
+        if (!live || (skip && o >= ST_PFILE0 && !(seen[o / 8u] >> (o % 8u) & 1u))) continue;
         st_hdr_t current; int copy = st_current(o, &current);
         if (copy < 0) continue;
         st_project_used(used, o, (uint32_t)copy, &current);

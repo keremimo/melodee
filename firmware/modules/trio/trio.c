@@ -345,6 +345,7 @@ static const mod_engine_v3 TRIO = {
     .render = trm_render,
 };
 
+MOD3_IDENT("melodee", "TRIO");
 MOD3_EXPORT(mod_trio) = {
     MOD3_SDK_HEAD,
     .engine = 6,                                 /* TRIO's number before it was retired: old sounds play again */

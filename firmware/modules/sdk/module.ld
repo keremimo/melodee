@@ -17,6 +17,7 @@ SECTIONS
         *(.data*) *(.sdata*)
         . = ALIGN(4);
     }
+    .mod_ident 0 (INFO) : { KEEP(*(.mod_ident)) }               /* (who it is: the builder's IDNT chunk, not loaded) */
     .bss (NOLOAD) : { *(.bss*) *(.sbss*) *(COMMON) *(.pool*) . = ALIGN(4); }
     /DISCARD/ : { *(.comment) *(.note*) }
 }

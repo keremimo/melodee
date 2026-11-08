@@ -301,8 +301,8 @@ int main(int argc, char **argv)
     bad += check("not a module file: refused before it is published", rc == -2 && !st_exists(ST_MFILE0 + 1));
     n = make_file(file2, ENGI_MIDI, "MIDI?", 1024, 4, 0, 0, 0);   /* a built-in engine's number (the MIDI Track's) */
     bad += check("a built-in engine's number: refused", put(1, file2, n) == -2);
-    n = make_file(file2, 6, "TRIO B", 1024, 4, 0, 5, "trio");   /* the same number as slot 0 */
-    bad += check("a number another slot has: refused", put(1, file2, n) == -3 && !st_exists(ST_MFILE0 + 1));
+    n = make_file(file2, 6, "TRIO", 1024, 4, 0, 5, "trio");   /* the same module (its UID) as slot 0 */
+    bad += check("the same module as another slot (its UID): refused", put(1, file2, n) == -3 && !st_exists(ST_MFILE0 + 1));
     n = make_file(file2, 22, "TRIO2", 1024, 4, 0, 5, "trio");
     file2[MOD3_HEAD + 100] ^= 0x40u;                 /* the body damaged after its CRC */
     rc = put(1, file2, n);

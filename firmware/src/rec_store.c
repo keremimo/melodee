@@ -13,10 +13,11 @@ _Static_assert(MOD3_REC_PAYLOAD == ST_LIN_PAYLOAD_MAX && MOD3_REC_OFF == ST_POOL
 static uint16_t rec_len[ST_NREC];                /* each slot's payload bytes as rec_tab lists it (0: none) */
 static uint8_t rec_pend;                         /* slots whose stored record waits for its module's check */
 static uint32_t rec_obj(uint32_t u) { return ST_RFILE0 + u; }
-/* a record's bounds: its sectors at most (0: no owner), its bytes at least */
-static uint32_t rec_bounds(uint32_t *rmin)
+static uint32_t rec_put_owner;                    /* the record being written: its owner's UID (rec_put_begin) */
+/* slot u's record's bounds (its owner's pads): its sectors at most (0: no owner), its bytes at least */
+static uint32_t rec_bounds(uint32_t u, uint32_t *rmin)
 {
-    const pads_c_t *c = rec_owner();
+    const pads_c_t *c = rec_owner(u);
     uint8_t b[MOD_SCH_PDHEAD];
     uint32_t wid;
     *rmin = 1;
@@ -26,8 +27,8 @@ static uint32_t rec_bounds(uint32_t *rmin)
     return b[27] < ST_PROJECT_SECTORS ? b[27] : ST_PROJECT_SECTORS;
 }
 /* a record's bytes at most (0: no synth has records), whether len bytes may be one */
-static uint32_t rec_max(void) { uint32_t rmin; return rec_bounds(&rmin) * MOD3_REC_PAYLOAD; }
-static int rec_len_ok(uint32_t len) { uint32_t rmin, max = rec_bounds(&rmin); return len >= rmin && len <= max * MOD3_REC_PAYLOAD; }
+static uint32_t rec_max(void) { uint32_t rmin; return rec_bounds(MOD3_NREC, &rmin) * MOD3_REC_PAYLOAD; }
+static int rec_len_ok(uint32_t len) { uint32_t rmin, max = rec_bounds(MOD3_NREC, &rmin); return len >= rmin && len <= max * MOD3_REC_PAYLOAD; }
 /* the table's slot u: n sectors (4 KB numbers), its number odd meanwhile */
 static void rec_table_set(uint32_t u, const uint8_t *sec, uint32_t n)
 {
@@ -52,10 +53,10 @@ static void rec_settle(void)
 }
 /* a record's sectors as the audio reads them; their count (0: none, too many, or not a list record: an old form's
  * 3,808-byte sectors would read wrong, so a record the converter could not move stays unplayed) */
-static uint32_t rec_sectors(const st_hdr_t *h, uint8_t sec[MOD3_REC_SEC], const uint32_t *p[MOD3_REC_SEC])
+static uint32_t rec_sectors(uint32_t u, const st_hdr_t *h, uint8_t sec[MOD3_REC_SEC], const uint32_t *p[MOD3_REC_SEC])
 {
     uint8_t idx[ST_PROJECT_SECTORS];
-    uint32_t rmin, max = rec_bounds(&rmin), n = st_rec_lin(h) ? st_rec_sectors(h, idx) : 0u;
+    uint32_t rmin, max = rec_bounds(u, &rmin), n = st_rec_lin(h) ? st_rec_sectors(h, idx) : 0u;
     if (n > max || h->len < rmin)
         return 0;
     for (uint32_t k = 0; k < n; k++) {
@@ -66,13 +67,13 @@ static uint32_t rec_sectors(const st_hdr_t *h, uint8_t sec[MOD3_REC_SEC], const 
     return n;
 }
 /* its module's word on a record: 0 it plays it, 1 not, -1 no module in SRAM to ask */
-static int rec_checked(const uint32_t *const *p, uint32_t n, uint32_t len)
+static int rec_checked(uint32_t u, const uint32_t *const *p, uint32_t n, uint32_t len)
 {
-    const pads_c_t *c = rec_owner();
+    const pads_c_t *c = rec_owner(u);
     const engine_t *g = c ? ENGINES[c->eng] : 0;
     if (!g || mod_idle(c->eng) || !g->rec_check)
         return -1;
-    return g->rec_check(p, n, len) ? 1 : 0;
+    return MOD_MAIN(c->eng, g->rec_check(p, n, len)) ? 1 : 0;
 }
 /* slot u's current record into the table if its module trusts it (else none; not yet asked: rec_pend); 1 listed */
 static int rec_scan_slot(uint32_t u)
@@ -81,8 +82,8 @@ static int rec_scan_slot(uint32_t u)
     uint8_t sec[MOD3_REC_SEC];
     const uint32_t *p[MOD3_REC_SEC];
     int copy = st_current(rec_obj(u), &h), ok;
-    uint32_t n = copy >= 2 ? rec_sectors(&h, sec, p) : 0u;
-    ok = n ? rec_checked(p, n, h.len) : 1;
+    uint32_t n = copy >= 2 ? rec_sectors(u, &h, sec, p) : 0u;
+    ok = n ? rec_checked(u, p, n, h.len) : 1;
     rec_pend = (uint8_t)(ok < 0 ? rec_pend | 1u << u : rec_pend & ~(1u << u));
     if (ok)
         n = 0;
@@ -123,8 +124,17 @@ static int rec_delete(uint32_t u)
  * commit; any other save meanwhile makes it stale (-6). -1: not a record its module could hold */
 static int rec_put_begin(st_stream_t *w, uint32_t u, uint32_t len)
 {
-    uint32_t rmin, max = rec_bounds(&rmin);
-    if (u >= ST_NREC || len < rmin || len > max * MOD3_REC_PAYLOAD)
+    uint32_t rmin, max, owner = mod_running_uid();     /* (a module's call: its own record; else the slot's) */
+    if (u >= ST_NREC)
+        return -1;
+    rec_put_owner = owner ? owner : rec_owner_uid(u);
+    {
+        uint32_t keep = rec_uid[u];
+        rec_uid[u] = rec_put_owner;                      /* (its bounds: the writer's pads) */
+        max = rec_bounds(u, &rmin);
+        rec_uid[u] = keep;
+    }
+    if (len < rmin || len > max * MOD3_REC_PAYLOAD)
         return -1;
     return st_stream_begin(w, rec_obj(u), len);
 }
@@ -138,11 +148,15 @@ static int rec_put_commit(st_stream_t *w, uint32_t u)
     int rc = st_stream_check(w);
     if (rc)
         return rc;
-    uint32_t n = rec_sectors(&w->head, sec, p);
-    if (!n || rec_checked(p, n, w->head.len) > 0)
-        return -2;
-    if ((rc = st_stream_publish(w)) != 0)
-        return rc;
+    uint32_t keep = rec_uid[u], n;
+    rec_uid[u] = rec_put_owner;                     /* (checked by the writer's module) */
+    n = rec_sectors(u, &w->head, sec, p);
+    if (!n || rec_checked(u, p, n, w->head.len) > 0 || (rc = st_stream_publish(w)) != 0) {
+        rec_uid[u] = keep;
+        return rc ? rc : -2;
+    }
+    if (rec_uid[u] != keep)
+        eng_map_dirty = 1;                          /* (its owner kept in the map record) */
     (void)rec_scan_slot(u);
     rec_settle();
     return 0;

@@ -116,6 +116,36 @@ static uint32_t up_obj(uint32_t b)
 typedef struct { uint8_t head[160], extra[46]; } up_disk_rec_t;
 typedef struct { uint32_t magic; uint16_t rsize,nslot; up_disk_rec_t r[UP_PER_BANK]; } up_disk_bank_t;
 _Static_assert(sizeof(up_disk_bank_t)<=3808u,"unified presets fit every A/B sector");
+/* A bank whose records name synths that are not Melodee's defaults here (eng_map.c) carries their entries after its
+ * records: "EMAP", the count, 0 x 3, the entries. A bank of Melodee's own synths is the record it always was */
+#define UP_MAP_MAGIC 0x50414D45u
+static uint32_t up_map_write(uint8_t *b, const uint8_t *eng)   /* its bytes (0: none needed) */
+{
+    uint32_t n = 0;
+    for (uint32_t e = 0; e < NENGINES; e++) {
+        uint32_t named = 0;
+        for (uint32_t i = 0; i < UP_PER_BANK; i++)
+            named |= eng[i] == e;
+        if (named && eng_map_own(e))
+            eng_map_put(b + 8u + EMAP_ENTRY * n++, e);
+    }
+    if (!n)
+        return 0;
+    memcpy(b, &(uint32_t){UP_MAP_MAGIC}, 4);
+    b[4] = (uint8_t)n; b[5] = b[6] = b[7] = 0;
+    return 8u + n * EMAP_ENTRY;
+}
+/* a stored bank of n bytes: its entries read (the remap for its records' numbers, eng_in), the bank's own length */
+static int up_map_read(int n)
+{
+    const uint8_t *m = (const uint8_t *)&up_cache + sizeof(up_disk_bank_t);
+    uint32_t c;
+    eng_remap_reset();
+    if (n <= (int)sizeof(up_disk_bank_t) || mod_le32(m) != UP_MAP_MAGIC || m[5] || m[6] || m[7] ||
+        (uint32_t)n != sizeof(up_disk_bank_t) + 8u + (c = m[4]) * EMAP_ENTRY || eng_remap_read(m + 8, c))
+        return n;
+    return (int)sizeof(up_disk_bank_t);
+}
 /* The bank cache has one foreground owner; audio holds independent patches.
  * Serialize it in place, saving only the omitted legacy phrase and old flags.
  * Restore the decoded view on success AND failure before returning to callers.
@@ -124,7 +154,8 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
 {
     up_bank_t *bank=up_cache_bank(b);
     struct {uint8_t phrase[32],used;} saved[UP_PER_BANK];
-    uint8_t header[8];memcpy(header,bank,sizeof header);
+    uint8_t header[8],saved_eng[UP_PER_BANK];memcpy(header,bank,sizeof header);
+    for(uint32_t i=0;i<UP_PER_BANK;i++)saved_eng[i]=bank->r[i].used?bank->r[i].engine:0u;
     for(uint32_t i=0;i<UP_PER_BANK;i++){
         memcpy(saved[i].phrase,bank->r[i].note,16u);memcpy(saved[i].phrase+16u,bank->r[i].flags,16u);saved[i].used=bank->r[i].used;
     }
@@ -138,7 +169,7 @@ static __attribute__((noinline)) int up_save_bank(uint32_t b)
     }
     struct {uint32_t magic;uint16_t size,count;} disk_head={UP_DISK_MAGIC,sizeof(up_disk_rec_t),UP_PER_BANK};
     memcpy(bank,&disk_head,sizeof disk_head);
-    int rc=st_save(up_obj(b),bank,sizeof(up_disk_bank_t));
+    int rc=st_save(up_obj(b),bank,sizeof(up_disk_bank_t)+up_map_write((uint8_t *)bank+sizeof(up_disk_bank_t),saved_eng));
     for(uint32_t i=UP_PER_BANK;i--;){
         up_disk_rec_t r;memcpy(&r,(uint8_t *)bank+8u+i*sizeof r,sizeof r);
         memcpy(&bank->r[i],r.head,160u);memcpy(bank->r[i].tone_extra,r.extra,46u);
@@ -280,7 +311,10 @@ static up_bank_t *up_cache_bank(uint32_t b)
         up_cached=(uint8_t)b;
         memset(&up_cache,0,sizeof up_cache);
         int n=flash_ok?st_load(up_obj(b),&up_cache,sizeof up_cache):-1;
+        n=up_map_read(n);                          /* (a bank naming synths of another device: its engine map entries) */
         int decoded=up_decode_bank(b,n);
+        for(uint32_t j=0;decoded==1 && j<UP_PER_BANK;j++)
+            if(up_cache.r[j].used)up_cache.r[j].engine=(uint8_t)eng_in(up_cache.r[j].engine);
         if(!decoded)memset(&up_cache,0,sizeof up_cache);
         if(decoded!=1 && flash_ok && st_exists(up_obj(b)))up_bank_old|=1u<<b;
         else up_bank_old&=~(1u<<b);

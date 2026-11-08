@@ -275,6 +275,7 @@ static const mod_engine_v3 WHEEL = {
     .state = whl_state,
 };
 
+MOD3_IDENT("melodee", "WHEL");
 MOD3_EXPORT(mod_wheel) = {
     MOD3_SDK_HEAD,
     .engine = 7,                                 /* WHEEL's number before it was retired */

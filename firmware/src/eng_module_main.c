@@ -3,10 +3,16 @@
 /* Synth modules, the main loop's side (eng_module.c has the audio's): the names and preset counts the lists show,
  * loading on demand, and registering a module as its engine number. Built for size (tools/size_fns.py). */
 /* e's name in the lists (a module not in SRAM: its file's) */
+static const char *eng_map_name(uint32_t e);      /* eng_map.c */
 static const char *eng_name(uint32_t e)
 {
     uint32_t k = ENGINES[e % NENGINES] == &ENG_MOD_IDLE ? mod_slot_of(e % NENGINES) : NMOD;
-    return k < NMOD ? mods[k].name : ENGINES[e % NENGINES]->name;
+    const char *m;
+    if (k < NMOD)
+        return mods[k].name;
+    if (ENGINES[e % NENGINES] == &ENG_RETIRED && (m = eng_map_name(e % NENGINES)) != 0)
+        return m;                                   /* (a module the device has not got: the map's name for it) */
+    return ENGINES[e % NENGINES]->name;
 }
 /* the slot whose file holds e's factory presets (its PRST chunk) while e plays from it or waits for it, NMOD: none (a
  * built-in engine: its rows or maker) */
@@ -32,6 +38,7 @@ static int (*mod_pread)(uint32_t k, uint32_t off, void *dst, uint32_t n);   /* m
 /* the host table's file_read: n bytes of slot self's file at off (a module reads its own: bind's self). 0 ok */
 static int mod_h_file_read(uint32_t self, uint32_t off, void *dst, uint32_t n)
 {
+    self &= 0xFFu;                                  /* (bind's self: the slot, the engine number above it) */
     return self >= NMOD || !mod_pread || off > mods[self].len || n > mods[self].len - off || mod_pread(self, off, dst, n);
 }
 #define MOD_WIN 128u
