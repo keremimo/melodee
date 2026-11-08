@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* A take into a kit's pad as it is recorded (the firmware's Record kit sheet drives it from USB audio: SAMPLER's
- * rec_stream): kit_take_core.c encodes and writes it piece by piece through the host's take calls (mod_abi3.h host
- * 6), into a pad record of its own, so a take never copies the kit's other pads and may fill the whole free store. */
+ * rec_stream): kit_take_core.c encodes it piece by piece and hands it to the host's take calls (mod_abi3.h host 6),
+ * into a pad record of its own, so a take never copies the kit's other pads. */
 #ifndef KT_ON
 #define KT_ON MOD3_TAKE_ON                       /* (the host's take starts above it: tk_end's quiet take) */
 #endif

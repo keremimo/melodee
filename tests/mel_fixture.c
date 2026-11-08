@@ -290,6 +290,10 @@ static int do_emit(void)
     }
 
     reset();
+    {
+        static uint8_t stage[FS * 8u];               /* (Record kit's RAM a take is encoded into) */
+        rec_take_stage(stage, sizeof stage);
+    }
     kit_record(0, DK_909, "909"); kit_record(1, DK_808, "808"); kit_record(2, DK_CR78, "cr78");
 
     kit_project();

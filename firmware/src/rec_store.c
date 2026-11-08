@@ -283,63 +283,64 @@ static int rec_put_name(uint32_t u, const char *name, uint32_t n)
     return rc;
 }
 
-/* ---- a take streamed into pad record s as it is recorded (Record kit, rec_ui.c; the synth writes through the host's
- * take calls): one at a time */
+/* ---- a take into pad record s (Record kit, rec_ui.c; the synth writes it through the host's take calls), one at a
+ * time: encoded into RAM while it is recorded (rec_take_stage: the bytes Record kit borrowed from the audio arena), into
+ * the flash once it has ended. Nothing is written meanwhile: a program holds the interrupts ~2 ms on the FM-1's NOR
+ * (32 bytes or a page alike), and USB audio's 5 kHz service lost a fifth of its packets while one ran after another
+ * (FM-1_900: 273 frames in 1.4 s): a take written as it came in was torn. So a take is as long as that RAM (and the
+ * free store) */
 static st_stream_t rec_w;
-static uint8_t rec_take_on;
-static uint32_t rec_take_slot;
-/* the free store made ready for it (every free sector erased now, none while the take is recorded): its room in bytes,
- * -n none (-5 the store is full) */
+static uint8_t rec_take_on, *rec_stage;
+static uint32_t rec_take_slot, rec_stage_n;
+static void rec_take_stage(uint8_t *p, uint32_t n) { rec_stage = p; rec_stage_n = n; }
+/* its room in bytes: the stage's, the free store's (-n none, -5 no room) */
 static int rec_take_begin(uint32_t s)
 {
-    uint32_t rmin, rpad, max;
+    uint32_t rmin, rpad, max, room;
     int rc;
     rec_take_on = 0;
-    if (s >= ST_NSMP)
+    if (s >= ST_NSMP || !rec_stage)
         return -1;
     max = rec_owner_bounds(s / MOD3_RPAD, &rmin, &rpad);
     if (!max || s % MOD3_RPAD >= rpad || (rc = st_stream_begin_lazy(&rec_w, rec_pad_obj(s))) != 0)
         return -1;
-    rc = st_stream_prepare(&rec_w, max);
-    if (rc < 0)
-        return rc;
-    if (rc < (int)(rmin + 256u))
+    room = st_stream_free(&rec_w);
+    if (room > max * MOD3_REC_PAYLOAD) room = max * MOD3_REC_PAYLOAD;
+    if (room > rec_stage_n) room = rec_stage_n;
+    if (room < rmin + 256u)
         return -5;
     rec_take_on = 1;
     rec_take_slot = s;
-    return rc;
+    return (int)room;
 }
 static int rec_take_write(uint32_t off, const void *src, uint32_t n)
 {
     if (!rec_take_on)
         return -1;
-    int rc = st_stream_write_at(&rec_w, off, src, n);
-    return rc == -5 || rc == -1 ? -5 : rc;
+    if (off > rec_stage_n || n > rec_stage_n - off)
+        return -5;
+    memcpy(rec_stage + off, src, n);
+    return 0;
 }
 static void rec_take_abort(void)
 {
     rec_take_on = 0;
     if (st_stream_open == rec_w.generation) st_stream_open = 0;
 }
-/* the take's len bytes: their CRC read back, its module's check, published */
+/* the take's len bytes into the store (its sectors erased as they are taken), its module's check, published */
 static int rec_take_end(uint32_t s, uint32_t len)
 {
-    int rc;
-    if (!rec_take_on || s != rec_take_slot)
+    int rc = 0;
+    if (!rec_take_on || s != rec_take_slot || len > rec_stage_n)
         return -1;
     rec_take_on = 0;
-    if ((rc = st_stream_end(&rec_w, len)) != 0)
-        return rc;
-    {
-        uint32_t crc = 0xFFFFFFFFu;                 /* (written in pieces, the header last: the CRC from the flash) */
-        for (uint32_t off = 0; off < len; off += sizeof st_buf) {
-            uint32_t k = len - off < sizeof st_buf ? len - off : sizeof st_buf;
-            if (st_stream_read(&rec_w, off, st_buf, k)) return -7;
-            crc = st_crc32_update(crc, st_buf, k);
-            if (!(off & 0xFFFFu)) ST_IDLE();
-        }
-        st_stream_seal(&rec_w, crc);
+    for (uint32_t off = 0; !rc && off < len; off += 256u) {
+        rc = st_stream_write_at(&rec_w, off, rec_stage + off, len - off < 256u ? len - off : 256u);
+        if (!(off & 0x3FFFu)) ST_IDLE();
     }
+    if (rc || (rc = st_stream_end(&rec_w, len)) != 0)
+        return rc == -5 || rc == -1 ? -5 : rc;
+    st_stream_seal(&rec_w, st_crc32_update(0xFFFFFFFFu, rec_stage, len));
     return rec_put_commit(&rec_w, s);
 }
 

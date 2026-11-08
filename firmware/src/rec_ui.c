@@ -4,20 +4,22 @@
  * records, rec_store.c; a take streamed into a pad's record by the synth as it comes, engine_t.rec_stream), "Record
  * kit..." opens the kit's own sheet:
  *   Pad          KNOB 1 (or OCT+) the pad the next take goes to
- *   Record       OCT+: the free store made ready ("Preparing"), then it waits for audio from the computer or the phone
- *                on USB; the take starts at the first hit and ends at 150 ms of silence, or when the store is full: a
- *                take may be as long as the free store (delete projects, synths or kits for a longer one). It is
- *                kept at once (the keys play it)
+ *   Record       OCT+: it waits for audio from the computer or the phone on USB; the take starts at the first hit
+ *                and ends at 150 ms of silence, or when the RAM it is encoded into is full ("Full": as long as the
+ *                arena has room, so a track that leaves its synth unloaded gives a longer one); it is written once it
+ *                has ended and kept at once (the keys play it)
  *   Clear pad    the pad's take gone (red)
  *   Delete kit   the whole kit, after its question
  * A pad struck while the sheet is open (a key, an SMK-37 pad, a note from MIDI in) plays its take and becomes the
  * Pad; held KT_HOLD_MS it is Record's OCT+ too. The track plays the kit recorded into while the sheet is open: its
  * own, or the first empty kit (the track's kit back when the sheet goes without a take kept). The transport stays
- * stopped; the take's ring is borrowed from the audio arena while the sheet is open (kit_rec_poll gives it back when
- * the sheet goes), and the main loop feeds the synth from it while the take is recorded. The card alone redraws as its
- * values change (sheet_draw's sig): no page under it. */
+ * stopped; the take's ring and the RAM it is encoded into are borrowed from the audio arena while the sheet is open
+ * (kit_rec_poll gives them back when the sheet goes), and the main loop feeds the synth from the ring while the take is
+ * recorded. The card alone redraws as its values change (sheet_draw's sig): no page under it. */
 #define KT_HOLD_MS 500u
 #define KT_FEED 4096u                                   /* samples fed to the synth a poll, at most */
+#define KT_RING 16384u                                  /* the take's ring (bytes): 186 ms the main loop may fall behind */
+#define KT_SPARE 4096u                                  /* arena bytes left free beside the take's stage */
 static struct { uint8_t on, slot, pad, saving, msg, trk, held, stop, prep; int16_t prev; uint32_t t, f; } ks;
 /* the sheet's track struck (input_on / input_off, the audio ISR's or the UI's): the drum, when, still down */
 static volatile struct { uint8_t note, down, news, rel, rels; uint32_t t; } kh;   /* (rel: a note let go: its pad
@@ -74,7 +76,9 @@ static void kt_release(void)
     kt_stop();
     UA_MEMORY_GUARD_OFF();
     kt.buf = 0;
+    rec_take_stage(0, 0);
     resource_release(RES_KIT_TAKE);
+    resource_release(RES_KIT_STAGE);
     UA_MEMORY_GUARD_ON();
     ks.on = 0;
     if (ks.prev && !rec_used(ks.slot) && pads_rec(&trk[ks.trk]) == (int32_t)ks.slot)
@@ -82,7 +86,6 @@ static void kt_release(void)
 }
 static void kit_rec_open(void)
 {
-    static const uint32_t TRY[] = {98304u, 65536u, 49152u, 32768u, 16384u};
     const pads_c_t *c = pads_of(TSEL);
     int32_t kit = c && c->sel < P_COUNT ? TSEL->p[c->sel] : 0, r = pads_rec(TSEL);
     uint32_t u = 0, n = c ? c->nrec : 0u;
@@ -96,18 +99,19 @@ static void kit_rec_open(void)
         ks.prev = (int16_t)kit;
         kt_kit(c->rec0 + (int32_t)u);
     }
-    void *p = 0;
-    uint32_t b = 0;
+    void *p = 0, *q = 0;
+    uint32_t b = KT_RING, room;
     UA_MEMORY_GUARD_OFF();
-    (void)eng_state_prepare(TSEL);                      /* its part in the arena before the take's ring */
+    (void)eng_state_prepare(TSEL);                      /* its part in the arena before the take's */
+    p = resource_allocate(RES_KIT_TAKE, b);
+    if (!p) p = resource_allocate(RES_KIT_TAKE, b /= 2u);
+    room = resource_room(0) & ~3u;                      /* the stage: the widest room left, a little spare */
+    room = room > KT_SPARE ? room - KT_SPARE : 0u;
+    q = room >= 16384u ? resource_allocate(RES_KIT_STAGE, room) : 0;
+    if (!q) { kt.buf = 0; resource_release(RES_KIT_TAKE); }
     UA_MEMORY_GUARD_ON();
-    for (uint32_t i = 0; !p && i < NELEM(TRY); i++) {
-        b = TRY[i];
-        UA_MEMORY_GUARD_OFF();
-        p = resource_allocate(RES_KIT_TAKE, b);
-        UA_MEMORY_GUARD_ON();
-    }
-    if (!p) { if (ks.prev) kt_kit(ks.prev); ui_message("NO MEMORY"); return; }
+    if (!p || !q) { if (ks.prev) kt_kit(ks.prev); ui_message("NO MEMORY"); return; }
+    rec_take_stage(q, room);
     kt.state = KT_OFF;
     kt.buf = p;
     kt.cap = b / 2u;
@@ -133,12 +137,12 @@ static void kt_pad_turn(int32_t s)
     kt_pad_to((ks.pad + (s > 0 ? 1u : n - 1u)) % n);
 }
 static void kt_pad_act(void) { kt_pad_turn(1); kt_sheet(0); }
-#define KT_FULL (MOD3_TK_FLASH + 1u)                    /* ks.msg: kept, the store full */
+#define KT_FULL (MOD3_TK_FLASH + 1u)                    /* ks.msg: kept, its RAM (or the store) full */
 #define KT_CUT (MOD3_TK_FLASH + 2u)                     /* .. kept, the synth fell behind */
 #define KT_HIDDEN (MOD3_TK_FLASH + 3u)                  /* .. the pad holds a take the audio does not list */
 static void kt_rec_v(char *b)
 {
-    static const char *const MSG[] = {0, "Kept", "Too quiet", "No room", "Not saved", "Store full", "Cut short", "In use"};
+    static const char *const MSG[] = {0, "Kept", "Too quiet", "No room", "Not saved", "Full", "Cut short", "In use"};
     if (kt.state == KT_PREP) str_cpy(b, "Preparing", 10);
     else if (kt.state == KT_ARMED) str_cpy(b, "Waiting", 10);
     else if (kt.state == KT_REC) { fmt_fix(b, (int32_t)(kt.n * 10u / FS), 1); str_cpy(b + str_len(b), " s", 3); }
@@ -217,7 +221,7 @@ static void kit_rec_poll(void)
         ks.held = 1;
         if (kt.state == KT_OFF && ks.pad == hp && kt_go()) pop.sel = 1;
     }
-    if (kt.state == KT_PREP) {                          /* the free store erased now: none while the take runs */
+    if (kt.state == KT_PREP) {                          /* the store's room counted ("Preparing" drawn first) */
         if (!kt_drawn()) return;
         int room = rec_take_begin(kt_slot());
         if (room < 0) { kt.state = KT_OFF; ks.msg = (uint8_t)(room == -5 ? MOD3_TK_ROOM : MOD3_TK_FLASH); return; }

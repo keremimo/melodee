@@ -4,8 +4,8 @@
  * (kit_take.c: the host's take calls) and what the web's kit maker does (web/kit, this file in WebAssembly), so that
  * both make a pad record byte for byte the same. The samples come in pieces (tk_feed) from the first above the take's
  * trigger, MOD3_TAKE_PRE samples early; the kick and the toms go to 22.05 kHz (a half-band filter); every piece is
- * encoded (drum_enc.c, 30 dB under each slice's level) and written as it comes, 32 slices at a time, so a take is as
- * long as the free store. At its end (tk_end): the record's header first in it, the take's level (gain: its peak to
+ * encoded (drum_enc.c, 30 dB under each slice's level) and handed to the host as it comes, 32 slices at a time (the
+ * device keeps them in RAM until the take ends), so a take is as long as its room. At its end (tk_end): the record's header first in it, the take's level (gain: its peak to
  * full scale), its length to 10 ms after its last sample above -60 dBFS (the slices after that stay, unplayed).
  * The includer gives KT_ON (usb_audio_stream.c), drum_enc.c, and the record's calls: kt_h_write(off, src, n) (each
  * payload byte once, src RAM), kt_h_end(slot, len) (published once checked: 0, -2 not playable, -5 no room, -n),

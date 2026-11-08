@@ -7,7 +7,6 @@ typedef struct {
     st_hdr_t head;
     uint32_t obj, pos, crc, generation;
     uint32_t avail[ST_LW];              /* lazy: the linear sectors still free to take */
-    uint32_t ready[ST_LW];              /* lazy: those erased ahead (st_stream_prepare): taken without an erase */
     int error;
     uint8_t lazy;                       /* st_stream_begin_lazy: the length is known only at st_stream_end */
     uint8_t nlist;                      /* lazy: its sectors so far, list[] their linear indices (the header holds 8) */
@@ -75,35 +74,19 @@ static int st_stream_room(st_stream_t *w,uint32_t end)
         if(have<8u)st_list_put(&w->head,have,i);
         w->list[have]=(uint8_t)i;
         if(!have)w->head.slot=(uint16_t)(ST_LIN_C0+i);
-        if(!((w->ready[i/32u]>>(i%32u))&1u)){int rc=st_erase(st_lin_at(i));if(rc)return w->error=rc;}
+        int rc=st_erase(st_lin_at(i));if(rc)return w->error=rc;
         w->nlist=(uint8_t)++have;
     }
     return 0;
 }
-/* A lazy image's sectors made ready ahead, up to max of them (in the order it takes them): each free sector not blank
- * already erased now, so that its writes later erase nothing (a take recorded from USB audio: an erase holds the
- * interrupts ~45 ms, a page's program < 1 ms). Its room in bytes (sectors taken and ready); -n an error */
-static int st_stream_prepare(st_stream_t *w,uint32_t max)
+/* a lazy image's room: the free sectors it may take, in bytes (its own count at most) */
+static uint32_t st_stream_free(const st_stream_t *w)
 {
-    uint32_t n=w->nlist;
-    if(w->generation!=st_stream_generation)return w->error=-6;
-    if(w->error||!w->lazy)return w->error?w->error:-1;
-    if(max>st_max_sectors(w->obj))max=st_max_sectors(w->obj);
-    for(uint32_t m=0;m<ST_LN&&n<max;m++){
-        uint32_t i=st_order(w->obj,m),blank=1;
-        if(!((w->avail[i/32u]>>(i%32u))&1u))continue;
-        if(!((w->ready[i/32u]>>(i%32u))&1u)){
-            for(uint32_t off=0;blank&&off<ST_SECTOR;off+=sizeof st_buf){
-                if(st_fetch(st_lin_at(i)+off,st_buf,sizeof st_buf))return w->error=-7;
-                for(uint32_t j=0;j<sizeof st_buf;j++)if(st_buf[j]!=0xFFu){blank=0;break;}
-            }
-            if(!blank){int rc=st_erase(st_lin_at(i));if(rc)return w->error=rc;}
-            w->ready[i/32u]|=1u<<(i%32u);
-            ST_IDLE();
-        }
-        n++;
-    }
-    return (int)(n*ST_LIN_PAYLOAD_MAX);
+    uint32_t n=0;
+    for(uint32_t i=0;i<ST_LN;i++)n+=(w->avail[i/32u]>>(i%32u))&1u;
+    n+=w->nlist;
+    if(n>st_max_sectors(w->obj))n=st_max_sectors(w->obj);
+    return n*ST_LIN_PAYLOAD_MAX;
 }
 static int st_stream_read(st_stream_t *w,uint32_t off,void *dst,uint32_t n)
 {
@@ -115,11 +98,6 @@ static int st_stream_read(st_stream_t *w,uint32_t off,void *dst,uint32_t n)
     }
     return 0;
 }
-/* A stream's programs, ST_GENTLE bytes at most: the interrupts held for one ~30 us + 2.5 us a byte (NOR byte
- * programming), so the 5 kHz tick that services USB audio is never late by a frame (1 ms). A page's program (~0.7 ms,
- * up to 3) lost a fifth of the packets while a save ran (FM-1_900: 273 frames in 1.4 s), and a take recorded while its
- * slices were written came out torn */
-#define ST_GENTLE 32u
 /* Input must be RAM: the flash-program window cannot fetch from XIP. Calls
  * may use arbitrary packet lengths; split at physical pages and extents. */
 static int st_stream_write_at(st_stream_t *w,uint32_t off,const void *data,uint32_t n)
@@ -134,7 +112,6 @@ static int st_stream_write_at(st_stream_t *w,uint32_t off,const void *data,uint3
         uint32_t span,at=w->lazy?st_stream_address(w,off,&span):st_address_at(w->obj,w->head.slot,off,&span,ST_PAYLOAD_OFF);
         if(!span)return w->error=-1;
         uint32_t k=256u-(at&255u);if(k>span)k=span;if(k>n)k=n;
-        if(k>ST_GENTLE)k=ST_GENTLE;              /* (a page's program holds the interrupts ~0.7 ms, USB audio's too) */
         int rc=st_prog(at,p,k);if(rc)return w->error=rc;
         off+=k;p+=k;n-=k;
     }

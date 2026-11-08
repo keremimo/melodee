@@ -153,9 +153,8 @@ enum {
 };
 
 /* mod_engine_v3.rec_stream: a take streamed into a pad record as it is recorded (host 6). The host's take begins
- * MOD3_TAKE_PRE samples before the first above MOD3_TAKE_ON (-40 dBFS) and ends at 150 ms below -60 dBFS, a full
- * store, or a take the synth no longer keeps up with. ops: BEGIN (pcm 0, n the record's room in bytes: the host made
- * the free sectors ready), FEED (n samples at pcm, 16-bit mono, 44.1 kHz), END (the take ends: n samples of it were
+ * MOD3_TAKE_PRE samples before the first above MOD3_TAKE_ON (-40 dBFS) and ends at 150 ms below -60 dBFS, its room
+ * full, or a take the synth no longer keeps up with. ops: BEGIN (pcm 0, n the record's room in bytes), FEED (n samples at pcm, 16-bit mono, 44.1 kHz), END (the take ends: n samples of it were
  * fed), ABORT. What becomes of it: MOD3_TK_* (FEED: NONE while it goes on, ROOM once the store is full) */
 #define MOD3_TAKE_ON 328
 #define MOD3_TAKE_PRE 128u
@@ -380,9 +379,10 @@ typedef struct mod_host_v3 {
      * the FX sends post balance). 0: not now (a render outside the mixer's): out alone, mono */
     int32_t *(*stereo)(const mod_part_v3 *t);
     /* host 6: the pad records' sectors (rec[].at, n index it), and a take streamed into pad record slot (main loop):
-     * take_begin makes the free store ready (its room in bytes, -n none), take_write puts n bytes at payload offset off
-     * (each byte once, in any order: the header last), take_end publishes len bytes once the synth checked them (0;
-     * -2 not playable, -5 no room, -n the store's error), take_abort drops it */
+     * take_begin its room in bytes (-n none), take_write puts n bytes at payload offset off (each byte once, in any
+     * order: the header last; the host keeps them in RAM while the take comes in: a flash program would cost USB audio
+     * its packets), take_end writes and publishes len bytes once the synth checked them (0; -2 not playable, -5 no
+     * room, -n the store's error), take_abort drops it */
     const uint8_t *rec_list;
     int (*take_begin)(uint32_t slot);
     int (*take_write)(uint32_t off, const void *src, uint32_t n);

@@ -21,7 +21,7 @@ static unsigned char nor[0x100000];
 static void fm1_wdt_feed(void) {}
 static uint8_t flash_ok = 1;
 static uint32_t erases;                          /* sector erases counted */
-static uint32_t prog_max;                        /* the longest program since it was zeroed (bytes) */
+static uint32_t progs;                           /* programs counted */
 static int prog_fail = -1;                       /* a program fails after this many (-1 never) */
 static int st_read(uint32_t off, void *dst, uint32_t n) { memcpy(dst, nor + off, n); return 0; }
 static int st_erase(uint32_t off) { erases++; memset(nor + off, 0xFF, 4096); return 0; }
@@ -29,7 +29,7 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
     if (prog_fail == 0) return -9;
     if (prog_fail > 0) prog_fail--;
-    if (n > prog_max) prog_max = n;
+    progs++;
     for (uint32_t i = 0; i < n; i++) nor[off + i] &= ((const uint8_t *)src)[i];
     return 0;
 }
@@ -92,28 +92,25 @@ static uint32_t stream(uint32_t u, uint32_t pad, const int16_t *x, uint32_t n, u
 {
     return ENGINES[ENGI_SAMPLER]->rec_stream(u, pad, x, n, op);
 }
-static uint32_t feed_prog_max;                   /* the longest program while the last take was fed */
-/* a whole take into kit u's pad: the store made ready (its room in *room), the samples in pieces of 1..max, ended.
- * MOD3_TK_*; *fed the samples it took, *during the erases from the first piece to the end */
+/* a whole take into kit u's pad: its room in *room, the samples in pieces of 1..max, ended. MOD3_TK_*; *fed the
+ * samples it took, *during the flash's erases and programs while they were fed */
 static uint32_t take(uint32_t u, uint32_t pad, const int16_t *x, uint32_t n, uint32_t max, int *room, uint32_t *fed,
                      uint32_t *during)
 {
-    uint32_t at = 0, st = MOD3_TK_NONE, e0;
+    uint32_t at = 0, st = MOD3_TK_NONE, e0, p0;
     *room = rec_take_begin(u * MOD3_RPAD + pad);
     if (*room < 0) return MOD3_TK_ROOM;
     stream(u, pad, 0, (uint32_t)*room, MOD3_TS_BEGIN);
-    e0 = erases;
-    prog_max = 0;
+    e0 = erases; p0 = progs;
     while (at < n && st == MOD3_TK_NONE) {
         uint32_t k = 1u + (uint32_t)(noise() & 0x7FFF) % max;
         if (k > n - at) k = n - at;
         st = stream(u, pad, x + at, k, MOD3_TS_FEED);
         at += k;
     }
-    feed_prog_max = prog_max;
     if (fed) *fed = at;
+    if (during) *during = erases - e0 + progs - p0;
     st = stream(u, pad, 0, at, MOD3_TS_END);
-    if (during) *during = erases - e0;
     return st;
 }
 static const drk_pad_t *pad_head(uint32_t s)
@@ -190,8 +187,10 @@ static uint32_t pool_free(void) { int f = st_project_free(); return f < 0 ? 0u :
 
 int main(int argc, char **argv)
 {
+    static uint8_t stage[FS * 16u];
     memset(nor, 0xFF, sizeof nor);
     rec_scan();                                  /* (the records' boot scan: the host's record calls SAMPLER writes through) */
+    rec_take_stage(stage, sizeof stage);         /* (Record kit's: the RAM a take is encoded into) */
     check("KIT 1..8 are 9..16, straight after FM; sixteen pads a kit", DK_USER0 == DK_FM + 1 && DK_KIT_MAX == 16 &&
           ENG_SAMPLER.edit[0].max == DK_KIT_MAX && !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && DRK_NPAD == 16u &&
           MOD3_RPAD == 16u);
@@ -271,9 +270,9 @@ int main(int argc, char **argv)
               H->inc == 32768u && H->gain == 32000u * 1024u / pk && !H->ms && H->n <= n);
         check("its slices are the whole take's encoding byte for byte (fed in pieces of 1..700)", sb == bytes &&
               !memcmp(words, words + bytes / 4u, bytes));
-        check("the dirty free sectors erased before the take, none while it was recorded", erases - e0 >= dirty - 1u && !during);
-        check("... and no program longer than 32 bytes while it was recorded (USB audio's tick never a frame late)",
-              feed_prog_max && feed_prog_max <= 32u);
+        check("nothing erased or programmed while it was recorded (USB audio's service never held), the store written after",
+              !during && erases - e0 >= rec_tab[1].n);
+        (void)dirty;
         uint32_t kn = decode(1, y);
         check("... it decodes through the player near its SNR", kn == H->n && snr_db(src, y, kn) > 20.0);
         check("the store less its sectors", pool_free() == f0 - rec_tab[1].n);
@@ -321,7 +320,7 @@ int main(int argc, char **argv)
         dke_out_t o;
         uint32_t bytes = dke_encode(src, n, TK_SNR, 0, words, &o);
         decode_words(words, n, z);
-        printf("KIT TAKE:   8 s: %u bytes in %u sectors, %u erases while recorded\n", bytes + DRK_PAD_BYTES, rec_tab[s].n, during);
+        printf("KIT TAKE:   8 s: %u bytes in %u sectors, %u erases or programs while recorded\n", bytes + DRK_PAD_BYTES, rec_tab[s].n, during);
         check("an 8 s take is kept: more than eight sectors, every sample as the whole encoding decodes",
               r == MOD3_TK_KEPT && rec_tab[s].n > 8u && kn == n && !memcmp(y, z, n * 2u) && !during);
         rec_scan();
@@ -330,7 +329,7 @@ int main(int argc, char **argv)
         r = take(3, 15, src, m, 4096u, &room, &fed, &during);
         s = 3u * MOD3_RPAD + 15u;
         kn = decode(s, y);
-        printf("KIT TAKE:   the store's last %u sectors: %.1f s of %.1f s fed, %u erases while recorded\n", f0, kn / (double)FS,
+        printf("KIT TAKE:   the store's last %u sectors: %.1f s of %.1f s fed, %u erases or programs while recorded\n", f0, kn / (double)FS,
                fed / (double)FS, during);
         check("a take longer than the store fills every free sector, ends there and is kept", r == MOD3_TK_KEPT &&
               rec_tab[s].n == f0 && pool_free() == 0u && kn > (f0 * 4056u / 30000u) * FS / 4u && fed < m && !during);
@@ -339,6 +338,14 @@ int main(int argc, char **argv)
         check("... what it holds decodes as the whole encoding of its first samples", !memcmp(y, z, kn * 2u));
         r = take(3, 14, src, FS, 4096u, &room, &fed, &during);
         check("a take into a full store: No room", r == MOD3_TK_ROOM && !rec_pad_stored(3u * MOD3_RPAD + 14u));
+        rec_delete_pad(s);
+        rec_take_stage(stage, 65536u);           /* (Record kit's RAM smaller than the store's room) */
+        r = take(3, 15, src, m, 4096u, &room, &fed, &during);
+        kn = decode(s, y);
+        printf("KIT TAKE:   a 64 KB stage: %.1f s kept of %.1f s fed\n", kn / (double)FS, fed / (double)FS);
+        check("a take longer than its RAM ends when the RAM is full and is kept", r == MOD3_TK_KEPT && room == 65536 &&
+              kn > FS * 2u && fed < m && !during);
+        rec_take_stage(stage, sizeof stage);
         rec_delete_pad(s);
         check("deleted: the store free again", pool_free() == f0);
         kit_on(2);
