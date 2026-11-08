@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* The SDK's example: two sine oscillators a fifth or an octave apart, detuned, through the firmware's envelope (its
  * amplitude ramp, mod_vmod_v3 amp0..amp1). Everything a module needs is here: the engine (its pages' eight values and
@@ -46,7 +46,7 @@ static const mod_engine_v3 DRONE = {
     .render = drone_render,
 };
 
-MOD3_IDENT("example", "DRON");                    /* its UID: CRC-32 of "example/DRONE" */
+MOD3_IDENT("example", "drone", "DRON");          /* its ID: its author key and "drone" (mod_abi3.h) */
 MOD3_PRESETS = {                                  /* name, category (8: OTHER), E1..E8, ATK DEC SUS REL, FENV, MONO */
     {"FIFTHS", 8, {1, 6, 64, 0, 0, 0, 0, 0}, {40, 64, 127, 70}, 0, 0},
     {"OCTAVE PAD", 8, {2, 12, 90, 0, 0, 0, 0, 0}, {90, 64, 110, 90}, 0, 0},

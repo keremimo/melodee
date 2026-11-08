@@ -292,6 +292,13 @@ def build_app(stub):
         if os.environ.get("MELODEE_BLE") == "0":
             raise SystemExit("MELODEE_BLE_LINKS=2 needs Bluetooth (MELODEE_BLE=1)")
         flags.append("-DBLE_LINKS=2")
+    # Melodee's release key here (tools/mod_build.py signs the shipped synths with it): the image takes no other key for
+    # Melodee's synths. Without it they are signed with the test key, and the image takes that one (mod_sign_keys.h)
+    sys.path.insert(0, str(SRC / "firmware" / "modules" / "sdk"))
+    import mod_sign
+    rk = os.environ.get("MELODEE_SIGN_KEY", os.path.expanduser("~/.config/melodee/module-sign.key"))
+    if rk and os.path.isfile(rk) and mod_sign.public(mod_sign.load(rk)).hex().startswith("45442ab682efbecc"):
+        flags.append("-DMELODEE_RELEASE_KEY=1")
     flags.append(f'-DMELODEE_ID="{PRODUCT}"')
     if VERSION:
         flags.append(f'-DMELODEE_VERSION="{VERSION}"')

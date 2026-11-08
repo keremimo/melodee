@@ -7,20 +7,20 @@
  *   [3, slot] commit: rc, the slot's state and engine; [4, slot] delete;
  *   [5, slot] its file: rc, state, engine, ABI, CRC (u35), key (u35: the legacy data's it was built against, 0 none;
  *       an older ABI 2 file's layout key), this firmware's legacy key (u35, module_legacy.h): the installer's check
- *       (web/fm1mods.js) whether a slot holds its file already; its UID (u35), its signature (0 not checked this run,
- *       1 Melodee's, 2 none: mod_sign.c).
+ *       (web/fm1mods.js) whether a slot holds its file already; its UID (u35: its ID's first 4 bytes), its signature
+ *       (0 not checked this run, 1 Melodee's, 2 none, 3 its author's: mod_sign.c).
  *   [6] the device's engine map (eng_map.c): rc, NENGINES, per number: UID (u35, 0 free), how (0 free, 1 Melodee's
  *       default, 2 a module here, 3 a module a store named, not here), name (string); then MOD3_NREC data record
  *       owners' UIDs (u35). A client maps stored engine numbers to synths with it (Studio, the web editor).
  * rc: 0 ok, 1 bad request, 2 storage full, 3 flash error, 4 busy (the transport would not stop), 5 not a module for
  * this firmware, 6 the same module is in another slot (or no engine number is left), 7 no room in RAM (stored, not
- * loaded). [3] commit answers its signature too (as [5]). */
+ * loaded), 8 its ID or signature is not its own (refused, deleted). [3] commit answers its signature too (as [5]). */
 #define ED_MODULE 84u
 static uint32_t ed_mod_rc(int rc)
 {
     return rc == MS_LOADED || rc == MS_EMPTY ? 0u : rc == -5 ? 2u : rc == -2 || rc == MS_BAD ? 5u :
            rc == -3 || rc == MS_CLASH ? 6u : rc == MS_NORAM ? 7u : rc == MS_SKIPPED ? 0u : rc == -1 ? 1u :
-           rc == MS_STALE || rc == MS_NEWER ? 5u : 3u;
+           rc == MS_STALE || rc == MS_NEWER ? 5u : rc == -4 ? 8u : 3u;
 }
 static int ed_module_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 {

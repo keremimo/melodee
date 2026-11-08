@@ -21,11 +21,25 @@ Install it with Melodee's web installer (Settings > Synth modules) or `tools/fm1
 
 ## Who it is
 
-`MOD3_IDENT("vendor", "TAG")` names the author; the module's UID is CRC-32 of `vendor/NAME`. A device gives each UID
-an engine number: the one the descriptor asks for (22..29) when it is free, else the first free one. Projects, user
-presets and `.mel` files carry the numbers they name, so a song moves between devices; a device without the module keeps
+`MOD3_IDENT("vendor", "slug", "TAG")`: the vendor is how the lists show you, the slug (lowercase letters, digits, `-`)
+is your synth's own name for good, the tag its four letters. Its ID is made from your key and the slug (`mod_abi3.h`),
+so it is yours alone: nobody else can make a file with that ID, and a file with the same ID is an update of your synth.
+Rename the synth as you like; keep the slug. A device gives each synth an engine number of its own, and projects, user
+presets and `.mel` files name the synths they use, so a song moves between devices; a device without the synth keeps
 its sounds and plays them silent.
+
+## Your key
+
+The first build makes your key, `~/.config/melodee/author.key` (or the file `MELODEE_AUTHOR_KEY` names), and signs
+every module with it. Keep a copy somewhere safe: an update of your synth needs the same key, and a synth signed with
+another key is another synth. `mod_build.py --check FILE.mmod` shows a file's ID and who signed it.
 
 ## Signed or not
 
-Melodee signs the modules it ships. Yours installs all the same, with a one-line warning ("UNSIGNED: NAME").
+A module signed by its key installs quietly. `MELODEE_AUTHOR_KEY=` (empty) builds an unsigned one: it installs with a
+one-line warning ("UNSIGNED: NAME"), and anyone can make a file with its ID. A device refuses a file whose ID its key
+did not make, or that its key did not sign.
+
+## Licence
+
+The SDK is MPL-2.0: changes to its own files stay open, your synth may carry any licence you like.

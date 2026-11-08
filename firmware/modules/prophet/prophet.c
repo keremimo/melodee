@@ -10,7 +10,7 @@
 
 static p5_part_t *p5_part(uint32_t part) { return mod_part_mem(part, sizeof(p5_part_t)); }   /* (engines.c's) */
 
-MOD3_IDENT("melodee", "P5");
+MOD3_IDENT("melodee", "prophet", "P5");
 MOD3_ENGINE_EXPORT(mod_p5) = {
     MOD3_ENGINE_HEAD, .engine = ENGI_PROPHET, .name = "PROPHET", .npresets = P5_FACTORY_N + 1u, .eng = &ENG_P5_TEST,
 };

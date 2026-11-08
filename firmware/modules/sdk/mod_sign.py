@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Ed25519 (RFC 8032) for synth modules' SIGN chunk: the reference arithmetic of RFC 8032 section 6, in Python.
 
     mod_sign.py --key KEYFILE --public          the public key (hex) of a 32-byte seed file (hex)
     mod_sign.py --new KEYFILE                   a new seed (os.urandom) into KEYFILE, its public key printed
 
-A module signed by one of Melodee's keys installs without the firmware's warning (firmware/src/mod_sign.c). The
-builder (mod_build.py) signs when it is given a key (MELODEE_SIGN_KEY, else ~/.config/melodee/module-sign.key if it
-is there); an outside author's modules are unsigned and install with the warning."""
+A module is signed by its author's key, the key its IDNT chunk names (its ID is made from it: mod_abi3.h), so
+nobody else can make a file with its ID; Melodee's synths by one of Melodee's keys (firmware/src/mod_sign.c). The
+builder (mod_build.py) signs with the author's key (MELODEE_AUTHOR_KEY, else ~/.config/melodee/author.key, made on the
+first build) or, for Melodee's synths, Melodee's (MELODEE_SIGN_KEY, else ~/.config/melodee/module-sign.key, else in
+Melodee's tree the test key). A module without a signature installs with a one-line warning."""
 import hashlib
 import os
 import sys
@@ -80,6 +82,29 @@ def sign(seed, msg):
     rb = _enc(_mul(r, _B))
     s = (r + _sha(rb, pk, msg) * a) % L
     return rb + s.to_bytes(32, "little")
+
+
+def _dec(b):
+    """a point from its 32 bytes, None when it is not one"""
+    y = int.from_bytes(b, "little") & ((1 << 255) - 1)
+    if y >= P:
+        return None
+    x = _xrecover(y)
+    if (x * x * (D * y * y + 1) - (y * y - 1)) % P:
+        return None
+    if (x & 1) != b[31] >> 7:
+        x = P - x
+    return (x, y, 1, x * y % P)
+
+
+def verify(pk, msg, sig):
+    """1: sig (64 bytes) is pk's signature of msg"""
+    a, r = _dec(pk), _dec(sig[:32])
+    s = int.from_bytes(sig[32:], "little")
+    if a is None or r is None or s >= L:
+        return 0
+    h = _sha(sig[:32], pk, msg) % L
+    return _enc(_mul(s, _B)) == _enc(_add(r, _mul(h, a)))
 
 
 def load(path):

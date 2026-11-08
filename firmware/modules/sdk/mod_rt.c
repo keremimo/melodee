@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* What the compiler may call by itself in a module (struct copies, cleared arrays) and what an engine calls (CZ-1:
  * memcmp): a module links nothing of the firmware's, so it carries these few bytes. mod_entry_ is the link's entry

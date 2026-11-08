@@ -35,7 +35,7 @@ typedef struct {
                                                      * record but the last ST_PROJECT_MAX bytes) */
     uint8_t parts;                                  /* .. its records */
     uint8_t sig;                                    /* its signature, as checked when it was installed (mod_sign.c): 0 not
-                                                     * checked this run, 1 Melodee's, 2 none or not Melodee's */
+                                                     * checked this run, 1 Melodee's, 2 none (unsigned), 3 its author's */
     uint32_t pst, pst_len, pst_dat;                 /* its factory presets (module_presets.h): the PRST payload's place
                                                      * in the file, its length (0: none), its dictionary's place in it */
     uint16_t pst_init, pst_dict, pst_ulen;          /* .. its INIT, dictionary and entry bytes */

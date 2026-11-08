@@ -530,7 +530,7 @@ static int j106_bind(const mod_host_v3 *h, uint32_t self)
 #include "j106_schema.h"
 MOD3_SCHEMA(J106_SCHEMA);
 #endif
-MOD3_IDENT("saadet", "J106");                     /* its UID: CRC-32 of "saadet/JUNO-106" */
+MOD3_IDENT("Saadet", "juno-106", "J106");         /* its ID: its author key and "juno-106" (mod_abi3.h) */
 #ifndef MOD_IN_CORE                               /* (the presets: the file's PRST chunk, never the image's) */
 #include "j106_presets.h"
 #else

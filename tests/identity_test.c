@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Who a synth module is, through real NOR saves (phase 6): its UID (its file's head and IDNT chunk), the device's
+/* Who a synth module is, through real NOR saves (phase 6; phase 8: its ID made from its author's key and slug, the
+ * install's refusals of a file whose ID or signature is not its own): its UID (its file's head and IDNT chunk), the device's
  * engine map (eng_map.c: Melodee's numbers by the manifest, a new module the number it asks for or the first free one,
  * kept across power-on in the map record, a deleted module's number free again), a project naming modules another
  * device numbers otherwise (FBKR: its entries and the patch of a synth without a Melodee 1.x format come back on
@@ -11,15 +12,10 @@
 #include "persistence_test.c"
 #include "../firmware/src/sysex_route.c"
 #include "../firmware/src/module_store.c"
+#include "mod_ident_test.h"
 #include <assert.h>
 
 static uint8_t file[MOD_FILE_MAX];
-static uint32_t idnt_crc(const char *vendor, const char *name)
-{
-    char b[40];
-    snprintf(b, sizeof b, "%s/%s", vendor, name);
-    return st_crc32(b, (uint32_t)strlen(b)) ? st_crc32(b, (uint32_t)strlen(b)) : 1u;
-}
 static void chunk(uint8_t *b, uint32_t *at, uint32_t tag, const void *p, uint32_t n)
 {
     memcpy(b + *at, &tag, 4);
@@ -46,25 +42,63 @@ static uint32_t make(const char *vendor, const char *name, uint32_t want, uint32
         uint32_t n = mod_sch_write(&s, sch, sizeof sch);
         chunk(file, &at, MOD_SCH_TAG, sch, n);
     }
-    memset(&id, 0, sizeof id);
-    id.uid = idnt_crc(vendor, name);
-    id.version = MOD3_IDNT_VERSION;
-    memcpy(id.tag, name, strlen(name) < 4u ? strlen(name) : 4u);
-    memcpy(id.vendor, vendor, strlen(vendor));
-    chunk(file, &at, MOD3_IDNT_TAG, &id, sizeof id);
+    h.uid = test_idnt(file, &at, vendor, test_slug(name), name, 0, &id);   /* (an outside author's, unsigned) */
     h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = (uint8_t)want; h.host = MOD3_HOST_MIN; h.flags = MOD3_FILE_CHUNKS;
-    h.image = image; h.bss = 16; h.version = 1; h.uid = id.uid; h.total = at;
+    h.image = image; h.bss = 16; h.version = 1; h.total = at;
     strncpy(h.name, name, sizeof h.name);
     h.crc = st_crc32(file + MOD3_HEAD, at - MOD3_HEAD);
     memcpy(file, &h, sizeof h);
     return at;
 }
-static void install(uint32_t k, const char *vendor, const char *name, uint32_t want, uint32_t plen)
+static uint32_t install(uint32_t k, const char *vendor, const char *name, uint32_t want, uint32_t plen)
 {
-    uint32_t n = make(vendor, name, want, plen);
+    uint32_t n = make(vendor, name, want, plen), uid;
     for (uint32_t j = 0; j < MOD_RECS; j++)
         if (st_exists(st_mod_obj(k, j))) (void)st_project_delete(st_mod_obj(k, j));
     assert(!st_save(st_mod_obj(k, 0), file, n));
+    memcpy(&uid, file + 24, 4);                     /* (the head's uid) */
+    return uid;
+}
+/* ---- phase 8: a file made by an author (seed: its key; 0 unsigned) naming key (0: the seed's own), its ID id (0: the
+ * one its key and slug make), signed by signer (0: the seed); version v. Uploaded into slot k as an installer does */
+static int put(uint32_t k, const uint8_t *b, uint32_t n)   /* (as editor_module.c: begin, 256-byte writes, commit) */
+{
+    int rc = mod_put_begin(k, n);
+    for (uint32_t off = 0; !rc && off < n; off += 256u)
+        rc = mod_put_write(k, off, b + off, n - off < 256u ? n - off : 256u);
+    return rc ? rc : mod_put_commit(k);
+}
+static uint32_t authored(const char *vendor, const char *slug, const uint8_t *seed, const uint8_t *key,
+                         const uint8_t *id, const uint8_t *signer, uint32_t v, mod_ident_v3 *out)
+{
+    mod_file3_t h;
+    mod_ident_v3 m;
+    uint8_t pk[32], sg[64];
+    uint32_t image = 256u, at = MOD3_HEAD + image;
+    memset(file, 0, sizeof file);
+    memset(&h, 0, sizeof h);
+    for (uint32_t i = 0; i < image; i++) file[MOD3_HEAD + i] = (uint8_t)(i * 5u + 3u);
+    if (seed && !key) {
+        test_sign(seed, 0, 0, sg, pk);
+        key = pk;
+    }
+    uint32_t idnt = at;
+    h.uid = test_idnt(file, &at, vendor, slug, "TEST", seed ? key : 0, &m);
+    if (id) {                                       /* (another ID than its key and slug make: a forgery) */
+        memcpy(file + idnt + 8u, id, 8);
+        memcpy(m.id, id, 8);
+        memcpy(&h.uid, id, 4);
+    }
+    if (seed)
+        test_seal(file, &at, signer ? signer : seed);
+    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = 25; h.host = MOD3_HOST_MIN; h.flags = MOD3_FILE_CHUNKS;
+    h.image = image; h.bss = 16; h.version = (uint16_t)v; h.total = at;
+    strncpy(h.name, "JUNO-106", sizeof h.name);
+    h.crc = st_crc32(file + MOD3_HEAD, at - MOD3_HEAD);
+    memcpy(file, &h, sizeof h);
+    if (out)
+        *out = m;
+    return at;
 }
 static uint32_t slot_of_name(const char *name)
 {
@@ -117,15 +151,15 @@ int main(void)
     flash_ok = 1;
     mod_boot();
     /* ---- the map */
-    install(0, "acme", "JUNO", 22, 32);
+    uint32_t juno_uid = install(0, "acme", "JUNO", 22, 32);
     install(1, "acme", "PPG", 22, 0);
     install(2, "acme", "FAKEFM", 12, 0);            /* (asks for a number of Melodee's own) */
     boot();
     uint32_t juno = mods[slot_of_name("JUNO")].engine, ppg = mods[slot_of_name("PPG")].engine,
              fake = mods[slot_of_name("FAKEFM")].engine;
     bad += check("UIDs from the files, Melodee's numbers by the manifest's UIDs (FM6 12, SID 3, the Prophet 19)",
-                 mods[0].uid == idnt_crc("acme", "JUNO") && eng_map[12].uid == 0x04AC81A9u && eng_map[3].uid == 0xC4263526u &&
-                 eng_map[19].uid == 0xA2CFA9ABu);
+                 mods[0].uid == juno_uid && eng_map[12].uid == 0x3909E71Au && eng_map[3].uid == 0x7F9158D4u &&
+                 eng_map[19].uid == 0xC585ED74u);
     bad += check("numbers: the one asked for (JUNO 22), the first free (PPG 23, its 22 taken), never Melodee's own (FAKEFM "
                  "asked for 12: 24)", juno == 22u && ppg == 23u && fake == 24u && mods[2].state == MS_STORED &&
                  !strcmp(eng_name(22), "JUNO") && !strcmp(eng_name(23), "PPG"));
@@ -193,7 +227,7 @@ int main(void)
     eng_map_dirty = 1;
     boot();
     bad += check("records' owners: the default (DRUM's, the manifest's General MIDI kit synth) and one kept by the map record",
-                 rec_owner_uid(0) == 0x86C271CFu && rec_owner_uid(3) == 0x12345678u);
+                 rec_owner_uid(0) == 0x7D998FFEu && rec_owner_uid(3) == 0x12345678u);
     {   /* an editor's PUT (a backup object, a module upload) is one stream over many messages, the main loop running
          * between them: the map record's save waits for it (else the stream goes stale: the PUT fails, rc 4) */
         static uint8_t body[1000];
@@ -298,6 +332,59 @@ int main(void)
             refused += mod_sign_check(sig, pk, (uint32_t)strlen(V[v][1]) / 2u, sg_read) != 0;
         }
         bad += check("Ed25519: RFC 8032's three vectors verify, each with a bit flipped refused", ok == 3u && refused == 3u);
+        uint8_t pk[32], sig[64];
+        static const uint8_t msg[3] = {1, 2, 3};
+        test_sign(TEST_SEED, msg, sizeof msg, sig, pk);
+        sg_msg = msg;
+        mod_sign_begin();
+        bad += check(".. the tests' signer (mod_ident_test.h): the test key's seed makes the host's test key, its signature "
+                     "verifies", !memcmp(pk, MOD_SIGN_KEYS[1], 32) && !mod_sign_check(sig, pk, sizeof msg, sg_read));
+    }
+    /* ---- phase 8: an ID is its author's (its key and slug); the install refuses one that is not its own */
+    {
+        static const uint8_t A[32] = {1, 2, 3}, B[32] = {9, 8, 7};   /* (two authors' keys' seeds) */
+        mod_ident_v3 ia, ib, ix;
+        uint32_t n;
+        int ra, rb, rx;
+        for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
+        mod_run.alive = 0; mod_run.crashed = 0; mod_run.loop = 0; bootguard.failed = 0;
+        boot();
+        mod_skipped = 0; mod_blamed = 0;
+        n = authored("Saadet", "juno-106", A, 0, 0, 0, 1, &ia);
+        ra = put(4, file, n);
+        n = authored("Copycat", "juno-106", B, 0, 0, 0, 1, &ib);
+        rb = put(5, file, n);
+        bad += check("phase 8: two authors' synths with the same slug (juno-106): two IDs, both installed, signed by their "
+                     "authors", memcmp(ia.id, ib.id, 8) && ra != -4 && rb != -4 && mods[4].len && mods[5].len &&
+                     mods[4].uid != mods[5].uid && mods[4].sig == MOD_SIG_AUTHOR && mods[5].sig == MOD_SIG_AUTHOR);
+        ui.msg[0] = 0;
+        n = authored("Copycat", "juno-106", B, 0, ia.id, 0, 1, 0);   /* (Saadet's ID, B's key) */
+        rx = put(6, file, n);
+        bad += check(".. a file claiming Saadet's ID with another author's key: refused, said so, its slot empty",
+                     rx == -4 && !mods[6].len && !st_exists(st_mod_obj(6, 0)) && !strcmp(ui.msg, "NOT ITS OWN: JUNO-106"));
+        n = authored("Saadet", "juno-106", A, ia.key, 0, B, 1, 0);   /* (Saadet's key named, B signing) */
+        rx = put(6, file, n);
+        bad += check(".. a file naming Saadet's key, signed by another: refused", rx == -4 && !mods[6].len);
+        n = authored("melodee", "trio", B, MOD_SIGN_KEYS[0], 0, B, 1, 0);   /* (Melodee's key named, an author signing) */
+        rx = put(6, file, n);
+        bad += check(".. a file naming Melodee's key, signed by an author: refused", rx == -4 && !mods[6].len);
+        n = authored("melodee", "trio", TEST_SEED, MOD_SIGN_KEYS[0], 0, TEST_SEED, 1, &ix);
+        rx = put(6, file, n);
+        bad += check(".. Melodee's key named, one of Melodee's keys signing (the host's test key): Melodee's, TRIO's ID "
+                     "and number (6)", rx != -4 && mods[6].sig == MOD_SIG_MELODEE && mods[6].uid == 0x2CF92788u &&
+                     mods[6].engine == 6u);
+        (void)mod_delete(6);
+        ui.msg[0] = 0;
+        n = authored("Saadet", "juno-106", 0, 0, 0, 0, 1, &ix);
+        rx = put(6, file, n);
+        bad += check(".. unsigned: installed with the warning, an ID of its own (not the signed one's)",
+                     rx != -4 && mods[6].len && mods[6].sig == MOD_SIG_NONE && !strcmp(ui.msg, "UNSIGNED: JUNO-106") &&
+                     memcmp(ix.id, ia.id, 8));
+        n = authored("Saadet", "juno-106", A, 0, 0, 0, 2, &ix);
+        rx = put(4, file, n);
+        bad += check(".. an update (Saadet's key, version 2) into its slot: replaces it, the same ID",
+                     rx != -4 && mods[4].version == 2u && !memcmp(&mods[4].uid, ia.id, 4) && !memcmp(ix.id, ia.id, 8) &&
+                     mods[4].sig == MOD_SIG_AUTHOR);
     }
     printf("%s\n", bad ? "IDENTITY TEST FAILED" : "identity test passed");
     return bad ? 1 : 0;

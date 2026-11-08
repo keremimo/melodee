@@ -345,7 +345,7 @@ static const mod_engine_v3 TRIO = {
     .render = trm_render,
 };
 
-MOD3_IDENT("melodee", "TRIO");
+MOD3_IDENT("melodee", "trio", "TRIO");
 MOD3_PRESETS = {
     {"FAT BASS", 8, {0, 0, -12, 9, 0, 62, 45, 64}, {0, 62, 60, 25}, 40, 1},
     {"ARP LEAD", 8, {2, 12, 0, 4, 0, 88, 25, 32}, {0, 60, 90, 30}, 8, 0},

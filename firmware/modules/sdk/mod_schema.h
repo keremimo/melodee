@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* A synth module's patch and its parameters, inside its file: the SCHM chunk (after the address words, as PRST:
  * module_presets.h). The firmware reads it where the file is, the module's code loaded or not: how many bytes the

@@ -275,7 +275,7 @@ static const mod_engine_v3 WHEEL = {
     .state = whl_state,
 };
 
-MOD3_IDENT("melodee", "WHEL");
+MOD3_IDENT("melodee", "wheel", "WHEL");
 MOD3_PRESETS = {
     {"FULL ORGAN", 8, {15, 0, 0, 0, 0, 30, 20, 1}, {0, 64, 127, 45}, 0, 0},
     {"JAZZ PERC", 8, {4, 0, 0, 0, 2, 50, 8, 1}, {0, 64, 127, 40}, 0, 0},

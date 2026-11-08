@@ -229,22 +229,24 @@ outside_author() {                                # the SDK alone: firmware/modu
     _d="$OUT/outside"
     rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp firmware/modules/trio/trio.c "$_d/trio.c" ||
         { fail "outside author: the folder"; return; }
-    step "outside author: the SDK folder alone (no Melodee tree, no key) builds a module from its source" \
-        sh -c "cd '$_d' && MELODEE_SIGN_KEY= '$PY' sdk/mod_build.py trio.c -o out/trio.mmod >/dev/null" || return
+    printf '%s\n' 028b4316505219da8b45b58781af5e22cd8e9771377068f9a1232d7e872b9f52 > "$_d/test.key"   # (the test key's seed)
+    step "outside author: the SDK folder alone (no Melodee tree; the test key, as a tree without the release key) builds a module from its source" \
+        sh -c "cd '$_d' && MELODEE_SIGN_KEY=test.key '$PY' sdk/mod_build.py trio.c -o out/trio.mmod >/dev/null" || return
     $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/trio.c" -o "$_d/trio.o" || { fail "outside author: the host object"; return; }
     build outside_author_test outside_author_test -O1 $FW "$_d/trio.o" &&
-        step "outside author: installed, listed, loaded and played in the host firmware as the reference plays it, unsigned (the warning); the in-tree file signed and the same module" \
+        step "outside author: installed, listed, loaded and played in the host firmware as the reference plays it, Melodee's TRIO; the in-tree file (the release key's) the same module" \
             "$OUT/outside_author_test" "$_d/out/trio.mmod" build/modules/trio.mmod
 }
 outside_j106() {                                  # an outside synth: Saadet's JUNO-106 (outside/j106) and the SDK alone
     _d="$OUT/outside_j106"
     rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp -R outside/j106 "$_d/j106" ||
         { fail "outside JUNO-106: the folder"; return; }
-    step "outside JUNO-106: Saadet's synth built from the SDK folder alone (no Melodee tree, no key: unsigned)" \
-        sh -c "cd '$_d' && MELODEE_SIGN_KEY= '$PY' sdk/mod_build.py j106/j106.c -o out/j106.mmod >/dev/null" || return
+    printf '%s\n' 5aade7a5e6c1b3d0a2e7b6f4c9d8e1f0a3b2c5d4e7f6a9b8c1d0e3f2a5b4c7d6 > "$_d/author.key"   # (a test author)
+    step "outside JUNO-106: Saadet's synth built from the SDK folder alone (no Melodee tree; signed by a test author's key)" \
+        sh -c "cd '$_d' && MELODEE_AUTHOR_KEY=author.key '$PY' sdk/mod_build.py j106/j106.c -o out/j106.mmod >/dev/null" || return
     $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/j106/j106.c" -o "$_d/j106.o" || { fail "outside JUNO-106: the host object"; return; }
     build outside_j106_test outside_j106_test -O1 $FW "$_d/j106.o" || return
-    step "outside JUNO-106: installed (the first free number, unsigned), its presets from its file, plays, its pages, SysEx, a project saved, loaded, on another device" \
+    step "outside JUNO-106: installed (the first free number, its author's), its presets from its file, plays in stereo, its pages, SysEx, a project saved, loaded, on another device" \
         "$OUT/outside_j106_test" "$_d/out/j106.mmod" "$_d/mel"
     if command -v node >/dev/null 2>&1; then
         step "outside JUNO-106: its project through a .mel file (web/mel_file.js: export, import)" \

@@ -2,9 +2,11 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * The Ed25519 verification below follows TweetNaCl (Daniel J. Bernstein, Bernard van Gastel, Wesley Janssen, Tanja
  * Lange, Peter Schwabe, Sjaak Smetsers: public domain), restated for streaming the message from the flash. */
-/* A synth module's signature (mod_abi3.h MOD3_SIGN_TAG): Ed25519 (RFC 8032) over every byte from the file's head's end
- * to the SIGN chunk, by one of Melodee's keys (MOD_SIGN_KEYS). Checked once, when a module is installed
- * (module_store.c mod_put_commit): a module without a good signature installs all the same, with a one-line warning.
+/* A synth module's identity (mod_abi3.h: its IDNT chunk's ID, made from its author's key and its slug) and signature
+ * (MOD3_SIGN_TAG): Ed25519 (RFC 8032) over every byte from the file's head's end to the SIGN chunk, by the key its IDNT
+ * chunk names (Melodee's release key: by any of Melodee's keys, MOD_SIGN_KEYS). Checked once, when a module is
+ * installed (module_store.c mod_put_commit): a file whose ID or signature is not its own is refused; an unsigned one
+ * installs all the same, with a one-line warning.
  * Main loop only; no division, 64-bit multiplies (pi32v2: int64 mul in hardware). Built for size (tools/size_fns.py). */
 typedef int64_t sg_gf[16];
 static const sg_gf SG_D2 = {0xf159, 0x26b2, 0x9b94, 0xebd6, 0xb156, 0x8283, 0x149a, 0x00e0,
@@ -297,8 +299,9 @@ static int sg_unpackneg(sg_gf r[4], const uint8_t p[32])
     sg_M(r[3], r[0], r[1]);
     return 0;
 }
-/* Melodee's keys (Ed25519 public keys): the release key (tools/mod_build.py signs with its private half,
- * ~/.config/melodee/module-sign.key, kept off the repository); host builds also the tests' key */
+/* Melodee's keys (Ed25519 public keys): the release key first, the identity key of every synth Melodee makes
+ * (tools/mod_build.py signs with its private half, ~/.config/melodee/module-sign.key, kept off the repository); host
+ * builds and a build without the release key also the tests' key */
 static const uint8_t MOD_SIGN_KEYS[][32] = {
 #include "mod_sign_keys.h"
 };
@@ -336,15 +339,41 @@ static int mod_sign_check(const uint8_t *sig, const uint8_t *pk, uint32_t n, int
 #undef x
 #undef b
 }
-/* a file's signature (its SIGN chunk at at, the last; the bytes it covers: from the head's end to the chunk) by any of
- * Melodee's keys: 1 signed, 0 not */
+enum { MOD_SIG_MELODEE = 1, MOD_SIG_NONE = 2, MOD_SIG_AUTHOR = 3 };   /* (module_store.c mods[].sig; 0 not checked) */
 static uint8_t *wire_take(void);                   /* (project.c: the main loop's staging) */
-static int mod_signed(const uint8_t *sig, uint32_t n, int (*read)(uint32_t, void *, uint32_t))
+static void mod_sign_begin(void)                   /* the working values in the staging, for the calls below */
 {
     _Static_assert(sizeof(sg_work_t) + 8u <= WIRE_SCRATCH_BYTES, "Ed25519's working values fit the staging");
     sg_w = (sg_work_t *)(void *)(((uintptr_t)wire_take() + 7u) & ~(uintptr_t)7u);
+}
+/* the ID its IDNT chunk's parts make (mod_abi3.h): the first 8 bytes of SHA-512 of the prefix, the key and the slug
+ * (signed), or of the prefix, the vendor, '/' and the slug (unsigned) */
+static uint32_t mod_id_len(const char *s) { uint32_t n = 0; while (n < MOD3_NAME_MAX && s[n]) n++; return n; }
+static void mod_id_make(const mod_ident_v3 *id, uint8_t *out)
+{
+    static const char SIGNED[] = MOD3_ID_SIGNED, UNSIGNED[] = MOD3_ID_UNSIGNED;
+    uint8_t d[64];
+    sg_sha_init(&sg_w->h);
+    if (id->flags & MOD3_IDNT_SIGNED) {
+        sg_sha_add(&sg_w->h, (const uint8_t *)SIGNED, sizeof SIGNED - 1u);
+        sg_sha_add(&sg_w->h, id->key, sizeof id->key);
+    } else {
+        sg_sha_add(&sg_w->h, (const uint8_t *)UNSIGNED, sizeof UNSIGNED - 1u);
+        sg_sha_add(&sg_w->h, (const uint8_t *)id->vendor, mod_id_len(id->vendor));
+        sg_sha_add(&sg_w->h, (const uint8_t *)"/", 1u);
+    }
+    sg_sha_add(&sg_w->h, (const uint8_t *)id->slug, mod_id_len(id->slug));
+    sg_sha_end(&sg_w->h, d);
+    for (int i = 0; i < 8; i++) out[i] = d[i];
+}
+/* a file's signature (its SIGN chunk; the n bytes it covers: from the head's end to the chunk) by the key pk its IDNT
+ * names: MOD_SIG_AUTHOR, or (pk Melodee's release key) MOD_SIG_MELODEE when any of Melodee's keys signed it; 0 not */
+static int mod_signed_by(const uint8_t *sig, const uint8_t *pk, uint32_t n, int (*read)(uint32_t, void *, uint32_t))
+{
+    if (sg_vn(pk, MOD_SIGN_KEYS[0], 32))
+        return mod_sign_check(sig, pk, n, read) ? 0 : MOD_SIG_AUTHOR;
     for (uint32_t k = 0; k < sizeof MOD_SIGN_KEYS / sizeof MOD_SIGN_KEYS[0]; k++)
         if (!mod_sign_check(sig, MOD_SIGN_KEYS[k], n, read))
-            return 1;
+            return MOD_SIG_MELODEE;
     return 0;
 }

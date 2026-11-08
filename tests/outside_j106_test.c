@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* An outside synth (tests/run_tests.sh outside_j106): Saadet's JUNO-106 (outside/j106, MPL-2.0) built from the SDK alone
- * in a folder of its own (firmware/modules/sdk and outside/j106 copied away; no Melodee tree, no key: unsigned) and, the
+ * in a folder of its own (firmware/modules/sdk and outside/j106 copied away; no Melodee tree; signed by a test author
+ * key: its ID that key's and "juno-106") and, the
  * same source, for the host from that folder (its object: the code the host plays). The firmware has no line of it.
  *   outside_j106_test J106.mmod DIR        installed as an upload after another outside synth that asked for the same
  *                                          number (the first free one through the engine map, the unsigned warning),
@@ -23,6 +24,7 @@
 #include "backup_test.c"
 #include "../firmware/src/sysex_route.c"
 #include "../firmware/src/module_store.c"
+#include "mod_ident_test.h"
 #include <sys/stat.h>
 #include <assert.h>
 
@@ -54,7 +56,7 @@ static void save_file(const char *name, const void *p, uint32_t n)
     FILE *f = fopen(path, "wb");
     if (f) { fwrite(p, 1, n, f); fclose(f); }
 }
-static uint32_t uid_of(const char *s) { uint32_t u = st_crc32(s, (uint32_t)strlen(s)); return u ? u : 1u; }
+static uint32_t other_uid;                          /* (acme/OTHER's: install_other) */
 static int put(uint32_t k, const uint8_t *b, uint32_t n)   /* (as editor_module.c: begin, 256-byte writes, commit) */
 {
     int rc = mod_put_begin(k, n);
@@ -66,22 +68,13 @@ static int put(uint32_t k, const uint8_t *b, uint32_t n)   /* (as editor_module.
 static void install_other(uint32_t k)
 {
     mod_file3_t h;
-    mod_ident_v3 id;
-    uint32_t image = 256u, at = MOD3_HEAD + image, tag = MOD3_IDNT_TAG, n = sizeof id;
+    uint32_t image = 256u, at = MOD3_HEAD + image;
     memset(other, 0, sizeof other);
     memset(&h, 0, sizeof h);
-    memset(&id, 0, sizeof id);
     for (uint32_t i = 0; i < image; i++) other[MOD3_HEAD + i] = (uint8_t)(i * 7u + 1u);
-    id.uid = uid_of("acme/OTHER");
-    id.version = MOD3_IDNT_VERSION;
-    memcpy(id.tag, "OTHE", 4);
-    memcpy(id.vendor, "acme", 4);
-    memcpy(other + at, &tag, 4);
-    memcpy(other + at + 4, &n, 4);
-    memcpy(other + at + 8, &id, n);
-    at += 8u + n;
+    other_uid = h.uid = test_idnt(other, &at, "acme", "other", "OTHE", 0, 0);   /* (unsigned) */
     h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = 22; h.host = MOD3_HOST_MIN; h.flags = MOD3_FILE_CHUNKS;
-    h.image = image; h.bss = 16; h.version = 1; h.uid = id.uid; h.total = at;
+    h.image = image; h.bss = 16; h.version = 1; h.total = at;
     strncpy(h.name, "OTHER", sizeof h.name);
     h.crc = st_crc32(other + MOD3_HEAD, at - MOD3_HEAD);
     memcpy(other, &h, sizeof h);
@@ -269,12 +262,13 @@ static int run(void)
                  !strcmp(eng_name(22), "OTHER"));
     ui.msg[0] = 0;
     int rc = put(3, file, file_n);
-    uint32_t e = mods[3].engine, uid = uid_of("saadet/JUNO-106");
+    uint32_t e = mods[3].engine, uid;
+    memcpy(&uid, file + 24, 4);                     /* (its ID's first 4 bytes: its head's uid) */
     bad += check("JUNO-106 installs as an upload (slot 3), its code in SRAM; it asked for 22 too: the first free number, 23",
                  rc == MS_LOADED && e == 23u && eng_ok(e) && !strcmp(eng_name(e), "JUNO-106") && mod_at[e] == 4u);
-    bad += check(".. who it is: CRC-32 of saadet/JUNO-106, in the device's engine map", mods[3].uid == uid &&
-                 eng_map[e].uid == uid && eng_map[22].uid == uid_of("acme/OTHER"));
-    bad += check(".. unsigned: the one-line warning", mods[3].sig == 2u && !strcmp(ui.msg, "UNSIGNED: JUNO-106"));
+    bad += check(".. who it is: its ID (its author's key and juno-106), in the device's engine map", mods[3].uid == uid &&
+                 eng_map[e].uid == uid && eng_map[22].uid == other_uid);
+    bad += check(".. signed by its author's key: no warning", mods[3].sig == MOD_SIG_AUTHOR && !ui.msg[0]);
     eng_map_service(1);
     boot();
     bad += check("power-on: listed from its record, the same number, its code not loaded", mods[3].state == MS_STORED &&

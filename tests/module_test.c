@@ -24,6 +24,7 @@
 #include "persistence_test.c"
 #include "../firmware/src/sysex_route.c"       /* (the synths' SysEx in: the FM6 bank phrases, through the module) */
 #include "../firmware/src/module_store.c"
+#include "mod_ident_test.h"                      /* (who a test file is: its IDNT and SIGN chunks) */
 #include "module_phrases.h"
 #include "module_preset_golden.h"               /* (the factory presets as c53538c9's makers made them) */
 #if !MELODEE_FM6_BUILTIN
@@ -95,10 +96,14 @@ static uint32_t make_file(uint8_t *b, uint32_t engine, const char *name, uint32_
         memcpy(b + MOD3_HEAD + image + 4u * k, &off, 4);
     }
     uint32_t body = image + 4u * nrel,
-             ck = stem ? mmod_chunks(stem, b + MOD3_HEAD + body, MOD_FILE_MAX - MOD3_HEAD - body) : 0u;
-    h.flags = ck ? (uint8_t)MOD3_FILE_CHUNKS : 0u;
-    h.total = MOD3_HEAD + body + ck;
-    h.crc = st_crc32(b + MOD3_HEAD, body + ck);
+             ck = stem ? mmod_chunks(stem, b + MOD3_HEAD + body, MOD_FILE_MAX - MOD3_HEAD - body) : 0u,
+             at = MOD3_HEAD + body + ck;
+    /* who it is: Melodee's synth of that name (Melodee's key, the test key signing), as tools/mod_build.py makes it */
+    h.uid = test_idnt(b, &at, "melodee", test_slug(name), name, MOD_SIGN_KEYS[0], 0);
+    test_seal(b, &at, TEST_SEED);
+    h.flags = (uint8_t)MOD3_FILE_CHUNKS;
+    h.total = at;
+    h.crc = st_crc32(b + MOD3_HEAD, at - MOD3_HEAD);
     memcpy(b, &h, MOD3_HEAD);
     return h.total;
 }

@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* An outside author's synth module (tests/run_tests.sh outside_author): firmware/modules/sdk copied alone into a
- * folder of its own with one module's source (TRIO's), the module built there by the SDK's builder (no Melodee tree,
- * no key: unsigned) and, beside this test, the same source built for the host from that folder (its object: the code the
+ * folder of its own with one module's source (TRIO's), the module built there by the SDK's builder (no Melodee tree;
+ * Melodee's synth, signed with the test key as a tree without the release key signs it) and, beside this test, the same source built for the host from that folder (its object: the code the
  * host plays). Here the file is installed into a slot as the editor's upload writes it, checked, listed, its number
  * given, loaded and played: sample for sample what the firmware's own reference of the same synth plays (the retired
- * built-in TRIO, firmware/modules/host). It installs with the unsigned warning; with the in-tree build's file (signed)
- * it installs without one, and the two files are the same module (image, address words, presets, who it is).
+ * built-in TRIO, firmware/modules/host). It installs as Melodee's (the host takes the test key), and with the in-tree
+ * build's file (the release key's) the two files are the same module (image, address words, presets, who it is).
  *   outside_author_test OUTSIDE.mmod INTREE.mmod */
 #define PERSISTENCE_TEST_NO_MAIN
 #include "persistence_test.c"
@@ -81,10 +81,11 @@ int main(int argc, char **argv)
     mod_boot();
     ui.msg[0] = 0;
     int rc = put(3, file[0], file_n[0]);
-    bad += check("the outside folder's file installs (an upload into slot 3), its number its own (6: TRIO's UID), loaded",
-                 rc == MS_LOADED && mods[3].engine == 6u && mods[3].uid == 0xDEA21A21u && eng_ok(6) &&
+    bad += check("the outside folder's file installs (an upload into slot 3), its number its own (6: TRIO's ID), loaded",
+                 rc == MS_LOADED && mods[3].engine == 6u && mods[3].uid == 0x2CF92788u && eng_ok(6) &&
                  !strcmp(eng_name(6), "TRIO"));
-    bad += check(".. with the one-line warning: no Melodee signature", mods[3].sig == 2u && !strcmp(ui.msg, "UNSIGNED: TRIO"));
+    bad += check(".. Melodee's synth, one of Melodee's keys signing (the host's test key): no warning",
+                 mods[3].sig == MOD_SIG_MELODEE && !ui.msg[0]);
     uint32_t same = 1, heard = 0;
     for (uint32_t p = 0; p < 5u; p++) {
         phrase(p, a, sizeof a / sizeof a[0]);

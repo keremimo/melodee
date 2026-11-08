@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Build a synth module (ABI 3: mod_abi3.h) from one C file: a .mmod file. The SDK's builder: this folder alone builds
 an SDK module (mod_sdk.h), anywhere; in Melodee's tree it builds Melodee's engine-source modules too.
@@ -11,13 +11,16 @@ an SDK module (mod_sdk.h), anywhere; in Melodee's tree it builds Melodee's engin
 
 Needs: Python 3, a host C compiler (cc, or HOST_CC: a module's schema is written by its own source, built natively),
 and the JieLi pi32v2 toolchain (JIELI_TOOLCHAIN, else ~/.jieli/toolchain; off Linux x86-64 it runs in Docker,
-JIELI_DOCKER_IMAGE). Signs the file when it has a key (MELODEE_SIGN_KEY, else ~/.config/melodee/module-sign.key):
-a module without Melodee's signature installs with a one-line warning (mod_sign.py).
+JIELI_DOCKER_IMAGE). Signs the file with its author's key (MELODEE_AUTHOR_KEY, a file; "" none: unsigned; else
+~/.config/melodee/author.key, made on the first build: keep it, it is who you are) and names that key in the IDNT
+chunk: its ID comes from the key and its slug (mod_abi3.h), so only its author makes a file with that ID. Melodee's own
+synths (vendor "melodee") are Melodee's key's: MELODEE_SIGN_KEY, else ~/.config/melodee/module-sign.key, else in
+Melodee's tree the test key (mod_sign.py). A module without a signature installs with a one-line warning.
 
 Two kinds of source, one file format:
   - an SDK module (#include "mod_sdk.h": TRIO, WHEEL, an outside author's synth) sees only the contract, built -Os
     without any firmware option. What it is comes from its source: MOD3_EXPORT (the descriptor), MOD3_IDENT (vendor,
-    tag: its UID is CRC-32 of "vendor/name"), MOD3_PRESETS (its factory presets, the first one the INIT), MOD3_SCHEMA
+    slug, tag: its ID from the slug and its key), MOD3_PRESETS (its factory presets, the first one the INIT), MOD3_SCHEMA
     (its parameters and pages, mod_schema.h: written by mod_dump.c, the source built for the host);
   - an engine-source module (#include "../mod_engine.h": SID, DRUM, CZ-1, FM6, the Prophet, Melodee's tree only) is a
     synth written against the firmware's engine headers, built as tools/build.py builds the image's audio code (IR,
@@ -74,29 +77,74 @@ IDNT_TAG = 0x544E4449                                # "IDNT": who the module is
 SIGN_TAG = 0x4E474953                                # "SIGN": Ed25519 of the bytes from the head's end to it, the last
 
 
-def sign_key():
-    """the signing key's seed: MELODEE_SIGN_KEY (a file; "" none), else ~/.config/melodee/module-sign.key if there"""
-    path = os.environ.get("MELODEE_SIGN_KEY", str(Path.home() / ".config" / "melodee" / "module-sign.key"))
+IDNT = struct.Struct("<8sBBH4s16s16s32s16x")         # mod_ident_v3: id, version, flags, rsv, tag, slug, vendor, key
+IDNT_VERSION, IDNT_SIGNED = 2, 1
+MELODEE_VENDOR = "melodee"
+# Melodee's release key (firmware/src/mod_sign_keys.h): every Melodee synth's identity key, whichever of Melodee's keys
+# signs it; the test key's seed (the host builds' and a tree without the release key's: firmware/src/mod_sign_keys.h)
+MELODEE_KEY = bytes.fromhex("45442ab682efbecc08950a41f914fefc2e29c472a8f0d364d02804e0708f7189")
+TEST_SEED = hashlib.sha256(b"melodee module test key").digest()
+MELODEE_SIGNERS = (MELODEE_KEY, mod_sign.public(TEST_SEED))
+
+
+def key_file(var, default):
+    """a key's seed: the file the environment variable names ("" none; a file not there stops the build), else default
+    (None: not there)"""
+    path = os.environ.get(var, str(default))
+    if os.environ.get(var) and not Path(path).is_file():
+        raise SystemExit(f"mod_build: {var}={path}: no such key file (\"\" builds unsigned)")
     return mod_sign.load(path) if path and Path(path).is_file() else None
-IDNT = struct.Struct("<IBBH4s16s12x")
 
 
-def uid_of(vendor, name):
-    """a module's UID: CRC-32 of "<vendor>/<name>" (never 0)"""
-    return zlib.crc32(f"{vendor}/{name}".encode()) or 1
+def author_seed():
+    """the author's key: MELODEE_AUTHOR_KEY ("" none: unsigned), else ~/.config/melodee/author.key, made if missing"""
+    path = os.environ.get("MELODEE_AUTHOR_KEY", str(Path.home() / ".config" / "melodee" / "author.key"))
+    if not path:
+        return None
+    if "MELODEE_AUTHOR_KEY" in os.environ and not Path(path).is_file():
+        raise SystemExit(f"mod_build: MELODEE_AUTHOR_KEY={path}: no such key file (\"\" builds unsigned)")
+    if not Path(path).is_file() and "MELODEE_AUTHOR_KEY" not in os.environ:
+        seed = os.urandom(32)
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(fd, (seed.hex() + "\n").encode())
+        os.close(fd)
+        print(f"mod_build: your author key is new: {path} (public {mod_sign.public(seed).hex()}). Keep a copy: your "
+              "synths' IDs come from it, and an update needs the same key", file=sys.stderr)
+    return mod_sign.load(path) if Path(path).is_file() else None
+
+
+def melodee_seed(inside):
+    """Melodee's signing key: MELODEE_SIGN_KEY ("" none), else ~/.config/melodee/module-sign.key, else in Melodee's tree
+    the test key (a tree without the release key builds firmware that takes the test key: mod_sign_keys.h)"""
+    seed = key_file("MELODEE_SIGN_KEY", Path.home() / ".config" / "melodee" / "module-sign.key")
+    if seed is None and inside and os.environ.get("MELODEE_SIGN_KEY") is None:
+        seed = TEST_SEED
+    if seed is not None and mod_sign.public(seed) not in MELODEE_SIGNERS:
+        raise SystemExit("mod_build: MELODEE_SIGN_KEY is not one of Melodee's keys (mod_sign_keys.h)")
+    return seed
+
+
+def module_id(key, slug, vendor):
+    """the ID (mod_abi3.h): SHA-512 of "melodee/synth/1", key, slug (signed), or of "melodee/unsigned/1", vendor, "/",
+    slug (key None), its first 8 bytes"""
+    m = b"melodee/synth/1" + key + slug.encode() if key else b"melodee/unsigned/1" + vendor.encode() + b"/" + slug.encode()
+    return hashlib.sha512(m).digest()[:8]
 
 
 def ident(elf, name):
-    """(vendor, tag) from the object's .mod_ident (MOD3_IDENT in the source)"""
+    """(vendor, slug, tag) from the object's .mod_ident (MOD3_IDENT in the source)"""
     d = elf.read_bytes()
     sec = elf_sections(d).get(".mod_ident")
-    if not sec or sec["size"] != 20:
-        raise SystemExit("mod_build: no MOD3_IDENT(\"vendor\", \"TAG\") in the module's source (mod_abi3.h)")
-    raw = d[sec["off"]: sec["off"] + 20]
-    vendor, tag = raw[:16].rstrip(b"\0").decode("ascii"), raw[16:].rstrip(b"\0").decode("ascii")
-    if not re.fullmatch(r"[a-z0-9-]{1,16}", vendor) or "\0" in tag or not all(32 <= ord(c) < 127 for c in tag):
-        raise SystemExit(f"mod_build: MOD3_IDENT: vendor {vendor!r} (lowercase letters, digits, '-'), tag {tag!r}")
-    return vendor, tag
+    if not sec or sec["size"] != 36:
+        raise SystemExit("mod_build: no MOD3_IDENT(\"vendor\", \"slug\", \"TAG\") in the module's source (mod_abi3.h)")
+    raw = d[sec["off"]: sec["off"] + 36]
+    vendor, slug, tag = (raw[a:b].rstrip(b"\0").decode("ascii") for a, b in ((0, 16), (16, 32), (32, 36)))
+    if not vendor or not all(32 <= ord(c) < 127 for c in vendor) or not re.fullmatch(r"[a-z0-9-]{1,16}", slug) or \
+            "\0" in tag or not all(32 <= ord(c) < 127 for c in tag):
+        raise SystemExit(f"mod_build: MOD3_IDENT: vendor {vendor!r} (printable), slug {slug!r} (lowercase letters, "
+                         f"digits, '-'), tag {tag!r}")
+    return vendor, slug, tag
 
 
 def abi_num(name):
@@ -323,14 +371,21 @@ def build(src, out, version, defs):
     engine, name, npre, key, host = describe(img, words, nbss)
     if not engine_src and key:
         raise SystemExit("mod_build: an SDK module names no key (MOD3_SDK_HEAD)")
-    vendor, tag = ident(e0, name)
-    uid = uid_of(vendor, name)
-    if engine < ENGI_MOD0 and not SHIPPED and vendor != "melodee":
+    vendor, slug, tag = ident(e0, name)
+    melodee = vendor == MELODEE_VENDOR
+    seed = melodee_seed(inside) if melodee else author_seed()
+    ikey = (MELODEE_KEY if melodee else mod_sign.public(seed)) if seed else None
+    mid = module_id(ikey, slug, vendor)
+    uid = struct.unpack_from("<I", mid)[0]
+    if not uid:
+        raise SystemExit(f"mod_build: {vendor}/{slug}'s ID begins with 4 zero bytes: pick another slug")
+    if engine < ENGI_MOD0 and not SHIPPED and not melodee:
         raise SystemExit(f"mod_build: engine {engine} is one of Melodee's own synths' numbers: ask for "
                          f"{ENGI_MOD0}..{NENGINES - 1} (a device gives a module the number it asks for when it is free)")
     if engine in SHIPPED and SHIPPED[engine] != uid:
         raise SystemExit(f"mod_build: engine {engine} is {SHIPPED[engine]:08x}'s (firmware/modules/shipped.h), this "
-                         f"module is {vendor}/{name} {uid:08x}: ask for {ENGI_MOD0}..{NENGINES - 1}")
+                         f"module is {vendor}/{slug} {uid:08x}" + ("" if ikey else " (unsigned)") +
+                         f": ask for {ENGI_MOD0}..{NENGINES - 1}")
     body = img + b"".join(struct.pack("<I", w) for w in words)
     if engine_src:                                   # (the host firmware's makers and descriptions)
         prst = presets_chunk(stem, engine, npre) if npre else b""
@@ -338,21 +393,23 @@ def build(src, out, version, defs):
     else:                                            # (the source's own: MOD3_PRESETS, MOD3_SCHEMA)
         prst = sdk_presets(e0, npre, work / (stem + ".prst"))
         schm = sdk_schema(src, work / (stem + "_dump"))
-    idnt = IDNT.pack(uid, 1, 0, 0, tag.encode().ljust(4, b"\0"), vendor.encode().ljust(16, b"\0"))
+    idnt = IDNT.pack(mid, IDNT_VERSION, IDNT_SIGNED if ikey else 0, 0, tag.encode().ljust(4, b"\0"),
+                     slug.encode().ljust(16, b"\0"), vendor.encode().ljust(16, b"\0"), ikey or bytes(32))
     chunks = (mod_presets.chunk(mod_presets.TAG, prst) if prst else b"") + \
         (mod_presets.chunk(SCHM_TAG, schm) if schm else b"") + mod_presets.chunk(IDNT_TAG, idnt)
-    seed = sign_key()
-    if seed:
+    if ikey:
         chunks += mod_presets.chunk(SIGN_TAG, mod_sign.sign(seed, body + chunks))
     head = HEAD.pack(FILE_MAGIC, ABI, engine, 1, HEAD.size + len(body) + len(chunks), len(img), nbss,
                      len(words), uid, zlib.crc32(body + chunks), name.encode()[:16].ljust(16, b"\0"), version, npre, 0,
                      key, host, 0)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(head + body + chunks)
-    print(f"module {name}: {vendor}/{name} uid {uid:08x} tag {tag!r}, ABI {ABI} host {host}, engine {engine}, " +
+    signer = ("Melodee's key" + (" (test)" if seed == TEST_SEED else "")) if melodee and ikey else \
+        f"key {ikey.hex()[:16]}" if ikey else "unsigned"
+    print(f"module {name}: {vendor}/{slug} ID {mid.hex()} ({signer}) tag {tag!r}, ABI {ABI} host {host}, engine {engine}, " +
           (f"key {key:08x}, " if key else "") +
           f"image {len(img)} B, bss {nbss} B, {len(words)} address words, stack {need} B, {npre} presets {len(prst)} B, "
-          f"schema {len(schm)} B, " + ("signed, " if seed else "unsigned, ") +
+          f"schema {len(schm)} B, " + ("signed, " if ikey else "unsigned, ") +
           f"file {len(head) + len(body) + len(chunks)} B -> {out}")
 
 
@@ -506,15 +563,28 @@ def check(path):
     idnt = chunks.get(IDNT_TAG, b"")
     if not idnt or len(idnt) != IDNT.size:
         raise SystemExit(f"{path}: no IDNT chunk (who it is)")
-    uid, iv, _, _, tag, vendor = IDNT.unpack(idnt)
-    if iv != 1 or uid != uid_of(vendor.rstrip(b"\0").decode(), n) or uid != huid:
-        raise SystemExit(f"{path}: its IDNT chunk's UID is not CRC-32 of vendor/name, or not the head's")
+    mid, iv, iflags, _, tag, slug, vendor, key = IDNT.unpack(idnt)
+    slug, vendor = slug.rstrip(b"\0").decode(), vendor.rstrip(b"\0").decode()
+    signed = iflags & IDNT_SIGNED
+    if iv != IDNT_VERSION or mid != module_id(key if signed else None, slug, vendor) or \
+            struct.unpack_from("<I", mid)[0] != huid:
+        raise SystemExit(f"{path}: its IDNT chunk's ID is not made from its key and slug, or not the head's")
+    sig, covered, at = chunks.get(SIGN_TAG, b""), b"", end
+    while sig and at + 8 <= len(b):                  # (the bytes from the head's end to the SIGN chunk)
+        tag_at, n_at = struct.unpack_from("<II", b, at)
+        if tag_at == SIGN_TAG:
+            covered = b[HEAD.size: at]
+            break
+        at += 8 + ((n_at + 3) & ~3)
+    if signed and (len(sig) != 64 or not any(mod_sign.verify(k, covered, sig) for k in
+                                             (MELODEE_SIGNERS if key == MELODEE_KEY else (key,)))):
+        raise SystemExit(f"{path}: not signed by the key its IDNT chunk names")
     schm = chunks.get(SCHM_TAG, b"")
     if schm and (len(schm) < 52 or zlib.crc32(schm[52:]) != struct.unpack_from("<I", schm, 48)[0]):
         raise SystemExit(f"{path}: its SCHM chunk does not check")
-    print(f"{path}: {vendor.rstrip(bytes(1)).decode()}/{n} uid {uid:08x}, engine {engine}, ABI {abi} host {host}" + (f", key {key:08x} (another firmware's)" if key else "") +
-          f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}, "
-          + ("signed" if len(chunks.get(SIGN_TAG, b"")) == 64 else "unsigned") + ": ok")
+    signer = ("Melodee's key" if key == MELODEE_KEY else f"key {key.hex()}") if signed else "unsigned"
+    print(f"{path}: {vendor}/{slug} ({n}) ID {mid.hex()}, {signer}, engine {engine}, ABI {abi} host {host}" +
+          f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
 
 
 WASM_TAG = 0x4D534157                          # "WASM": the module as a WebAssembly side module (Studio's core)

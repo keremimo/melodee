@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """A synth module's factory presets as the PRST chunk of its .mmod file (firmware/src/module_presets.h): the browser's
 index (names, categories) and every preset's bytes (the 16-byte common block, then the synth's own patch), each entry

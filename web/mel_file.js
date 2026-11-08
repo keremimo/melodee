@@ -211,7 +211,7 @@ const FUN_MAGIC = 0x46554E49, FBKP = 0x504B4246, FBKQ = 0x514B4246, FBKR = 0x524
 const NPART = 4, NTRK = 8, NPAT = 16, NSTEP = 64, MOTION_MAX = 64, CHAIN_ROWS = 64, CHAIN_OLD_ROWS = 16, CHAIN_OLD_BYTES = 36, FM6_NFN = 16;
 const ENGI_DRUM = 10, NAME_LEN = 12;
 // the kits' synth by its UID (firmware/modules/shipped.h: DRUM, "melodee/DRUM"; the engine map's default number 10)
-const KIT_OWNER_UID = 0x86C271CF, EMX_TAG = 0x31584D45, EMX_TRAIL = 12, EMAP_ENTRY = 24;
+const KIT_OWNER_UID = 0x7D998FFE, EMX_TAG = 0x31584D45, EMX_TRAIL = 12, EMAP_ENTRY = 24;
 // FBKR (pattern_store.c): FBKP / FBKQ plus an end block before the sum, the engine map's entries for the numbers the
 // project names that are not Melodee's defaults (eng_map.c), the patches of parts whose synth has no 1.x format
 export function recMap(rec) {

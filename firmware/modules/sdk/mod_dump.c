@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* An SDK module's schema as its SCHM chunk (mod_schema.h): its source built for the host with this file around it
  * (mod_build.py: -DMOD_HOSTED -DMOD_DUMP -DMOD_SOURCE="its.c"), printed for the builder: "S bytes hex" */

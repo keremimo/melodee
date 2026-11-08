@@ -247,33 +247,32 @@ static int mod_sch_find(uint32_t k, const mod_file3_t *f)
     s->sch_len = c[1];
     return 1;
 }
-/* slot k's signature (its SIGN chunk, the file's last: mod_abi3.h MOD3_SIGN_TAG) by one of Melodee's keys: 1, else 0 */
+/* slot k's identity as installed (main loop): its IDNT chunk's ID made from its own key (or vendor) and slug, and a
+ * signed one's SIGN chunk (the file's last) by that key. MOD_SIG_MELODEE, _AUTHOR, _NONE (unsigned), 0: its ID or its
+ * signature is not its own */
 static uint32_t mod_sig_slot;
 static int mod_sig_read(uint32_t off, void *dst, uint32_t n) { return mod_rd(mod_sig_slot, MOD3_HEAD + off, dst, n); }
 static uint32_t mod_chunk(uint32_t k, const mod_file3_t *f, uint32_t tag, uint32_t *len);
 static int mod_sig_check(uint32_t k)
 {
     mod_file3_t f;
-    uint8_t sig[64];
+    mod_ident_v3 id;
+    uint8_t sig[64], mid[8];
     uint32_t len = 0, at;
-    if (mod_rd(k, 0, &f, sizeof f) || !(at = mod_chunk(k, &f, MOD3_SIGN_TAG, &len)) || len != sizeof sig ||
-        at + len != f.total || mod_rd(k, at, sig, sizeof sig))
+    if (mod_rd(k, 0, &f, sizeof f) || !(at = mod_chunk(k, &f, MOD3_IDNT_TAG, &len)) || len != sizeof id ||
+        mod_rd(k, at, &id, sizeof id))
+        return 0;
+    mod_sign_begin();
+    mod_id_make(&id, mid);
+    if (memcmp(mid, id.id, sizeof mid))
+        return 0;
+    if (!(id.flags & MOD3_IDNT_SIGNED))
+        return MOD_SIG_NONE;
+    if (!(at = mod_chunk(k, &f, MOD3_SIGN_TAG, &len)) || len != sizeof sig || at + len != f.total ||
+        mod_rd(k, at, sig, sizeof sig))
         return 0;
     mod_sig_slot = k;
-    return mod_signed(sig, at - 8u - MOD3_HEAD, mod_sig_read);
-}
-/* who a file's head says it is: its UID, or (a file from before the map) "melodee/<name>"'s, the synths Melodee made */
-static uint32_t mod_head_uid(const mod_file3_t *f)
-{
-    char v[MOD3_NAME_MAX + 8u];
-    uint32_t n = 0;
-    if (f->uid)
-        return f->uid;
-    for (const char *p = SHIP_VENDOR "/"; *p; p++)
-        v[n++] = *p;
-    for (uint32_t i = 0; i < MOD3_NAME_MAX && f->name[i]; i++)
-        v[n++] = f->name[i];
-    return st_crc32(v, n);
+    return mod_signed_by(sig, id.key, at - 8u - MOD3_HEAD, mod_sig_read);
 }
 /* slot k's chunk tag: its payload's place in the file (*len its length), 0: none */
 static uint32_t mod_chunk(uint32_t k, const mod_file3_t *f, uint32_t tag, uint32_t *len)
@@ -288,19 +287,18 @@ static uint32_t mod_chunk(uint32_t k, const mod_file3_t *f, uint32_t tag, uint32
         }
     }
 }
-/* who slot k's module is (its IDNT chunk): its UID and tag into the slot; a file without one (built before the map):
- * "melodee/<name>", the synths Melodee made then. 0, or 1 (a bad chunk) */
+/* who slot k's module is (its IDNT chunk, as installed: mod_sig_check made sure its ID is its own): its UID (the ID's
+ * first 4 bytes, the head's) and tag into the slot. 0, or 1 (no chunk, a bad one) */
 static int mod_id_find(uint32_t k, const mod_file3_t *f)
 {
     mod_slot_t *s = &mods[k];
-    mod_ident_v3 id;
+    uint8_t id[16];                                 /* (mod_ident_v3's first 16 bytes: id, version, flags, rsv, tag) */
     uint32_t len = 0, at = mod_chunk(k, f, MOD3_IDNT_TAG, &len);
-    s->uid = mod_head_uid(f);
-    if (!at)
-        return 0;
-    if (len != sizeof id || mod_rd(k, at, &id, sizeof id) || id.version != MOD3_IDNT_VERSION || id.uid != s->uid)
+    s->uid = f->uid;
+    if (!at || len != sizeof(mod_ident_v3) || mod_rd(k, at, id, sizeof id) || id[8] != MOD3_IDNT_VERSION || !f->uid ||
+        ((uint32_t)id[0] | (uint32_t)id[1] << 8 | (uint32_t)id[2] << 16 | (uint32_t)id[3] << 24) != f->uid)
         return 1;                                   /* (the chunk and the head say who it is: they agree) */
-    memcpy(s->tag, id.tag, sizeof s->tag);
+    memcpy(s->tag, id + 12, sizeof s->tag);
     return 0;
 }
 /* slot k listed from its record's head, nothing loaded (power-on, an upload): MS_STORED or why not */
@@ -571,14 +569,32 @@ static int mod_put_check(uint32_t k, uint32_t len)
     if (st_stream_read(&mod_up, 0, &mod_up_head, sizeof mod_up_head) || !mod_head_ok(&mod_up_head, len) ||
         !mod_head_mine(&mod_up_head))
         return -2;                                  /* (not a module, or not one this firmware plays) */
-    for (uint32_t j = 0, uid = mod_head_uid(&mod_up_head); j < NMOD; j++)   /* (the same module: its UID) */
+    for (uint32_t j = 0, uid = mod_up_head.uid; j < NMOD; j++)   /* (the same module: its UID) */
         if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].state != MS_STALE && mods[j].state != MS_NEWER &&
             mods[j].uid == uid)
             return -3;
     return 0;
 }
-/* the file as written: its head checked, no other slot holding the same module, published, loaded. MS_* (>= 0), or
- * a storage error (< 0; -2: not a module file, -3: another slot has this module) */
+/* slot k's file whole by its head's CRC: 1 */
+static int mod_crc_ok(uint32_t k)
+{
+    mod_file3_t f;
+    uint32_t w[32], crc = 0xFFFFFFFFu;
+    if (mod_rd(k, 0, &f, sizeof f))
+        return 0;
+    for (uint32_t at = MOD3_HEAD; at < f.total;) {
+        uint32_t m = f.total - at < sizeof w ? f.total - at : (uint32_t)sizeof w;
+        if (mod_rd(k, at, w, m))
+            return 0;
+        crc = st_crc32_update(crc, w, m);
+        at += m;
+    }
+    return ~crc == f.crc;
+}
+static int mod_delete(uint32_t k);
+/* the file as written: its head checked, no other slot holding the same module, published, its ID and signature its
+ * own, loaded. MS_* (>= 0), or a storage error (< 0; -2: not a module file, -3: another slot has this module, -4: its
+ * ID or signature is not its own: deleted again) */
 static int mod_put_commit(uint32_t k)
 {
     if (k != mod_up_slot)
@@ -592,11 +608,25 @@ static int mod_put_commit(uint32_t k)
     for (uint32_t j = mod_up_part + 1u; j < MOD_RECS; j++)
         if (st_exists(mod_obj(k, j)))
             (void)st_project_delete(mod_obj(k, j));   /* (a longer file's rest: gone with it) */
+    /* who it is before anything else reads it as a synth: a file claiming an ID its key did not make, or not signed by
+     * that key, goes again (a damaged one, by its CRC, is stored and its load says so: nothing of it runs) */
+    int sig = 0, whole = mod_open(k) && mod_crc_ok(k);
+    if (whole && !(sig = mod_sig_check(k))) {
+        mod_file3_t f;
+        char nm[MOD3_NAME_MAX + 1u] = {0};
+        if (!mod_rd(k, 0, &f, sizeof f))
+            memcpy(nm, f.name, MOD3_NAME_MAX);
+        (void)mod_delete(k);
+        ui_say("NOT ITS OWN: ", nm);
+        return -4;
+    }
     rc = mod_catalog(k);
+    mods[k].sig = (uint8_t)sig;                     /* (0: a damaged file's, not checked) */
     if (rc != MS_STORED)
         return rc;
-    mods[k].sig = (uint8_t)(mod_sig_check(k) ? 1u : 2u);
-    if (mods[k].sig != 1u)
+    if (!whole)
+        return mod_bring(k);
+    if (sig == MOD_SIG_NONE)
         ui_say("UNSIGNED: ", mods[k].name);         /* (it installs all the same: one line says so) */
     mod_fetch = mod_bring;
     mod_last[k] = fm1_ms;                           /* loaded once (its check); out again when nothing uses it */

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Melodee synth modules, ABI 3: the contract between a module file (.mmod, tools/mod_build.py) and every firmware that
  * plays it. A module built once keeps working when the firmware changes, because it sees nothing of the firmware but
@@ -389,29 +389,40 @@ typedef struct mod_desc_v3 {
 } mod_desc_v3;
 #define MOD3_SELF_ENGINE(self) (((self) >> 8) & 0xFFu)
 
-/* ---- who a module is: its IDNT chunk (tools/mod_build.py writes it from MOD3_IDENT in the source) */
+/* ---- who a module is: its IDNT chunk (tools/mod_build.py writes it from MOD3_IDENT in the source and the author's key)
+ * Its ID is the first 8 bytes of SHA-512 of MOD3_ID_SIGNED, the author's Ed25519 public key and the slug (a signed
+ * module: the file must carry the SIGN chunk of that key, so nobody but its author makes a file with its ID), or of
+ * MOD3_ID_UNSIGNED, the vendor, '/' and the slug (an unsigned one: anyone can make it, a device says so). A module of
+ * Melodee's (its key Melodee's release key) may be signed by any of the firmware's own keys (mod_sign.c). The slug and
+ * the vendor are their bytes up to the first 0, at most 16. */
 #define MOD3_IDNT_TAG 0x544E4449u                /* "IDNT" */
-#define MOD3_IDNT_VERSION 1u
-typedef struct mod_ident_v3 {                    /* the IDNT chunk's payload, 40 bytes */
-    uint32_t uid;                                /* CRC-32 of "<vendor>/<name>" (zlib's): the module's identity on every
-                                                  * device (the engine map: projects, presets and songs name it by this) */
-    uint8_t version, flags;                      /* MOD3_IDNT_VERSION; 0 */
+#define MOD3_IDNT_VERSION 2u
+#define MOD3_IDNT_SIGNED 1u                      /* mod_ident_v3.flags: key is its author's, the file signed by it */
+#define MOD3_ID_SIGNED "melodee/synth/1"         /* (the hashes' prefixes, without their 0) */
+#define MOD3_ID_UNSIGNED "melodee/unsigned/1"
+typedef struct mod_ident_v3 {                    /* the IDNT chunk's payload, 96 bytes */
+    uint8_t id[8];                               /* who it is (above): its identity on every device; the file head's uid
+                                                  * is its first 4 bytes (little endian) */
+    uint8_t version, flags;                      /* MOD3_IDNT_VERSION; MOD3_IDNT_SIGNED or 0 */
     uint16_t rsv;
     char tag[4];                                 /* the lists' four-letter tag, 0-padded ("": the name's first four) */
-    char vendor[MOD3_NAME_MAX];                  /* its author, 0-padded: lowercase letters, digits, '-' */
-    uint32_t rsv2[3];
+    char slug[MOD3_NAME_MAX];                    /* its own name for its identity, 0-padded: lowercase letters, digits,
+                                                  * '-' (the display name may change; the slug never does) */
+    char vendor[MOD3_NAME_MAX];                  /* its author as the lists show it, 0-padded: printable ASCII */
+    uint8_t key[32];                             /* the author's Ed25519 public key (MOD3_IDNT_SIGNED), else 0 */
+    uint32_t rsv2[4];
 } mod_ident_v3;
-/* in a module's source: MOD3_IDENT("vendor", "TAG"); the builder takes it from the object (never in the image) */
+/* in a module's source: MOD3_IDENT("vendor", "slug", "TAG"); the builder takes it from the object (never in the image) */
 #ifdef __ELF__
 #define MOD3_IDENT_PLACE __attribute__((used, section(".mod_ident")))
 #else
 #define MOD3_IDENT_PLACE __attribute__((used))   /* (host and WebAssembly builds: no section, the same bytes) */
 #endif
-#define MOD3_IDENT(vendor, tag) \
-    MOD3_IDENT_PLACE static const struct { char v[MOD3_NAME_MAX], t[4]; } mod_ident_ = {vendor, tag}
+#define MOD3_IDENT(vendor, slug, tag) \
+    MOD3_IDENT_PLACE static const struct { char v[MOD3_NAME_MAX], s[MOD3_NAME_MAX], t[4]; } mod_ident_ = {vendor, slug, tag}
 #define MOD3_SIGN_TAG 0x4E474953u                /* "SIGN": an Ed25519 signature (64 bytes) of every byte from the head's
-                                                  * end to this chunk's start, the file's last chunk (Melodee's key: a
-                                                  * module without one installs with a warning) */
+                                                  * end to this chunk's start, the file's last chunk: a signed module's
+                                                  * (MOD3_IDNT_SIGNED), by its key */
 
 typedef struct mod_file3_t {                     /* the file's head (60 bytes) */
     uint32_t magic;                              /* MOD3_FILE_MAGIC */
@@ -420,8 +431,7 @@ typedef struct mod_file3_t {                     /* the file's head (60 bytes) *
     uint8_t flags;                               /* MOD3_FILE_CHUNKS or 0 */
     uint32_t total;                              /* the file's length */
     uint32_t image, bss, nrel;
-    uint32_t uid;                                /* who it is: = its IDNT chunk's (0: a file from before the map, which
-                                                  * reads as "melodee/<name>") */
+    uint32_t uid;                                /* who it is: its IDNT chunk's ID's first 4 bytes (little endian) */
     uint32_t crc;                                /* CRC-32 of the bytes after the head */
     char name[MOD3_NAME_MAX];                    /* = the descriptor's, 0-padded (the lists without loading) */
     uint16_t version;                            /* the module's own */

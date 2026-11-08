@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* A synth module's image (tools/mod_build.py): one block from MOD_BASE (0; the tool links a second time at another
  * base to check the address list), the descriptor first, then code, constants and initialised data; .bss after it
