@@ -15,7 +15,8 @@
  *
  * File: mod_file_t with abi MOD_ABI_NATIVE, then the key (u32: a 56-byte head), then the image as for ABI 1 (its
  * first bytes are mod_native_t, mod_file_t.desc 0), the address words, bss after the image in RAM.
- * Included after core.h, dsp.c, drum_map.c, drum_kit.h, cz_parts.h, fm6_parts.h and audio_batch.h, on both sides. */
+ * Included after core.h, dsp.c, drum_map.c, drum_kit.h, cz_parts.h, fm6_parts.h, audio_batch.h, audio_worker.h and
+ * p5_parts.h, on both sides. */
 #pragma once
 #include "module_abi.h"
 
@@ -30,7 +31,7 @@
                                                   * checks each native module against it) */
 
 /* the firmware's side, handed over before any call (mod_native_t.bind). Append only, MOD_NATIVE_IMPORTS + 1 */
-#define MOD_NATIVE_IMPORTS 3u
+#define MOD_NATIVE_IMPORTS 4u
 typedef struct {
     track_t *im_trk;                                 /* trk[NTRK] */
     song_t *im_song;
@@ -80,6 +81,13 @@ typedef struct {
     void (*im_audio_profile_add)(uint32_t id, uint32_t ticks);
     uint16_t *im_FM6_MKI_LOG, *im_FM6_MKI_EXP, *im_FM6_OPL_LOG, *im_FM6_OPL_EXP;
     const int32_t *im_A4_LOG;
+    /* 4: the Prophet. The parts' programs (p5_parts.h: p5_patch[NPART], p5_ready[NPART]), the presets made from
+     * Sequential's programs (prophet_programs.c: main loop), the pitch wheel's target (voice.c p5_update_bend: the
+     * part's block) */
+    p5_patch_t *im_p5_patch;
+    uint8_t *im_p5_ready;
+    void (*im_p5_preset_make)(uint32_t k, preset_t *p, char *name);
+    void (*im_p5_update_bend)(track_t *t);
 } mod_imports_t;
 
 /* The layout key: what a native module and the firmware must agree on, hashed (any change: another key) */
@@ -107,7 +115,10 @@ typedef struct {
     MNK(80, MELODEE_FM6_FAST) + MNK(82, MELODEE_AUDIO_PROFILE) +                                                    \
     MNK(83, AUDIO_BATCH_BYTES) + MNK(84, AP_FM6_CONTROL) + MNK_T(85, track_t, bend_raw) + MNK_T(86, track_t, mw) +   \
     MNK_T(87, track_t, foot) + MNK_T(88, track_t, porta) + MNK_T(89, voice_t, gate) + MNK_T(90, voice_t, mvel) +    \
-    MNK_T(91, voice_t, stage))
+    MNK_T(91, voice_t, stage) + MNK(92, sizeof(p5_patch_t)) + MNK(93, P5_OVERSAMPLE) + MNK(94, MELODEE_PROPHET_FAST) + \
+    MNK(95, AP_PROPHET) + MNK_T(96, track_t, at) + MNK_T(97, voice_t, active) + MNK_T(98, vmod_t, pitch16) +      \
+    MNK_T(99, vmod_t, fine) + MNK_T(200, vmod_t, cutoff) + MNK_T(201, vmod_t, shape) + MNK_T(202, vmod_t, amp0) +   \
+    MNK(203, P_VOICE) + MNK(204, V_UNISON) + MNK(205, P_E7))
 
 typedef struct {                                  /* the image's first bytes (mod_file_t.desc 0) */
     uint32_t magic;                               /* MOD_NDESC_MAGIC */
@@ -127,14 +138,11 @@ static void *(*mod_imp_part_mem)(uint32_t part, uint32_t bytes);
 static void (*mod_imp_voice_scale_pitch)(const track_t *t, voice_t *v, uint32_t note);
 static void (*mod_imp_cz_preset_make)(uint32_t k, preset_t *p, char *name);   /* (modules/cz/cz.c calls it) */
 static uint32_t (*mod_imp_trk_nvoice)(const track_t *t);
-static int *mod_imp_audio_worker_online;
-static int (*mod_imp_audio_worker_submit)(void (*fn)(void *), void *context);
-static int (*mod_imp_audio_worker_join)(void);
+static void (*mod_imp_p5_preset_make)(uint32_t k, preset_t *p, char *name);   /* (modules/prophet/prophet.c) */
+static void (*mod_imp_p5_update_bend)(track_t *t);
 #define voice_scale_pitch (*mod_imp_voice_scale_pitch)
 #define trk_nvoice (*mod_imp_trk_nvoice)
-#define audio_worker_online (*mod_imp_audio_worker_online)
-#define audio_worker_submit (*mod_imp_audio_worker_submit)
-#define audio_worker_join (*mod_imp_audio_worker_join)
+#define p5_update_bend (*mod_imp_p5_update_bend)
 #define mod_part_mem(part, bytes) mod_imp_part_mem(part, bytes)
 static void mod_native_bind(const mod_imports_t *im)
 {
@@ -185,6 +193,10 @@ static void mod_native_bind(const mod_imports_t *im)
     mod_imp_FM6_OPL_LOG = im->im_FM6_OPL_LOG;
     mod_imp_FM6_OPL_EXP = im->im_FM6_OPL_EXP;
     mod_imp_A4_LOG = im->im_A4_LOG;
+    mod_imp_p5_patch = im->im_p5_patch;
+    mod_imp_p5_ready = im->im_p5_ready;
+    mod_imp_p5_preset_make = im->im_p5_preset_make;
+    mod_imp_p5_update_bend = im->im_p5_update_bend;
 }
 #ifdef FM1_IRQ_TARGET
 #define MOD_NATIVE_EXPORT(sym) __attribute__((used, section(".mod_desc"))) const mod_native_t sym

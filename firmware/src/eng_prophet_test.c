@@ -3,22 +3,11 @@
 #include "performance_options.h"
 /* Prophet prototype: native patches and five (experimental dual-core: eight) voices, with two provisional
  * filter characters. Stored engine ID 19 is independent of legacy ANALOG.
- * MELODEE_PROPHET_PROTOTYPE additionally aliases ID 0 for measurement rigs. */
+ * MELODEE_PROPHET_PROTOTYPE additionally aliases ID 0 for measurement rigs.
+ * The engine only (a synth module on the device: firmware/modules/prophet): the parts' programs, their format and
+ * the voice count are the firmware's (p5_parts.h), Sequential's programs and the presets made from them too
+ * (prophet_programs.c); the pitch wheel's target is voice.c's (p5_update_bend) */
 #include "x0x/fastmath.h"
-#include "prophet_patch.c"
-#include "melodee_prophet_factory.h"   /* Sequential's 200 v1.03 programs (tools/gen_prophet_factory.py) */
-#if MELODEE_DUAL_CORE
-#define P5_POLY 8u
-#else
-#define P5_POLY 5u
-#endif
-static uint32_t p5_poly(void)
-{
-#if MELODEE_DUAL_CORE
-    if (audio_worker_online) return P5_POLY;
-#endif
-    return 5u;
-}
 typedef struct { float value; uint8_t stage; } p5_env_t;
 typedef struct {
     uint32_t phase[2];
@@ -39,14 +28,6 @@ typedef struct {
 } p5_render_params_t;
 typedef struct { p5_voice_t voice[P5_POLY]; uint32_t lfo; int32_t lfo_value, last_pitch, mod_noise, dc_x1, dc_y1; float wheel[CTL * P5_OVERSAMPLE], wheel_pitch[CTL * P5_OVERSAMPLE]; uint8_t value[56],input_key[56],base_valid; int16_t base_e[8]; int32_t coarse_a,coarse_b,fixed_b,fine_b; p5_render_params_t base; } p5_part_t;
 static p5_part_t *p5_part(uint32_t part);
-static p5_patch_t p5_patch[NPART] __attribute__((section(".pool")));
-static uint8_t p5_ready[NPART];
-static p5_patch_t *p5_patch_of(const track_t *t)
-{
-    uint32_t k = (uint32_t)(t - trk) % NPART;
-    if (!p5_ready[k]) { p5_patch_init(&p5_patch[k]); p5_ready[k] = 1; }
-    return &p5_patch[k];
-}
 static inline __attribute__((always_inline)) p5_voice_t *p5_voice(track_t *t, voice_t *v)
 {
     p5_part_t *part = p5_part((uint32_t)(t - trk));
@@ -258,25 +239,9 @@ static void p5_block(track_t *t)
     void (*volatile run)(p5_part_t *,const uint8_t *,uint32_t,float,float)=p5_mod_samples_run;
     run(s,p,inc,amount,(float)p5_value(p,P5_WHEEL_MIX)*(1.0f/127.0f));
 }
-static uint32_t p5_cap(const track_t *t)
-{
-    const uint8_t *p=p5_patch_of(t)->raw;
-    return p[P5_UNISON] && t->p[P_VOICE]==V_UNISON ?
-        (uint32_t)clamp(p[P5_UNISON_COUNT]?p[P5_UNISON_COUNT]:5,1,(int32_t)p5_poly()) : p5_poly();
-}
 static void p5_legato(track_t *t,voice_t *v)
 {
     if(p5_patch_of(t)->raw[P5_RETRIGGER]&1u){p5_voice_t *s=p5_voice(t,v);if(s)s->filter.stage=s->amp.stage=1;}
-}
-/* Native performance controls become the track's allocator settings at load
- * or native edit. Afterwards Melodee's VOICE/PRIO/DETUNE pages can override. */
-static void p5_track_accept(track_t *t)
-{
-    const uint8_t *p=p5_patch_of(t)->raw;
-    t->p[P_VOICE]=p[P5_UNISON]?V_UNISON:V_POLY;
-    t->p[P_PRIO]=p[P5_RETRIGGER]<2u?1:0;
-    t->p[P_DETUNE]=clamp(p[P5_UNISON_DETUNE],0,7)*127/7;
-    t->p[P_ALLOC]=1; /* repeated keys reuse a voice, as the original does */
 }
 
 /* Four trapezoidal one-poles with an algebraic feedback solution. Curtis
@@ -564,39 +529,11 @@ static void p5_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     run(s,p,out,n,m,&c);
 }
 
-/* Sequential's factory program k (0..P5_FACTORY_N-1), unpacked (tools/gen_prophet_factory.py pack) */
-static void p5_factory(uint32_t k,p5_patch_t *p)
-{
-    if(!RES_OK()){p5_patch_init(p);return;}         /* (res.c: the factory programs not installed) */
-    const uint8_t *b=P5_FPACK+k*P5_FACTORY_BYTES;
-    uint32_t pos=0;
-    for(uint32_t i=0;i<P5_RAW_MAX;i++){
-        uint32_t v=0;
-        for(uint32_t j=0;j<P5_FWIDTH[i];j++,pos++)v|=(uint32_t)(b[pos>>3]>>(pos&7u)&1u)<<j;
-        p->raw[i]=(uint8_t)(P5_FBASE[i]+v);
-    }
-    p->size=P5_RAW_MAX;p->model=0x32;p->command=2;p->group=(uint8_t)(k/40u);p->program=(uint8_t)(k%40u);
-}
-/* INIT, then Sequential's factory programs in their order (111..588 on the
- * Prophet: preset k is program k-1 of the v1.03 bank), named as the programs are. Dry, as the Prophet. */
-static void p5_preset_make(uint32_t k,preset_t *pr,char *name)
-{
-    p5_patch_t p;
-    pr->env[2]=127;
-    if(!k){str_cpy(name,"INIT PROPHET",21);return;}
-    p5_factory(k-1u,&p);p5_patch_name(name,&p);
-}
-/* A factory preset's native program; preset 0 is INIT. */
-static void p5_preset_loaded(track_t *t,uint32_t pi)
-{
-    p5_patch_t *p=p5_patch_of(t);
-    if(pi && pi<=P5_FACTORY_N)p5_factory(pi-1u,p);else p5_patch_init(p);
-    p5_track_accept(t);
-}
 /* Serial hardware measurements justify three units per voice. The opt-in
  * paired path provisionally charges two: eight voices fill the same sixteen
  * units, so adding another track still steals voices. Validate on hardware. */
 static uint32_t p5_units(const track_t *t) { (void)t; return p5_poly()>5u?2u:3u; }
+static uint32_t p5_state(const track_t *t) { (void)t; return sizeof(p5_part_t); }   /* (engine_t.state) */
 static const engine_t ENG_P5_TEST = {
     .name="PROPHET", .page_title={"FILTER/TUNE","PW/MIX"},
     .edit={{"CUT",F_INT,-63,63,0,0,0},{"RES",F_INT,-63,63,0,0,0},
@@ -607,5 +544,7 @@ static const engine_t ENG_P5_TEST = {
     .note_on=p5_note_on,.render=p5_render,.done=p5_done,.block=p5_block,.units=p5_units,.cap=p5_cap,.legato=p5_legato,
     .post=p5_post,
     .knob={P_E0,P_E1,P_RESERVED34,P_RESERVED36},
-    .wclass=1
+    .state=p5_state,
+    .wclass=1,
+    .menv=p5_env_source            /* (the matrix's ENV: the amp envelope as it was last rendered) */
 };

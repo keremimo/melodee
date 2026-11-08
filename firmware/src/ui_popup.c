@@ -815,7 +815,7 @@ static void preset_pick_draw(void)
     draw_head();
     entry_label(src, k, tag, nm);
     if (src == ENGI_PROPHET)
-        str_cpy(nm, eng_preset(ENGINES[ENGI_PROPHET], k)->name, sizeof nm);
+        p5_preset_name(k, nm, sizeof nm);   /* (the firmware's: the engine's module loaded or not) */
     title[1] = (char)('1' + song.sel);
     for (uint32_t band = 0; band < 104u; band += CV_MAX / POP_W) {
         cv_begin_band(POP_W, 104u, T_BG, band);

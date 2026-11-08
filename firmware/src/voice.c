@@ -754,6 +754,7 @@ static int32_t smk_vibrato(const track_t *t)   /* Q8 semitones */
     return (tri * smk_modw) >> 14;
 }
 #endif
+/* (the Prophet's p5_block calls it: on the device through its module's imports, module_native.h) */
 static __attribute__((noinline)) void p5_update_bend(track_t *t)
 {
 #if MELODEE_CONTROL_FAST
@@ -909,9 +910,8 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
         m.shape = (64 << 8) + ((lfo * p[P_LD_SHP]) >> 7) + ((m.envq15 * p[P_ED_SHP]) >> 7);
-        if (e->menv)                                    /* the engine's own (CZ-1, PHASE: the native DCA): the */
-            m.envq15 = e->menv(t, v);                   /* matrix's ENV source */
-        if(e==&ENG_P5_TEST)m.envq15=p5_env_source(t,v);
+        if (e->menv)                                    /* the engine's own (CZ-1, PHASE: the native DCA; the */
+            m.envq15 = e->menv(t, v);                   /* Prophet: its amp envelope): the matrix's ENV source */
         if (mod.on){
             AP_START(mod_start);mod_voice(t,v,&m,m.fine);AP_END(AP_MODULATION,mod_start);
         }

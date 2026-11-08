@@ -6,7 +6,13 @@
 #include "dsp.c"
 #include "audio_batch.h"
 #if MELODEE_PROPHET
-#include "eng_prophet_test.c"
+#include "p5_parts.h"           /* the parts' Prophet programs (the firmware's: the engine reads them), the voice count */
+#include "prophet_programs.c"   /* Sequential's programs, the presets made from them, a program accepted on a part */
+#if MELODEE_P5_BUILTIN
+#include "eng_prophet_test.c"   /* PROPHET: Sequential's Rev 4 (a synth module on the device: firmware/modules/prophet) */
+#elif MELODEE_PROPHET_PROTOTYPE
+#error "MELODEE_PROPHET_PROTOTYPE plays the built-in Prophet as engine 0: MELODEE_P5_BUILTIN=1"
+#endif
 #endif
 #include "cz_parts.h"           /* the parts' CZ-1 tones (the firmware's: the engine reads them) */
 #if MELODEE_CZ_BUILTIN || MELODEE_LEGACY_EXTRAS
@@ -80,12 +86,6 @@ static uint32_t eng_state_size(uint32_t e)
         return mod_part_bytes(e);
 #endif
     switch (e) {
-#if MELODEE_PROPHET
-    case ENGI_PROPHET: return sizeof(p5_part_t);
-#if MELODEE_PROPHET_PROTOTYPE
-    case 0: return sizeof(p5_part_t);
-#endif
-#endif
 #if MELODEE_LEGACY_EXTRAS
     case ENGI_PHYS: return sizeof(phys_slot_t) * PHYS_POLY;
     case 7: return sizeof(drw_part_t);
@@ -130,7 +130,7 @@ static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + par
 #if MELODEE_SID_BUILTIN || MELODEE_DRUM_BUILTIN
 static sid_part_t *sid_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(sid_part_t)); }
 #endif
-#if MELODEE_PROPHET
+#if MELODEE_PROPHET && MELODEE_P5_BUILTIN
 static p5_part_t *p5_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(p5_part_t)); }
 #endif
 #if MELODEE_SLICE
@@ -209,7 +209,11 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_RETIRED,                /* 15: CZ-1, a synth module (firmware/modules/cz) */
 #endif
     &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, /* 16..18 reserved */
-    &ENG_P5_TEST,                /* 19: Prophet (ANALOG's ID 0 stays reserved) */
+#if MELODEE_P5_BUILTIN
+    &ENG_P5_TEST,                /* 19 (ENGI_PROPHET): Prophet (ANALOG's ID 0 stays reserved) */
+#else
+    &ENG_RETIRED,                /* 19 (ENGI_PROPHET): Prophet, a synth module (firmware/modules/prophet) */
+#endif
     &ENG_RETIRED,                /* 20: Prophet user-preset namespace */
     &ENG_MIDI,                   /* 21: USB MIDI Track */
     &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED,   /* 22..29: synth modules (ENGI_MOD0), silent while */
@@ -250,7 +254,10 @@ static uint8_t ENGINE_ORDER[NENG_SHOWN_MAX] = {
 #define eng_nshown NENG_SHOWN
 static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
 #endif
-    ENGI_PROPHET,                /* Prophet replaces ANALOG in new-sound browsing */
+#if MELODEE_P5_BUILTIN
+    ENGI_PROPHET,                /* Prophet replaces ANALOG in new-sound browsing (else a module: listed when there,
+                                  * first) */
+#endif
 #if MELODEE_FM6_BUILTIN
     12,                          /* FM6 (else a module: listed when there, at its place below) */
 #endif
@@ -274,8 +281,8 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
 #endif
     ENGI_MIDI,
 };
-/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): FM6 after the Prophet,
- * CZ-1 after FM6, SID after CZ-1, DRUM before the MIDI Track as built in; any other after them all */
+/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): the Prophet first, FM6
+ * after it, CZ-1 after FM6, SID after CZ-1, DRUM before the MIDI Track as built in; any other after them all */
 static uint32_t eng_order_rank(uint32_t e)
 {
     static const uint8_t R[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, 3, ENGI_DRUM, ENGI_MIDI};
@@ -286,8 +293,9 @@ static uint32_t eng_order_rank(uint32_t e)
 }
 
 /* Retired synth records (ANALOG and DIGITAL since 2.0 too) retain their stored identity and render silence.
- * Never relabel retired records FM6. FM6 without its module (MELODEE_FM6_BUILTIN 0): retired as the others, its
- * sounds keep the number, silent, and the start asks for setup (SHIPPED_OK) */
+ * Never relabel retired records FM6. FM6 or the Prophet without its module (MELODEE_FM6_BUILTIN /
+ * MELODEE_P5_BUILTIN 0): retired as the others, its sounds keep the number, silent, its programs the firmware's
+ * (edited, stored, sent: never heard), and the start asks for setup (SHIPPED_OK) */
 static int eng_extra_retired(uint32_t e)
 {
 #if MELODEE_MODULES
@@ -302,7 +310,8 @@ static int eng_extra_retired(uint32_t e)
     return e == ENGI_DIGITAL || (!MELODEE_LEGACY_EXTRAS && (e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u)) ||
            (!MELODEE_SID_BUILTIN && e == 3u) || (!MELODEE_DRUM_BUILTIN && e == ENGI_DRUM) ||
            (!MELODEE_CZ_BUILTIN && e == ENGI_CZ) ||
-           (!MELODEE_FM6_BUILTIN && e == ENGI_FM6);   /* (no module for them) */
+           (!MELODEE_FM6_BUILTIN && e == ENGI_FM6) ||
+           (!MELODEE_P5_BUILTIN && e == ENGI_PROPHET);   /* (no module for them) */
 }
 /* the engines one can pick, in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
@@ -326,7 +335,7 @@ static uint32_t eng_rank(uint32_t e)
     uint32_t n;
     if (!eng_ok(e))
         e = ENGI_FM6;                            /* (a retired or reserved engine: FM6's place; without its module
-                                                  * none: the first engine's) */
+                                                  * none: the first engine's, the Prophet's while it is there) */
     for (n = 0; n < eng_nshown && ENGINE_ORDER[n] != e; n++)
         ;
     return n < eng_nshown ? n : 0u;

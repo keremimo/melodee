@@ -1,14 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The phrases the native-module tests render (tests/module_test.c): SID, DRUM, CZ-1 and FM6 on part 1, every preset,
- * POLY and LEGATO, the C64 models, ENV3 as ENV DEST, every kit with the drum patch, lane levels, DRV, recorded hit
- * lengths and pitches, every CZ-1 tone edited as it plays, the matrix's ENV (CZ-1's DCA), LFO, a MIDI insert release,
- * concert pitch, every FM6 voice in POLY, LEGATO and UNISON with every algorithm, feedback, the three ENGINEs, its
- * controllers, macros and switches as it plays, a DX7 bank by SysEx, each also on the dual-core path
- * (engine_batch_kernel; FM6: its own queue jobs). Each phrase starts from the same state, so its
+/* The phrases the native-module tests render (tests/module_test.c): SID, DRUM, CZ-1, FM6 and the Prophet on part 1,
+ * every preset, POLY and LEGATO, the C64 models, ENV3 as ENV DEST, every kit with the drum patch, lane levels, DRV,
+ * recorded hit lengths and pitches, every CZ-1 tone edited as it plays, the matrix's ENV (CZ-1's DCA), LFO, a MIDI
+ * insert release, concert pitch, every FM6 voice in POLY, LEGATO and UNISON with every algorithm, feedback, the three
+ * ENGINEs, its controllers, macros and switches as it plays, a DX7 bank by SysEx, every Prophet program in POLY and
+ * UNISON edited as it plays (both filters, the envelopes, Poly-Mod, the LFO and the wheel, Lo Freq, glide, sync,
+ * vintage, voices stolen), each also on the dual-core path (engine_batch_kernel; FM6, the Prophet: their own queue
+ * jobs). Each phrase starts from the same state, so its
  * render is a function of the phrase alone: module_test.c holds the modules to the built-in engines sample for sample
  * and to MP_GOLDEN, the hashes the built-in engines rendered before they left the firmware (SID, DRUM, CZ-1: 203a5c04,
- * FM6: 0df43be6; this file compiled there with tests/persistence_test.c and fm6_store.c, each phrase's mp_run printed).
+ * FM6: 0df43be6, the Prophet: 47d57c42; this file compiled there with tests/persistence_test.c and fm6_store.c, each
+ * phrase's mp_run printed).
  * Needs persistence_test.c (reset, host_preset) and fm6_store.c (fm6_service). */
 #define MP_NB 200u
 static int32_t mp_out[MP_NB * CTL];
@@ -167,7 +170,8 @@ static uint32_t mp_cz(uint32_t pi, uint32_t mono, uint32_t batch)
     return mp_hash(mp_out, MP_NB * CTL);
 }
 
-/* FM6: a block as mix.c runs it: the matrix (mix_part), on CPU1 the part's post (Dexed's DC filter) after the queue */
+/* FM6, the Prophet: a block as mix.c runs it: the matrix (mix_part), on CPU1 the part's post (Dexed's DC filter, the
+ * Prophet's coupling capacitor) after the queue */
 static void mp_fm6_block(uint32_t b, uint32_t batch)
 {
     int32_t *out = mp_out + b * CTL;
@@ -325,6 +329,113 @@ static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
     return mp_hash(mp_out, MP_NB * CTL);
 }
 
+/* the Prophet: program pi (0 INIT, Sequential's 200); mode 0 POLY, 1 UNISON (the program's unison, its voice count and
+ * detune by pi). Before the first key, by pi: Lo Freq B (a fresh voice's free-running B), glide, vintage (each voice's
+ * own mismatch), a filter oscillating behind a shut mixer (its seeded state), sync. As it plays: the mod wheel and
+ * aftertouch, pitch bend both ways over the program's range (voice.c p5_update_bend), the E1..E8 offsets, then the
+ * program edited as the panel edits it: the filter model swapped (Curtis / SSI: its saturating stages, the SSM
+ * envelope), cutoff, resonance, key tracking, both envelopes, velocity, Poly-Mod (the filter envelope and oscillator B
+ * on frequency A, PW A, the filter), the LFO (waves, rate, the noise mix; the wheel on both frequencies, both widths,
+ * the filter; aftertouch on the LFO and the filter), Lo Freq B, sync, release off, the retrigger. By pi: the matrix's
+ * ENV (the amp envelope: engine_t.menv) on cutoff and pitch, the track's LFO on pitch and cutoff, a MIDI insert release,
+ * a small voice budget (budget victims fade out: the engine's last-sample fade), concert pitch moved. In every phrase:
+ * 8 keys at once and a key struck again (POLY: the engine's 5 voices stolen and reused), the DC filter (post) */
+/* a key on the Prophet's part. UNISON (mono): mono_play's random start phases come from one seed for the whole run, so
+ * a voice that starts afresh after it ended would take its phase from the phrases before; it starts from the phase a
+ * new phrase gives it instead, so each phrase is a function of itself alone */
+static void mp_p5_key(uint32_t mono, uint32_t note, uint32_t vel)
+{
+    for (uint32_t i = 0; mono && i < NVOICE; i++)
+        if (!inst.v[i].active) inst.v[i].ph[0] = 0;
+    trk_note_on(&inst, note, vel);
+}
+static uint32_t mp_p5(uint32_t pi, uint32_t mode, uint32_t batch)
+{
+    int16_t a4 = tuning_a4, budget = settings_budget;
+    mp_start();
+    memset(midi_verb, 0, sizeof midi_verb);
+    host_preset(&inst, ENGI_PROPHET, pi);
+    uint8_t *r = p5_patch_of(&inst)->raw;
+    if (mode) {
+        r[P5_UNISON] = 1; r[P5_UNISON_COUNT] = (uint8_t)(pi % 6u); r[P5_UNISON_DETUNE] = (uint8_t)(pi % 8u);
+        r[P5_RETRIGGER] = (uint8_t)(pi % 4u);
+        p5_track_accept(&inst);
+    } else
+        inst.p[P_VOICE] = V_POLY;
+    if (pi % 6u == 5u) { r[P5_LOW_B] = 1; r[P5_KEY_B] = (uint8_t)(pi % 12u < 6u); r[P5_POLY_B] = 100; r[P5_POLY_FILTER] = 1; }
+    if (pi % 8u == 2u) r[P5_GLIDE] = (uint8_t)(40u + pi % 60u);
+    if (pi % 9u == 4u) r[P5_VINTAGE] = (uint8_t)(pi % 2u ? 127u : 42u);
+    if (pi % 10u == 7u) { r[P5_RESONANCE] = 120; r[P5_LEVEL_A] = r[P5_LEVEL_B] = r[P5_NOISE] = 0; }
+    if (pi % 7u == 3u) { r[P5_SYNC] = 1; r[P5_SAW_A] = 1; r[P5_LEVEL_A] = 110; }
+    r[P5_BEND] = (uint8_t)(pi % 12u);
+    if (pi % 4u == 1u) {
+        inst.p[P_M1SRC] = MS_ENV; inst.p[P_M1DST] = MD_CUT; inst.p[P_M1AMT] = 50;
+        inst.p[P_M2SRC] = MS_ENV; inst.p[P_M2DST] = MD_PITCH; inst.p[P_M2AMT] = -20;
+    }
+    if (pi % 4u == 2u) { inst.p[P_LD_PIT] = 12; inst.p[P_LD_FLT] = 40; }
+    if (pi % 4u == 3u) { inst.p[P_FXTYPE] = FX_MIDIVERB; inst.p[P_FXTYPE + 1] = (int16_t)(20u + pi % 80u); }   /* (the
+                                                         * insert's release: the engine's envelopes take it) */
+    if (pi % 5u == 4u) settings_budget = 8;              /* (two Prophet voices: the others budget victims) */
+    for (uint32_t b = 0; b < MP_NB; b++) {
+        if (b == 4) mp_p5_key(mode, 48, 100);
+        if (b == 20) { inst.mw = (uint8_t)(40u + pi % 80u); inst.at = 60; }
+        if (b == 30) inst.bend_raw = 3000;
+        if (b == 40) mp_p5_key(mode, 55, 80);
+        if (b == 60) trk_note_off(&inst, 48);
+        if (b == 70) mp_p5_key(mode, 64, 127);
+        if (b == 71) mp_p5_key(mode, 67, 30);
+        if (b == 90) {                                   /* CUT RES TUNA TUNB PWA PWB MIXA MIXB */
+            inst.p[P_E0] = (int16_t)((int32_t)(pi * 7u % 64u) - 32); inst.p[P_E1] = (int16_t)((int32_t)(pi % 41u) - 20);
+            inst.p[P_E2] = (int16_t)((int32_t)(pi % 5u) - 2); inst.p[P_E3] = (int16_t)((int32_t)(pi % 7u) - 3);
+            inst.p[P_E4] = (int16_t)((int32_t)(pi * 3u % 50u) - 25); inst.p[P_E5] = (int16_t)((int32_t)(pi * 11u % 50u) - 25);
+            inst.p[P_E6] = (int16_t)((int32_t)(pi % 30u) - 15); inst.p[P_E7] = (int16_t)((int32_t)(pi * 13u % 60u) - 20);
+        }
+        if (b == 100) {                                  /* the program edited as the panel edits it */
+            if (pi % 2u) r[P5_FILTER_REV] ^= 1u;
+            r[P5_CUTOFF] = (uint8_t)(30u + pi * 37u % 98u); r[P5_RESONANCE] = (uint8_t)(pi * 53u % 128u);
+            r[P5_KEY_FILTER] = (uint8_t)(pi % 3u); r[P5_ENV_FILTER] = (uint8_t)(pi * 29u % 128u);
+            r[P5_ATTACK_FILTER] = (uint8_t)(pi % 40u); r[P5_DECAY_FILTER] = (uint8_t)(20u + pi * 3u % 100u);
+            r[P5_SUSTAIN_FILTER] = (uint8_t)(pi * 17u % 128u); r[P5_RELEASE_FILTER] = (uint8_t)(10u + pi % 90u);
+            r[P5_ATTACK_AMP] = (uint8_t)(pi % 32u); r[P5_DECAY_AMP] = (uint8_t)(30u + pi * 7u % 90u);
+            r[P5_SUSTAIN_AMP] = (uint8_t)(40u + pi * 23u % 88u); r[P5_RELEASE_AMP] = (uint8_t)(20u + pi * 5u % 100u);
+            r[P5_VEL_FILTER] = (uint8_t)(pi >> 1 & 1u); r[P5_VEL_AMP] = (uint8_t)(pi >> 2 & 1u);
+            r[P5_POLY_ENV] = (uint8_t)(pi * 31u % 128u); r[P5_POLY_B] = (uint8_t)(pi * 41u % 128u);
+            r[P5_POLY_FREQ] = (uint8_t)(pi & 1u); r[P5_POLY_PW] = (uint8_t)(pi >> 1 & 1u);
+            r[P5_POLY_FILTER] = (uint8_t)(pi >> 2 & 1u);
+            r[P5_LFO_RATE] = (uint8_t)(pi * 13u % 128u); r[P5_LFO_INITIAL] = (uint8_t)(pi * 7u % 64u);
+            r[P5_LFO_SAW] = (uint8_t)(pi >> 3 & 1u); r[P5_LFO_TRI] = (uint8_t)(pi >> 4 & 1u);
+            r[P5_LFO_PULSE] = (uint8_t)(pi >> 5 & 1u); r[P5_WHEEL_MIX] = (uint8_t)(pi * 19u % 128u);
+            r[P5_WHEEL_FREQ_A] = (uint8_t)(pi % 3u == 0); r[P5_WHEEL_FREQ_B] = (uint8_t)(pi % 5u == 1u);
+            r[P5_WHEEL_PW_A] = (uint8_t)(pi >> 1 & 1u); r[P5_WHEEL_PW_B] = (uint8_t)(pi >> 3 & 1u);
+            r[P5_WHEEL_FILTER] = (uint8_t)(pi % 3u == 1u);
+            r[P5_PRESS_LFO] = (uint8_t)(pi >> 4 & 1u); r[P5_PRESS_FILTER] = (uint8_t)(pi >> 5 & 1u);
+            r[P5_PULSE_A] = (uint8_t)(pi >> 2 & 1u); r[P5_PULSE_B] = 1; r[P5_TRI_B] = (uint8_t)(pi >> 3 & 1u);
+            r[P5_PW_A] = (uint8_t)(pi * 9u % 128u); r[P5_PW_B] = (uint8_t)(20u + pi * 3u % 100u);
+            r[P5_LEVEL_B] = (uint8_t)(r[P5_LEVEL_B] / 2u + 30u); r[P5_NOISE] = (uint8_t)(pi % 4u == 0 ? 50u : 0u);
+            if (pi % 6u == 2u) { r[P5_LOW_B] = 1; r[P5_KEY_B] = 0; }
+            if (pi % 7u == 6u) r[P5_SYNC] ^= 1u;
+            r[P5_RELEASE_ON] = (uint8_t)(pi % 11u != 10u);
+        }
+        if (b == 120) { trk_note_off(&inst, 55); trk_note_off(&inst, 64); trk_note_off(&inst, 67); inst.bend_raw = -2000; }
+        if (b >= 130 && b < 134)
+            for (uint32_t j = 0; j < 2u; j++) mp_p5_key(mode, 40u + 5u * ((b - 130u) * 2u + j), 50u + (b - 130u) * 18u + j);
+        if (b == 140) mp_p5_key(mode, 45, 90);        /* (a key struck again: its voice reused) */
+        if (b == 150 && pi % 3u == 0) tuning_a4 = 432;
+        if (b >= 160 && b < 164)
+            for (uint32_t j = 0; j < 2u; j++) trk_note_off(&inst, 40u + 5u * ((b - 160u) * 2u + j));
+        if (b == 175) { inst.bend_raw = 0; inst.mw = 0; inst.at = 0; mp_p5_key(mode, 36, 90); }
+        if (b == 182) mp_p5_key(mode, 43, 70);
+        if (b == 190) { trk_note_off(&inst, 36); trk_note_off(&inst, 43); }
+        mp_fm6_block(b, batch);
+    }
+    tuning_a4 = a4;
+    settings_budget = budget;
+    midi_verb[0] = 0;
+    inst.mw = inst.at = 0;
+    inst.bend_raw = 0;
+    return mp_hash(mp_out, MP_NB * CTL);
+}
+
 /* phrase k (0 .. MP_COUNT - 1) rendered into mp_out: its hash; *what, *a, *b: what it plays */
 #define MP_SID_PRESETS 32u
 #define MP_DRUM_PRESETS 6u
@@ -336,9 +447,12 @@ static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
 #define MP_FM6_PRESETS 25u                               /* F1..F24, INIT VOICE */
 #define MP_FM6 (2u * MP_FM6_PRESETS * 3u)                /* every preset x POLY / LEGATO / UNISON, serial then on CPU1 */
 #define MP_FM6_SX (2u * 8u)                              /* the bank's 32 voices four at a time, serial then on CPU1 */
-#define MP_COUNT (MP_SID_A + MP_SID_B + MP_DRUM + MP_CZ + MP_FM6 + MP_FM6_SX)
+#define MP_P5_PRESETS 201u                               /* INIT, Sequential's 200 */
+#define MP_P5 (2u * MP_P5_PRESETS * 2u)                  /* every program x POLY / UNISON, serial then on CPU1 */
+#define MP_COUNT (MP_SID_A + MP_SID_B + MP_DRUM + MP_CZ + MP_FM6 + MP_FM6_SX + MP_P5)
 #define MP_CZ0 (MP_SID_A + MP_SID_B + MP_DRUM)           /* (the first CZ-1 phrase) */
 #define MP_FM60 (MP_CZ0 + MP_CZ)                         /* (the first FM6 phrase) */
+#define MP_P50 (MP_FM60 + MP_FM6 + MP_FM6_SX)            /* (the first Prophet phrase) */
 static uint32_t mp_run(uint32_t k, const char **what, uint32_t *a, uint32_t *b)
 {
     if (k < MP_SID_A) {
@@ -353,6 +467,12 @@ static uint32_t mp_run(uint32_t k, const char **what, uint32_t *a, uint32_t *b)
         return mp_sid(model * 7u + 2u, mono, (int32_t)model, env3, batch);
     }
     k -= MP_SID_B;
+    if (k >= MP_DRUM + MP_CZ + MP_FM6 + MP_FM6_SX) {     /* the Prophet */
+        k -= MP_DRUM + MP_CZ + MP_FM6 + MP_FM6_SX;
+        uint32_t batch = k / (MP_P5 / 2u), pi = k % (MP_P5 / 2u) / 2u, mode = k % 2u;
+        *what = batch ? "PROPHET program (CPU1)" : "PROPHET program"; *a = pi; *b = mode;
+        return mp_p5(pi, mode, batch);
+    }
     if (k >= MP_DRUM + MP_CZ + MP_FM6) {                 /* FM6: a DX7 bank by SysEx */
         k -= MP_DRUM + MP_CZ + MP_FM6;
         uint32_t batch = k / (MP_FM6_SX / 2u), j = k % (MP_FM6_SX / 2u);
@@ -380,8 +500,8 @@ static uint32_t mp_run(uint32_t k, const char **what, uint32_t *a, uint32_t *b)
     return mp_drum(0, (int32_t)(j - MP_DRUM_PRESETS + 4u), batch);                         /* user kits 1, 2 */
 }
 
-/* what the built-in engines rendered (SID, DRUM, CZ-1: 203a5c04, before they left the firmware; FM6: 0df43be6, before
- * it left), phrase by phrase */
+/* what the built-in engines rendered (SID, DRUM, CZ-1: 203a5c04, before they left the firmware; FM6: 0df43be6, the
+ * Prophet: 47d57c42, before each left), phrase by phrase */
 static const uint32_t MP_GOLDEN[MP_COUNT] = {
     0x49b11ea6u, /*   0 SID preset 0 0 */
     0x12c28a5fu, /*   1 SID preset 0 1 */
@@ -995,4 +1115,808 @@ static const uint32_t MP_GOLDEN[MP_COUNT] = {
     0x33d60df6u, /* 609 FM6 SysEx bank (CPU1) 5 0 */
     0x6ab552c4u, /* 610 FM6 SysEx bank (CPU1) 6 0 */
     0x6233c272u, /* 611 FM6 SysEx bank (CPU1) 7 0 */
+    0xbbdeae25u, /* 612 PROPHET program 0 0 */
+    0xb4265430u, /* 613 PROPHET program 0 1 */
+    0x4b045e95u, /* 614 PROPHET program 1 0 */
+    0x01231144u, /* 615 PROPHET program 1 1 */
+    0x3bbbf278u, /* 616 PROPHET program 2 0 */
+    0x87feea04u, /* 617 PROPHET program 2 1 */
+    0x65a201cbu, /* 618 PROPHET program 3 0 */
+    0x7d89ed68u, /* 619 PROPHET program 3 1 */
+    0xf3641b0du, /* 620 PROPHET program 4 0 */
+    0x55008411u, /* 621 PROPHET program 4 1 */
+    0x41b36feau, /* 622 PROPHET program 5 0 */
+    0xe1c5dc08u, /* 623 PROPHET program 5 1 */
+    0x9eaf2b9eu, /* 624 PROPHET program 6 0 */
+    0xc5887d6du, /* 625 PROPHET program 6 1 */
+    0x68a5f46fu, /* 626 PROPHET program 7 0 */
+    0x895aab48u, /* 627 PROPHET program 7 1 */
+    0x89d48a63u, /* 628 PROPHET program 8 0 */
+    0x326ecd81u, /* 629 PROPHET program 8 1 */
+    0x3eb9ad3bu, /* 630 PROPHET program 9 0 */
+    0xf312f3f2u, /* 631 PROPHET program 9 1 */
+    0xdec59be2u, /* 632 PROPHET program 10 0 */
+    0x3ce092e0u, /* 633 PROPHET program 10 1 */
+    0x171d6159u, /* 634 PROPHET program 11 0 */
+    0x945b2cd6u, /* 635 PROPHET program 11 1 */
+    0x64b2b04eu, /* 636 PROPHET program 12 0 */
+    0x1245c44au, /* 637 PROPHET program 12 1 */
+    0x87e8baeeu, /* 638 PROPHET program 13 0 */
+    0xac20d13eu, /* 639 PROPHET program 13 1 */
+    0x567bb11fu, /* 640 PROPHET program 14 0 */
+    0x50625dddu, /* 641 PROPHET program 14 1 */
+    0xb0a24991u, /* 642 PROPHET program 15 0 */
+    0x80931fe6u, /* 643 PROPHET program 15 1 */
+    0x1ea058acu, /* 644 PROPHET program 16 0 */
+    0xeda170b5u, /* 645 PROPHET program 16 1 */
+    0x11240d97u, /* 646 PROPHET program 17 0 */
+    0x5f756478u, /* 647 PROPHET program 17 1 */
+    0x7a43daa3u, /* 648 PROPHET program 18 0 */
+    0xd74d3689u, /* 649 PROPHET program 18 1 */
+    0x0b37acbeu, /* 650 PROPHET program 19 0 */
+    0x750fc061u, /* 651 PROPHET program 19 1 */
+    0x75302e1au, /* 652 PROPHET program 20 0 */
+    0x242c68c0u, /* 653 PROPHET program 20 1 */
+    0x667ccaf5u, /* 654 PROPHET program 21 0 */
+    0xa68725a4u, /* 655 PROPHET program 21 1 */
+    0x33145ecbu, /* 656 PROPHET program 22 0 */
+    0x40e325f9u, /* 657 PROPHET program 22 1 */
+    0x75ebffbbu, /* 658 PROPHET program 23 0 */
+    0x3a9f9f55u, /* 659 PROPHET program 23 1 */
+    0x8d5414a4u, /* 660 PROPHET program 24 0 */
+    0xe276d5cau, /* 661 PROPHET program 24 1 */
+    0xaea15a32u, /* 662 PROPHET program 25 0 */
+    0x85999925u, /* 663 PROPHET program 25 1 */
+    0x11be5c01u, /* 664 PROPHET program 26 0 */
+    0x5cad5138u, /* 665 PROPHET program 26 1 */
+    0xfe32abceu, /* 666 PROPHET program 27 0 */
+    0xb7be46d3u, /* 667 PROPHET program 27 1 */
+    0x3c2bfd7eu, /* 668 PROPHET program 28 0 */
+    0xfa634acbu, /* 669 PROPHET program 28 1 */
+    0xa0da2fcau, /* 670 PROPHET program 29 0 */
+    0x53f5a6feu, /* 671 PROPHET program 29 1 */
+    0xbed52711u, /* 672 PROPHET program 30 0 */
+    0x7a6161cfu, /* 673 PROPHET program 30 1 */
+    0x06be0816u, /* 674 PROPHET program 31 0 */
+    0xe817c100u, /* 675 PROPHET program 31 1 */
+    0x1d09f68bu, /* 676 PROPHET program 32 0 */
+    0x613a2b7du, /* 677 PROPHET program 32 1 */
+    0x8186ed71u, /* 678 PROPHET program 33 0 */
+    0xe8642084u, /* 679 PROPHET program 33 1 */
+    0x3759f803u, /* 680 PROPHET program 34 0 */
+    0x1310f719u, /* 681 PROPHET program 34 1 */
+    0x29bb5d7du, /* 682 PROPHET program 35 0 */
+    0x40f9f404u, /* 683 PROPHET program 35 1 */
+    0xfbf203a4u, /* 684 PROPHET program 36 0 */
+    0xce9179efu, /* 685 PROPHET program 36 1 */
+    0xbeec72fcu, /* 686 PROPHET program 37 0 */
+    0xd79c6f60u, /* 687 PROPHET program 37 1 */
+    0x1bf21384u, /* 688 PROPHET program 38 0 */
+    0xd177c132u, /* 689 PROPHET program 38 1 */
+    0xdd343e4fu, /* 690 PROPHET program 39 0 */
+    0x8dca574bu, /* 691 PROPHET program 39 1 */
+    0x8f26f21bu, /* 692 PROPHET program 40 0 */
+    0x261f079eu, /* 693 PROPHET program 40 1 */
+    0x07f9ed4du, /* 694 PROPHET program 41 0 */
+    0x99979950u, /* 695 PROPHET program 41 1 */
+    0x270d2ba0u, /* 696 PROPHET program 42 0 */
+    0x3817b8b0u, /* 697 PROPHET program 42 1 */
+    0xd1209ad1u, /* 698 PROPHET program 43 0 */
+    0xedad8179u, /* 699 PROPHET program 43 1 */
+    0xc12549f0u, /* 700 PROPHET program 44 0 */
+    0xd5c7318fu, /* 701 PROPHET program 44 1 */
+    0xa87d6d38u, /* 702 PROPHET program 45 0 */
+    0x90d2128du, /* 703 PROPHET program 45 1 */
+    0x9f5f5c09u, /* 704 PROPHET program 46 0 */
+    0xc43bebc0u, /* 705 PROPHET program 46 1 */
+    0x8042a8f5u, /* 706 PROPHET program 47 0 */
+    0xc3de4a34u, /* 707 PROPHET program 47 1 */
+    0x27d3dc82u, /* 708 PROPHET program 48 0 */
+    0xa60b0d32u, /* 709 PROPHET program 48 1 */
+    0x1827b753u, /* 710 PROPHET program 49 0 */
+    0xfe87143du, /* 711 PROPHET program 49 1 */
+    0x87d74711u, /* 712 PROPHET program 50 0 */
+    0xe6d5c23au, /* 713 PROPHET program 50 1 */
+    0x33905d1eu, /* 714 PROPHET program 51 0 */
+    0xf1336ed3u, /* 715 PROPHET program 51 1 */
+    0x7e001ebdu, /* 716 PROPHET program 52 0 */
+    0x8e73b6e6u, /* 717 PROPHET program 52 1 */
+    0xbfe12339u, /* 718 PROPHET program 53 0 */
+    0xb8e7f4b7u, /* 719 PROPHET program 53 1 */
+    0x8839ed28u, /* 720 PROPHET program 54 0 */
+    0xc92de3cfu, /* 721 PROPHET program 54 1 */
+    0x253b113fu, /* 722 PROPHET program 55 0 */
+    0x939acb3fu, /* 723 PROPHET program 55 1 */
+    0x8db9805cu, /* 724 PROPHET program 56 0 */
+    0x2ef350f4u, /* 725 PROPHET program 56 1 */
+    0x7a9feba9u, /* 726 PROPHET program 57 0 */
+    0xf67fa50bu, /* 727 PROPHET program 57 1 */
+    0x429413eau, /* 728 PROPHET program 58 0 */
+    0x3bf0fed8u, /* 729 PROPHET program 58 1 */
+    0xe68f71dfu, /* 730 PROPHET program 59 0 */
+    0xbd2582c6u, /* 731 PROPHET program 59 1 */
+    0xdf1b1f0eu, /* 732 PROPHET program 60 0 */
+    0xfb692886u, /* 733 PROPHET program 60 1 */
+    0x70019886u, /* 734 PROPHET program 61 0 */
+    0xfd464880u, /* 735 PROPHET program 61 1 */
+    0x9e79442fu, /* 736 PROPHET program 62 0 */
+    0x149395b4u, /* 737 PROPHET program 62 1 */
+    0xab1edb10u, /* 738 PROPHET program 63 0 */
+    0x30827e7cu, /* 739 PROPHET program 63 1 */
+    0x6d3e3992u, /* 740 PROPHET program 64 0 */
+    0xcc1699c0u, /* 741 PROPHET program 64 1 */
+    0xaac586eeu, /* 742 PROPHET program 65 0 */
+    0x9584b7ccu, /* 743 PROPHET program 65 1 */
+    0xb02b2a1du, /* 744 PROPHET program 66 0 */
+    0xf4ac7eafu, /* 745 PROPHET program 66 1 */
+    0x2c87b2eeu, /* 746 PROPHET program 67 0 */
+    0x417f67cdu, /* 747 PROPHET program 67 1 */
+    0x94101899u, /* 748 PROPHET program 68 0 */
+    0x4458139du, /* 749 PROPHET program 68 1 */
+    0xfe33abfdu, /* 750 PROPHET program 69 0 */
+    0x6ad500aau, /* 751 PROPHET program 69 1 */
+    0x748c4fbau, /* 752 PROPHET program 70 0 */
+    0xcd359334u, /* 753 PROPHET program 70 1 */
+    0xa82614a3u, /* 754 PROPHET program 71 0 */
+    0x04d429beu, /* 755 PROPHET program 71 1 */
+    0x83b0bd04u, /* 756 PROPHET program 72 0 */
+    0x274d0985u, /* 757 PROPHET program 72 1 */
+    0xa492c620u, /* 758 PROPHET program 73 0 */
+    0x7c0a1b48u, /* 759 PROPHET program 73 1 */
+    0xbfe56a72u, /* 760 PROPHET program 74 0 */
+    0x4e8511fau, /* 761 PROPHET program 74 1 */
+    0xc905acd3u, /* 762 PROPHET program 75 0 */
+    0x29f7caefu, /* 763 PROPHET program 75 1 */
+    0x31b97211u, /* 764 PROPHET program 76 0 */
+    0xfd748b75u, /* 765 PROPHET program 76 1 */
+    0x028474c6u, /* 766 PROPHET program 77 0 */
+    0x1e5c0c13u, /* 767 PROPHET program 77 1 */
+    0xa0d31d76u, /* 768 PROPHET program 78 0 */
+    0x5cbd187cu, /* 769 PROPHET program 78 1 */
+    0x69c74bd5u, /* 770 PROPHET program 79 0 */
+    0xafd57b9eu, /* 771 PROPHET program 79 1 */
+    0xf94cd605u, /* 772 PROPHET program 80 0 */
+    0x9c08096eu, /* 773 PROPHET program 80 1 */
+    0x4e631befu, /* 774 PROPHET program 81 0 */
+    0x721e4bcbu, /* 775 PROPHET program 81 1 */
+    0x6356fe6au, /* 776 PROPHET program 82 0 */
+    0x2f788ba4u, /* 777 PROPHET program 82 1 */
+    0xcf402898u, /* 778 PROPHET program 83 0 */
+    0xe4956088u, /* 779 PROPHET program 83 1 */
+    0x5e4653d5u, /* 780 PROPHET program 84 0 */
+    0x2642813du, /* 781 PROPHET program 84 1 */
+    0x6897d604u, /* 782 PROPHET program 85 0 */
+    0xb5626ec0u, /* 783 PROPHET program 85 1 */
+    0x376a5e8bu, /* 784 PROPHET program 86 0 */
+    0xcc5dd808u, /* 785 PROPHET program 86 1 */
+    0x5fb9451au, /* 786 PROPHET program 87 0 */
+    0x6ac5212du, /* 787 PROPHET program 87 1 */
+    0xd35c5b2eu, /* 788 PROPHET program 88 0 */
+    0x7406540du, /* 789 PROPHET program 88 1 */
+    0xbc2b07e8u, /* 790 PROPHET program 89 0 */
+    0xa71c101cu, /* 791 PROPHET program 89 1 */
+    0x3530e26eu, /* 792 PROPHET program 90 0 */
+    0xfea11db1u, /* 793 PROPHET program 90 1 */
+    0x823c275cu, /* 794 PROPHET program 91 0 */
+    0x94cd0d82u, /* 795 PROPHET program 91 1 */
+    0x89edce56u, /* 796 PROPHET program 92 0 */
+    0x659cc0f6u, /* 797 PROPHET program 92 1 */
+    0x5e7bb7e2u, /* 798 PROPHET program 93 0 */
+    0x68ea1ad7u, /* 799 PROPHET program 93 1 */
+    0x4c610eccu, /* 800 PROPHET program 94 0 */
+    0x3d677ad1u, /* 801 PROPHET program 94 1 */
+    0x7c9f715au, /* 802 PROPHET program 95 0 */
+    0x28387ba7u, /* 803 PROPHET program 95 1 */
+    0x73d4b0d9u, /* 804 PROPHET program 96 0 */
+    0x570e5251u, /* 805 PROPHET program 96 1 */
+    0x5022dc63u, /* 806 PROPHET program 97 0 */
+    0x150f7063u, /* 807 PROPHET program 97 1 */
+    0x54048517u, /* 808 PROPHET program 98 0 */
+    0x2e34e67bu, /* 809 PROPHET program 98 1 */
+    0x23e7975cu, /* 810 PROPHET program 99 0 */
+    0xa4d1fa64u, /* 811 PROPHET program 99 1 */
+    0x054da554u, /* 812 PROPHET program 100 0 */
+    0xe7946d03u, /* 813 PROPHET program 100 1 */
+    0xbe365799u, /* 814 PROPHET program 101 0 */
+    0xb5a715d2u, /* 815 PROPHET program 101 1 */
+    0x780ff25bu, /* 816 PROPHET program 102 0 */
+    0xee37ec0eu, /* 817 PROPHET program 102 1 */
+    0x7683c0f7u, /* 818 PROPHET program 103 0 */
+    0xd6cd321au, /* 819 PROPHET program 103 1 */
+    0x2c0d5365u, /* 820 PROPHET program 104 0 */
+    0x4ec1fe2au, /* 821 PROPHET program 104 1 */
+    0x54760eaeu, /* 822 PROPHET program 105 0 */
+    0x2b7a5d76u, /* 823 PROPHET program 105 1 */
+    0x6922348du, /* 824 PROPHET program 106 0 */
+    0x034ae343u, /* 825 PROPHET program 106 1 */
+    0x56de4ba9u, /* 826 PROPHET program 107 0 */
+    0x2e4656feu, /* 827 PROPHET program 107 1 */
+    0x0d638165u, /* 828 PROPHET program 108 0 */
+    0xe7240440u, /* 829 PROPHET program 108 1 */
+    0xa566c99du, /* 830 PROPHET program 109 0 */
+    0xa97c72ebu, /* 831 PROPHET program 109 1 */
+    0x0bd8a335u, /* 832 PROPHET program 110 0 */
+    0x8ad25b87u, /* 833 PROPHET program 110 1 */
+    0xf2a8eaeeu, /* 834 PROPHET program 111 0 */
+    0x78344c73u, /* 835 PROPHET program 111 1 */
+    0x159395a0u, /* 836 PROPHET program 112 0 */
+    0xbbe66b95u, /* 837 PROPHET program 112 1 */
+    0x5d3cbb62u, /* 838 PROPHET program 113 0 */
+    0xee20c570u, /* 839 PROPHET program 113 1 */
+    0x5b2aabe7u, /* 840 PROPHET program 114 0 */
+    0x0a04c59au, /* 841 PROPHET program 114 1 */
+    0xd6029be0u, /* 842 PROPHET program 115 0 */
+    0xf5aeec07u, /* 843 PROPHET program 115 1 */
+    0xcbea057au, /* 844 PROPHET program 116 0 */
+    0x29274089u, /* 845 PROPHET program 116 1 */
+    0x2515e737u, /* 846 PROPHET program 117 0 */
+    0x02bbf214u, /* 847 PROPHET program 117 1 */
+    0x82b50dacu, /* 848 PROPHET program 118 0 */
+    0xace46b14u, /* 849 PROPHET program 118 1 */
+    0xc2a35ba6u, /* 850 PROPHET program 119 0 */
+    0xe8a253a8u, /* 851 PROPHET program 119 1 */
+    0xd86e4090u, /* 852 PROPHET program 120 0 */
+    0xcd354a73u, /* 853 PROPHET program 120 1 */
+    0xc120b5edu, /* 854 PROPHET program 121 0 */
+    0xa6274069u, /* 855 PROPHET program 121 1 */
+    0x8efbe391u, /* 856 PROPHET program 122 0 */
+    0x7df82f1du, /* 857 PROPHET program 122 1 */
+    0xd781e295u, /* 858 PROPHET program 123 0 */
+    0x746745f0u, /* 859 PROPHET program 123 1 */
+    0x2541f10fu, /* 860 PROPHET program 124 0 */
+    0xf43976b0u, /* 861 PROPHET program 124 1 */
+    0x19fc2762u, /* 862 PROPHET program 125 0 */
+    0x7dd5c7c3u, /* 863 PROPHET program 125 1 */
+    0x868e6691u, /* 864 PROPHET program 126 0 */
+    0x949fc106u, /* 865 PROPHET program 126 1 */
+    0xae279b44u, /* 866 PROPHET program 127 0 */
+    0xffd13a1eu, /* 867 PROPHET program 127 1 */
+    0x0918dc2bu, /* 868 PROPHET program 128 0 */
+    0xa66faed3u, /* 869 PROPHET program 128 1 */
+    0xb7d733cbu, /* 870 PROPHET program 129 0 */
+    0x961b7dc6u, /* 871 PROPHET program 129 1 */
+    0x0c5bb0c4u, /* 872 PROPHET program 130 0 */
+    0x0e14dfc4u, /* 873 PROPHET program 130 1 */
+    0xa6128269u, /* 874 PROPHET program 131 0 */
+    0x97f515deu, /* 875 PROPHET program 131 1 */
+    0xd03d8b03u, /* 876 PROPHET program 132 0 */
+    0xe8e5f747u, /* 877 PROPHET program 132 1 */
+    0x3fccebcfu, /* 878 PROPHET program 133 0 */
+    0x2021bc20u, /* 879 PROPHET program 133 1 */
+    0xa965deabu, /* 880 PROPHET program 134 0 */
+    0x1b618638u, /* 881 PROPHET program 134 1 */
+    0x3b339be3u, /* 882 PROPHET program 135 0 */
+    0xeebfeb0fu, /* 883 PROPHET program 135 1 */
+    0xbeaa5f8cu, /* 884 PROPHET program 136 0 */
+    0x6b8a095eu, /* 885 PROPHET program 136 1 */
+    0xc8a52fadu, /* 886 PROPHET program 137 0 */
+    0xb114ab42u, /* 887 PROPHET program 137 1 */
+    0x46730df2u, /* 888 PROPHET program 138 0 */
+    0x01ed79a5u, /* 889 PROPHET program 138 1 */
+    0xb9ea4874u, /* 890 PROPHET program 139 0 */
+    0xce0defdbu, /* 891 PROPHET program 139 1 */
+    0x4b6ddaf6u, /* 892 PROPHET program 140 0 */
+    0xdf9b031au, /* 893 PROPHET program 140 1 */
+    0x3dd6bfafu, /* 894 PROPHET program 141 0 */
+    0xab5de7b1u, /* 895 PROPHET program 141 1 */
+    0x9f98b6f6u, /* 896 PROPHET program 142 0 */
+    0xba90cbe1u, /* 897 PROPHET program 142 1 */
+    0x0a290f3cu, /* 898 PROPHET program 143 0 */
+    0x0c5071f5u, /* 899 PROPHET program 143 1 */
+    0xca412986u, /* 900 PROPHET program 144 0 */
+    0x97163bf7u, /* 901 PROPHET program 144 1 */
+    0xea21c026u, /* 902 PROPHET program 145 0 */
+    0xa7e858c4u, /* 903 PROPHET program 145 1 */
+    0x0763f8d1u, /* 904 PROPHET program 146 0 */
+    0x51294ddau, /* 905 PROPHET program 146 1 */
+    0xabc1753au, /* 906 PROPHET program 147 0 */
+    0xa20a2447u, /* 907 PROPHET program 147 1 */
+    0x4a485f7fu, /* 908 PROPHET program 148 0 */
+    0xecfdcc65u, /* 909 PROPHET program 148 1 */
+    0x34e98aceu, /* 910 PROPHET program 149 0 */
+    0x451f90efu, /* 911 PROPHET program 149 1 */
+    0x1c2e7ff1u, /* 912 PROPHET program 150 0 */
+    0xc4a3a1afu, /* 913 PROPHET program 150 1 */
+    0x492a5aa1u, /* 914 PROPHET program 151 0 */
+    0xefdde0f5u, /* 915 PROPHET program 151 1 */
+    0xff943f95u, /* 916 PROPHET program 152 0 */
+    0x6ead7ec3u, /* 917 PROPHET program 152 1 */
+    0xe8ef3e23u, /* 918 PROPHET program 153 0 */
+    0xcd26074bu, /* 919 PROPHET program 153 1 */
+    0xd1d6e64fu, /* 920 PROPHET program 154 0 */
+    0xae3a42d3u, /* 921 PROPHET program 154 1 */
+    0xcd720f4au, /* 922 PROPHET program 155 0 */
+    0xa9969d76u, /* 923 PROPHET program 155 1 */
+    0xfa623681u, /* 924 PROPHET program 156 0 */
+    0x9f8e4e2au, /* 925 PROPHET program 156 1 */
+    0x20bb98a4u, /* 926 PROPHET program 157 0 */
+    0xe2fd19e0u, /* 927 PROPHET program 157 1 */
+    0x4e16e622u, /* 928 PROPHET program 158 0 */
+    0x7ba775d0u, /* 929 PROPHET program 158 1 */
+    0x283cfa5cu, /* 930 PROPHET program 159 0 */
+    0xc2c59cd5u, /* 931 PROPHET program 159 1 */
+    0xa5d8d898u, /* 932 PROPHET program 160 0 */
+    0x9accfc3fu, /* 933 PROPHET program 160 1 */
+    0xe3de4bd9u, /* 934 PROPHET program 161 0 */
+    0xa6c3215fu, /* 935 PROPHET program 161 1 */
+    0x77f5454cu, /* 936 PROPHET program 162 0 */
+    0x1b41233cu, /* 937 PROPHET program 162 1 */
+    0x9d2642f0u, /* 938 PROPHET program 163 0 */
+    0x5f882cc8u, /* 939 PROPHET program 163 1 */
+    0x6aa617f5u, /* 940 PROPHET program 164 0 */
+    0x623c2fe4u, /* 941 PROPHET program 164 1 */
+    0x7d27575du, /* 942 PROPHET program 165 0 */
+    0xaeab0280u, /* 943 PROPHET program 165 1 */
+    0x657a5ae0u, /* 944 PROPHET program 166 0 */
+    0x55c38fadu, /* 945 PROPHET program 166 1 */
+    0x5e5f8636u, /* 946 PROPHET program 167 0 */
+    0x8808ca82u, /* 947 PROPHET program 167 1 */
+    0x807f4beeu, /* 948 PROPHET program 168 0 */
+    0xa009e5ebu, /* 949 PROPHET program 168 1 */
+    0xf0cd083eu, /* 950 PROPHET program 169 0 */
+    0xc7c8ea95u, /* 951 PROPHET program 169 1 */
+    0x3027ca50u, /* 952 PROPHET program 170 0 */
+    0x8f8e7506u, /* 953 PROPHET program 170 1 */
+    0x2e8bb126u, /* 954 PROPHET program 171 0 */
+    0x545b0f1cu, /* 955 PROPHET program 171 1 */
+    0x4ed16a01u, /* 956 PROPHET program 172 0 */
+    0xb3de06b1u, /* 957 PROPHET program 172 1 */
+    0xb44d909au, /* 958 PROPHET program 173 0 */
+    0x3d12c6a6u, /* 959 PROPHET program 173 1 */
+    0xa52ecab9u, /* 960 PROPHET program 174 0 */
+    0xf67087afu, /* 961 PROPHET program 174 1 */
+    0xeff4d51eu, /* 962 PROPHET program 175 0 */
+    0xa1723042u, /* 963 PROPHET program 175 1 */
+    0xb079f57du, /* 964 PROPHET program 176 0 */
+    0x422fcdedu, /* 965 PROPHET program 176 1 */
+    0xc92a93d6u, /* 966 PROPHET program 177 0 */
+    0x06624cffu, /* 967 PROPHET program 177 1 */
+    0xe58cac68u, /* 968 PROPHET program 178 0 */
+    0x04ecfb1au, /* 969 PROPHET program 178 1 */
+    0x8535033eu, /* 970 PROPHET program 179 0 */
+    0x14a51d2fu, /* 971 PROPHET program 179 1 */
+    0xef2865c2u, /* 972 PROPHET program 180 0 */
+    0x6bcf7ff0u, /* 973 PROPHET program 180 1 */
+    0x4bcc404bu, /* 974 PROPHET program 181 0 */
+    0x9421ae9fu, /* 975 PROPHET program 181 1 */
+    0x47d48eafu, /* 976 PROPHET program 182 0 */
+    0x9b06d48eu, /* 977 PROPHET program 182 1 */
+    0x273b7593u, /* 978 PROPHET program 183 0 */
+    0x585a97a0u, /* 979 PROPHET program 183 1 */
+    0x74f56da7u, /* 980 PROPHET program 184 0 */
+    0x3df0d926u, /* 981 PROPHET program 184 1 */
+    0x70eed611u, /* 982 PROPHET program 185 0 */
+    0xcd8cb09eu, /* 983 PROPHET program 185 1 */
+    0xf14a2a26u, /* 984 PROPHET program 186 0 */
+    0xaf65b6efu, /* 985 PROPHET program 186 1 */
+    0x86dbbb1du, /* 986 PROPHET program 187 0 */
+    0x9c336975u, /* 987 PROPHET program 187 1 */
+    0xeaf6ff4cu, /* 988 PROPHET program 188 0 */
+    0x54ed712eu, /* 989 PROPHET program 188 1 */
+    0x76e1ee2cu, /* 990 PROPHET program 189 0 */
+    0xbdd40860u, /* 991 PROPHET program 189 1 */
+    0xfac589f1u, /* 992 PROPHET program 190 0 */
+    0x48491148u, /* 993 PROPHET program 190 1 */
+    0xe2a33252u, /* 994 PROPHET program 191 0 */
+    0xf900e0d1u, /* 995 PROPHET program 191 1 */
+    0xc3a9c309u, /* 996 PROPHET program 192 0 */
+    0xa2752d84u, /* 997 PROPHET program 192 1 */
+    0x7192911cu, /* 998 PROPHET program 193 0 */
+    0x87900884u, /* 999 PROPHET program 193 1 */
+    0x955dcb6eu, /* 1000 PROPHET program 194 0 */
+    0xf78e4ad0u, /* 1001 PROPHET program 194 1 */
+    0xa25a233du, /* 1002 PROPHET program 195 0 */
+    0xf14e8486u, /* 1003 PROPHET program 195 1 */
+    0x04f18a5du, /* 1004 PROPHET program 196 0 */
+    0x1775a63au, /* 1005 PROPHET program 196 1 */
+    0x7e305da0u, /* 1006 PROPHET program 197 0 */
+    0x063b0b1au, /* 1007 PROPHET program 197 1 */
+    0xec5b3f9du, /* 1008 PROPHET program 198 0 */
+    0xf0b21cbeu, /* 1009 PROPHET program 198 1 */
+    0x0d520475u, /* 1010 PROPHET program 199 0 */
+    0x404afcfdu, /* 1011 PROPHET program 199 1 */
+    0x9c59c9aeu, /* 1012 PROPHET program 200 0 */
+    0x44a06095u, /* 1013 PROPHET program 200 1 */
+    0xbbdeae25u, /* 1014 PROPHET program (CPU1) 0 0 */
+    0xb4265430u, /* 1015 PROPHET program (CPU1) 0 1 */
+    0x4b045e95u, /* 1016 PROPHET program (CPU1) 1 0 */
+    0x01231144u, /* 1017 PROPHET program (CPU1) 1 1 */
+    0x3bbbf278u, /* 1018 PROPHET program (CPU1) 2 0 */
+    0x87feea04u, /* 1019 PROPHET program (CPU1) 2 1 */
+    0x65a201cbu, /* 1020 PROPHET program (CPU1) 3 0 */
+    0x7d89ed68u, /* 1021 PROPHET program (CPU1) 3 1 */
+    0xf3641b0du, /* 1022 PROPHET program (CPU1) 4 0 */
+    0x55008411u, /* 1023 PROPHET program (CPU1) 4 1 */
+    0x41b36feau, /* 1024 PROPHET program (CPU1) 5 0 */
+    0xe1c5dc08u, /* 1025 PROPHET program (CPU1) 5 1 */
+    0x9eaf2b9eu, /* 1026 PROPHET program (CPU1) 6 0 */
+    0xc5887d6du, /* 1027 PROPHET program (CPU1) 6 1 */
+    0x68a5f46fu, /* 1028 PROPHET program (CPU1) 7 0 */
+    0x895aab48u, /* 1029 PROPHET program (CPU1) 7 1 */
+    0x89d48a63u, /* 1030 PROPHET program (CPU1) 8 0 */
+    0x326ecd81u, /* 1031 PROPHET program (CPU1) 8 1 */
+    0x3eb9ad3bu, /* 1032 PROPHET program (CPU1) 9 0 */
+    0xf312f3f2u, /* 1033 PROPHET program (CPU1) 9 1 */
+    0xdec59be2u, /* 1034 PROPHET program (CPU1) 10 0 */
+    0x3ce092e0u, /* 1035 PROPHET program (CPU1) 10 1 */
+    0x171d6159u, /* 1036 PROPHET program (CPU1) 11 0 */
+    0x945b2cd6u, /* 1037 PROPHET program (CPU1) 11 1 */
+    0x64b2b04eu, /* 1038 PROPHET program (CPU1) 12 0 */
+    0x1245c44au, /* 1039 PROPHET program (CPU1) 12 1 */
+    0x87e8baeeu, /* 1040 PROPHET program (CPU1) 13 0 */
+    0xac20d13eu, /* 1041 PROPHET program (CPU1) 13 1 */
+    0x567bb11fu, /* 1042 PROPHET program (CPU1) 14 0 */
+    0x50625dddu, /* 1043 PROPHET program (CPU1) 14 1 */
+    0xb0a24991u, /* 1044 PROPHET program (CPU1) 15 0 */
+    0x80931fe6u, /* 1045 PROPHET program (CPU1) 15 1 */
+    0x1ea058acu, /* 1046 PROPHET program (CPU1) 16 0 */
+    0xeda170b5u, /* 1047 PROPHET program (CPU1) 16 1 */
+    0x11240d97u, /* 1048 PROPHET program (CPU1) 17 0 */
+    0x5f756478u, /* 1049 PROPHET program (CPU1) 17 1 */
+    0x7a43daa3u, /* 1050 PROPHET program (CPU1) 18 0 */
+    0xd74d3689u, /* 1051 PROPHET program (CPU1) 18 1 */
+    0x0b37acbeu, /* 1052 PROPHET program (CPU1) 19 0 */
+    0x750fc061u, /* 1053 PROPHET program (CPU1) 19 1 */
+    0x75302e1au, /* 1054 PROPHET program (CPU1) 20 0 */
+    0x242c68c0u, /* 1055 PROPHET program (CPU1) 20 1 */
+    0x667ccaf5u, /* 1056 PROPHET program (CPU1) 21 0 */
+    0xa68725a4u, /* 1057 PROPHET program (CPU1) 21 1 */
+    0x33145ecbu, /* 1058 PROPHET program (CPU1) 22 0 */
+    0x40e325f9u, /* 1059 PROPHET program (CPU1) 22 1 */
+    0x75ebffbbu, /* 1060 PROPHET program (CPU1) 23 0 */
+    0x3a9f9f55u, /* 1061 PROPHET program (CPU1) 23 1 */
+    0x8d5414a4u, /* 1062 PROPHET program (CPU1) 24 0 */
+    0xe276d5cau, /* 1063 PROPHET program (CPU1) 24 1 */
+    0xaea15a32u, /* 1064 PROPHET program (CPU1) 25 0 */
+    0x85999925u, /* 1065 PROPHET program (CPU1) 25 1 */
+    0x11be5c01u, /* 1066 PROPHET program (CPU1) 26 0 */
+    0x5cad5138u, /* 1067 PROPHET program (CPU1) 26 1 */
+    0xfe32abceu, /* 1068 PROPHET program (CPU1) 27 0 */
+    0xb7be46d3u, /* 1069 PROPHET program (CPU1) 27 1 */
+    0x3c2bfd7eu, /* 1070 PROPHET program (CPU1) 28 0 */
+    0xfa634acbu, /* 1071 PROPHET program (CPU1) 28 1 */
+    0xa0da2fcau, /* 1072 PROPHET program (CPU1) 29 0 */
+    0x53f5a6feu, /* 1073 PROPHET program (CPU1) 29 1 */
+    0xbed52711u, /* 1074 PROPHET program (CPU1) 30 0 */
+    0x7a6161cfu, /* 1075 PROPHET program (CPU1) 30 1 */
+    0x06be0816u, /* 1076 PROPHET program (CPU1) 31 0 */
+    0xe817c100u, /* 1077 PROPHET program (CPU1) 31 1 */
+    0x1d09f68bu, /* 1078 PROPHET program (CPU1) 32 0 */
+    0x613a2b7du, /* 1079 PROPHET program (CPU1) 32 1 */
+    0x8186ed71u, /* 1080 PROPHET program (CPU1) 33 0 */
+    0xe8642084u, /* 1081 PROPHET program (CPU1) 33 1 */
+    0x3759f803u, /* 1082 PROPHET program (CPU1) 34 0 */
+    0x1310f719u, /* 1083 PROPHET program (CPU1) 34 1 */
+    0x29bb5d7du, /* 1084 PROPHET program (CPU1) 35 0 */
+    0x40f9f404u, /* 1085 PROPHET program (CPU1) 35 1 */
+    0xfbf203a4u, /* 1086 PROPHET program (CPU1) 36 0 */
+    0xce9179efu, /* 1087 PROPHET program (CPU1) 36 1 */
+    0xbeec72fcu, /* 1088 PROPHET program (CPU1) 37 0 */
+    0xd79c6f60u, /* 1089 PROPHET program (CPU1) 37 1 */
+    0x1bf21384u, /* 1090 PROPHET program (CPU1) 38 0 */
+    0xd177c132u, /* 1091 PROPHET program (CPU1) 38 1 */
+    0xdd343e4fu, /* 1092 PROPHET program (CPU1) 39 0 */
+    0x8dca574bu, /* 1093 PROPHET program (CPU1) 39 1 */
+    0x8f26f21bu, /* 1094 PROPHET program (CPU1) 40 0 */
+    0x261f079eu, /* 1095 PROPHET program (CPU1) 40 1 */
+    0x07f9ed4du, /* 1096 PROPHET program (CPU1) 41 0 */
+    0x99979950u, /* 1097 PROPHET program (CPU1) 41 1 */
+    0x270d2ba0u, /* 1098 PROPHET program (CPU1) 42 0 */
+    0x3817b8b0u, /* 1099 PROPHET program (CPU1) 42 1 */
+    0xd1209ad1u, /* 1100 PROPHET program (CPU1) 43 0 */
+    0xedad8179u, /* 1101 PROPHET program (CPU1) 43 1 */
+    0xc12549f0u, /* 1102 PROPHET program (CPU1) 44 0 */
+    0xd5c7318fu, /* 1103 PROPHET program (CPU1) 44 1 */
+    0xa87d6d38u, /* 1104 PROPHET program (CPU1) 45 0 */
+    0x90d2128du, /* 1105 PROPHET program (CPU1) 45 1 */
+    0x9f5f5c09u, /* 1106 PROPHET program (CPU1) 46 0 */
+    0xc43bebc0u, /* 1107 PROPHET program (CPU1) 46 1 */
+    0x8042a8f5u, /* 1108 PROPHET program (CPU1) 47 0 */
+    0xc3de4a34u, /* 1109 PROPHET program (CPU1) 47 1 */
+    0x27d3dc82u, /* 1110 PROPHET program (CPU1) 48 0 */
+    0xa60b0d32u, /* 1111 PROPHET program (CPU1) 48 1 */
+    0x1827b753u, /* 1112 PROPHET program (CPU1) 49 0 */
+    0xfe87143du, /* 1113 PROPHET program (CPU1) 49 1 */
+    0x87d74711u, /* 1114 PROPHET program (CPU1) 50 0 */
+    0xe6d5c23au, /* 1115 PROPHET program (CPU1) 50 1 */
+    0x33905d1eu, /* 1116 PROPHET program (CPU1) 51 0 */
+    0xf1336ed3u, /* 1117 PROPHET program (CPU1) 51 1 */
+    0x7e001ebdu, /* 1118 PROPHET program (CPU1) 52 0 */
+    0x8e73b6e6u, /* 1119 PROPHET program (CPU1) 52 1 */
+    0xbfe12339u, /* 1120 PROPHET program (CPU1) 53 0 */
+    0xb8e7f4b7u, /* 1121 PROPHET program (CPU1) 53 1 */
+    0x8839ed28u, /* 1122 PROPHET program (CPU1) 54 0 */
+    0xc92de3cfu, /* 1123 PROPHET program (CPU1) 54 1 */
+    0x253b113fu, /* 1124 PROPHET program (CPU1) 55 0 */
+    0x939acb3fu, /* 1125 PROPHET program (CPU1) 55 1 */
+    0x8db9805cu, /* 1126 PROPHET program (CPU1) 56 0 */
+    0x2ef350f4u, /* 1127 PROPHET program (CPU1) 56 1 */
+    0x7a9feba9u, /* 1128 PROPHET program (CPU1) 57 0 */
+    0xf67fa50bu, /* 1129 PROPHET program (CPU1) 57 1 */
+    0x429413eau, /* 1130 PROPHET program (CPU1) 58 0 */
+    0x3bf0fed8u, /* 1131 PROPHET program (CPU1) 58 1 */
+    0xe68f71dfu, /* 1132 PROPHET program (CPU1) 59 0 */
+    0xbd2582c6u, /* 1133 PROPHET program (CPU1) 59 1 */
+    0xdf1b1f0eu, /* 1134 PROPHET program (CPU1) 60 0 */
+    0xfb692886u, /* 1135 PROPHET program (CPU1) 60 1 */
+    0x70019886u, /* 1136 PROPHET program (CPU1) 61 0 */
+    0xfd464880u, /* 1137 PROPHET program (CPU1) 61 1 */
+    0x9e79442fu, /* 1138 PROPHET program (CPU1) 62 0 */
+    0x149395b4u, /* 1139 PROPHET program (CPU1) 62 1 */
+    0xab1edb10u, /* 1140 PROPHET program (CPU1) 63 0 */
+    0x30827e7cu, /* 1141 PROPHET program (CPU1) 63 1 */
+    0x6d3e3992u, /* 1142 PROPHET program (CPU1) 64 0 */
+    0xcc1699c0u, /* 1143 PROPHET program (CPU1) 64 1 */
+    0xaac586eeu, /* 1144 PROPHET program (CPU1) 65 0 */
+    0x9584b7ccu, /* 1145 PROPHET program (CPU1) 65 1 */
+    0xb02b2a1du, /* 1146 PROPHET program (CPU1) 66 0 */
+    0xf4ac7eafu, /* 1147 PROPHET program (CPU1) 66 1 */
+    0x2c87b2eeu, /* 1148 PROPHET program (CPU1) 67 0 */
+    0x417f67cdu, /* 1149 PROPHET program (CPU1) 67 1 */
+    0x94101899u, /* 1150 PROPHET program (CPU1) 68 0 */
+    0x4458139du, /* 1151 PROPHET program (CPU1) 68 1 */
+    0xfe33abfdu, /* 1152 PROPHET program (CPU1) 69 0 */
+    0x6ad500aau, /* 1153 PROPHET program (CPU1) 69 1 */
+    0x748c4fbau, /* 1154 PROPHET program (CPU1) 70 0 */
+    0xcd359334u, /* 1155 PROPHET program (CPU1) 70 1 */
+    0xa82614a3u, /* 1156 PROPHET program (CPU1) 71 0 */
+    0x04d429beu, /* 1157 PROPHET program (CPU1) 71 1 */
+    0x83b0bd04u, /* 1158 PROPHET program (CPU1) 72 0 */
+    0x274d0985u, /* 1159 PROPHET program (CPU1) 72 1 */
+    0xa492c620u, /* 1160 PROPHET program (CPU1) 73 0 */
+    0x7c0a1b48u, /* 1161 PROPHET program (CPU1) 73 1 */
+    0xbfe56a72u, /* 1162 PROPHET program (CPU1) 74 0 */
+    0x4e8511fau, /* 1163 PROPHET program (CPU1) 74 1 */
+    0xc905acd3u, /* 1164 PROPHET program (CPU1) 75 0 */
+    0x29f7caefu, /* 1165 PROPHET program (CPU1) 75 1 */
+    0x31b97211u, /* 1166 PROPHET program (CPU1) 76 0 */
+    0xfd748b75u, /* 1167 PROPHET program (CPU1) 76 1 */
+    0x028474c6u, /* 1168 PROPHET program (CPU1) 77 0 */
+    0x1e5c0c13u, /* 1169 PROPHET program (CPU1) 77 1 */
+    0xa0d31d76u, /* 1170 PROPHET program (CPU1) 78 0 */
+    0x5cbd187cu, /* 1171 PROPHET program (CPU1) 78 1 */
+    0x69c74bd5u, /* 1172 PROPHET program (CPU1) 79 0 */
+    0xafd57b9eu, /* 1173 PROPHET program (CPU1) 79 1 */
+    0xf94cd605u, /* 1174 PROPHET program (CPU1) 80 0 */
+    0x9c08096eu, /* 1175 PROPHET program (CPU1) 80 1 */
+    0x4e631befu, /* 1176 PROPHET program (CPU1) 81 0 */
+    0x721e4bcbu, /* 1177 PROPHET program (CPU1) 81 1 */
+    0x6356fe6au, /* 1178 PROPHET program (CPU1) 82 0 */
+    0x2f788ba4u, /* 1179 PROPHET program (CPU1) 82 1 */
+    0xcf402898u, /* 1180 PROPHET program (CPU1) 83 0 */
+    0xe4956088u, /* 1181 PROPHET program (CPU1) 83 1 */
+    0x5e4653d5u, /* 1182 PROPHET program (CPU1) 84 0 */
+    0x2642813du, /* 1183 PROPHET program (CPU1) 84 1 */
+    0x6897d604u, /* 1184 PROPHET program (CPU1) 85 0 */
+    0xb5626ec0u, /* 1185 PROPHET program (CPU1) 85 1 */
+    0x376a5e8bu, /* 1186 PROPHET program (CPU1) 86 0 */
+    0xcc5dd808u, /* 1187 PROPHET program (CPU1) 86 1 */
+    0x5fb9451au, /* 1188 PROPHET program (CPU1) 87 0 */
+    0x6ac5212du, /* 1189 PROPHET program (CPU1) 87 1 */
+    0xd35c5b2eu, /* 1190 PROPHET program (CPU1) 88 0 */
+    0x7406540du, /* 1191 PROPHET program (CPU1) 88 1 */
+    0xbc2b07e8u, /* 1192 PROPHET program (CPU1) 89 0 */
+    0xa71c101cu, /* 1193 PROPHET program (CPU1) 89 1 */
+    0x3530e26eu, /* 1194 PROPHET program (CPU1) 90 0 */
+    0xfea11db1u, /* 1195 PROPHET program (CPU1) 90 1 */
+    0x823c275cu, /* 1196 PROPHET program (CPU1) 91 0 */
+    0x94cd0d82u, /* 1197 PROPHET program (CPU1) 91 1 */
+    0x89edce56u, /* 1198 PROPHET program (CPU1) 92 0 */
+    0x659cc0f6u, /* 1199 PROPHET program (CPU1) 92 1 */
+    0x5e7bb7e2u, /* 1200 PROPHET program (CPU1) 93 0 */
+    0x68ea1ad7u, /* 1201 PROPHET program (CPU1) 93 1 */
+    0x4c610eccu, /* 1202 PROPHET program (CPU1) 94 0 */
+    0x3d677ad1u, /* 1203 PROPHET program (CPU1) 94 1 */
+    0x7c9f715au, /* 1204 PROPHET program (CPU1) 95 0 */
+    0x28387ba7u, /* 1205 PROPHET program (CPU1) 95 1 */
+    0x73d4b0d9u, /* 1206 PROPHET program (CPU1) 96 0 */
+    0x570e5251u, /* 1207 PROPHET program (CPU1) 96 1 */
+    0x5022dc63u, /* 1208 PROPHET program (CPU1) 97 0 */
+    0x150f7063u, /* 1209 PROPHET program (CPU1) 97 1 */
+    0x54048517u, /* 1210 PROPHET program (CPU1) 98 0 */
+    0x2e34e67bu, /* 1211 PROPHET program (CPU1) 98 1 */
+    0x23e7975cu, /* 1212 PROPHET program (CPU1) 99 0 */
+    0xa4d1fa64u, /* 1213 PROPHET program (CPU1) 99 1 */
+    0x054da554u, /* 1214 PROPHET program (CPU1) 100 0 */
+    0xe7946d03u, /* 1215 PROPHET program (CPU1) 100 1 */
+    0xbe365799u, /* 1216 PROPHET program (CPU1) 101 0 */
+    0xb5a715d2u, /* 1217 PROPHET program (CPU1) 101 1 */
+    0x780ff25bu, /* 1218 PROPHET program (CPU1) 102 0 */
+    0xee37ec0eu, /* 1219 PROPHET program (CPU1) 102 1 */
+    0x7683c0f7u, /* 1220 PROPHET program (CPU1) 103 0 */
+    0xd6cd321au, /* 1221 PROPHET program (CPU1) 103 1 */
+    0x2c0d5365u, /* 1222 PROPHET program (CPU1) 104 0 */
+    0x4ec1fe2au, /* 1223 PROPHET program (CPU1) 104 1 */
+    0x54760eaeu, /* 1224 PROPHET program (CPU1) 105 0 */
+    0x2b7a5d76u, /* 1225 PROPHET program (CPU1) 105 1 */
+    0x6922348du, /* 1226 PROPHET program (CPU1) 106 0 */
+    0x034ae343u, /* 1227 PROPHET program (CPU1) 106 1 */
+    0x56de4ba9u, /* 1228 PROPHET program (CPU1) 107 0 */
+    0x2e4656feu, /* 1229 PROPHET program (CPU1) 107 1 */
+    0x0d638165u, /* 1230 PROPHET program (CPU1) 108 0 */
+    0xe7240440u, /* 1231 PROPHET program (CPU1) 108 1 */
+    0xa566c99du, /* 1232 PROPHET program (CPU1) 109 0 */
+    0xa97c72ebu, /* 1233 PROPHET program (CPU1) 109 1 */
+    0x0bd8a335u, /* 1234 PROPHET program (CPU1) 110 0 */
+    0x8ad25b87u, /* 1235 PROPHET program (CPU1) 110 1 */
+    0xf2a8eaeeu, /* 1236 PROPHET program (CPU1) 111 0 */
+    0x78344c73u, /* 1237 PROPHET program (CPU1) 111 1 */
+    0x159395a0u, /* 1238 PROPHET program (CPU1) 112 0 */
+    0xbbe66b95u, /* 1239 PROPHET program (CPU1) 112 1 */
+    0x5d3cbb62u, /* 1240 PROPHET program (CPU1) 113 0 */
+    0xee20c570u, /* 1241 PROPHET program (CPU1) 113 1 */
+    0x5b2aabe7u, /* 1242 PROPHET program (CPU1) 114 0 */
+    0x0a04c59au, /* 1243 PROPHET program (CPU1) 114 1 */
+    0xd6029be0u, /* 1244 PROPHET program (CPU1) 115 0 */
+    0xf5aeec07u, /* 1245 PROPHET program (CPU1) 115 1 */
+    0xcbea057au, /* 1246 PROPHET program (CPU1) 116 0 */
+    0x29274089u, /* 1247 PROPHET program (CPU1) 116 1 */
+    0x2515e737u, /* 1248 PROPHET program (CPU1) 117 0 */
+    0x02bbf214u, /* 1249 PROPHET program (CPU1) 117 1 */
+    0x82b50dacu, /* 1250 PROPHET program (CPU1) 118 0 */
+    0xace46b14u, /* 1251 PROPHET program (CPU1) 118 1 */
+    0xc2a35ba6u, /* 1252 PROPHET program (CPU1) 119 0 */
+    0xe8a253a8u, /* 1253 PROPHET program (CPU1) 119 1 */
+    0xd86e4090u, /* 1254 PROPHET program (CPU1) 120 0 */
+    0xcd354a73u, /* 1255 PROPHET program (CPU1) 120 1 */
+    0xc120b5edu, /* 1256 PROPHET program (CPU1) 121 0 */
+    0xa6274069u, /* 1257 PROPHET program (CPU1) 121 1 */
+    0x8efbe391u, /* 1258 PROPHET program (CPU1) 122 0 */
+    0x7df82f1du, /* 1259 PROPHET program (CPU1) 122 1 */
+    0xd781e295u, /* 1260 PROPHET program (CPU1) 123 0 */
+    0x746745f0u, /* 1261 PROPHET program (CPU1) 123 1 */
+    0x2541f10fu, /* 1262 PROPHET program (CPU1) 124 0 */
+    0xf43976b0u, /* 1263 PROPHET program (CPU1) 124 1 */
+    0x19fc2762u, /* 1264 PROPHET program (CPU1) 125 0 */
+    0x7dd5c7c3u, /* 1265 PROPHET program (CPU1) 125 1 */
+    0x868e6691u, /* 1266 PROPHET program (CPU1) 126 0 */
+    0x949fc106u, /* 1267 PROPHET program (CPU1) 126 1 */
+    0xae279b44u, /* 1268 PROPHET program (CPU1) 127 0 */
+    0xffd13a1eu, /* 1269 PROPHET program (CPU1) 127 1 */
+    0x0918dc2bu, /* 1270 PROPHET program (CPU1) 128 0 */
+    0xa66faed3u, /* 1271 PROPHET program (CPU1) 128 1 */
+    0xb7d733cbu, /* 1272 PROPHET program (CPU1) 129 0 */
+    0x961b7dc6u, /* 1273 PROPHET program (CPU1) 129 1 */
+    0x0c5bb0c4u, /* 1274 PROPHET program (CPU1) 130 0 */
+    0x0e14dfc4u, /* 1275 PROPHET program (CPU1) 130 1 */
+    0xa6128269u, /* 1276 PROPHET program (CPU1) 131 0 */
+    0x97f515deu, /* 1277 PROPHET program (CPU1) 131 1 */
+    0xd03d8b03u, /* 1278 PROPHET program (CPU1) 132 0 */
+    0xe8e5f747u, /* 1279 PROPHET program (CPU1) 132 1 */
+    0x3fccebcfu, /* 1280 PROPHET program (CPU1) 133 0 */
+    0x2021bc20u, /* 1281 PROPHET program (CPU1) 133 1 */
+    0xa965deabu, /* 1282 PROPHET program (CPU1) 134 0 */
+    0x1b618638u, /* 1283 PROPHET program (CPU1) 134 1 */
+    0x3b339be3u, /* 1284 PROPHET program (CPU1) 135 0 */
+    0xeebfeb0fu, /* 1285 PROPHET program (CPU1) 135 1 */
+    0xbeaa5f8cu, /* 1286 PROPHET program (CPU1) 136 0 */
+    0x6b8a095eu, /* 1287 PROPHET program (CPU1) 136 1 */
+    0xc8a52fadu, /* 1288 PROPHET program (CPU1) 137 0 */
+    0xb114ab42u, /* 1289 PROPHET program (CPU1) 137 1 */
+    0x46730df2u, /* 1290 PROPHET program (CPU1) 138 0 */
+    0x01ed79a5u, /* 1291 PROPHET program (CPU1) 138 1 */
+    0xb9ea4874u, /* 1292 PROPHET program (CPU1) 139 0 */
+    0xce0defdbu, /* 1293 PROPHET program (CPU1) 139 1 */
+    0x4b6ddaf6u, /* 1294 PROPHET program (CPU1) 140 0 */
+    0xdf9b031au, /* 1295 PROPHET program (CPU1) 140 1 */
+    0x3dd6bfafu, /* 1296 PROPHET program (CPU1) 141 0 */
+    0xab5de7b1u, /* 1297 PROPHET program (CPU1) 141 1 */
+    0x9f98b6f6u, /* 1298 PROPHET program (CPU1) 142 0 */
+    0xba90cbe1u, /* 1299 PROPHET program (CPU1) 142 1 */
+    0x0a290f3cu, /* 1300 PROPHET program (CPU1) 143 0 */
+    0x0c5071f5u, /* 1301 PROPHET program (CPU1) 143 1 */
+    0xca412986u, /* 1302 PROPHET program (CPU1) 144 0 */
+    0x97163bf7u, /* 1303 PROPHET program (CPU1) 144 1 */
+    0xea21c026u, /* 1304 PROPHET program (CPU1) 145 0 */
+    0xa7e858c4u, /* 1305 PROPHET program (CPU1) 145 1 */
+    0x0763f8d1u, /* 1306 PROPHET program (CPU1) 146 0 */
+    0x51294ddau, /* 1307 PROPHET program (CPU1) 146 1 */
+    0xabc1753au, /* 1308 PROPHET program (CPU1) 147 0 */
+    0xa20a2447u, /* 1309 PROPHET program (CPU1) 147 1 */
+    0x4a485f7fu, /* 1310 PROPHET program (CPU1) 148 0 */
+    0xecfdcc65u, /* 1311 PROPHET program (CPU1) 148 1 */
+    0x34e98aceu, /* 1312 PROPHET program (CPU1) 149 0 */
+    0x451f90efu, /* 1313 PROPHET program (CPU1) 149 1 */
+    0x1c2e7ff1u, /* 1314 PROPHET program (CPU1) 150 0 */
+    0xc4a3a1afu, /* 1315 PROPHET program (CPU1) 150 1 */
+    0x492a5aa1u, /* 1316 PROPHET program (CPU1) 151 0 */
+    0xefdde0f5u, /* 1317 PROPHET program (CPU1) 151 1 */
+    0xff943f95u, /* 1318 PROPHET program (CPU1) 152 0 */
+    0x6ead7ec3u, /* 1319 PROPHET program (CPU1) 152 1 */
+    0xe8ef3e23u, /* 1320 PROPHET program (CPU1) 153 0 */
+    0xcd26074bu, /* 1321 PROPHET program (CPU1) 153 1 */
+    0xd1d6e64fu, /* 1322 PROPHET program (CPU1) 154 0 */
+    0xae3a42d3u, /* 1323 PROPHET program (CPU1) 154 1 */
+    0xcd720f4au, /* 1324 PROPHET program (CPU1) 155 0 */
+    0xa9969d76u, /* 1325 PROPHET program (CPU1) 155 1 */
+    0xfa623681u, /* 1326 PROPHET program (CPU1) 156 0 */
+    0x9f8e4e2au, /* 1327 PROPHET program (CPU1) 156 1 */
+    0x20bb98a4u, /* 1328 PROPHET program (CPU1) 157 0 */
+    0xe2fd19e0u, /* 1329 PROPHET program (CPU1) 157 1 */
+    0x4e16e622u, /* 1330 PROPHET program (CPU1) 158 0 */
+    0x7ba775d0u, /* 1331 PROPHET program (CPU1) 158 1 */
+    0x283cfa5cu, /* 1332 PROPHET program (CPU1) 159 0 */
+    0xc2c59cd5u, /* 1333 PROPHET program (CPU1) 159 1 */
+    0xa5d8d898u, /* 1334 PROPHET program (CPU1) 160 0 */
+    0x9accfc3fu, /* 1335 PROPHET program (CPU1) 160 1 */
+    0xe3de4bd9u, /* 1336 PROPHET program (CPU1) 161 0 */
+    0xa6c3215fu, /* 1337 PROPHET program (CPU1) 161 1 */
+    0x77f5454cu, /* 1338 PROPHET program (CPU1) 162 0 */
+    0x1b41233cu, /* 1339 PROPHET program (CPU1) 162 1 */
+    0x9d2642f0u, /* 1340 PROPHET program (CPU1) 163 0 */
+    0x5f882cc8u, /* 1341 PROPHET program (CPU1) 163 1 */
+    0x6aa617f5u, /* 1342 PROPHET program (CPU1) 164 0 */
+    0x623c2fe4u, /* 1343 PROPHET program (CPU1) 164 1 */
+    0x7d27575du, /* 1344 PROPHET program (CPU1) 165 0 */
+    0xaeab0280u, /* 1345 PROPHET program (CPU1) 165 1 */
+    0x657a5ae0u, /* 1346 PROPHET program (CPU1) 166 0 */
+    0x55c38fadu, /* 1347 PROPHET program (CPU1) 166 1 */
+    0x5e5f8636u, /* 1348 PROPHET program (CPU1) 167 0 */
+    0x8808ca82u, /* 1349 PROPHET program (CPU1) 167 1 */
+    0x807f4beeu, /* 1350 PROPHET program (CPU1) 168 0 */
+    0xa009e5ebu, /* 1351 PROPHET program (CPU1) 168 1 */
+    0xf0cd083eu, /* 1352 PROPHET program (CPU1) 169 0 */
+    0xc7c8ea95u, /* 1353 PROPHET program (CPU1) 169 1 */
+    0x3027ca50u, /* 1354 PROPHET program (CPU1) 170 0 */
+    0x8f8e7506u, /* 1355 PROPHET program (CPU1) 170 1 */
+    0x2e8bb126u, /* 1356 PROPHET program (CPU1) 171 0 */
+    0x545b0f1cu, /* 1357 PROPHET program (CPU1) 171 1 */
+    0x4ed16a01u, /* 1358 PROPHET program (CPU1) 172 0 */
+    0xb3de06b1u, /* 1359 PROPHET program (CPU1) 172 1 */
+    0xb44d909au, /* 1360 PROPHET program (CPU1) 173 0 */
+    0x3d12c6a6u, /* 1361 PROPHET program (CPU1) 173 1 */
+    0xa52ecab9u, /* 1362 PROPHET program (CPU1) 174 0 */
+    0xf67087afu, /* 1363 PROPHET program (CPU1) 174 1 */
+    0xeff4d51eu, /* 1364 PROPHET program (CPU1) 175 0 */
+    0xa1723042u, /* 1365 PROPHET program (CPU1) 175 1 */
+    0xb079f57du, /* 1366 PROPHET program (CPU1) 176 0 */
+    0x422fcdedu, /* 1367 PROPHET program (CPU1) 176 1 */
+    0xc92a93d6u, /* 1368 PROPHET program (CPU1) 177 0 */
+    0x06624cffu, /* 1369 PROPHET program (CPU1) 177 1 */
+    0xe58cac68u, /* 1370 PROPHET program (CPU1) 178 0 */
+    0x04ecfb1au, /* 1371 PROPHET program (CPU1) 178 1 */
+    0x8535033eu, /* 1372 PROPHET program (CPU1) 179 0 */
+    0x14a51d2fu, /* 1373 PROPHET program (CPU1) 179 1 */
+    0xef2865c2u, /* 1374 PROPHET program (CPU1) 180 0 */
+    0x6bcf7ff0u, /* 1375 PROPHET program (CPU1) 180 1 */
+    0x4bcc404bu, /* 1376 PROPHET program (CPU1) 181 0 */
+    0x9421ae9fu, /* 1377 PROPHET program (CPU1) 181 1 */
+    0x47d48eafu, /* 1378 PROPHET program (CPU1) 182 0 */
+    0x9b06d48eu, /* 1379 PROPHET program (CPU1) 182 1 */
+    0x273b7593u, /* 1380 PROPHET program (CPU1) 183 0 */
+    0x585a97a0u, /* 1381 PROPHET program (CPU1) 183 1 */
+    0x74f56da7u, /* 1382 PROPHET program (CPU1) 184 0 */
+    0x3df0d926u, /* 1383 PROPHET program (CPU1) 184 1 */
+    0x70eed611u, /* 1384 PROPHET program (CPU1) 185 0 */
+    0xcd8cb09eu, /* 1385 PROPHET program (CPU1) 185 1 */
+    0xf14a2a26u, /* 1386 PROPHET program (CPU1) 186 0 */
+    0xaf65b6efu, /* 1387 PROPHET program (CPU1) 186 1 */
+    0x86dbbb1du, /* 1388 PROPHET program (CPU1) 187 0 */
+    0x9c336975u, /* 1389 PROPHET program (CPU1) 187 1 */
+    0xeaf6ff4cu, /* 1390 PROPHET program (CPU1) 188 0 */
+    0x54ed712eu, /* 1391 PROPHET program (CPU1) 188 1 */
+    0x76e1ee2cu, /* 1392 PROPHET program (CPU1) 189 0 */
+    0xbdd40860u, /* 1393 PROPHET program (CPU1) 189 1 */
+    0xfac589f1u, /* 1394 PROPHET program (CPU1) 190 0 */
+    0x48491148u, /* 1395 PROPHET program (CPU1) 190 1 */
+    0xe2a33252u, /* 1396 PROPHET program (CPU1) 191 0 */
+    0xf900e0d1u, /* 1397 PROPHET program (CPU1) 191 1 */
+    0xc3a9c309u, /* 1398 PROPHET program (CPU1) 192 0 */
+    0xa2752d84u, /* 1399 PROPHET program (CPU1) 192 1 */
+    0x7192911cu, /* 1400 PROPHET program (CPU1) 193 0 */
+    0x87900884u, /* 1401 PROPHET program (CPU1) 193 1 */
+    0x955dcb6eu, /* 1402 PROPHET program (CPU1) 194 0 */
+    0xf78e4ad0u, /* 1403 PROPHET program (CPU1) 194 1 */
+    0xa25a233du, /* 1404 PROPHET program (CPU1) 195 0 */
+    0xf14e8486u, /* 1405 PROPHET program (CPU1) 195 1 */
+    0x04f18a5du, /* 1406 PROPHET program (CPU1) 196 0 */
+    0x1775a63au, /* 1407 PROPHET program (CPU1) 196 1 */
+    0x7e305da0u, /* 1408 PROPHET program (CPU1) 197 0 */
+    0x063b0b1au, /* 1409 PROPHET program (CPU1) 197 1 */
+    0xec5b3f9du, /* 1410 PROPHET program (CPU1) 198 0 */
+    0xf0b21cbeu, /* 1411 PROPHET program (CPU1) 198 1 */
+    0x0d520475u, /* 1412 PROPHET program (CPU1) 199 0 */
+    0x404afcfdu, /* 1413 PROPHET program (CPU1) 199 1 */
+    0x9c59c9aeu, /* 1414 PROPHET program (CPU1) 200 0 */
+    0x44a06095u, /* 1415 PROPHET program (CPU1) 200 1 */
 };

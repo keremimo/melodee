@@ -38,4 +38,6 @@ int memcmp(const void *a, const void *b, size_t n);
 #include "cz_parts.h"
 #include "fm6_parts.h"
 #include "audio_batch.h"                         /* (the firmware's queue for CPU1: its imports) */
+#include "audio_worker.h"                        /* (CPU1's pairing: its imports) */
+#include "p5_parts.h"
 #include "module_native.h"
