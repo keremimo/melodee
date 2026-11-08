@@ -64,11 +64,11 @@ _Static_assert(sizeof(up_rec_t) == 238, "user preset record layout");
 _Static_assert(P_COUNT <= UP_PMAX * 2u && P_COUNT < 128, "user preset record: P_COUNT");
 #if MELODEE_FLASH && !defined(UP_HOST)
 /* One main-loop bank cache holds whichever bank was asked for last: a user preset bank, a native FM6 or CZ-1 bank
- * (or the CZ-1 bank's older view, cz_bank_load) or a Prophet user bank (bank_buf, after native_presets.c). Each owner
+ * (Melodee 1.x's: native_presets.c) (bank_buf). Each owner
  * keeps its own cached-bank byte; bank_claim(kind) before a load forgets the others' (a user bank is indexed first,
  * up_meta). Names, used masks and favourites stay in the owners' indexes, so browsing never reloads. A pointer into a
  * bank is good until the next call that may load another kind: copy what outlives it. */
-enum { BK_UP, BK_FM, BK_CZ, BK_CZOLD, BK_P5 };
+enum { BK_UP, BK_FM };
 static void bank_claim(uint32_t kind);
 static up_bank_t *bank_up(void);
 #define up_cache (*bank_up())
@@ -172,14 +172,6 @@ static int up_native(const up_rec_t *r)
     return r->ver==UP_VER_FM || r->ver==UP_VER_P5 || r->ver==UP_VER_NATIVE_CZ || r->ver==UP_VER_BLOB;
 }
 static int up_bank_shape(uint32_t len,uint32_t rsize){return len==sizeof(up_bank_t) && rsize==sizeof(up_rec_t);}
-#ifndef UP_HOST
-/* TEMPORARY (phase 4: the editor's CZ-1 command, editor_cz.c): a CZ-1 tone record's tone, checked */
-static int up_cz_raw(const up_rec_t *r,uint8_t *raw)
-{
-    if(r->engine!=ENGI_CZ || (r->ver!=UP_VER_CZ && r->ver!=UP_VER_NATIVE_CZ))return 0;
-    memcpy(raw,r->packed,CZ_BYTES);return cz_patch_valid(raw);
-}
-#endif
 static int up_kit_wire(const up_rec_t *r,uint8_t *b)  /* a KIT patch's bits (KIT_WIRE_BYTES) */
 {
     if(r->np>sizeof r->packed-8u)return 0;
@@ -194,7 +186,7 @@ static int up_valid(const up_rec_t *r)
         if (r->engine >= NENGINES)
             return 0;
 #ifndef UP_HOST
-        return p4_store_valid(r->ver == UP_VER_FM ? MOD_SCH_STORE_VOICE : r->ver == UP_VER_P5 ? MOD_SCH_STORE_PROGRAM :
+        return patch_stored_ok(r->ver == UP_VER_FM ? MOD_SCH_STORE_VOICE : r->ver == UP_VER_P5 ? MOD_SCH_STORE_PROGRAM :
                               r->ver == UP_VER_NATIVE_CZ ? MOD_SCH_STORE_TONE : MOD_SCH_STORE_NONE, r->packed);
 #else
         if (r->ver == UP_VER_NATIVE_CZ) return cz_patch_valid(r->packed);
@@ -202,7 +194,12 @@ static int up_valid(const up_rec_t *r)
         return r->ver != UP_VER_P5 || r->packed[133] == 128u || r->packed[133] == 133u;
 #endif
     }
-    if ((r->used & ~UP_STAR) == UP_USED && up_native_cz(r)) return (r->np==92u || r->np==100u || r->np==104u || r->np==108u || r->np==119u || r->np==122u || r->np==125u /* (the FX cuts) */ || r->np==P_COUNT) && r->name[0] && cz_patch_valid(r->packed);
+    if ((r->used & ~UP_STAR) == UP_USED && up_native_cz(r)) return (r->np==92u || r->np==100u || r->np==104u || r->np==108u || r->np==119u || r->np==122u || r->np==125u /* (the FX cuts) */ || r->np==P_COUNT) && r->name[0] &&
+#ifndef UP_HOST
+        patch_stored_ok(MOD_SCH_STORE_TONE, r->packed);
+#else
+        cz_patch_valid(r->packed);
+#endif
     if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || r->ver==UP_VER_DRUM || r->ver==UP_VER_DRUM_GRID) && r->engine < USER_GENERAL &&
           r->np >= 8u && r->np <= UP_PMAX * 2u && r->name[0])) return 0;
     for (uint32_t i = 0; i < r->np; i++) if (r->packed[i] > 191u) return 0;
@@ -421,7 +418,6 @@ static void up_values(const up_rec_t *r, int16_t *v)   /* mapped and clamped for
         v[i] = (int16_t)clamp(v[i], param_desc_of(r->engine, i)->min, param_desc_of(r->engine, i)->max);
 }
 
-#include "cz_bank.c"
 static void shared_boot(void);
 static void native_cache_reset(void);
 
@@ -434,7 +430,6 @@ static void up_boot(void)                      /* persist_boot: the banks from f
     /* shared_boot indexes and converts in source-preserving order. */
 #endif
     native_cache_reset();
-    cz_bank_boot();
     shared_boot();
 #ifdef MELODEE_FAVORITES
     for (uint32_t k = 0; k < UP_SLOTS; k++)
@@ -721,21 +716,18 @@ static void up_ui_named(uint32_t op, uint32_t k, const char *name)   /* 0 load, 
     ui.force = 1;
 }
 static void up_ui(uint32_t op, uint32_t k) { up_ui_named(op, k, 0); }
-#include "prophet_user.c"
 #include "native_presets.c"
 #include "shared_presets.c"
 #if MELODEE_FLASH
-static union { up_bank_t up; native_fm_t fm; cz_bank_t cz; p5_bank_t p5; } bank_buf __attribute__((section(".pool")));
+static union { up_bank_t up; native_fm_t fm; tone_bank_t tone; program_bank_t program; } bank_buf __attribute__((section(".pool")));
 static up_bank_t *bank_up(void) { return &bank_buf.up; }
 static native_fm_t *bank_fm(void) { return &bank_buf.fm; }
-static cz_bank_t *bank_cz(void) { return &bank_buf.cz; }
 static void bank_claim(uint32_t kind)
 {
     if (kind != BK_UP && up_cached < UP_BANKS)
         up_cache_index(up_cached);
     if (kind != BK_UP) up_cached = 255;
     if (kind != BK_FM) native_fm_cached = 255;
-    if (kind != BK_CZOLD) cz_bank_cached = 255;
 }
 #endif
 #endif

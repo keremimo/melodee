@@ -22,6 +22,9 @@ build/studio-bundle/
                         (no JS glue; the core imports nothing, the kit maker only env.emscripten_notify_memory_growth);
                         the core's exports and ABI in the manifest ("core"), the kit maker's exports, its kit_max and
                         whether web/kit/check.mjs made the fixture's kits again byte for byte ("kit")
+  modules/<name>.mmod   with the core: the five synths' module files with their WebAssembly (tools/mod_build.py --wasm,
+                        web/core/build.sh: build/modules/wasm), which Studio links into the core (web/core/mod_link.mjs)
+                        and installs as the device's files; listed in the manifest ("core": "modules")
   protocol-transcripts.jsonl  the core's replies to Studio's requests from a new device's power-on and with the song
                         fixture loaded (web/core/core_check.mjs --transcripts: needs the core and node)
   LICENSES/  SOURCE     the licences and where the complete corresponding source is
@@ -57,6 +60,7 @@ DUMPERS = {
     "settingsdump": ["-DMELODEE_USB_AUDIO=1", "-DMELODEE_USB_HOST=1", "-Itests/ble_fake"],
 }
 WASM = {"melodee_core.wasm": ["build/core/melodee_core.wasm"], "melodee_kit.wasm": ["build/kit/melodee_kit.wasm"]}
+CORE_MODULES = ["sid", "drum", "cz", "fm6", "prophet"]   # the synths the core plays as modules (web/core/build.sh MODS)
 
 
 def wasm_exports(path):
@@ -246,7 +250,7 @@ def build(out, work, wasm_args):
     write_json(tmp / "settings.json", settings)
     py = sys.executable
     run([py, "tools/gen_scales.py", "--check", "--json", str(tmp / "scales.json")])
-    run([py, "tools/gen_prophet_factory.py", "--web", "check", "--json", str(tmp / "prophet_factory.json")])
+    run([py, "tools/gen_prophet_factory.py", "--json", str(tmp / "prophet_factory.json")])
     run([py, "tools/gen_ui_palettes.py", "--json", str(tmp / "palettes.json")])
     palettes = json.loads((tmp / "palettes.json").read_text())
     check(tmp, consts, layout, desc, proto, settings, palettes)
@@ -272,9 +276,16 @@ def build(out, work, wasm_args):
         if nimports:
             fail(f"melodee_core.wasm imports {nimports} functions: Studio gives it none")
         core = {"abi": int(abi.group(1)) if abi else None, "exports": [e for e in exports if e.startswith("core_")],
-                "transcripts": False}
+                "transcripts": False, "modules": []}
+        (tmp / "modules").mkdir()
+        for m in CORE_MODULES:                        # (the synths are modules in the core: their files beside it)
+            src = ROOT / "build" / "modules" / "wasm" / f"{m}.mmod"
+            if not src.is_file():
+                fail(f"{src.relative_to(ROOT)}: no such file (web/core/build.sh)")
+            shutil.copyfile(src, tmp / "modules" / f"{m}.mmod")
+            core["modules"].append(f"modules/{m}.mmod")
         if shutil.which("node"):                      # the core's own replies, for Studio's tests
-            run(["node", "web/core/core_check.mjs", "--core", str(tmp / "melodee_core.wasm"), "--mel", str(mel),
+            run(["node", "web/core/core_check.mjs", "--core", str(tmp / "melodee_core.wasm"), "--modules", str(tmp / "modules"), "--mel", str(mel),
                  "--transcripts", str(tmp / "protocol-transcripts.jsonl"), "--transcripts-only"])
             core["transcripts"] = True
     kit = None

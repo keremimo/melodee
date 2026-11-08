@@ -56,17 +56,15 @@ static const struct { uint32_t id; const char *name, *group, *when; } CMDS[] = {
     {ED_DRUM, "DRUM", "studio device", ""}, {ED_DEVICE_CHANGED, "DEVICE_CHANGED", "studio device (push)", ""},
     {ED_MOTION, "MOTION", "motion", ""}, {ED_BACKUP_LIST, "BACKUP_LIST", "backup", ""},
     {ED_BACKUP_GET, "BACKUP_GET", "backup", ""}, {ED_BACKUP_PUT, "BACKUP_PUT", "backup", ""},
-    {ED_FM6_GET, "FM6_GET", "fm6", ""}, {ED_FM6_PUT, "FM6_PUT", "fm6", ""}, {ED_FM6_LIST, "FM6_LIST", "fm6", ""},
-    {ED_FM6_ERASE, "FM6_ERASE", "fm6", ""},
     {ED_AUDIO_STATS, "AUDIO_STATS", "diagnostics", "MELODEE_USB_AUDIO"},
     {ED_PATTERN, "PATTERN", "pattern banks", ""}, {ED_BANK_SONG, "BANK_SONG", "pattern banks", ""},
-    {ED_CZ_GET, "CZ_GET", "cz", ""}, {ED_CZ_PUT, "CZ_PUT", "cz", ""}, {ED_CZ_BANK, "CZ_BANK", "cz", ""},
-    {ED_NATIVE, "NATIVE", "native slots", ""},
     {79, "CORE1_TEST", "laboratory", "MELODEE_CORE1_TEST && MELODEE_DUAL_CORE"},   /* (editor.c ED_CORE1_TEST) */
     {ED_LIBRARY, "LIBRARY", "shared library", ""},
     {81, "BLE_CAL", "bluetooth", "MELODEE_BLE"},                                      /* (editor_ble.c ED_BLE_CAL) */
     {82, "RES", "resources", "RES_BASE"},                                             /* (editor_res.c ED_RES) */
-    {95, "PROPHET", "prophet", ""},                                                   /* (editor_prophet.c) */
+    {84, "MODULE", "synth modules", "MODULE_STORE"},                                  /* (editor_module.c ED_MODULE) */
+    {ED_SCHEMA, "SCHEMA", "synths", ""}, {ED_PATCH, "PATCH", "synths", ""}, {ED_SYSEX, "SYSEX", "synths", ""},
+    {ED_PARAM, "PARAM", "synths", ""},
     {97, "FX_PROFILE", "laboratory", "MELODEE_FX_PROFILE"},
     {98, "AUDIO_PROFILE", "laboratory", "MELODEE_AUDIO_PROFILE"},
     {99, "AUDIO_BENCH", "laboratory", "MELODEE_AUDIO_BENCH"},
@@ -90,13 +88,9 @@ static const struct { uint8_t tag, ver; const char *name, *cmds, *fields[8]; } T
     {0x4d, 2, "motion", "64", {"motion_max", "chance"}},
     {0x42, 1, "backup", "65-67", {"caps"}},
     {0x50, 4, "pattern banks", "73-74", {"patterns", "chain_rows"}},
-    {0x46, 1, "fm6 patches", "68-71", {"factory", "bank"}},
-    {0x43, 1, "native cz tones", "75-77", {"name_bytes", "bank", "retired", "retired"}},
-    {0x35, 1, "native namespace", "78", {"prophet_engine", "user_general", "user_native_fm", "user_native_cz",
-                                         "user_native_p5", "flags", "native_version"}},
-    {0x4e, 1, "native pools", "78", {"fm6_capacity_lo", "fm6_capacity_hi", "cz_capacity_lo", "cz_capacity_hi"}},
     {0x55, 1, "shared library", "80", {"capacity_lo", "capacity_hi"}},
     {0x53, 1, "studio", "39-45, 47-53, 55-60", {"caps_command"}},
+    {0x59, 1, "synths", "85-88", {"first_command"}},
 };
 
 static uint32_t nfields(uint32_t k) { uint32_t n = 0; while (n < 8u && TAGS[k].fields[n]) n++; return n; }

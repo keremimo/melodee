@@ -5,6 +5,9 @@
  * patch (modules/cz/cz_tone.h), its panel the schema's (cz_ui.c); Casio's factory presets are cz_tones.c's makers on
  * host builds. A synth module on the device: firmware/modules/cz */
 #include "../modules/cz/cz_tone.h"   /* the part's patch: a Casio tone (where the firmware keeps it) */
+#if !MOD_SIDE
+#include "../modules/cz/cz_presets.c"   /* Casio's tones (host builds: the module's file has them) */
+#endif
 #include "cz_native.c"
 static int cz_native_done(track_t *t, voice_t *v)
 {
@@ -18,6 +21,7 @@ static int cz_native_done(track_t *t, voice_t *v)
 static int32_t cz_batch(const track_t *t) { (void)t; return AP_CZ; }   /* (its voices on CPU1: voice.c engine_render) */
 static uint32_t cz_state(const track_t *t) { (void)t; return sizeof(cz_part_t); }   /* (its part memory) */
 #include "../modules/cz/cz_ui.c"   /* its panel: the schema's values, hints, the TOOLS page's line copies */
+#include "../modules/cz/cz_sysex.c"   /* Casio's tone dumps */
 static const engine_t ENG_CZ = {
     .name = "CZ-1", .page_title = {"CZ-1", "TONE"},
     .edit = {
@@ -37,4 +41,5 @@ static const engine_t ENG_CZ = {
     .batch = cz_batch, .wclass = 2,
     .menv = phase_env_source,    /* (native DCA: the matrix's ENV source) */
     .pget = cz_pget, .pput = cz_pput, .pactive = cz_pactive,
+    .sysex = cz_sysex, .sysex_dump = cz_sysex_dump,
 };

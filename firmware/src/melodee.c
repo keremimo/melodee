@@ -191,8 +191,7 @@ static void midi_thru(uint32_t pkt, uint32_t source);   /* midi_thru.c, after th
 #endif
 #include "upreset.c"             /* user presets (RAM mirror; flash with MELODEE_FLASH) */
 #include "project.c"
-#include "cz_store.c"
-#include "fm6_store.c"            /* FM6: DX7 SysEx, the STORE shortcut to user presets */
+#include "sysex_route.c"          /* the synths' SysEx: frames to their modules, the sends */
 #if MELODEE_OTA
 #define OTA_SCRATCH proj_wire_borrow()   /* the update entry stages in the project staging RAM */
 #include "ota.c"

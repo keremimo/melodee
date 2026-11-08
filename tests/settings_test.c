@@ -10,8 +10,6 @@
 #define USER_GENERAL 16u
 #define USER_NATIVE_P5 20u
 #define ENGI_PROPHET 19u
-static int p5_favorite_has(uint32_t slot,int factory){(void)slot;(void)factory;return 0;}
-static int p5_favorite_set(uint32_t slot,int on,int factory){(void)slot;(void)on;(void)factory;return 0;}
 #define UP_SLOTS 64u
 #define USER_NATIVE_FM 17u
 #define USER_NATIVE_CZ 18u

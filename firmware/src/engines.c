@@ -8,10 +8,9 @@
 #include "module_presets.h"     /* a synth module's factory presets, in its file (module_store.c reads them) */
 #include "module_schema.h"      /* .. its patch and parameters (schema.c reads them) */
 #include "patch.c"              /* the parts' patches: their engines' bytes */
-#include "synths_phase4.h"      /* TEMPORARY (phase 4: SysEx, the editor): the shipped synths' layouts for that code */
+#include "sysex_rx.c"           /* the synths' SysEx in: their schemas' patterns, collected for their modules */
 static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (below: factory preset k's patch) */
 #if MELODEE_PROPHET
-#include "prophet_programs.c"   /* Sequential's programs, the presets made from them, a program accepted on a part */
 #if MELODEE_P5_BUILTIN
 #include "eng_prophet_test.c"   /* PROPHET: Sequential's Rev 4 (a synth module on the device: firmware/modules/prophet) */
 #elif MELODEE_PROPHET_PROTOTYPE
@@ -21,7 +20,6 @@ static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (be
 #if MELODEE_CZ_BUILTIN || MELODEE_LEGACY_EXTRAS
 #include "eng_phase.c"          /* PHASE (retired), the core CZ-1 keeps */
 #endif
-#include "cz_tones.c"           /* Casio's tones, the presets made from them, COMP, the SysEx bytes */
 #if MELODEE_CZ_BUILTIN
 #include "eng_cz.c"             /* CZ-1 (a synth module on the device: firmware/modules/cz) */
 #endif
@@ -43,7 +41,6 @@ static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (be
 #if MELODEE_LEGACY_EXTRAS
 #include "eng_noise.c"
 #endif
-#include "fm6_voices.c"         /* the function settings, factory voices, patch formats and writes, DX7 SysEx in */
 #if MELODEE_FM6_BUILTIN
 #include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c; a synth module on the
                                  * device: firmware/modules/fm6) */
@@ -244,6 +241,22 @@ static const mod_sch_src *sch_builtin_src(uint32_t e)
 #endif
 #if MELODEE_DRUM_BUILTIN
     if (ENGINES[e] == &ENG_DRUM) return &DRUM_SCHEMA;
+#endif
+    return 0;
+}
+#endif
+#if MELODEE_P5_BUILTIN || MELODEE_CZ_BUILTIN || MELODEE_FM6_BUILTIN
+/* the patch of built-in engine e's factory preset k (host builds: its makers), its length; 0 none */
+static uint32_t preset_builtin_patch(uint32_t e, uint32_t k, uint8_t *p)
+{
+#if MELODEE_P5_BUILTIN
+    if (ENGINES[e % NENGINES] == &ENG_P5_TEST) return p5_preset_patch(k, p);
+#endif
+#if MELODEE_CZ_BUILTIN
+    if (ENGINES[e % NENGINES] == &ENG_CZ) return cz_preset_patch(k, p);
+#endif
+#if MELODEE_FM6_BUILTIN
+    if (ENGINES[e % NENGINES] == &ENG_FM6) return fm6_preset_patch(k, p);
 #endif
     return 0;
 }

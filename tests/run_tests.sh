@@ -67,7 +67,8 @@
 #                   layout + fixtures, protocol, constants, settings, scales, Prophet factory, palettes, licences), from
 #                   the firmware's own sources (tests/protodump.c, constdump.c, settingsdump.c), checked against itself
 #                   and its manifest's hashes; with web/core/build.sh's WebAssembly, the virtual FM-1 core
-#                   (web/core/core_check.mjs): Studio's commands, a render, taps, events, kits, the NOR, WASM == native.
+#                   (web/core/core_check.mjs): Studio's commands, a render, taps, events, kits, the NOR, WASM == native,
+#                   the five synths' modules in WebAssembly (tools/mod_build.py --wasm) == the native core's.
 # PHYS (tests/phys_test.c): stability over the whole parameter and pitch range, the worst-case cost against
 #                   the heaviest factory preset, demos in build/phys_demo/; tests/phys_ref.cpp compares the
 #                   fixed-point models with DaisySP's float originals when DaisySP is there (DAISYSP=path).
@@ -182,7 +183,7 @@ web_tests() {                                     # the editor mock's tables mus
             step "parameter and engine tables as JSON (for the editor mock test)" desc_json
     fi
     if command -v node >/dev/null 2>&1; then
-        step "web pages: editor protocol + native CZ patches, package builder, update protocol" node web/test_web.mjs
+        step "web pages: editor protocol + the synths from their schemas, package builder, update protocol" node web/test_web.mjs
         step "installer UI: release selection, fetch races, cache and write lock" node web/test_installer.mjs
         step "installer safety: tab locks, wake/leave guards, throttled MIDI, preflight and interrupted resumes" node web/test_install_safety.mjs
         step "TransitFM1: verified package, backup, loader isolation and resume" node web/test_transit.mjs
@@ -248,9 +249,14 @@ studio_bundle() {                                 # the firmware's data for Melo
     # the same core built here from this tree, byte for byte (a WebAssembly core older than the tree shows here)
     if [ -f build/core/melodee_core.wasm ] && command -v node >/dev/null 2>&1; then
         _ver=$(sed -n 's/^#define MELODEE_VERSION "\([^"]*\)".*/\1/p' firmware/src/melodee.c | head -n 1)
-        $CC -O2 -std=gnu99 $FW -Itests -DMELODEE_RAM_AUDIO=1 -DMELODEE_VERSION="\"$_ver\"" -DCORE_NATIVE_MAIN \
-            -o "$OUT/core_native" web/core/melodee_core.c -lm || { fail "compile web/core/melodee_core.c"; return 1; }
-        step "virtual FM-1 core: Studio's commands, a render, taps, MIDI events, kits, the NOR kept (WASM == native)" \
+        mkdir -p "$OUT/core_mods"                 # (the synths as modules: their objects beside the native core)
+        for _s in sid drum cz fm6 prophet; do
+            $CC -c -O2 -DMOD_IN_CORE=1 -Ifirmware/modules/sdk -Ifirmware/hal $FW firmware/modules/$_s/$_s.c -o "$OUT/core_mods/$_s.o" ||
+                { fail "compile firmware/modules/$_s/$_s.c (core)"; return 1; }
+        done
+        $CC -O2 -std=gnu99 $FW -Itests -DMELODEE_RAM_AUDIO=1 -DMELODEE_VERSION="\"$_ver\"" -DCORE_MODULES=1 -DCORE_NATIVE_MAIN \
+            -o "$OUT/core_native" web/core/melodee_core.c "$OUT"/core_mods/*.o -lm || { fail "compile web/core/melodee_core.c"; return 1; }
+        step "virtual FM-1 core: Studio's commands, a render, taps, MIDI events, kits, the NOR kept, the five synths as WebAssembly modules (WASM == native)" \
             node web/core/core_check.mjs --native "$OUT/core_native" --mel "$OUT/studio/mel"
     else
         echo "== skip the virtual FM-1 core check (no build/core/melodee_core.wasm: web/core/build.sh; or no node)"
@@ -556,6 +562,8 @@ if core && [ $TABLES = 1 ]; then
     t "full backup: CRC before writes, stale runtime, USB reset / timeout, malformed objects, older projects" backup_test $FW
     t "CPU laboratory: persistence guard and RAM-only preference restoration" backup_lab:backup_test -DMELODEE_AUDIO_PROFILE=1 $FW
     t "editor: real C protocol, malformed transfers and queue recovery" editor_test $FW
+    t "synths' SysEx in and out as 88f4eb02 had them: DX7 banks, voices, functions, CZ-1 tones, Prophet programs, sends (tests/fixtures/sysex-88f4eb02.txt)" \
+        sysex_parity_test $FW
     t "editor over Bluetooth (MELODEE_BLE_EDITOR, two links): SysEx across BLE packets, the command list, replies on the asking link" \
         editor_ble:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -DBLE_LINKS=2 -Itests/ble_fake $FW
     t "editor over Bluetooth (MELODEE_BLE_EDITOR, one link)" editor_ble1:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -Itests/ble_fake $FW

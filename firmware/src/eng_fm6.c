@@ -31,6 +31,9 @@
  * functions, the switches; mod_patch); this engine is a synth module on the device (firmware/modules/fm6), built in
  * on the host (MELODEE_FM6_BUILTIN). */
 #include "../modules/fm6/fm6_patch.h"
+#if !MOD_SIDE
+#include "../modules/fm6/fm6_presets.c"   /* its factory voices (host builds: the module's file has them) */
+#endif
 #include "fm6_core.c"
 static volatile uint8_t fm6_pgen[NPART];         /* +1 after each write of a part's patch (fm6_patch_changed) */
 static volatile uint8_t fm6_lgen[NPART];         /* +1 when the write was another voice (a load): the notes stop */
@@ -958,6 +961,7 @@ _Static_assert(NELEM(FM6_PRESETS) == FM6_NFAC + 1u, "FM6: F1..F24, then INIT VOI
 
 static uint32_t fm6_pstate(const track_t *t) { (void)t; return sizeof(fm6_part_t); }   /* (its part memory) */
 #include "../modules/fm6/fm6_ui.c"   /* its pages: an operator's frequency as the schema's columns show it */
+#include "../modules/fm6/fm6_sysex.c"   /* the DX7's SysEx */
 /* the part's patch written (main loop; Motion: the audio): the voice sanitized as the DX7's ranges have it, the
  * functions Dexed's when a stored set is out of range; another voice (a new sound, or a whole patch with another name
  * or TRANSPOSE: a DX7 program change) switches every operator on and stops the notes */
@@ -1035,4 +1039,5 @@ static const engine_t ENG_FM6 = {
     .reserve = fm6_reserve,
     .caps = MOD3_CAP_WHEEL,      /* (its DX7 controllers read the wheel: no SMK-37 vibrato) */
     .patch_changed = fm6_patch_changed, .pformat = fm6_pformat, .pget = fm6_pget, .pput = fm6_pput,
+    .sysex = fm6_sysex, .sysex_dump = fm6_sysex_dump,
 };

@@ -12,7 +12,7 @@
  * and to MP_GOLDEN, the hashes the built-in engines rendered before they left the firmware (SID, DRUM, CZ-1: 203a5c04,
  * FM6: 0df43be6, the Prophet: 47d57c42; this file compiled there with tests/persistence_test.c and fm6_store.c, each
  * phrase's mp_run printed).
- * Needs persistence_test.c (reset, host_preset) and fm6_store.c (fm6_service). */
+ * Needs persistence_test.c (reset, host_preset) and sysex_route.c (msx_service: the DX7 SysEx to FM6's module). */
 #define MP_NB 200u
 static int32_t mp_out[MP_NB * CTL];
 
@@ -269,12 +269,12 @@ static uint32_t mp_fm6(uint32_t pi, uint32_t mode, uint32_t batch)
 /* DX7 SysEx: a 32-voice bank (F1..F24, then 8 voices of random values in their ranges) through the USB byte
  * collector, imported into the user slots as the PRESETS page does, then voices 4j..4j+3 of it loaded on the track as
  * the user list loads them, played; Dexed's live voice and function parameter messages as it plays */
-static uint8_t mp_sx[FM6_RX];
+static uint8_t mp_sx[MOD3_SX_MAX];
 static void mp_fm6_send(const uint8_t *m, uint32_t n)
 {
     wire_release();                                       /* (the next main-loop turn: the scratch free) */
-    for (uint32_t i = 0; i < n; i++) fm6_sx_byte(m[i]);
-    fm6_service();
+    for (uint32_t i = 0; i < n; i++) msx_byte(m[i], MSX_USB);
+    msx_service();                                        /* (FM6's module: its fm6_sysex.c) */
 }
 static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
 {
@@ -287,7 +287,7 @@ static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
     memcpy(mp_sx, (const uint8_t[]){0xF0, 0x43, 0x00, 0x09, 0x20, 0x00}, 6);
     for (uint32_t k = 0; k < 32u; k++) {
         uint8_t *pk = mp_sx + 6u + k * FM6_PACKED;
-        if (k < FM6_NFAC) { fm6_factory(k, pk); continue; }
+        if (k < FM6_NFAC) { (void)preset_patch(ENGI_FM6, k, pk, FM6_PACKED); continue; }   /* (F1..F24) */
         for (uint32_t i = 0; i < FP_SIZE; i++) { r = r * 1664525u + 1013904223u; v[i] = (uint8_t)((r >> 16) % (fm6_max(i) + 1u)); }
         for (uint32_t i = 0; i < 10u; i++) v[FP_NAME + i] = (uint8_t)('A' + (k + i) % 26u);
         v[FP_TRNSP] = (uint8_t)(18u + k % 12u);
@@ -296,7 +296,7 @@ static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
     }
     mp_sx[4102] = sx_checksum(mp_sx + 6, 4096);
     mp_sx[4103] = 0xF7;
-    mp_fm6_send(mp_sx, FM6_RX);
+    mp_fm6_send(mp_sx, MOD3_SX_MAX);
     sx_import.first = 0;
     sysex_commit();
     for (uint32_t b = 0; b < MP_NB; b++) {

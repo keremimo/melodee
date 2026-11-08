@@ -60,11 +60,25 @@ static int scale_favorite_set(uint32_t scale, int on)
     else p[16u + scale / 8u] &= (uint8_t)~(1u << (scale % 8u));
     return 1;
 }
-static int p5_favorite_has(uint32_t slot,int factory);
-static int p5_favorite_set(uint32_t slot,int on,int factory);
+/* the factory stars of the one engine numbered past the rows (FAV_WIDE: 1.x's 19, its FAV_WIDE_N presets), in row 0
+ * (engine 0's, retired) from byte 2, tagged "P5F" 1 at its end (the settings record's layout) */
+#define FAV_WIDE 19u
+#define FAV_WIDE_N 201u
+static int fav_wide_tagged(const uint8_t *row) { return row[28]=='P' && row[29]=='5' && row[30]=='F' && row[31]==1u; }
+static int fav_wide_has(uint32_t slot)
+{
+    const uint8_t *row=favorites.factory[0];
+    return slot<FAV_WIDE_N && fav_wide_tagged(row) && (row[2u+slot/8u]>>(slot%8u)&1u);
+}
+static int fav_wide_set(uint32_t slot,int on)
+{
+    uint8_t *row=favorites.factory[0];if(slot>=FAV_WIDE_N || fav_wide_has(slot)==!!on)return 0;
+    if(!fav_wide_tagged(row)){memset(row+2,0,26u);row[28]='P';row[29]='5';row[30]='F';row[31]=1u;}
+    if(on)row[2u+slot/8u]|=(uint8_t)(1u<<(slot%8u));else row[2u+slot/8u]&=(uint8_t)~(1u<<(slot%8u));return 1;
+}
 static int favorite_has(uint32_t engine, uint32_t preset)
 {
-    if(engine==ENGI_PROPHET)return p5_favorite_has(preset,1);
+    if(engine==FAV_WIDE)return fav_wide_has(preset);
     if(engine==USER_NATIVE_P5 || engine==USER_NATIVE_FM || engine==USER_NATIVE_CZ)engine=USER_GENERAL;
     if (engine == USER_GENERAL)
         return up_favorite(preset);
@@ -73,7 +87,7 @@ static int favorite_has(uint32_t engine, uint32_t preset)
 }
 static int favorite_set(uint32_t engine, uint32_t preset, int on)
 {
-    if(engine==ENGI_PROPHET)return p5_favorite_set(preset,on,1);
+    if(engine==FAV_WIDE)return fav_wide_set(preset,on);
     if(engine==USER_NATIVE_P5 || engine==USER_NATIVE_FM || engine==USER_NATIVE_CZ)engine=USER_GENERAL;
     if (engine >= NENGINES || (engine == USER_GENERAL ? preset >= UP_SLOTS : engine >= 16u || preset >= 256u))
         return 0;

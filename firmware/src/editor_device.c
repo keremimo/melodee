@@ -31,7 +31,7 @@ static uint32_t ed_dev_sig(uint32_t k)
     if (k == 3)
         for (i = 0; i < NPART; i++)
             if (patch_eng_of(i) == ENGI_DRUM)
-                h = fnv(h, patch_of(i), sizeof(drum_patch_t));
+                h = fnv(h, patch_of(i), patch_len(ENGI_DRUM));
     return h;
 }
 static void ed_dev_known(void)                            /* the editor's own change: no push */
@@ -225,7 +225,7 @@ static int ed_device_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             fm1_irq_off();                                /* (as the page: DRUM SOUND's TUNE, DECAY, the third, MIX's LEVEL) */
             for (i = 0; i < m; i++) {
                 const uint8_t *p = a + 3u + 4u * i;
-                int8_t *q = drum_patch_of(tr)->c[x + i];
+                int8_t *q = drum_offsets(tr)[x + i];
                 q[0] = (int8_t)(p[0] - 24); q[1] = (int8_t)(p[1] - 64); q[2] = (int8_t)(p[2] - 64); q[3] = (int8_t)(127 - p[3]);
             }
             fm1_irq_on();
@@ -235,7 +235,7 @@ static int ed_device_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         ns = rc ? 0u : ns;
         ed_b(ns);
         for (i = 0; i < ns; i++) {
-            const int8_t *q = drum_patch_of(tr)->c[i];
+            const int8_t *q = drum_offsets(tr)[i];
             ed_b(q[0] + 24); ed_b(q[1] + 64); ed_b(q[2] + 64); ed_b(127 - q[3]);
         }
         for (i = 0; i < ns; i++) {

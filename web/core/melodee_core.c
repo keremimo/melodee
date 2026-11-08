@@ -8,7 +8,7 @@
  * Composition: tests/editor_test.c's (hostsim.c's engines and sequencer, ui.c, the editor) with backup_test.c's
  * NOR flash under MELODEE_FLASH 1, in melodee.c's order (storage, kits, user presets, projects, CZ/FM6 stores,
  * editor). The clock is web/emu/melodee_web.c's: a millisecond at a time, mix_block every CTL frames at FS as the
- * audio ISR; main.c's loop services (pattern_poll, cz_service, fm6_service, ed_service, glo_poll, settings_poll)
+ * audio ISR; main.c's loop services (pattern_poll, msx_service, ed_service, glo_poll, settings_poll)
  * every 15 ms, ed_service every millisecond (main.c's wait between frames).
  * A wait of the main loop for the ISR (ed_flash_stop, the backup LIST, a kit's settle) feeds the watchdog: here
  * that is a millisecond of the ISR's time (fm1_wdt_feed below), the sound it makes kept for core_render.
@@ -20,9 +20,24 @@
  * audio track's share (its post-fader, post-pan, post-solo sum into the mix, mix.c mix_part) and the shared FX
  * return (mix.c master_samples), both before punch, the limiter and the DC blocker, so they do not sum to the
  * master exactly.
+ *
+ * CORE_MODULES (web/core/build.sh builds it so): the five synths as the device plays them, synth modules
+ * (eng_module.c, module_store.c in the pool) bound to the same ABI 3 host table. The module files (build/modules/
+ * <name>.mmod, the device's) go into the pool as an installer puts them (core_mod_install); their code is the
+ * module's own source built for this core: in WebAssembly a side module the page links into the core's memory and
+ * function table (tools/mod_build.py --wasm: the file's WASM chunk) and names to the core (core_mod_link), natively
+ * the module objects linked beside it (as tests/module_test.c's device build). module_store.c's mod_host_desc
+ * gives the loader the linked module's descriptor for the file's engine.
  *   web/core/build.sh  ->  build/core/melodee_core.wasm
  *   cc -DCORE_NATIVE_MAIN ... web/core/melodee_core.c: the same core natively, replaying SysEx frames (stdin) */
 #include <stdint.h>
+#ifdef CORE_MODULES
+#define MELODEE_SID_BUILTIN 0
+#define MELODEE_DRUM_BUILTIN 0
+#define MELODEE_CZ_BUILTIN 0
+#define MELODEE_FM6_BUILTIN 0
+#define MELODEE_P5_BUILTIN 0
+#endif
 static unsigned char nor[0x100000];                     /* the FM-1's 1 MiB NOR flash, erased at a first boot */
 #define DRK_XIP(off) ((const uint8_t *)nor + (off))      /* user kits play from the pool (drum_real.c) */
 #define MELODEE_OTA 1
@@ -67,9 +82,9 @@ static void sound_name(const track_t *t, char *b)
     }
     const engine_t *e = ENGINES[t->eng_req % NENGINES];
     b[0] = 0;
-    if (t->eng_req == ENGI_PROPHET) {
-        char full[P5_NAME_LEN + 1u];
-        p5_patch_name(full, p5_patch_of((track_t *)t));
+    if (sch_flag(eng_idx(t->eng_req), MOD_SCH_F_SNAME)) {   /* (ui_draw.c's: a synth whose sound is its patch's name) */
+        char full[64];
+        patch_name_of(eng_idx(t->eng_req), patch_of(trk_ix(t)), full, sizeof full);
         str_cpy(b, full, 16);
     } else if (t->user_native && user_of(t) < USER_NONE) native_name(t->eng_req, user_of(t), b);
     else if (user_of(t) < UP_SLOTS) up_name(user_of(t), b);
@@ -112,10 +127,12 @@ static void fl_plain_window_init(void) {}
 static void audio_silence(void) {}
 #include "../firmware/src/storage.c"
 #include "../firmware/src/kit_store.c"
+#ifdef CORE_MODULES
+#include "../firmware/src/module_store.c"
+#endif
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
-#include "../firmware/src/cz_store.c"
-#include "../firmware/src/fm6_store.c"
+#include "../firmware/src/sysex_route.c"
 #define ED_BK_FLASH_PTR(off) (nor + (off))
 static uint32_t ota_now_ms(void) { return fm1_ms; }
 static void ota_idle(void) { core_drain(); }            /* the USB IN endpoint: the page takes every packet */
@@ -277,8 +294,10 @@ static void loop_services(void)                        /* main.c's loop, without
     in_loop = 1;
     wire_release();
     pattern_poll();
-    cz_service();
-    fm6_service();
+#ifdef MODULE_STORE
+    mod_service(fm1_ms);                                /* synth modules: the used ones in, the idle ones out */
+#endif
+    msx_service();
     ed_service();
     frame_done();
     dq_poll();                                          /* (ui_input.c's frame: edits waiting for a loop end) */
@@ -304,8 +323,13 @@ static void core_melodee_init(void)                    /* main.c melodee_init */
     pattern_init();
     for (i = 0; i < G_COUNT; i++) song.g[i] = GP[i].def;
     undo_depth++;
+    msx_reset();
+#ifdef CORE_MODULES
+    sch_info_sync();                                    /* (the synths' patches: schema.c) */
+#else
     fm6_init();
     cz_init();
+#endif
     for (i = 0; i < NTRK; i++) {
         track_t *t = &trk[i];
         track_defaults(t);
@@ -333,7 +357,8 @@ static void core_melodee_init(void)                    /* main.c melodee_init */
 /* the page's scratch: requests, records and kits are written here before a call names them */
 static uint8_t scratch[0x20000];
 /* the exports' version: Studio refuses a core whose calls it does not know */
-#define CORE_ABI 2u                                     /* 2: motion events (core_midi_tap bit 2), core_master_raw */
+#define CORE_ABI 3u                                     /* 2: motion events (core_midi_tap bit 2), core_master_raw;
+                                                         * 3: the synths as modules (core_mod_*) */
 EXPORT(core_abi) uint32_t core_abi(void) { return CORE_ABI; }
 EXPORT(core_scratch) uint8_t *core_scratch(void) { return scratch; }
 EXPORT(core_scratch_size) uint32_t core_scratch_size(void) { return sizeof scratch; }
@@ -343,6 +368,51 @@ EXPORT(core_now) uint32_t core_now(void) { return fm1_ms; }
 EXPORT(core_fs) uint32_t core_fs(void) { return FS; }
 EXPORT(core_ntrk) uint32_t core_ntrk(void) { return NTRK; }
 EXPORT(core_taps_count) uint32_t core_taps_count(void) { return TAPS; }
+#ifdef CORE_MODULES
+/* ---- the synth modules: their code linked by the page (WebAssembly side modules) or beside the core (natively) */
+static const mod_desc_v3 *core_descs[NENGINES];       /* the linked modules' descriptors, by engine */
+static const mod_desc_v3 *core_desc(uint32_t e) { return e < NENGINES ? core_descs[e] : 0; }
+static uint8_t core_mod_mem[1u << 20] __attribute__((aligned(16)));   /* their data, .bss and stacks */
+static uint32_t core_mod_used;
+/* n bytes of the modules' memory, aligned (a power of two): a side module's __memory_base, a stack; 0 when full */
+EXPORT(core_mod_alloc) uint8_t *core_mod_alloc(uint32_t n, uint32_t align)
+{
+    uint32_t at = (core_mod_used + (align ? align - 1u : 0u)) & ~(align ? align - 1u : 0u);
+    if (at > sizeof core_mod_mem || n > sizeof core_mod_mem - at) return 0;
+    core_mod_used = at + n;
+    memset(core_mod_mem + at, 0, n);
+    return core_mod_mem + at;
+}
+/* a linked module's descriptor (its engine's code from now on, when its file is in the pool): 0 ok */
+EXPORT(core_mod_link) uint32_t core_mod_link(const mod_desc_v3 *d)
+{
+    if (!d || d->magic != MOD3_MAGIC || d->abi != MOD3_ABI || d->engine >= NENGINES) return 1;
+    core_descs[d->engine] = d;
+    return 0;
+}
+/* a module file (the device's, n bytes at p) into the pool, as an installer puts it (the slot playing its engine,
+ * else the first free one), and loaded: MS_* (>= 0), or a storage error (< 0; -2 not a module file) */
+EXPORT(core_mod_install) int32_t core_mod_install(const uint8_t *p, uint32_t n)
+{
+    uint32_t e = n > 6u ? p[6] : NENGINES, k = NMOD;
+    for (uint32_t j = 0; j < NMOD && k == NMOD; j++) if (mods[j].len && mods[j].engine == e) k = j;
+    for (uint32_t j = 0; j < NMOD && k == NMOD; j++) if (!mods[j].len) k = j;
+    if (k == NMOD) return -1;
+    int rc = mod_put_begin(k, n);
+    if (!rc) rc = mod_put_write(k, 0, p, n);
+    return rc ? rc : mod_put_commit(k);
+}
+/* the CRC (its head's) of the file in the pool that plays as engine e, 0 none: the page puts its own file in when the
+ * NOR it kept holds another */
+EXPORT(core_mod_crc) uint32_t core_mod_crc(uint32_t e)
+{
+    mod_file3_t f;
+    for (uint32_t k = 0; k < NMOD; k++)
+        if (mods[k].len && mods[k].engine == e && mod_open(k) && !mod_rd(k, 0, &f, sizeof f))
+            return f.crc;
+    return 0;
+}
+#endif
 /* the NOR's write count (erases + programs): the page saves it when this moves */
 EXPORT(core_nor_writes) uint32_t core_nor_writes(void) { return nor_erases + nor_progs; }
 
@@ -351,6 +421,9 @@ EXPORT(core_nor_writes) uint32_t core_nor_writes(void) { return nor_erases + nor
 EXPORT(core_boot) uint32_t core_boot(uint32_t keep)
 {
     if (!keep) memset(nor, 0xFF, sizeof nor);
+#ifdef CORE_MODULES
+    mod_host_desc = core_desc;                          /* (the loader's descriptors: the linked modules') */
+#endif
     settings_init();
     persist_boot();
     settings_init();
@@ -607,7 +680,37 @@ EXPORT(core_stats) uint32_t *core_stats(void)
  *   core_native < frames       SysEx frames (F0 .. F7, one after another), each reply as a hex line: "> frame",
  *                              then "< reply" for every frame the core sent back before the next request
  *   core_native render REC SECONDS OUT   a project record (expanded) loaded to slot 0, its song from row 0, SECONDS
- *                              of it as interleaved float (raw) in OUT, as web/core/core_check.mjs renders it in WASM */
+ *                              of it as interleaved float (raw) in OUT, as web/core/core_check.mjs renders it in WASM
+ *   core_native synth E P OUT  preset P of engine E on track 1, a chord held 1 s then let go, 2 s of sound (raw float):
+ *                              each synth module as core_check.mjs plays it in WASM */
+#ifdef CORE_MODULES
+static int boot_modules(void);
+#endif
+#define SYNTH_CHORD {0x90u, 48u, 100u, 0x90u, 55u, 90u, 0x90u, 64u, 80u}
+#define SYNTH_OFF {0x80u, 48u, 0u, 0x80u, 55u, 0u, 0x80u, 64u, 0u}
+static int synth_main(uint32_t e, uint32_t p, const char *out)
+{
+    static const uint8_t on[] = SYNTH_CHORD, off[] = SYNTH_OFF;
+    uint8_t f[] = {0xF0u, 0x7Du, 0x46u, 0x4Cu, 8u, (uint8_t)e, (uint8_t)(p & 127u), (uint8_t)(p >> 7), 0xF7u};
+    FILE *o;
+#ifdef CORE_MODULES
+    if (boot_modules()) return 1;
+#else
+    core_boot(0);
+    core_poll(100);
+#endif
+    if (p < 128u) { f[7] = 0xF7u; core_sysex_in(f, 8u); } else core_sysex_in(f, 9u);
+    core_sysex_out(scratch, sizeof scratch);
+    core_poll(30);
+    if (!(o = fopen(out, "wb"))) return 2;
+    core_midi_in(on, sizeof on);
+    for (uint32_t k = 0; k < 3u * FS; k += 1024u) {
+        if (k == FS - FS % 1024u) core_midi_in(off, sizeof off);
+        fwrite(core_render(1024u), sizeof(float), 2u * 1024u, o);
+    }
+    fclose(o);
+    return 0;
+}
 static int render_main(const char *rec, uint32_t secs, const char *out)
 {
     static uint8_t r[BANK_STORE_SIZE + 1u];
@@ -615,8 +718,12 @@ static int render_main(const char *rec, uint32_t secs, const char *out)
     if (!f) return 2;
     uint32_t n = (uint32_t)fread(r, 1, sizeof r, f), rc;
     fclose(f);
+#ifdef CORE_MODULES
+    if (boot_modules()) return 1;
+#else
     core_boot(0);
     core_poll(100);
+#endif
     if ((rc = core_load_record(r, n, 0)) != 0) { printf("core: load %u\n", (unsigned)rc); return 1; }
     core_poll(30);
     if ((rc = core_song_prepare(0)) != 0) { printf("core: song %u\n", (unsigned)rc); return 1; }
@@ -630,13 +737,51 @@ static int render_main(const char *rec, uint32_t secs, const char *out)
     printf("core: rendered %u s, state %#x\n", (unsigned)secs, (unsigned)core_song_state());
     return 0;
 }
+#ifdef CORE_MODULES
+extern const mod_desc_v3 mod_sid, mod_drum, mod_cz, mod_fm6, mod_p5;   /* (the module objects, linked beside) */
+/* the five synths: their objects named, the device's files (CORE_MODULES_DIR, else build/modules) in the pool of a new
+ * device, then booted again (an installed FM-1's power-on), as web/core/core_check.mjs does in WebAssembly */
+static int boot_modules(void)
+{
+    static const char *const stem[] = {"sid", "drum", "cz", "fm6", "prophet"};
+    static const mod_desc_v3 *const desc[] = {&mod_sid, &mod_drum, &mod_cz, &mod_fm6, &mod_p5};
+    const char *dir = getenv("CORE_MODULES_DIR");
+    core_boot(0);
+    core_poll(100);
+    for (uint32_t i = 0; i < 5u; i++) {
+        char path[512];
+        snprintf(path, sizeof path, "%s/%s.mmod", dir ? dir : "build/modules", stem[i]);
+        FILE *f = fopen(path, "rb");
+        if (!f) { printf("core: no %s\n", path); return 1; }
+        uint32_t n = (uint32_t)fread(scratch, 1, sizeof scratch, f), key = MOD3_PADS_KEY;
+        fclose(f);
+        int32_t rc = 0;
+        if (n >= MOD3_HEAD && (scratch[52] | scratch[53] << 8 | scratch[54] << 16 | (uint32_t)scratch[55] << 24)) {
+            /* (a module reading the pads data: natively the key is the 64-bit host's layout; the device's file else) */
+            memcpy(scratch + 52, &key, 4);
+            uint32_t crc = ~st_crc32_update(0xFFFFFFFFu, scratch + MOD3_HEAD, n - MOD3_HEAD);
+            memcpy(scratch + 28, &crc, 4);
+        }
+        if (core_mod_link(desc[i]) || (rc = core_mod_install(scratch, n)) < 0) { printf("core: %s not installed (%d)\n", path, (int)rc); return 1; }
+    }
+    core_poll(100);
+    core_boot(1);
+    core_poll(100);
+    return 0;
+}
+#endif
 int main(int argc, char **argv)
 {
     static uint8_t in[1 << 20], out[1 << 18];
     if (argc == 5 && !strcmp(argv[1], "render")) return render_main(argv[2], (uint32_t)atoi(argv[3]), argv[4]);
+    if (argc == 5 && !strcmp(argv[1], "synth")) return synth_main((uint32_t)atoi(argv[2]), (uint32_t)atoi(argv[3]), argv[4]);
     size_t n = fread(in, 1, sizeof in, stdin), at = 0;
+#ifdef CORE_MODULES
+    if (boot_modules()) return 1;
+#else
     core_boot(0);
     core_poll(100);
+#endif
     while (at < n) {
         size_t e = at;
         while (e < n && in[e] != 0xF7u) e++;

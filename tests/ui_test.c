@@ -165,7 +165,7 @@ static struct { uint32_t stage; } melodee_dbg;
 #include "../firmware/src/ui_layer.c"
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
-#include "../firmware/src/fm6_store.c"
+#include "../firmware/src/sysex_route.c"
 #include "demo_steps.h"
 #include "synth_compat.h"                     /* (the synths' patches by their schemas, for the checks) */
 /* the host screen blanked: the diff (gfx.c) forgets what it sent, as after a fill */
@@ -3422,7 +3422,6 @@ static int test_cz1_pages(void)
     bad += check("CZ-1 an edit rewrites its own envelope only; imported rates elsewhere stay verbatim", kept);
     /* the knobs: CZ DETUNE FINE up 5 -> 5; C1 AMP POINT SUS past END -> "-", back down -> END - 1 */
     cz_patch_init(cz_patch_of(tr)->raw);
-    cz_track_accept(TSEL);
     go_title("CZ DETUNE");
     turn(EN_K4, 5);
     cz_ed_decode(p, cz_patch_of(tr)->raw);
@@ -3460,14 +3459,12 @@ static int test_cz1_pages(void)
     return bad;
 }
 
-/* CZ-1's factory: Casio's 64 preset tones are PRESETS 1..64 (each loads its tone, BANK A..D, PTCH 1..16) and
- * the default BANK A..D (E..H empty); a saved bank wins, "none" in a restore brings the default back */
+/* CZ-1's factory: Casio's 64 preset tones are PRESETS 1..64 (each loads its tone, BANK A..D, PTCH 1..16); BANK / PTCH
+ * pick nothing (Melodee 1.x's banks are user presets now) */
 static int test_cz1_factory(void)
 {
     const engine_t *e = ENGINES[ENGI_CZ];
-    uint32_t tr, i, ok = 1, n;
-    cz_bank_t *b;
-    static cz_bank_t mine;
+    uint32_t tr, i, ok = 1;
     int bad = 0;
     ui_power_on();
     stop_transport();
@@ -3479,7 +3476,7 @@ static int test_cz1_factory(void)
         apply_preset_to(TSEL, i);
         ok &= TSEL->preset == i && TSEL->p[P_E0] == (int16_t)((i - 1u) / 16u) && TSEL->p[P_E1] == (int16_t)((i - 1u) % 16u + 1u) &&
               !memcmp(cz_patch_of(tr)->raw, cz_fac(i - 1u), CZ_BYTES) && cz_patch_valid(cz_patch_of(tr)->raw);
-        frame();                                         /* (cz_bank_poll: the tone stays, BANK / PTCH already its) */
+        frame();                                         /* (the tone stays) */
         ok &= !memcmp(cz_patch_of(tr)->raw, cz_fac(i - 1u), CZ_BYTES);
     }
     bad += check("CZ-1 each factory preset loads its native tone and shows its BANK / PTCH", ok);
@@ -3487,28 +3484,10 @@ static int test_cz1_factory(void)
                  !memcmp(cz_fac(0) + 128, "    BRASS 1     ", 16) && !memcmp(cz_fac(45) + 128, "AFRO-PERCUSSION ", 16));
     apply_preset_to(TSEL, 0);
     bad += check("CZ-1 INIT TONE is still the init voice", !memcmp(cz_patch_of(tr)->raw + 128, "INIT", 4) && TSEL->p[P_E1] == 0);
-    ok = 1;
-    for (n = 0; n < 8u; n++) {
-        cz_bank_import(n, 0, 0);
-        b = cz_bank_load(n);
-        ok &= !cz_bank_saved && b->used == (n < 4u ? 0xFFFFu : 0u);
-        for (i = 0; n < 4u && i < 16u; i++) ok &= !memcmp(b->tone[i].raw, cz_fac(n * 16u + i), CZ_BYTES);
-    }
-    b = cz_bank_load(1);
-    bad += check("CZ-1 never-saved BANK A..D hold Casio's A-1 .. H-8, E..H empty", ok && !memcmp(b->name, "CZ-1 C1-D8", 10));
-    cz_bank_boot();                                      /* (power-on: persist_boot -> up_boot) */
     set_engine_of(TSEL, ENGI_CZ);
     TSEL->p[P_E0] = 2; TSEL->p[P_E1] = 7; frame();
     bad += check("CZ-1 retired BANK / PTCH values cannot replace the current tone",
                  !memcmp(cz_patch_of(tr)->raw + 128,"INIT",4));
-    cz_bank_empty(&mine, 0);
-    memcpy(mine.tone[0].raw, cz_fac(63), CZ_BYTES); mine.used = 1u;
-    cz_bank_import(0, (const uint8_t *)&mine, sizeof mine);
-    b = cz_bank_load(0);
-    ok = cz_bank_saved && b->used == 1u && !memcmp(b->tone[0].raw, cz_fac(63), CZ_BYTES);
-    bad += check("CZ-1 a saved BANK A wins over the factory one", ok);
-    cz_bank_import(0, 0, 0);
-    bad += check("CZ-1 a restore without BANK A brings Casio's back", cz_bank_load(0)->used == 0xFFFFu && !cz_bank_saved);
     return bad;
 }
 

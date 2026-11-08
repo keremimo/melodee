@@ -54,6 +54,7 @@ static void sound_name(const track_t *t, char *b)        /* (ui_draw.c's, not bu
 }
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
+#include "../firmware/src/sysex_route.c"
 static int layer_allowed(void) { return !ui.menu && !ui.confirm; }   /* (ui_layer.c's, not built here) */
 
 static uint32_t flash_ok = 1;
@@ -77,7 +78,6 @@ static uint32_t ble_found_n(void) { return mb_saved.flags & MB_VISIBLE ? 0u : mb
 static int ble_start_quiet(void) { return !song.playing; }
 #endif
 #include "../firmware/src/editor.c"
-#include "../firmware/src/cz_store.c"
 
 static int check(const char *what, int ok)
 {
@@ -90,7 +90,7 @@ static void reset(void)
     memset(&song, 0, sizeof song); memset(trk, 0, sizeof trk);trk_voices_bind();
     memset(&chain, 0, sizeof chain); chain_defaults(&chain_config);
     pattern_init();
-    memset(&sx_import,0,sizeof sx_import);memset(&bulk,0,sizeof bulk);resource_release(RES_NOTE_HISTORY);note_transaction_ptr=0;fm6_rx_ready=0;
+    memset(&sx_import,0,sizeof sx_import);memset(&bulk,0,sizeof bulk);resource_release(RES_NOTE_HISTORY);note_transaction_ptr=0;msx_reset();
     memset(&ed_w, 0, sizeof ed_w); memset(&ui, 0, sizeof ui);
     memset(&favorites, 0, sizeof favorites); memset(&settings, 0, sizeof settings); settings_init();
     memset(proj_slot, 0, sizeof proj_slot); up_cache_reset(); native_cache_reset();
@@ -134,8 +134,8 @@ static int preferences(void)
     uint8_t a[4] = {0, 2, 0, 0};
     reset();
     uint32_t n = request(ED_INFO, a, 0);
-    const uint8_t caps[]={0,0x55,1,121,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,4,NPAT,CHAIN_ROWS,0x46,1,FM6_NFAC,0,0x43,1,16,1,0,0,0x35,1,19,16,17,18,20,0,1,0x4e,1,64,0,0,1,0x55,1,0,3,0x53,1,39};
-    bad+=check("INFO preserves existing IDs, the shared 384-slot library, then Studio's tag",ED_SONG==33&&ED_FAV_SET==38&&n>sizeof caps&&!memcmp(host_wire+n-sizeof caps-1,caps,sizeof caps));
+    const uint8_t caps[]={0,0x55,1,121,0x4d,2,MOTION_MAX,1,0x42,1,3,0x50,4,NPAT,CHAIN_ROWS,0x55,1,0,3,0x53,1,39,0x59,1,85};
+    bad+=check("INFO preserves existing IDs, the shared 384-slot library, Studio's tag, then the synths' (85..88)",ED_SONG==33&&ED_FAV_SET==38&&n>sizeof caps&&!memcmp(host_wire+n-sizeof caps-1,caps,sizeof caps));
     request(ED_UI_SET, a, 2);
     bad += check("UI_SET updates the actual palette and reports RAM-only saving",
         host_wire[5] == 3 && settings.palette == 2 && T_BG == UI_PALETTES[2].bg);
@@ -325,60 +325,6 @@ static int malformed_saves(void)
 }
 
 /* FM6 patches (cmds 68..71): a track's own patch, the bank (RAM here), the factory patches, malformed frames */
-static int fm6_patches(void)
-{
-    int bad = 0;
-    uint8_t a[2 + FM6_PACKED], pk[FM6_PACKED];
-    uint32_t n, i;
-    reset();
-    a[0] = ED_FM6_FACTORY; a[1] = 3;
-    n = request(ED_FM6_GET, a, 2);
-    bad += check("FM6_GET factory 4: the packed record", n == 5u + 3u + FM6_PACKED + 1u && host_wire[7] == 0 &&
-                 !memcmp(host_wire + 8, FM6_FACTORY[3], FM6_PACKED));
-    memcpy(pk, FM6_FACTORY[3], FM6_PACKED);
-    memcpy(pk + 118, "MY PATCH  ", 10);
-    a[0] = ED_FM6_TRACK; a[1] = 2; memcpy(a + 2, pk, FM6_PACKED);
-    set_engine_of(&trk[2], ENGI_CZ);
-    n = request(ED_FM6_PUT, a, sizeof a);
-    bad += check("FM6_PUT a track not playing FM6: rc 2, nothing written", n == 9u && host_wire[7] == 2);
-    set_engine_of(&trk[2], ENGI_FM6);
-    n = request(ED_FM6_PUT, a, sizeof a);
-    bad += check("FM6_PUT track 3: rc 0, the track's patch", n == 9u && host_wire[7] == 0 &&
-                 !memcmp(fm6_patch_of(2) + FP_NAME, "MY PATCH  ", 10));
-    a[1] = 2;
-    n = request(ED_FM6_GET, a, 2);
-    bad += check("FM6_GET track 3: as sent", host_wire[7] == 0 && !memcmp(host_wire + 8, pk, FM6_PACKED));
-    a[0] = ED_FM6_BANK; a[1] = 4;
-    n = request(ED_FM6_GET, a, 2);
-    bad += check("retired FM6 bank GET returns rc 3", n == 9u && host_wire[7] == 3);
-    a[0] = ED_FM6_BANK; a[1] = 4; memcpy(a + 2, pk, FM6_PACKED);
-    request(ED_FM6_PUT, a, sizeof a);
-    bad += check("retired FM6 bank PUT returns rc 3", host_wire[7] == 3);
-    set_engine_of(TSEL, ENGI_FM6);
-    (void)up_store(63, "LAST PRESET");
-    a[0] = ED_FM6_USER; a[1] = 63; memcpy(a + 2, pk, FM6_PACKED);
-    a[2 + 14] = 120;
-    request(ED_FM6_PUT, a, sizeof a);
-    request(ED_FM6_GET, a, 2);
-    bad += check("user U64 owns its sanitized FM6 voice", host_wire[7] == 0 && host_wire[8 + 14] == 99 &&
-                 !memcmp(host_wire + 8 + 118, "MY PATCH  ", 10));
-    n = request(ED_FM6_LIST, a, 0);
-    bad += check("FM6_LIST advertises 24 factory voices and no bank", host_wire[5] == FM6_NFAC && host_wire[6] == 0);
-    a[0] = 4;
-    request(ED_FM6_ERASE, a, 1);
-    bad += check("retired FM6 bank ERASE returns rc 3", host_wire[6] == 3);
-    a[0] = ED_FM6_TRACK; a[1] = 4;
-    request(ED_FM6_PUT, a, sizeof a);
-    i = host_wire[7];
-    request(ED_FM6_PUT, a, 20);
-    bad += check("FM6_PUT: a fifth track or a short record: rc 1", i == 1u && host_wire[7] == 1u);
-    a[0] = ED_FM6_BANK; a[1] = 31;
-    request(ED_FM6_GET, a, 2);
-    bad += check("FM6_GET retired bank: rc 3", host_wire[7] == 3u);
-    return bad;
-}
-
-/* UP_PUT -> UP_GET: every value round-trips through the v4 record (a byte each), negative ones too */
 static int user_preset_roundtrip(void)
 {
     static uint8_t a[16 + 2u * P_COUNT + 32u];
@@ -449,100 +395,6 @@ static int bank_protocol(void)
     bad += check("sample upload and erase commands cannot write into pattern storage", request(ED_SMP_BEGIN,a,1)==0 && request(ED_SMP_ERASE,a,1)==0 && host_writes==writes && !host_erases);
     request(ED_SMP_INFO,a,0);
     bad += check("sample inventory advertises zero user slots", host_wire[5]==0);
-    return bad;
-}
-static int cz_native_protocol(void)
-{
-    int bad=0; uint8_t raw[CZ_BYTES],a[322]; reset();cz_init();
-    cz_patch_init(raw);raw[20]=0x37;raw[16]=0x42;raw[17]=17;raw[14]=0xE0;raw[15]=0xDE;
-    for(uint32_t k=0;k<8;k++){raw[21+2*k]=(uint8_t)(k*15);raw[22+2*k]=(uint8_t)(k*17);}raw[28]|=128;
-    a[0]=0;a[1]=2;for(uint32_t i=0;i<CZ_BYTES;i++){a[2+2*i]=raw[i]&15;a[3+2*i]=raw[i]>>4;}
-    request(ED_CZ_PUT,a,290);
-    bad+=check("CZ PUT preserves all eight DCA points, velocity and hidden waves",host_wire[7]==0 && trk[2].eng_req==ENGI_CZ && trk[2].p[P_E7]==CZ_NATIVE && !memcmp(cz_patch_of(2)->raw,raw,CZ_BYTES));
-    request(ED_CZ_GET,a,2);int same=host_wire_n==297 && host_wire[7]==0;
-    for(uint32_t i=0;i<CZ_BYTES;i++)same &= host_wire[8+2*i]==(raw[i]&15) && host_wire[9+2*i]==(raw[i]>>4);
-    bad+=check("CZ GET returns exact low-first tone nibbles",same);
-    a[40]=16;request(ED_CZ_PUT,a,290);bad+=check("invalid CZ upload leaves live patch intact",host_wire[7]==1 && !memcmp(cz_patch_of(2)->raw,raw,CZ_BYTES));a[40]=raw[19]&15;
-    a[0]=1;a[1]=8;request(ED_CZ_PUT,a,290);bad+=check("CZ tone uses atomic ordinary preset storage",host_wire[7]==0 && up_used(8) && up_rec(8)->ver==UP_VER_CZ && !memcmp(up_rec(8)->packed,raw,CZ_BYTES));
-    song.sel=1;up_load(8);bad+=check("loading user CZ preset restores all 144 native bytes",TSEL->p[P_E7]==CZ_NATIVE && !memcmp(cz_patch_of(1)->raw,raw,CZ_BYTES));
-    project_t q,r;project_store_t packed;project_capture(&q);bad+=check("native tones survive project serialization",proj_pack(&packed,&q) && proj_unpack(&r,packed.raw) && !memcmp(q.cz,r.cz,sizeof q.cz));
-    static uint8_t banked[BANK_STORE_SIZE];
-    bad+=check("native tones survive full pattern-bank serialization",bank_pack(banked,&q,1) && bank_valid(banked,sizeof banked) && !memcmp(q.cz,proj_scratch.cz,sizeof q.cz));
-    template_save(); static tmpl_t saved; saved=tmpl;
-    for(uint32_t k=0;k<NTRK;k++)memset(patch_of(k),0,MOD3_PATCH_MAX); memset(&tmpl,0,sizeof tmpl);
-    int restored=tmpl_take((const uint8_t *)&saved,sizeof saved);template_load();
-    bad+=check("native tone bytes and mode survive a saved template",restored && trk[1].p[P_E7]==CZ_NATIVE && !memcmp(cz_patch_of(1)->raw,raw,CZ_BYTES));
-    const uint32_t sizes[]={sizeof(tmpl_fx_legacy_t),sizeof(tmpl_fx_single_t),sizeof(tmpl_t)-NPART*2u*(P_COUNT-116u)-20u,sizeof(tmpl_t)-NPART*2u*(P_COUNT-117u)-4u,sizeof(tmpl_t)-NPART*2u*(P_COUNT-119u)-4u,sizeof(tmpl_t)+NPART*2u*(125u-P_COUNT),sizeof(tmpl_t)-NPART*2u*(P_COUNT-122u),sizeof(tmpl_t)};
-    for(uint32_t k=0;k<NELEM(sizes);k++){
-        uint8_t begin[12]={0,1},abort[2]={3,1};uint32_t len=sizeof(persist_t)+sizes[k];
-        for(uint32_t j=0;j<5;j++)begin[2+j]=(uint8_t)((len>>(7*j))&127u);
-        bad+=check("settings transfer accepts every supported template layout",!ed_bk_write(begin,sizeof begin) && !ed_bk_write(abort,sizeof abort));
-    }
-    {uint8_t malformed[12]={0,1,1};bad+=check("settings transfer rejects undersized template payload",ed_bk_write(malformed,sizeof malformed)==1);}
-    return bad;
-}
-static int cz_casio_sysex(void)
-{
-    int bad=0;reset();cz_init();trk[0].eng_req=ENGI_CZ;uint8_t raw[CZ_BYTES],frame[296],got[CZ_BYTES];cz_patch_init(raw);raw[16]=0x42;raw[17]=17;raw[18]=5;raw[19]=83;raw[128]='S';
-    const uint8_t head[]={0xf0,0x44,0,0,0x70,0x21,0x60};memcpy(frame,head,7);for(uint32_t j=0;j<CZ_BYTES;j++){frame[7+2*j]=raw[j]&15;frame[8+2*j]=raw[j]>>4;}frame[295]=0xf7;
-    for(uint32_t j=0;j<sizeof frame;j++)sysex_byte(frame[j]);cz_service();host_drain();
-    bad+=check("direct Casio MIDI SysEx stages exact named tone in the CZ user list",sx_import.count==1 && library_engine()==ENGI_CZ && !memcmp(sx_import.data,raw,CZ_BYTES) && cur_page()->graph==GR_USER);
-    ui.uslot=7;sysex_choose();native_load(ENGI_CZ,7,0);memcpy(got,cz_patch_of(0)->raw,CZ_BYTES);
-    frame[10]=16;for(uint32_t j=0;j<sizeof frame;j++)sysex_byte(frame[j]);cz_service();
-    bad+=check("invalid direct Casio SysEx leaves the native tone intact",!memcmp(cz_patch_of(0)->raw,got,CZ_BYTES));
-    const uint8_t request[]={0xf0,0x44,0,0,0x70,0x11,0x60,0xf7};host_wire_n=0;for(uint32_t j=0;j<sizeof request;j++)sysex_byte(request[j]);cz_service();host_drain();
-    int same=host_wire_n==295 && host_wire[5]==0x30;for(uint32_t j=0;same && j<CZ_BYTES;j++)same=host_wire[6+2*j]==(raw[j]&15) && host_wire[7+2*j]==(raw[j]>>4);
-    bad+=check("direct Casio tone request exports exact native bytes",same);return bad;
-}
-
-static int cz_dedicated_banks(void)
-{
-    int bad=0;reset();cz_init();cz_bank_boot();uint8_t raw[CZ_BYTES];cz_patch_init(raw);
-    static up_bank_t bank;
-    for(uint32_t k=0;k<8u;k++){
-        memset(&bank,0,sizeof bank);bank.magic=UP_BANK_MAGIC;bank.rsize=sizeof(up_rec_t);bank.nslot=UP_PER_BANK;
-        raw[128]=(uint8_t)('A'+k);shared_native_record(&bank.r[0],ENGI_CZ,raw);
-        raw[128]=(uint8_t)('a'+k);shared_native_record(&bank.r[17],ENGI_CZ,raw);
-        memcpy(ED_BK_RAW,&bank,sizeof bank);ed_bk_id=(uint8_t)(9+k);ed_bk_len=ed_bk_pos=sizeof bank;ed_bk_crc=st_crc32(&bank,sizeof bank);
-        bad+=check("shared host bank commits through bounded archive staging",!ed_bk_commit());
-    }
-    for(uint32_t k=0;k<8u;k++)bad+=check("shared CZ records preserve complete voices across bank evictions",native_used(ENGI_CZ,(8u+k)*18u+17u)&&native_raw(ENGI_CZ,(8u+k)*18u+17u)[128]=='a'+k);
-    uint32_t shared=0;for(uint32_t i=0;i<ED_BK_N;i++)shared+=ed_bk_preset_bank(ED_BK_IDS[i])<UP_BANKS;
-    bad+=check("full backups include all 22 shared preset objects and the 32 projects",ED_BK_N==57u && shared==22u);
-    return bad;
-}
-static int native_protocol(void)
-{
-    int bad=0;reset();cz_init();uint8_t a[3+2*CZ_BYTES],fm[FM6_PACKED],cz[CZ_BYTES];
-    fm6_factory(5,fm);cz_patch_init(cz);memcpy(cz+128,"SIXTEEN CHAR CZ! ",16);
-    a[0]=ENGI_FM6;a[1]=2;a[2]=63;memcpy(a+3,fm,sizeof fm);request(ED_NATIVE,a,3+sizeof fm);
-    bad+=check("NATIVE saves F064 independently of general user records",!host_wire[8] && native_used(ENGI_FM6,63) && up_used(63));
-    a[1]=1;uint32_t n=request(ED_NATIVE,a,3);
-    bad+=check("NATIVE GET returns exact DX7 VMEM bytes",n==138 && !host_wire[8] && !memcmp(host_wire+9,fm,sizeof fm));
-    a[0]=ENGI_CZ;a[1]=2;a[2]=127;
-    for(uint32_t j=0;j<CZ_BYTES;j++){a[3+2*j]=cz[j]&15;a[4+2*j]=cz[j]>>4;}
-    request(ED_NATIVE,a,sizeof a);
-    bad+=check("NATIVE saves Z128 without using general or FM6 slots",!host_wire[8] && native_used(ENGI_CZ,127) && !memcmp(native_raw(ENGI_CZ,127),cz,sizeof cz));
-    a[3]=16;request(ED_NATIVE,a,sizeof a);
-    bad+=check("malformed native nibbles cannot replace a committed tone",host_wire[8]==1 && !memcmp(native_raw(ENGI_CZ,127),cz,sizeof cz));
-    a[1]=0;a[2]=120;a[3]=16;request(ED_NATIVE,a,4);
-    bad+=check("last native page clamps to Z128 and reports 128 slots",!host_wire[8] && host_wire[9]==8 && host_wire[10]==0 && host_wire[11]==1);
-    a[1]=4;a[2]=127;a[3]=2;trk[2].p[P_PAN]=37;trk[2].p[P_LEVEL]=61;trk[2].step[0].note[0]=67;request(ED_NATIVE,a,4);
-    bad+=check("native load targets track 3 and preserves pan, level and pattern",!host_wire[8] && trk[2].user==128 && !trk[2].user_native && trk[2].p[P_PAN]==37 && trk[2].p[P_LEVEL]==61 && trk[2].step[0].note[0]==67 && !memcmp(cz_patch_of(2)->raw,cz,sizeof cz));
-    trk[2].p[P_E2]=23;request(ED_NATIVE,a,4);
-    bad+=check("same-engine native load also keeps track macros",trk[2].p[P_E2]==param_desc_of(ENGI_CZ,P_E2)->def);
-    a[1]=7;a[2]=2;request(ED_NATIVE,a,3);
-    bad+=check("native status encodes Z128 without a 7-bit overflow",!host_wire[8] && host_wire[9]==0 && host_wire[10]==1);
-    uint8_t fav[4]={USER_NATIVE_CZ,127,64,1};request(ED_FAV_SET,fav,4);
-    bad+=check("highest native preset can be favorited through editor",host_wire[5]==3 && favorite_has(USER_NATIVE_CZ,127));
-    a[1]=3;a[2]=126;a[3]=2;request(ED_NATIVE,a,4);
-    bad+=check("native STORE captures just the complete tone",!host_wire[8] && !memcmp(native_raw(ENGI_CZ,126),cz,sizeof cz) && !up_used(62));
-    a[1]=6;memcpy(a+3,"FULL NAME 16 XYZ!",16);request(ED_NATIVE,a,19);
-    bad+=check("native rename retains all 16 CZ name bytes",!host_wire[8] && !memcmp(native_raw(ENGI_CZ,126)+128,"FULL NAME 16 XYZ!",16));
-    a[1]=5;a[2]=127;request(ED_NATIVE,a,3);
-    bad+=check("native erase clears favorite and current preset origin",!host_wire[8] && !native_used(ENGI_CZ,127) && !favorite_has(USER_NATIVE_CZ,127) && !trk[2].user);
-    a[0]=ENGI_FM6;a[1]=3;a[2]=0;a[3]=2;request(ED_NATIVE,a,4);
-    bad+=check("wrong-engine store cannot create a native preset",host_wire[8]==1 && !native_used(ENGI_FM6,0));
     return bad;
 }
 static int shared_protocol(void)
@@ -706,22 +558,129 @@ static int project_scale_protocol(void)
         return (ok ? 0 : 1) + check("SET and TRACK_PARAM share the tuning, a maqam's scale brings its tuning", tuned);
     }
 }
-static int prophet_protocol(void)
+static uint32_t cz_frame_of(const uint8_t *raw, uint8_t *f)   /* a CZ-1 tone straight (F0 44 00 00 70 30) */
 {
-    reset();int bad=0;p5_patch_t patch,copy;uint8_t frame[P5_FRAME_MAX],args[P5_FRAME_MAX];
-    p5_patch_init(&patch);patch.raw[97]=patch.raw[98]=255;memcpy(patch.raw+P5_NAME,"FULL PROPHET NAME XY!",20);
-    uint32_t size=p5_patch_encode(&patch,frame,sizeof frame);args[0]=1;args[1]=2;memcpy(args+2,frame+1,size-2);
-    request(95,args,size);
-    bad+=check("Prophet PUT loads a selected track with every opaque byte intact",host_wire[6]==0&&trk[2].eng_req==19&&!memcmp(p5_patch_of(&trk[2]),&patch,sizeof patch));
-    args[0]=0;request(95,args,2);frame[0]=240;memcpy(frame+1,host_wire+8,host_wire_n-9);frame[host_wire_n-8]=247;
-    bad+=check("Prophet GET re-encodes a complete reusable native SysEx frame",p5_patch_decode(&copy,frame,host_wire_n-7)&&!memcmp(&copy,&patch,sizeof patch));
-    args[0]=2;args[2]=P5_CUTOFF;args[3]=120;request(95,args,4);
-    bad+=check("native field edit touches only its documented offset",host_wire[6]==0&&(patch.raw[P5_CUTOFF]=120,!memcmp(p5_patch_of(&trk[2]),&patch,sizeof patch)));
-    args[2]=P5_KEY_FILTER;args[3]=3;request(95,args,4);bad+=check("out-of-range native field edit leaves the full patch unchanged",host_wire[6]==1&&!memcmp(p5_patch_of(&trk[2]),&patch,sizeof patch));
-    args[0]=3;memcpy(args+2,"TWENTY CHARACTERS XYZ",20);request(95,args,22);memcpy(patch.raw+P5_NAME,args+2,20);
-    bad+=check("native rename keeps all twenty name bytes",!host_wire[6]&&!memcmp(p5_patch_of(&trk[2]),&patch,sizeof patch));
-    args[0]=1;memcpy(args+2,frame+1,size-2);args[2]=2;request(95,args,size);
-    bad+=check("foreign native SysEx is rejected without changing the track",host_wire[6]==1&&!memcmp(p5_patch_of(&trk[2]),&patch,sizeof patch));
+    memcpy(f, (uint8_t[]){0xf0, 0x44, 0, 0, 0x70, 0x30}, 6);
+    for (uint32_t j = 0; j < CZ_BYTES; j++) { f[6 + 2 * j] = raw[j] & 15u; f[7 + 2 * j] = raw[j] >> 4; }
+    f[6 + 2 * CZ_BYTES] = 0xf7;
+    return 7u + 2u * CZ_BYTES;
+}
+/* the synths' commands (editor_synth.c): nothing in them names a synth, so these checks go through each shipped one */
+static uint32_t synth_req(uint32_t cmd, const uint8_t *a, uint32_t n) { return request(cmd, a, n); }
+static int synth_protocol(void)
+{
+    int bad = 0;
+    static uint8_t a[700], got[16384], want[16384];
+    uint8_t raw[MOD3_PATCH_MAX], p[MOD3_PATCH_MAX];
+    uint32_t n, len, off, i, key;
+    reset(); fm6_init(); cz_init(); p5_parts_init();
+    /* SCHEMA: FM6's whole schema in pages, as the device reads it; no PRST in a host build */
+    len = 0; off = 0;
+    do {
+        a[0] = ENGI_FM6; a[1] = 0; a[2] = off & 127u; a[3] = off >> 7 & 127u; a[4] = off >> 14; a[5] = 840u & 127u; a[6] = 840u >> 7;
+        n = synth_req(ED_SCHEMA, a, 7);
+        if (host_wire[7] || n < 26u) break;
+        len = host_wire[8] | (uint32_t)host_wire[9] << 7 | (uint32_t)host_wire[10] << 14;
+        key = host_wire[11] | (uint32_t)host_wire[12] << 7 | (uint32_t)host_wire[13] << 14 | (uint32_t)host_wire[14] << 21 | (uint32_t)host_wire[15] << 28;
+        uint32_t cnt = host_wire[19] | (uint32_t)host_wire[20] << 7;
+        if (ed_unpack7(host_wire + 21, n - 22u, got + off, sizeof got - off) != cnt) break;
+        off += cnt;
+    } while (off < len);
+    {
+        mod_sch_head h;
+        bad += check("SCHEMA reads FM6's schema whole, in pages, byte for byte, its CRC as the key", len && off == len &&
+                     !sch_rd(ENGI_FM6, 0, want, len) && !memcmp(got, want, len) && !sch_head(ENGI_FM6, &h) && key == h.crc);
+    }
+    a[1] = 1; synth_req(ED_SCHEMA, a, 7);
+    bad += check("SCHEMA: no PRST chunk where the presets are built in (rc 2)", host_wire[7] == 2);
+    a[0] = 0; a[1] = 0; synth_req(ED_SCHEMA, a, 7);
+    bad += check("SCHEMA: an engine without a schema (rc 2)", host_wire[7] == 2);
+    /* PATCH: a part's, a factory preset's, a user slot's; put, sent, dumped */
+    set_engine_of(&trk[1], ENGI_FM6); apply_preset_to(&trk[1], 5);
+    a[0] = 0; a[1] = 0; a[2] = 127; a[3] = 1; a[4] = 0; n = synth_req(ED_PATCH, a, 5);
+    len = host_wire[12] | (uint32_t)host_wire[13] << 7;
+    bad += check("PATCH GET a part: its synth's number, its patch's bytes", !host_wire[10] && host_wire[11] == ENGI_FM6 &&
+                 len == patch_len(ENGI_FM6) && ed_unpack7(host_wire + 14, n - 15u, raw, sizeof raw) == len &&
+                 !memcmp(raw, patch_of(1), len));
+    a[2] = ENGI_CZ; synth_req(ED_PATCH, a, 5);
+    bad += check("PATCH GET a part of another synth: rc 2", host_wire[10] == 2);
+    a[1] = 2; a[2] = ENGI_PROPHET; a[3] = 4; n = synth_req(ED_PATCH, a, 5);
+    len = host_wire[12] | (uint32_t)host_wire[13] << 7;
+    bad += check("PATCH GET a factory preset: its patch as the preset carries it", !host_wire[10] && len == patch_sound_len(ENGI_PROPHET) &&
+                 ed_unpack7(host_wire + 14, n - 15u, raw, sizeof raw) == len && preset_patch(ENGI_PROPHET, 4, p, len) && !memcmp(raw, p, len));
+    raw[70] = 'Z';                                       /* (a name byte: the program's own) */
+    a[0] = 1; a[1] = 0; a[2] = ENGI_PROPHET; a[3] = 2; a[4] = 0; n = 5u + pack7(raw, len, a + 5);
+    undo_seal(); synth_req(ED_PATCH, a, n);
+    bad += check("PATCH PUT a Prophet program on a SID part: loaded as its sound, every byte", !host_wire[10] &&
+                 trk[2].eng_req == ENGI_PROPHET && patch_eng_of(2) == ENGI_PROPHET && !memcmp(patch_of(2), raw, len));
+    a[0] = 3; a[1] = 0; a[2] = 127; n = synth_req(ED_PATCH, a, 5);
+    {
+        p5_patch_t q; uint8_t f[P5_FRAME_MAX]; memcpy(&q, raw, sizeof q); q.command = 3;
+        uint32_t m = p5_patch_encode(&q, f, sizeof f), k = host_wire[11] | (uint32_t)host_wire[12] << 7;
+        bad += check("PATCH DUMP a part: its synth's SysEx (the Prophet's edit buffer), F0 and F7 off", !host_wire[10] &&
+                     k == m - 2u && !memcmp(host_wire + 13, f + 1, k));
+    }
+    a[0] = 2; host_wire_n = 0; n = synth_req(ED_PATCH, a, 5);
+    bad += check("PATCH SEND a part: the frame over USB, then the reply", n > 150u && host_wire[0] == 0xF0 && host_wire[1] == 1);
+    (void)preset_patch(ENGI_CZ, 9, raw, CZ_BYTES); memcpy(raw + 128, "PATCH PUT  TONE!", 16);
+    a[0] = 1; a[1] = 1; a[2] = ENGI_CZ; a[3] = 9; a[4] = 0; n = 5u + pack7(raw, CZ_BYTES, a + 5);
+    synth_req(ED_PATCH, a, n);
+    bad += check("PATCH PUT a user slot: the synth's stored patch, named by its own name", !host_wire[10] && native_used(ENGI_CZ, 9) &&
+                 !memcmp(native_raw(ENGI_CZ, 9), raw, CZ_BYTES) && !memcmp(up_rec(9)->name, "PATCH PUT  T", 12));
+    raw[0] = 0xF0; n = 5u + pack7(raw, CZ_BYTES, a + 5); synth_req(ED_PATCH, a, n);
+    bad += check("PATCH PUT a tone its synth's checks refuse: rc 1, the slot as it was", host_wire[10] == 1 &&
+                 native_raw(ENGI_CZ, 9)[0] != 0xF0);
+    a[0] = 3; a[1] = 1; a[2] = 127; n = synth_req(ED_PATCH, a, 5);
+    bad += check("PATCH DUMP a user slot: Casio's tone frame (F0 44 00 00 70 30), 288 nibbles", !host_wire[10] &&
+                 (host_wire[11] | host_wire[12] << 7) == 293u && host_wire[13] == 0x44 && host_wire[17] == 0x30 &&
+                 host_wire[18] == (native_raw(ENGI_CZ, 9)[0] & 15u));
+    a[0] = 0; a[1] = 1; a[3] = 10; synth_req(ED_PATCH, a, 5);
+    bad += check("PATCH GET an empty slot: rc 2", host_wire[10] == 2);
+    /* SYSEX: a DX7 bank in parts, kept from U041 on, as the device's import keeps it */
+    {
+        static uint8_t f[4104];
+        memcpy(f, (uint8_t[]){0xf0, 0x43, 0, 9, 0x20, 0}, 6);
+        for (i = 0; i < 32u; i++) (void)preset_patch(ENGI_FM6, i % 24u, f + 6 + i * 128u, 128u);
+        uint32_t s = 0;
+        for (i = 6; i < 4102u; i++) s += f[i];
+        f[4102] = (uint8_t)(-s & 127u); f[4103] = 0xf7;
+        a[0] = 0; a[1] = 4104u & 127u; a[2] = 4104u >> 7 & 127u; a[3] = 0; synth_req(ED_SYSEX, a, 4);
+        int ok = !host_wire[6];
+        for (off = 0; ok && off < 4104u; off += 448u) {
+            uint32_t m = 4104u - off < 448u ? 4104u - off : 448u;
+            a[0] = 1; a[1] = off & 127u; a[2] = off >> 7 & 127u; a[3] = off >> 14;
+            n = 4u + pack7(f + off, m, a + 4); synth_req(ED_SYSEX, a, n); ok = !host_wire[6];
+        }
+        a[0] = 2; a[1] = 40; a[2] = 0; synth_req(ED_SYSEX, a, 3);
+        ok = ok && !host_wire[6] && host_wire[7] == ENGI_FM6 && host_wire[8] == 32 && !sx_import.count;
+        for (i = 0; ok && i < 32u; i++) ok = native_used(ENGI_FM6, 40 + i) && !memcmp(native_raw(ENGI_FM6, 40 + i), f + 6 + i * 128u, 128u);
+        bad += check("SYSEX passes a DX7 bank to FM6 in parts: its 32 voices kept from the slot given", ok);
+        a[0] = 0; a[1] = 9; a[2] = 0; a[3] = 0; synth_req(ED_SYSEX, a, 4);
+        a[0] = 1; a[1] = 0; a[2] = 0; a[3] = 0; n = 4u + pack7((const uint8_t[]){0xf0, 0x7d, 0x46, 0x4c, 1, 0, 0, 0, 0xf7}, 9, a + 4);
+        synth_req(ED_SYSEX, a, n); a[0] = 2; a[1] = UP_SLOTS & 127u; a[2] = UP_SLOTS >> 7; synth_req(ED_SYSEX, a, 3);
+        bad += check("SYSEX of no synth's pattern: rc 3, nothing staged", host_wire[6] == 3 && !sx_import.count);
+        memcpy(raw, native_raw(ENGI_CZ, 9), CZ_BYTES);   /* (the tone kept above: valid) */
+        n = cz_frame_of(raw, f);
+        a[0] = 0; a[1] = n & 127u; a[2] = n >> 7; a[3] = 0; synth_req(ED_SYSEX, a, 4);
+        a[0] = 1; a[1] = 0; a[2] = 0; a[3] = 0; synth_req(ED_SYSEX, a, 4u + pack7(f, n, a + 4));
+        a[0] = 2; a[1] = UP_SLOTS & 127u; a[2] = UP_SLOTS >> 7; synth_req(ED_SYSEX, a, 3);
+        bad += check("SYSEX with no slot: the synth's tone offered on the device (its import asks where)", !host_wire[6] &&
+                     host_wire[7] == ENGI_CZ && host_wire[8] == 1 && sx_import.count == 1 && cur_page()->graph == GR_USER);
+        sysex_cancel();
+    }
+    /* PARAM: by schema id, as the pages read and set them */
+    {
+        uint32_t id = 134u;                              /* (FM6's ALG) */
+        a[0] = 0; a[1] = 1; a[2] = id & 127u; a[3] = id >> 7; synth_req(ED_PARAM, a, 4);
+        bad += check("PARAM GET: FM6's ALG as its pages show it", !host_wire[7] && host_wire[8] == ENGI_FM6 &&
+                     ed_rv(host_wire + 9) == sch_get_t(1, id));
+        a[0] = 1; a[4] = 17u + 8192u & 127u; a[5] = (17u + 8192u) >> 7; synth_req(ED_PARAM, a, 6);
+        bad += check("PARAM SET: the value written, FM6 told", !host_wire[7] && sch_get_t(1, id) == 17 && ed_rv(host_wire + 8) == 17);
+        a[0] = 2; a[2] = (105u + 18u) & 127u; a[3] = (105u + 18u) >> 7; n = synth_req(ED_PARAM, a, 4);
+        bad += check("PARAM GET with texts: a frequency as FM6 writes it", !host_wire[7] && n > 13u && host_wire[11] != 0);
+        a[1] = 4; synth_req(ED_PARAM, a, 4);
+        bad += check("PARAM on a MIDI-only place: rc 1", host_wire[7] == 1);
+    }
     return bad;
 }
 static int native_motion_protocol(void)
@@ -749,11 +708,11 @@ static int native_motion_protocol(void)
     return bad;
 }
 #ifndef EDITOR_TEST_NO_MAIN
-#include "../firmware/src/fm6_store.c"
 static void receive_library(const uint8_t *frame,uint32_t n)
 {
+    wire_release();                                      /* (a main-loop turn's top: main.c) */
     for(uint32_t i=0;i<n;i++)midi_in_event(15u|(uint32_t)frame[i]<<8);
-    fm6_service();cz_service();ed_service();host_drain();ota_frame_done();
+    msx_service();ed_service();host_drain();ota_frame_done();
 }
 static int library_transfers(void)
 {
@@ -919,6 +878,7 @@ static int studio_session(void)
         track_defaults(&trk[i]); set_engine_of(&trk[i], trk_def_engine(i)); apply_preset_to(&trk[i], trk_def_preset(i));
         trk[i].engine = trk[i].eng_req;
     }
+    proj_cur = PROJ_NO_SLOT; proj_name[0] = 0;          /* (no project loaded: an earlier check's save is not this one's) */
     n = request(ED_PROJECTS, a, 0);
     bad += check("PROJECTS status: no slot, unchanged, no name", n == 11u && host_wire[5] == 127 && !host_wire[6] && host_wire[7] == 127 && !host_wire[8] && !host_wire[9]);
     a[0] = 3; a[1] = 1; memcpy(a + 2, "MY SONG", 7);
@@ -1656,8 +1616,8 @@ static int studio_bluetooth(void)
     a[0] = 1; n = request(ED_BACKUP_LIST, a, 1);
     bad += check("... BACKUP_LIST still answers over USB", n > 8u && host_wire[4] == ED_BACKUP_LIST);
     static const uint8_t allowed[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 17, 18, 19, 20, 21, 22, 25, 27, 28, 29, 30, 31, 33, 34, 35,
-                                      36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51, 52, 53, 64, 68, 69, 70, 71, 73,
-                                      74, 75, 76, 77, 78, 80, 95};
+                                      36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51, 52, 53, 64, 73, 74, 80, 85, 86,
+                                      87, 88};
     for (i = 0, ok = 1; i < 128u; i++) {
         uint32_t in = 0, j;
         for (j = 0; j < sizeof allowed; j++) in |= allowed[j] == i;
@@ -1738,8 +1698,8 @@ static int studio_bluetooth(void)
 #endif
 int main(void)
 {
-    int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + prophet_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
-              native_protocol() + shared_protocol() + fm6_patches() + user_preset_roundtrip() + cz_native_protocol() + cz_dedicated_banks() + cz_casio_sysex() + concert_pitch() + scale_catalogue() + desc_bulk() + project_scale_protocol() + studio_session() +
+    int bad = midi_track_protocol() + library_transfers() + native_motion_protocol() + synth_protocol() + bank_protocol() + preferences() + framing() + uart_recovery() + steps() + song_protocol() + malformed_saves() + names_whole() +
+              shared_protocol() + user_preset_roundtrip() + concert_pitch() + scale_catalogue() + desc_bulk() + project_scale_protocol() + studio_session() +
               studio_song() + studio_patterns() + studio_device();
 #if MELODEE_BLE_EDITOR
     bad += studio_bluetooth();

@@ -3,7 +3,7 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* The firmware's parameter and engine tables as JSON, from the same sources (through hostsim.c):
  * TP, GP, every engine's page titles, EDIT descriptors and presets, their display order, the factory patterns, the
- * power-on sounds and the protocol constants. web/test_web.mjs compares the editor's mock device
+ * power-on sounds, the synths' schemas and the protocol constants. web/test_web.mjs compares the editor's mock device
  * (web/editor.html makeMockDevice) with it, so the mock cannot drift from the firmware.
  *   build/host/descdump > build/host/desc.json      (run_tests.sh) */
 #define MELODEE_BLE 1 /* default device descriptors, including BLE input/clock */
@@ -113,17 +113,23 @@ int main(void)
     printf("],\n\"TRK_DEF\":[");
     for (k = 0; k < NPART; k++)
         printf("%s[%d,%d]", k ? "," : "", TRK_DEF[k][0], TRK_DEF[k][1]);
-    printf("],\n\"FM6\":{\"bank\":%u,\"init\":", 0u);   /* FM6: the packed patches */
-    for (i = 0; i < FM6_PACKED; i++)
-        printf("%s%d", i ? "," : "[", FM6_INIT[i]);
-    printf("],\"factory\":[");
-    for (k = 0; k < FM6_NFAC; k++) {
-        uint8_t pk[FM6_PACKED];
-        fm6_factory(k, pk);
-        for (i = 0; i < FM6_PACKED; i++)
-            printf("%s%d%s", i ? "," : k ? ",[" : "[", pk[i], i == FM6_PACKED - 1u ? "]" : "");
+    printf("]");
+    printf(",\n\"SCHEMAS\":{");                    /* the synths' schemas (SCHM), byte for byte as SCHEMA sends them */
+    for (k = 0, e = 0; k < NENGINES; k++) {
+        mod_sch_head h;
+        uint32_t n, j;
+        if (sch_head(k, &h) || !(n = sch_size(k)))
+            continue;
+        printf("%s\"%u\":[", e++ ? "," : "", (unsigned)k);
+        for (j = 0; j < n; j++) {
+            uint8_t x;
+            if (sch_rd(k, j, &x, 1u))
+                return 1;
+            printf("%s%u", j ? "," : "", (unsigned)x);
+        }
+        putchar(']');
     }
-    printf("]}");
+    printf("}");
     printf(",\n\"LANE_NOTE\":[");                    /* the DRUM grid: each lane's GM note, the lane of GM 35..81 */
     for (k = 0; k < NLANE; k++)
         printf("%s%d", k ? "," : "", DRUM_LANE_NOTE[k]);

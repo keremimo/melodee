@@ -4,7 +4,7 @@
  * DRUM, FM6, CZ-1, the Prophet), as FNV-1a hashes (tests/module_test.c mpr_*; tests/module_preset_golden.h): per preset its entry (name, 0, category,
  * the 16-byte common block, its patch: the Prophet's p5_patch_t, the CZ-1's tone, FM6's packed voice), its name and
  * category, the part after a pick (engine_load_of on part 2 from zeroed parameters: its parameters, preset, engine, its
- * engine's patch, FM6's operator switches, the CZ-1 pick); the CZ-1's default banks A..H (cz_bank_default) */
+ * engine's patch, FM6's operator switches, the CZ-1 pick: its BANK * 17 + PTCH) */
 #define MPR_NE 5u
 static const uint8_t MPR_E[MPR_NE] = {3, 10, 12, 15, 19};
 static const uint8_t MPR_N[MPR_NE] = {32, 6, 25, 65, 201};
@@ -142,7 +142,4 @@ static const uint32_t MPR_PICK[MPR_COUNT] = {
     0xd3b609bau, 0xe833f455u, 0x1900428bu, 0xa4e05b9au, 0xace9de96u, 0x6137a538u, 0x4a80309cu, 0x5d5e6bf8u,
     0x83472883u, 0x4fff6621u, 0x41a35144u, 0xc4388a1fu, 0xbeae1c8cu, 0x596541e2u, 0xaad7bd86u, 0x5f638971u,
     0x54cd9ab6u,
-};
-static const uint32_t MPR_BANK[8] = {
-    0x1f6c7e99u, 0xf8e6a80au, 0xbab545cdu, 0x77b486aeu, 0x75a528adu, 0x74a98facu, 0x74fd6d57u, 0x76a0c1aeu,
 };

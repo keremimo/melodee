@@ -341,8 +341,8 @@ static int bank_tail_common(const uint8_t *raw, uint32_t motion_off, uint32_t fn
         memcpy(&m, raw + BT(fn_off), 4);
         if (m == BANK_FN_MAGIC) {
             const uint8_t *f = raw + BT(fn_off) + 4u;
-            for (k = 0; k < PROJ_TRK; k++)               /* (as 1.x checked them: synths_phase4.h) */
-                if (!p4_voice_fn_valid(f + k * PROJ_FN_BYTES))
+            for (k = 0; k < PROJ_TRK; k++)               /* (as 1.x checked them: the synth's schema, MOD3_R_CHECK) */
+                if (!patch_settings_ok(MOD_SCH_STORE_VOICE, f + k * PROJ_FN_BYTES))
                     return 0;
             memcpy(proj_scratch.fm6_fn, f, sizeof proj_scratch.fm6_fn);
             proj_scratch.fm6_fn_ok = 1;

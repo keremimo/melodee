@@ -29,8 +29,8 @@
 #include <stdint.h>
 
 #define MOD3_ABI 3u
-#define MOD3_HOST 2u                             /* the host table version this contract describes (2: the patch, its
-                                                  * schema's callbacks, the host's drawing) */
+#define MOD3_HOST 3u                             /* the host table version this contract describes (2: the patch, its
+                                                  * schema's callbacks, the host's drawing; 3: SysEx) */
 #define MOD3_FILE_MAGIC 0x31444D4Du              /* "MMD1": every module file's (ABI 1 and 2: older firmware's) */
 #define MOD3_MAGIC 0x33444F4Du                   /* "MOD3": the descriptor, the image's first bytes */
 #define MOD3_FILE_CHUNKS 1u                      /* mod_file3_t.flags: chunks follow the address words */
@@ -59,6 +59,8 @@
 #define MOD3_AP_COUNT 32u                        /* cost classes (the firmware's AP_*): the CPU1 queue's, the profile's */
 #define MOD3_BATCH_BYTES 148u                    /* a CPU1 job's descriptor bytes, at most (host_v3 batch_push) */
 #define MOD3_PATCH_MAX 512u                      /* a part's patch (host 2): the module's own bytes, at most */
+#define MOD3_SX_MAX 4104u                        /* a SysEx frame the host collects for a module (host 3), at most: F0 to
+                                                  * F7 (a DX7 32-voice bank); also its scratch's bytes (host sx_scratch) */
 
 /* the parameter formats of a parameter (the firmware's F_*) */
 enum {
@@ -97,6 +99,25 @@ enum {
                                                   * voice parameters from it and decides whether it is another sound */
 };
 typedef struct mod_area_v3 { int16_t x, y, w, h; } mod_area_v3;   /* a widget's place on the screen (host 2 draw) */
+/* mod_engine_v3.sysex (host 3): what came (ev), what the module wants next (its answer) */
+enum {
+    MOD3_SX_MORE,                                /* more bytes of the frame came (f[0..n): F0 first, n grew) */
+    MOD3_SX_END,                                 /* the frame ended: f[n - 1] is F7 */
+    MOD3_SX_ABORT,                               /* the frame broke: another status in it, too long, its link gone, the
+                                                  * scratch taken by a job; nothing more of it comes */
+    MOD3_SX_IDLE                                 /* nothing new (it answered MOD3_SXR_IDLE: a handshake's clock) */
+};
+enum {
+    MOD3_SXR_DONE,                               /* done with this frame (its rest, if any, is dropped) */
+    MOD3_SXR_MORE,                               /* call again when bytes come or it ends */
+    MOD3_SXR_IDLE                                /* .. and once each main-loop turn meanwhile (a handshake waits) */
+};
+/* mod_engine_v3.sysex_dump: which patch it is */
+enum {
+    MOD3_DUMP_PART,                              /* a part's sound, sent on its channel (the STORE page's SEND, the
+                                                  * editor): the synth's edit buffer */
+    MOD3_DUMP_STORED                             /* a stored patch (a user slot: the user pages' send, the editor), ch 0 */
+};
 
 /* ---- the views */
 typedef struct mod_voice_v3 {                    /* a voice: the firmware's voice_t begins with these, its own follow */
@@ -212,6 +233,14 @@ typedef struct mod_engine_v3 {
                     const char **unit);          /* a MOD3_SF_FORMAT parameter's text (val: 8 bytes) */
     int (*pactive)(const mod_part_v3 *t, const uint8_t *patch, uint32_t id);        /* 0: drawn dim (no effect now) */
     void (*draw)(const mod_part_v3 *t, const uint8_t *patch, uint32_t widget, const mod_area_v3 *a);  /* MOD3_W_DRAW */
+    /* host 3: SysEx, main loop. Frames whose first bytes after F0 are one of its schema's MOD3_R_SYSEX patterns (from
+     * USB, Bluetooth or the TRS jack) come here as the host collects them (f: the host's scratch, F0 first): ev
+     * MOD3_SX_*, the answer MOD3_SXR_*. A module not in SRAM is loaded for its frame first; the host has its own
+     * frames (the editor's, the updater's) */
+    uint32_t (*sysex)(const uint8_t *f, uint32_t n, uint32_t ev);
+    /* the patch as the synth's SysEx, F0..F7 into out (max bytes): its length, 0 none (what: MOD3_DUMP_*; ch: the
+     * channel, 0..15) */
+    uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
 } mod_engine_v3;
 
 /* ---- the firmware's side, handed to bind() (append only) */
@@ -258,7 +287,29 @@ typedef struct mod_host_v3 {
     void (*text)(int32_t x, int32_t y, const char *s, uint32_t font, uint16_t c);      /* font MOD3_FONT_* */
     uint32_t *paired;                            /* voices an engine rendered on CPU1 outside the worker's queue, paired
                                                   * with CPU0's (the CPU lab's count: AUDIO_STATS) */
+    /* host 3: SysEx and the parts' patches from the main loop (mod_engine_v3.sysex, sysex_dump and what they do) */
+    mod_part_v3 *(*part)(uint32_t k);            /* part k (0..7) */
+    uint8_t *(*part_patch)(uint32_t k, uint32_t engine);   /* part k's patch while it is engine's, else 0: read only
+                                                  * (patch_put writes it) */
+    int (*patch_put)(uint32_t k, uint32_t engine, const uint8_t *src, uint32_t n, uint32_t how);   /* part k's
+                                                  * patch's first n bytes, part k playing engine (else 1, nothing
+                                                  * written): told as MOD3_PATCH_* how (patch_changed), redrawn */
+    int (*sx_part)(uint32_t engine, uint32_t ch);   /* the part a message on channel ch is for: the selected part
+                                                  * if it plays engine, else part ch, else engine's first; -1 none.
+                                                  * ch MOD3_SX_SEL: the selected part, whatever it plays */
+    int (*sx_send)(const uint8_t *f, uint32_t n);   /* F0..F7 out (USB): 0 sent; n 0: 0 while it can send */
+    uint8_t *(*sx_scratch)(void);                /* MOD3_SX_MAX bytes of the main loop's (the frame read is lost) */
+    int (*sx_stage)(uint32_t engine, const uint8_t *patches, uint32_t count, uint32_t stride);   /* count patches
+                                                  * (engine's stored bytes, stride apart) offered for user slots: the
+                                                  * USER page asks where. A bank left in the frame (at MOD3_SX_END)
+                                                  * stays there until it is chosen. 1 staged */
+    uint32_t (*slot_get)(uint32_t engine, uint32_t slot, uint8_t *patch);   /* user slot's stored patch if it is
+                                                  * engine's: its length (its schema's sound bytes are written), else 0 */
+    uint32_t (*store_slot)(uint32_t engine);     /* the slot engine's STORE page points at */
+    void (*message)(const char *s);              /* a line on the screen (0: only redraw it) */
+    const volatile uint32_t *ms;                 /* milliseconds, counting */
 } mod_host_v3;
+#define MOD3_SX_SEL 0xFFu
 enum { MOD3_C_BG, MOD3_C_INK, MOD3_C_DIM, MOD3_C_ACCENT, MOD3_C_THEME, MOD3_C_SURF, MOD3_C_RAISE, MOD3_C_COUNT };
 enum { MOD3_FONT_SMALL, MOD3_FONT_LABEL, MOD3_FONT_VALUE };
 

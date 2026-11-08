@@ -5,7 +5,6 @@
 /* Casio CZ-1 MIDI specification, pp. 83-98. Keep the native 144-byte
  * tone verbatim: 128 synthesis bytes followed by the 16-byte LCD name.
  * Transport uses low nibble first. No conversion to common ADSR controls. */
-#define ENGI_CZ 15u
 #define CZ_BYTES 144u
 #define CZ_NATIVE 2u
 typedef struct { uint8_t raw[CZ_BYTES]; } cz_patch_t;

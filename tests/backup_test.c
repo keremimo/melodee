@@ -558,19 +558,17 @@ int main(void)
         b.nslot = 3;
         bad += check("a bank with the wrong slot count is refused", put_all(7, &b, sizeof b, st_crc32(&b, sizeof b)) == 2u);
     }
-    {   /* CZ-1 banks: a never-saved bank (BANK A..D: Casio's factory tones) is no object of the backup, so a
-         * restore keeps it the default; a saved one is carried byte for byte */
-        static cz_bank_t cb;
+    {   /* Melodee 1.x's CZ-1 banks (TONE banks: converted into user presets): a never-saved one is no object of the
+         * backup; a saved one is carried byte for byte */
+        static cz_bank_t cb, rb;
         reset();
-        cz_bank_boot();
-        bad += check("CZ-1: a never-saved BANK A (its factory default) lists as length 0",
-                     list(9, &len, &crc) == 0 && len == 0 && cz_bank_load(0)->used == 0xFFFFu);
+        bad += check("CZ-1: a never-saved BANK A lists as length 0", list(9, &len, &crc) == 0 && len == 0);
         cz_bank_empty(&cb, 0);
         memcpy(cb.tone[3].raw, cz_fac(7), CZ_BYTES);
         cb.used = 1u << 3;
         bad += check("CZ-1: a saved BANK A restores and lists with its 2332 B",
                      put_all(9, &cb, sizeof cb, st_crc32(&cb, sizeof cb)) == 0 && list(9, &len, &crc) == 0 &&
-                     len == sizeof cb && cz_bank_load(0)->used == 1u << 3);
+                     len == sizeof cb && st_load(OBJ_CZBANK0, &rb, sizeof rb) == (int)sizeof rb && rb.used == 1u << 3);
         bad += check("CZ-1: length 0 clears native presets while keeping factory tones separate",
                      put_all(9, &cb, 0, st_crc32(&cb, 0)) == 0 && !up_used(144) &&
                      list(9, &len, &crc) == 0 && len == 0);

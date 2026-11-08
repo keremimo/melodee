@@ -64,6 +64,9 @@ static volatile uint32_t drk_user_gen;
 #ifdef FM1_IRQ_TARGET
 #include "fm1_xip.h"
 #define DRK_XIP(off) fm1_xip_ptr(off)            /* the data flash reads plain (fl_plain_window_init) */
+#elif defined(MOD_IN_CORE)                       /* a module built for the virtual FM-1 (web/core): its pool's NOR */
+uint8_t *core_nor_ptr(void);
+#define DRK_XIP(off) ((const uint8_t *)core_nor_ptr() + (off))
 #else
 #define DRK_XIP(off) ((const uint8_t *)0)        /* (host builds without a flash image: no user kits) */
 #endif

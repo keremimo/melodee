@@ -202,9 +202,10 @@ static const mod_sch_param_src FM6_SCH_PARAM[] = {
 #define FM6S_OPG(t, w, a, b, c, d, s4, wd, fl) {t, w, MOD3_PG_INST | (fl), {FM6S_OP + (a), FM6S_OP + (b), c, d}, 6, {-21, -21, \
     s4 ? -21 : 0, s4}, FM6S_OPN, wd, 0}
 static const char *const FM6S_OPN[6] = {"OP1", "OP2", "OP3", "OP4", "OP5", "OP6"};
-static const char *const FM6S_INIT[] = {"INIT VOICE"};
+static const char *const FM6S_INIT[] = {"INIT VOICE", "VOICE SENT", "SYSEX SEND ERROR"};
 static const mod_sch_page_src FM6_SCH_PAGE[] = {
-    {"STORE", MOD3_W_STORE, MOD3_PG_LAST, {0, 1, 2, 3}, 0, {0}, FM6S_INIT, MOD3_ST_NAMED | MOD3_ST_NOUNDO, "Store"},
+    {"STORE", MOD3_W_STORE, MOD3_PG_LAST, {0, 1, 2, 3}, 0, {0}, FM6S_INIT, MOD3_ST_NAMED | MOD3_ST_NOUNDO | MOD3_ST_SENDMSG,
+     "Store"},
     FM6S_PG("ALGO", 134, 135, 136, 144, "Algo", 0),
     FM6S_OPG("FREQ", MOD3_W_NONE, 18, 19, FM6S_OP + 20, FM6S_OP + 17, -21, 0, 0),
     FM6S_OPG("OUT", MOD3_W_NONE, 16, 15, FM6S_OP + 14, 185, -1, 0, 0),
@@ -473,6 +474,17 @@ static void fm6_sch_def(uint8_t *b)
     b[FM6_B_ON] = FM6_ON_ALL;
 }
 static const char *const FM6S_STRIP[] = {"FM ", 0};   /* (the pages' short names: the title past these) */
+static const uint8_t FM6S_SYSEX[] = {1, 0x43, 0, 0};   /* (Yamaha's: fm6_sysex.c) */
+#define FM6S_CK(off, n, max) (uint8_t)(off), (uint8_t)((off) >> 8), (uint8_t)(n), 0, 0xFF, 0, 0, (uint8_t)(max)
+static const uint8_t FM6S_CHECK[] = {          /* (as Melodee 1.x stored it: VMEM's bytes 7-bit; the functions; the switches) */
+    FM6S_CK(0, FM6_PACKED, 127),
+    FM6S_CK(FM6_B_FN + 0, 3, 12), FM6S_CK(FM6_B_FN + 3, 1, 1), FM6S_CK(FM6_B_FN + 4, 1, 127), FM6S_CK(FM6_B_FN + 5, 1, 1),
+    FM6S_CK(FM6_B_FN + 6, 1, 99), FM6S_CK(FM6_B_FN + 7, 1, 7), FM6S_CK(FM6_B_FN + 8, 1, 99), FM6S_CK(FM6_B_FN + 9, 1, 7),
+    FM6S_CK(FM6_B_FN + 10, 1, 99), FM6S_CK(FM6_B_FN + 11, 1, 7), FM6S_CK(FM6_B_FN + 12, 1, 99), FM6S_CK(FM6_B_FN + 13, 1, 7),
+    FM6S_CK(FM6_B_FN + 14, 1, 1), FM6S_CK(FM6_B_FN + 15, 1, 2), FM6S_CK(FM6_B_ON, 1, FM6_ON_ALL),
+};
+#undef FM6S_CK
+_Static_assert(FM6_NFN == 16u, "FM6S_CHECK: the functions' ranges are FM6_FNMAX's");
 static const mod_sch_src FM6_SCHEMA = {
     .patch = FM6_BLOB, .def_make = fm6_sch_def, .store = MOD_SCH_STORE_VOICE, .utag = 'F', .mtag = 3, .flags = 0, .abbr = "FM6",
     .wdef = 36, .mmap = 442, .name = 118, .nlen = 10, .sound = FM6_PACKED,
@@ -482,4 +494,5 @@ static const mod_sch_src FM6_SCHEMA = {
     .wid = FM6_SCH_WID, .nwid = sizeof FM6_SCH_WID,
     .rec = FM6S_REC, .nrec = sizeof FM6S_REC / sizeof *FM6S_REC,
     .strip = FM6S_STRIP, .design = &FM6S_DESIGN,
+    .sysex = FM6S_SYSEX, .nsysex = 1, .check = FM6S_CHECK, .ncheck = sizeof FM6S_CHECK / MOD_SCH_CREC,
 };

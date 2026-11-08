@@ -205,26 +205,26 @@ static double centroid(const double *y, uint32_t a)       /* the spectral centro
 }
 
 /* -------------------------------------------------------------- SysEx --- */
-static void sysex_pending(void)
+static void sysex_pending(void)                  /* (sysex_rx.c: the synths' SysEx collector) */
 {
     static const uint8_t voice[] = {0xF0, 0x43, 0, 0, 1, 0x1B, 42, 0xF7};
     static const uint8_t ping[] = {0xF0, 0x7D, 0x46, 0x4C, 25, 0xF7};
     uint32_t i;
-    fm6_rx_ready = fm6_rx_on = 0;
-    fm6_rx_n = 0;
-    for (i = 0; i < sizeof voice; i++) fm6_sx_byte(voice[i]);
-    check("SysEx: a DX7 frame waits for the main loop", fm6_rx_ready && fm6_rx_n == sizeof voice);
-    for (i = 0; i < sizeof ping; i++) fm6_sx_byte(ping[i]);
+    msx_routes_sync();
+    msx.ready = msx.on = 0; msx.eng = 0xFFu; msx.n = 0;
+    for (i = 0; i < sizeof voice; i++) msx_byte(voice[i], MSX_USB);
+    check("SysEx: a DX7 frame waits for the main loop", msx.ready && msx.eng == ENGI_FM6 && msx.n == sizeof voice);
+    for (i = 0; i < sizeof ping; i++) msx_byte(ping[i], MSX_USB);
     check("SysEx: editor traffic does not discard a pending DX7 frame",
-          fm6_rx_ready && fm6_rx_n == sizeof voice && !memcmp(fm6_rx, voice, sizeof voice));
-    fm6_sx_byte(0xF0); fm6_sx_byte(0x43); fm6_sx_byte(0xF7);
+          msx.ready && msx.n == sizeof voice && !memcmp(proj_wire_u.raw, voice, sizeof voice));
+    msx_byte(0xF0, MSX_USB); msx_byte(0x43, MSX_USB); msx_byte(0xF7, MSX_USB);
     check("SysEx: a second Yamaha frame does not discard the pending frame",
-          fm6_rx_ready && fm6_rx_n == sizeof voice && !memcmp(fm6_rx, voice, sizeof voice));
-    fm6_rx_ready = 0;                                    /* main loop consumed it */
-    fm6_sx_byte(0xF0); fm6_sx_byte(0x43); fm6_sx_byte(0xF8); fm6_sx_byte(0xF7);
+          msx.ready && msx.n == sizeof voice && !memcmp(proj_wire_u.raw, voice, sizeof voice));
+    msx.ready = 0; msx.eng = 0xFFu; msx.n = 0;           /* main loop consumed it */
+    msx_byte(0xF0, MSX_USB); msx_byte(0x43, MSX_USB); msx_byte(0xF8, MSX_USB); msx_byte(0xF7, MSX_USB);
     check("SysEx: the next frame after it (a clock byte inside is not part of it)",
-          fm6_rx_ready && fm6_rx_n == 3 && fm6_rx[2] == 0xF7);
-    fm6_rx_ready = 0;
+          msx.ready && msx.n == 3 && proj_wire_u.raw[2] == 0xF7);
+    msx.ready = 0; msx.eng = 0xFFu; msx.n = 0;
 }
 
 /* --------------------------------------------------------- algorithms --- */

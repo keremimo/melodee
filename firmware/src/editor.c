@@ -22,7 +22,7 @@ enum { ED_INFO = 1, ED_GET, ED_SET, ED_DUMP, ED_DESC, ED_STEP_GET, ED_STEP_SET, 
        ED_CAPS, ED_TRACKS, ED_TRANSPORT,                                       /* Studio (editor_session.c; 42, 43: editor_projects.c) */
        ED_METERS = 55, ED_TRACKS_CHANGED, ED_TRANSPORT_CHANGED,                /* .. its pushes */
        ED_MOTION = 64, ED_BACKUP_LIST, ED_BACKUP_GET, ED_BACKUP_PUT,                               /* v6: song chain */
-       ED_AUDIO_STATS = 72, ED_PATTERN, ED_BANK_SONG };                                       /* USB audio diagnostics (68..71: FM6, editor_fm6.c) */
+       ED_AUDIO_STATS = 72, ED_PATTERN, ED_BANK_SONG };                                       /* USB audio diagnostics (85..88: the synths, editor_synth.c) */
 #if MELODEE_CORE1_TEST && MELODEE_DUAL_CORE
 enum { ED_CORE1_TEST = 79 };                         /* test builds only: CPU1 failure injection */
 static void core1_test_stall(void *unused) { (void)unused; for (;;) ; }
@@ -74,7 +74,7 @@ static int ed_ble_busy(void)                       /* (no lock: the IRQ only add
 /* the commands Bluetooth takes (bit c: command c), each a request with one reply of at most 1024 bytes: the session,
  * sounds, patterns, song and device. Not the samples (11..15), the backups and kits (65..67), the audio and CPU1
  * diagnostics (72, 79, 100, 101), the radio calibration (81), the resources (82) nor the pushes' numbers: no reply */
-static const uint8_t ED_BLE_OK[12] = {0xFE, 0x07, 0x7F, 0xFA, 0xFE, 0xBF, 0x3F, 0x00, 0xF1, 0x7E, 0x01, 0x80};
+static const uint8_t ED_BLE_OK[12] = {0xFE, 0x07, 0x7F, 0xFA, 0xFE, 0xBF, 0x3F, 0x00, 0x01, 0x06, 0xE1, 0x01};
 static void ed_frame_done(void)
 {
     if (!ed_link) { ota_frame_done(); return; }
@@ -367,11 +367,8 @@ static int ed_flash_stop(void)
 #include "editor_module.c"
 #endif
 #include "editor_backup.c"
-#include "editor_fm6.c"
-#include "editor_cz.c"
-#include "editor_native.c"
 #include "editor_library.c"
-#include "editor_prophet.c"
+#include "editor_synth.c"                    /* the synths: schemas, patches, SysEx, parameters by id */
 #include "editor_cpu_lab.h"
 #include "editor_song.c"
 #include "editor_patterns.c"
@@ -438,7 +435,7 @@ static int ed_args_ok(uint32_t cmd, const uint8_t *a, uint32_t n)
 /* the command families with their own files, asked in turn: each answers 1 when the command is its own (the reply
  * is then sent), else 0 (new families: one more entry) */
 static int (*const ED_HANDLERS[])(uint32_t cmd, const uint8_t *a, uint32_t n) = {
-    ed_prophet_handle,
+    ed_synth_handle,
 #if MELODEE_BLE
     ed_ble_handle,
 #endif
@@ -448,7 +445,7 @@ static int (*const ED_HANDLERS[])(uint32_t cmd, const uint8_t *a, uint32_t n) = 
 #ifdef MODULE_STORE
     ed_module_handle,
 #endif
-    ed_ui_handle, ed_backup_handle, ed_fm6_handle, ed_cz_handle, ed_library_handle, ed_native_handle,
+    ed_ui_handle, ed_backup_handle, ed_library_handle,
     ed_session_handle, ed_projects_handle, ed_song_handle, ed_patterns_handle, ed_device_handle,
 };
 static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0 and F7 */
@@ -462,7 +459,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
     const param_desc_t *d;
     if (!ed_args_ok(cmd, a, na))
         return;
-    if(cmd==ED_SET || (cmd==ED_TRACK_PARAM && na==4u) || cmd==ED_FM6_PUT || cmd==ED_CZ_PUT || (cmd==95u && na && a[0]>=1u && a[0]<=3u))momentary_restore();
+    if(cmd==ED_SET || (cmd==ED_TRACK_PARAM && na==4u) || ((cmd==ED_PATCH || cmd==ED_PARAM) && na && a[0]==1u))momentary_restore();
     ed_begin(cmd);
     for (i = 0; i < sizeof ED_HANDLERS / sizeof *ED_HANDLERS; i++)
         if (ED_HANDLERS[i](cmd, a, na)) {
@@ -574,9 +571,6 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
     }
 #if MELODEE_AUDIO_BENCH
     case 99: {
-        if(na==3u && a[0]==2u && a[1]<NTRK && a[2]<=FM6_OPL){
-            fm1_irq_off();fm6_fn_set(a[1],FN_ENGINE,a[2]);fm1_irq_on();ed_b(0);break;
-        }
         if(na!=1u || a[0]>1u){ed_b(1);break;}
         fm1_irq_off();audio_bench_until=a[0]?fm1_ticks()+30u*24000000u:0;fm1_irq_on();
         ed_b(0);break;
@@ -815,12 +809,9 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             0x4d, 2, MOTION_MAX, 1,                                 /* [9] motion v2: native ids, chance v1 */
             0x42, 1, 3,                                             /* bounded full-backup read + restore */
             0x50, 4, NPAT, CHAIN_ROWS,                              /* bank controls: 73/74 */
-            0x46, 1, FM6_NFAC, 0,                                   /* FM6 patches: cmds 68..71 */
-            0x43, 1, CZ_BYTES & 127u, CZ_BYTES >> 7, 0, 0,          /* old CZ bank controls retired */
-            0x35, 1, ENGI_PROPHET, USER_GENERAL, USER_NATIVE_FM, USER_NATIVE_CZ, USER_NATIVE_P5, 0, 1, /* legacy native clients see their addressable prefix */
-            0x4e, 1, 64, 0, 0, 1,                                   /* legacy command 78 addressable prefixes */
             0x55, 1, UP_SLOTS & 127u, UP_SLOTS >> 7,                /* shared library, command 80 */
-            0x53, 1, ED_CAPS };                                     /* Studio: CAPS (39) says what else */
+            0x53, 1, ED_CAPS,                                       /* Studio: CAPS (39) says what else */
+            0x59, 1, ED_SCHEMA };                                   /* the synths: SCHEMA, PATCH, SYSEX, PARAM (85..88) */
         ed_str("MELODEE " MELODEE_VERSION, 24);
         ed_bytes(info, 5u);
         for (i = 0; i < NENGINES; i++)
@@ -1281,7 +1272,6 @@ static void ed_service(void)
     if (INSTALLER_REPORT_FRAME(p,n)) { ota_frame_done();return; }
 #endif
     if(general_sysex_frame(p,n)){ota_frame_done();return;}
-    if(p5_native_frame(p,n)){ota_frame_done();return;}
     if (n < 4u || p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
         return;
 #if MELODEE_BLE_EDITOR

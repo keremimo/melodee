@@ -1195,8 +1195,8 @@ static void drum_sound_edit(uint32_t slot,int32_t delta)
     if(!field){drum_pick(drum_sound_step(TSEL,ui.drum_sound,delta));return;}
     if(field==255)return;
     fm1_irq_off();
-    if(field==4){int8_t *p=&drum_patch_of(song.sel)->c[ui.drum_sound][3];*p=(int8_t)clamp(*p-delta,0,127);}
-    else {int8_t *p=&drum_patch_of(song.sel)->c[ui.drum_sound][field-1];*p=(int8_t)clamp(*p+delta,field==1?-24:-64,field==1?24:63);}
+    if(field==4){int8_t *p=&drum_offsets(song.sel)[ui.drum_sound][3];*p=(int8_t)clamp(*p-delta,0,127);}
+    else {int8_t *p=&drum_offsets(song.sel)[ui.drum_sound][field-1];*p=(int8_t)clamp(*p+delta,field==1?-24:-64,field==1?24:63);}
     fm1_irq_on();ui.force=1;
 }
 static void drum_hit_jog(int32_t delta);
@@ -1531,7 +1531,7 @@ static void act_do(void)
             else if (how & MOD3_ST_NAMED) patch_store_named(slot);   /* (by the patch's own name: no NAME screen) */
             else name_open(NK_USER_SAVE, slot);
         } else if (c == 2u) {
-            p4_send(e, song.sel);                        /* TEMPORARY (synths_phase4.h: the SysEx out) */
+            (void)store_send(song.sel, 1);               /* (sysex_route.c: the synth's SysEx out) */
         } else if (c == 3u) {
             char m[MOD_SCH_NAME + 8u];
             if (!(how & MOD3_ST_NOUNDO)) { load_begin(TSEL, UNDO_SOUND); panic_req |= (uint8_t)(1u << song.sel); }

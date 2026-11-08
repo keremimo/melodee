@@ -95,14 +95,16 @@ static int song_sound_valid(const song_sound_t *s, int stored)
         if (v < d->min || v > d->max) return 0;
     }
     for (uint32_t i = 0; s->name[i]; i++) if ((uint8_t)s->name[i] < 32u || (uint8_t)s->name[i] > 126u) return 0;
-    if (tag == MOD_SCH_STORE_VOICE) {             /* (the patch as 1.x checked it, by its layout: synths_phase4.h) */
-        uint8_t v[SS_PATCH];
+    if (tag == MOD_SCH_STORE_VOICE) {             /* (as 1.x checked it: every value by its id in its parameter's range,
+                                                   * the switches by the synth's checks) */
+        uint8_t v[SS_PATCH], on = stored ? s->fm_on : s->patch[SS_VOICE_ON];
         if (stored)
-            return p4_voice_valid(s->patch, s->fm_on);
-        patch_ids_get(s->engine, s->patch, v, SS_VOICE_IDS);
-        return p4_voice_valid(v, s->patch[SS_VOICE_ON]);
+            memcpy(v, s->patch, SS_VOICE_IDS);
+        else
+            patch_ids_get(s->engine, s->patch, v, SS_VOICE_IDS);
+        return patch_ids_ok(s->engine, v, SS_VOICE_IDS) && patch_check(s->engine, &on, SS_VOICE_ON, 1);
     }
-    return p4_store_valid(tag, s->patch);         /* (another layout: the module checks its own when it loads) */
+    return patch_stored_ok(tag, s->patch);         /* (another layout: the synth's checks; no synth: as it is) */
 }
 static void song_sound_apply(uint32_t k, const song_sound_t *s)
 {

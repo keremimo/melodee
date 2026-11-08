@@ -27,7 +27,7 @@ CALLBACKS = {'note_on', 'render', 'amp', 'block', 'done', 'alloc', 'legato',
              'mono_key', 'post', 'units', 'cap', 'keys', 'desc',
              'state', 'env_q15', 'chord', 'reuse', 'batch', 'render_p', 'menv', 'join', 'reserve', 'bend_range',
              'patch_changed', 'pget', 'pput'}   # (Motion plays a synth's parameters from the sequencer's tick)
-COLD_CALLBACKS = {'preset_make', 'pformat', 'pactive', 'draw'}   # (the pages': the main loop's)
+COLD_CALLBACKS = {'preset_make', 'pformat', 'pactive', 'draw', 'sysex', 'sysex_dump'}   # (the pages', SysEx: the main loop's)
 
 
 def engine_roots(src):

@@ -253,6 +253,7 @@ static void fm1_fault(const fm1_crash_t *c)
 /* power-on: the parts with their default sounds (TRK_DEF); the sequencers empty */
 static void melodee_init(void)
 {
+    msx_reset();                                     /* the synths' SysEx: the router, the host table's calls */
     uint32_t i;
     trk_voices_bind();
     midi_insert_init();
@@ -473,8 +474,7 @@ static void fm1_main(void)
                 fm1_enter_uboot();
             }
         }
-        cz_service();
-        fm6_service();                                  /* DX7 SysEx for FM6, a pending FM6 settings save */
+        msx_service();                                  /* the synths' SysEx: a frame to its module */
 #if MELODEE_OTA
         ed_service();                                   /* web editor SysEx */
         ota_service();                                  /* M-UPGRADE handshake */

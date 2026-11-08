@@ -9,9 +9,14 @@
 //      sample; the taps (core_render_taps: the master the same as core_render's, each track and the FX return);
 //      the MIDI events (core_midi_events) the song's notes; a kit (fixtures' kit-*.bin) into a user slot; the NOR
 //      kept and booted again (core_boot(1)) with the project still there; core_midi_in playing a note.
+//   3. The five synths as modules (CORE_MODULES): each power-on puts the device's module files in the pool and links
+//      their WebAssembly (mod_link.mjs: build/modules/wasm/*.mmod, tools/mod_build.py --wasm) into the core, as the
+//      native core links the module objects; a chord on two presets of each synth (SID, DRUM, CZ-1, FM6, the Prophet)
+//      renders sample for sample what the native core (the device's configuration) renders.
 //   web/core/build.sh; tools/studio_bundle.py (or tests/run_tests.sh: the fixtures); node web/core/core_check.mjs
 // options: --core WASM (build/core/melodee_core.wasm), --native BIN (build/core/core_native), --mel DIR (the fixtures:
-// build/host/studio/mel, else build/host/mel), --transcripts FILE, --transcripts-only, --seconds N (10), --json FILE
+// build/host/studio/mel, else build/host/mel), --transcripts FILE, --transcripts-only, --seconds N (10), --json FILE,
+// --modules DIR (build/modules/wasm: the five synths' files with their WebAssembly)
 import { readFileSync, readdirSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -19,6 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { BACKUP_CMD } from "../fm1backup.js";
 import { pjExpand } from "../mel_file.js";
+import { installModules } from "./mod_link.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const opt = (name, def) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : def; };
@@ -27,7 +33,10 @@ const WASM = resolve(opt("core", join(ROOT, "build/core/melodee_core.wasm")));
 const NATIVE = resolve(opt("native", join(ROOT, "build/core/core_native")));
 const MEL = opt("mel", [join(ROOT, "build/host/studio/mel"), join(ROOT, "build/host/mel")].find((d) => existsSync(join(d, "song.rec"))));
 const SECONDS = Number(opt("seconds", 10));
-const ABI = 2;
+const ABI = 3;
+const MODDIR = resolve(opt("modules", join(ROOT, "build/modules/wasm")));
+const SYNTHS = [["sid", 3], ["drum", 10], ["cz", 15], ["fm6", 12], ["prophet", 19]];
+const modFiles = SYNTHS.map(([s]) => readFileSync(join(MODDIR, `${s}.mmod`)));
 const hex = (a) => Array.from(a, (b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
 const report = {};
 let failures = 0;
@@ -66,13 +75,28 @@ async function core() {
   };
 }
 const req = (cmd, args = []) => Uint8Array.from([0xF0, 0x7D, 0x46, 0x4C, cmd, ...args, 0xF7]);
+/* power-on as an installed FM-1's (core_native's boot_modules): a new device's NOR, the synths' files in its pool
+   (their WebAssembly linked), booted again. keep: the NOR has them (written to core_nor_ptr): linked, booted. 1 =
+   the flash works */
+let installed = null;
+async function power(c, keep = false) {
+  if (keep) { await installModules(c.x, modFiles, false); return c.x.core_boot(1); }
+  c.x.core_boot(0); c.x.core_poll(100);
+  const rc = await installModules(c.x, modFiles);
+  installed ??= rc;
+  c.x.core_poll(100);
+  const ok = c.x.core_boot(1);
+  c.x.core_poll(100);
+  return ok;
+}
 
 check("no imports (a standalone module: no glue)", imports.length === 0, imports.map((i) => `${i.module}.${i.name}`).join(", "));
 const t0 = performance.now();
 const a = await core();
 check(`ABI ${ABI}`, a.x.core_abi() === ABI, `core says ${a.x.core_abi()}`);
-const flashOk = a.x.core_boot(0);
-a.x.core_poll(100);
+const flashOk = await power(a);
+check("the five synths' modules: their WebAssembly linked, the device's files in the pool (MS_LOADED, MS_STORED or MS_NORAM)",
+  installed.length === 5 && installed.every((rc) => rc === 1 || rc === 2 || rc === 4), installed.join(" "));
 report.boot = { ms: +(performance.now() - t0).toFixed(1), flashOk, wasmBytes: readFileSync(WASM).length };
 check("power-on with an erased NOR: the flash works", flashOk === 1, `${report.boot.ms} ms with instantiation`);
 
@@ -98,8 +122,9 @@ const at = (name, phase = "power-on") => transcripts.find((t) => t.name === name
 const bytes = (h) => h.split(" ").map((v) => parseInt(v, 16));
 {
   const info = bytes(at("INFO").replies[0]);
-  const tail = info.slice(-4, -1);
-  check("INFO: the Studio tag 'S' v1, CAPS at 39", tail[0] === 0x53 && tail[1] === 1 && tail[2] === 39, hex(tail));
+  const tag = (t, v, c) => info.some((x, i) => i >= 25 && x === t && info[i + 1] === v && info[i + 2] === c);   /* (as Studio reads it) */
+  check("INFO: the Studio tag 'S' v1, CAPS at 39", tag(0x53, 1, 39), hex(info.slice(-7, -1)));
+  check("INFO: the synths' tag 0x59 v1, SCHEMA at 85", tag(0x59, 1, 85), hex(info.slice(-7, -1)));
   const caps = bytes(at("CAPS").replies[0]);
   check("CAPS: revision 1 and the song's tag 'S'", caps[5] === 1 && caps.includes(0x53), `${caps.length} bytes`);
   const tracks = bytes(at("TRACKS").replies[0]).slice(5, -1);
@@ -147,7 +172,7 @@ if (flag("transcripts-only") || !rec) finish();
 const FS = a.x.core_fs(), frames = SECONDS * FS, NTRK = a.x.core_ntrk(), TAPS = a.x.core_taps_count();
 async function songCore({ taps = false, midi = 0 } = {}) {                       // a fresh power-on, the song loaded
   const c = await core();
-  c.x.core_boot(0); c.x.core_poll(100);
+  await power(c);
   c.x.core_load_record(c.put(rec), rec.length, 0); c.x.core_poll(30);
   if (taps) c.x.core_taps(1);
   if (midi) c.x.core_midi_tap(midi);
@@ -275,7 +300,7 @@ async function songCore({ taps = false, midi = 0 } = {}) {                      
   const nor = c.u8().slice(c.x.core_nor_ptr(), c.x.core_nor_ptr() + c.x.core_nor_len());
   const d = await core();
   d.u8().set(nor, d.x.core_nor_ptr());
-  const ok = d.x.core_boot(1);
+  const ok = await power(d, true);
   d.x.core_poll(100);
   const list = d.ask(42, [0, 0, 32]);
   const text = String.fromCharCode(...(list ?? []).filter((b) => b >= 32 && b < 127));
@@ -290,6 +315,30 @@ async function songCore({ taps = false, midi = 0 } = {}) {                      
   const n = d.x.core_midi_events(d.x.core_scratch(), 64);
   check("core_midi_in: a note on channel 1 plays the selected track", taken === 1 && loud > 0.001 && n > 0 && sel !== null,
     `peak ${loud.toFixed(3)}, ${n} event(s)`);
+}
+
+// ------------------------------------------------------------------ 3. the synths ---
+for (const [name, e] of SYNTHS) for (const p of [0, 5]) {
+  const c = await core();
+  await power(c);
+  c.exchange(req(8, [e, p]));
+  c.x.core_poll(30);
+  const s = c.x.core_scratch(), on = [0x90, 48, 100, 0x90, 55, 90, 0x90, 64, 80], off = [0x80, 48, 0, 0x80, 55, 0, 0x80, 64, 0];
+  c.u8().set(on, s); c.x.core_midi_in(s, on.length);
+  const wasm = new Float32Array(3 * FS * 2 + 2048);
+  let at = 0;
+  for (let k = 0; k < 3 * FS; k += 1024) {
+    if (k === FS - FS % 1024) { c.u8().set(off, s); c.x.core_midi_in(s, off.length); }
+    wasm.set(new Float32Array(c.x.memory.buffer, c.x.core_render(1024), 2048), at); at += 2048;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "core-synth-")), out = join(dir, "synth.raw");
+  const r = spawnSync(NATIVE, ["synth", String(e), String(p), out], { encoding: "utf8", env: { ...process.env, CORE_MODULES_DIR: join(ROOT, "build/modules") } });
+  const native = r.status === 0 ? new Float32Array(readFileSync(out).buffer.slice(0)) : new Float32Array(0);
+  rmSync(dir, { recursive: true, force: true });
+  let peak = 0, same = native.length === at;
+  for (let i = 0; i < at; i++) { peak = Math.max(peak, Math.abs(wasm[i])); if (same && Object.is(wasm[i], native[i]) === false && wasm[i] !== native[i]) same = false; }
+  check(`${name.toUpperCase()} preset ${p}: the module in WebAssembly == the native core's module, sample for sample`, same && peak > 0.001,
+    `${at / 2} frames, peak ${peak.toFixed(3)}${r.status ? `, native: ${r.stdout}${r.stderr}` : ""}`);
 }
 finish();
 

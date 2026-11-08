@@ -340,6 +340,14 @@ static const mod_sch_rec_src CZS_REC[] = {
     {MOD3_Q_GOAL, MOD3_GM(FX), LCZ_MOD, 1},
     {MOD3_Q_GOAL, MOD3_GM(FX), LCZ_FINE, 30},
 };
+static const uint8_t CZS_SYSEX[] = {1, 0x44, 0, 0};   /* (Casio's: cz_sysex.c) */
+#define CZS_CK(off, n, st, mask, max) (uint8_t)(off), 0, (uint8_t)(n), (uint8_t)(st), (uint8_t)(mask), 0, 0, (uint8_t)(max)
+static const uint8_t CZS_CHECK[] = {           /* (a tone as the CZ-1 and Melodee 1.x take it: cz_patch.h) */
+    CZS_CK(0, 1, 0, 0xF0, 0), CZS_CK(0, 1, 0, 0x0C, 2), CZS_CK(1, 1, 0, 0xFF, 1), CZS_CK(2, 1, 0, 0x03, 0),
+    CZS_CK(3, 1, 0, 0xFF, 47), CZS_CK(16, 2, 57, 0x0F, 9), CZS_CK(16, 2, 57, 0xF0, 14), CZS_CK(18, 2, 57, 0xFF, 9),
+    CZS_CK(20, 3, 17, 0x08, 0), CZS_CK(77, 3, 17, 0x08, 0),
+};
+#undef CZS_CK
 static const mod_sch_src CZ_SCHEMA = {
     .patch = CZ_BYTES, .def_make = cz_sch_def, .store = MOD_SCH_STORE_TONE, .utag = 'Z', .mtag = 2,
     .flags = MOD_SCH_F_MBYTES | MOD_SCH_F_NOEDIT | MOD_SCH_F_MLANES, .abbr = "CZ-1", .wdef = MOD_SCH_NONE, .mmap = 0,
@@ -351,4 +359,5 @@ static const mod_sch_src CZ_SCHEMA = {
     .mlanes = CZS_MLANE, .nmlanes = sizeof CZS_MLANE / sizeof *CZS_MLANE,
     .rec = CZS_REC, .nrec = sizeof CZS_REC / sizeof *CZS_REC,
     .strip = CZS_STRIP, .design = &CZS_DESIGN,
+    .sysex = CZS_SYSEX, .nsysex = 1, .check = CZS_CHECK, .ncheck = sizeof CZS_CHECK / MOD_SCH_CREC,
 };

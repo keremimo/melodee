@@ -12,3 +12,12 @@
 #define MOD_SCH_NO_WRITER
 #endif
 #include "../modules/sdk/mod_schema.h"
+/* Melodee 1.x's store formats (MOD_SCH_STORE_*): a patch's bytes there, and a VOICE's settings after them (its
+ * schema's patch bytes from its sound's end) */
+#define MOD_SCH_VOICE_BYTES 128u
+#define MOD_SCH_TONE_BYTES 144u
+#define MOD_SCH_PROGRAM_BYTES 138u
+#define MOD_SCH_KIT_BYTES 64u
+static const uint8_t MOD_SCH_STORE_BYTES[] = {0, MOD_SCH_VOICE_BYTES, MOD_SCH_TONE_BYTES, MOD_SCH_PROGRAM_BYTES,
+                                              MOD_SCH_KIT_BYTES};
+#define MOD_SCH_STORE_FN 16u

@@ -129,7 +129,9 @@ static uint32_t role_faults(uint32_t e)
         if (sch_rd(e, h.role + i * MOD_SCH_RREC, r, sizeof r))
             return faults + 1u;
         id = sch_u16(r + 2);
-        if (r[0] >= MOD3_R_BANK_FILTER && r[0] <= MOD3_R_BANK_LFO)
+        if (r[0] == MOD3_R_SYSEX || r[0] == MOD3_R_CHECK)   /* (the widget data's records: their offset, a count) */
+            faults += (uint32_t)id + r[1] * (r[0] == MOD3_R_SYSEX ? 4u : MOD_SCH_CREC) > (uint32_t)h.str - h.wid;
+        else if (r[0] >= MOD3_R_BANK_FILTER && r[0] <= MOD3_R_BANK_LFO)
             faults += id >= h.npage;
         else if (r[1] & MOD3_RF_TRACK)
             faults += id >= P_COUNT;             /* (the part's own: a P_* number, an E value or not) */

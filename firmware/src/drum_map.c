@@ -255,3 +255,8 @@ static uint32_t drum_user_key(const track_t *t, int32_t ks)
     w = 7 * (c / 12) + W[c % 12] - DRUM_WHITE0;
     return w >= 0 && w < 16 ? drum_mpc_note(t, (uint32_t)w) : DRUM_SILENT;
 }
+#if !MOD_SIDE
+/* TEMPORARY (phase 5, the pads): a DRUM part's patch as the firmware's DRUM SOUND / DRUM MIX pages and the editor's DRUM
+ * read it (main loop): its 16 sounds' offsets, int8 each (TUNE, DECAY, the third control, 127 - LEVEL) */
+static int8_t (*drum_offsets(uint32_t k))[4] { return (int8_t (*)[4])(void *)patch_of(k); }
+#endif

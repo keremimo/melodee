@@ -2,6 +2,9 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 #include "performance_options.h"
 #include "../modules/prophet/p5_patch.h"   /* the part's patch: a Rev-4 program (where the firmware keeps it) */
+#if !MOD_SIDE
+#include "../modules/prophet/p5_presets.c"   /* Sequential's programs (host builds: the module's file has them) */
+#endif
 /* Prophet prototype: native patches and five (experimental dual-core: eight) voices, with two provisional
  * filter characters. Stored engine ID 19 is independent of legacy ANALOG.
  * MELODEE_PROPHET_PROTOTYPE additionally aliases ID 0 for measurement rigs.
@@ -537,6 +540,7 @@ static void p5_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
 static uint32_t p5_units(const track_t *t) { (void)t; return p5_poly()>5u?2u:3u; }
 static uint32_t p5_state(const track_t *t) { (void)t; return sizeof(p5_part_t); }   /* (engine_t.state) */
 #include "../modules/prophet/p5_ui.c"   /* its panel: the schema's values, hints, the program's voice settings */
+#include "../modules/prophet/p5_sysex.c"   /* Sequential's program dumps */
 static const engine_t ENG_P5_TEST = {
     .name="PROPHET", .page_title={"FILTER/TUNE","PW/MIX"},
     .edit={{"CUT",F_INT,-63,63,0,0,0},{"RES",F_INT,-63,63,0,0,0},
@@ -557,4 +561,5 @@ static const engine_t ENG_P5_TEST = {
     .bend_range=p5_bend_range,
     .desc=p5_desc,
     .patch_changed=p5_patch_changed, .pget=p5_pget, .pput=p5_pput, .pactive=p5_pactive,
+    .sysex = p5_sysex, .sysex_dump = p5_sysex_dump,
 };

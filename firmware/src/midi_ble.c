@@ -151,11 +151,22 @@ BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last)
 {
     struct mb_link *l = MBL;
     uint32_t status = (pkt >> 8) & 255u;
+    if ((pkt & 15u) - 4u < 4u) {                /* SysEx: a synth's (sysex_rx.c), Studio's frames */
+        uint32_t cin = pkt & 15u, k = cin == 4u ? 3u : cin - 4u;
+        if (!mb.on || l->closing)
+            return;
+#ifdef MSX_ROUTES
+        for (uint32_t i = 0; i < k; i++)
+            msx_byte(pkt >> (8u + 8u * i) & 255u, MSX_BLE);
+#endif
 #if MELODEE_BLE_EDITOR
-    if ((pkt & 15u) - 4u < 4u) {                /* SysEx: Studio's frames, on the computer's link only */
-        if (mb.on && !l->closing && MB_ED_HERE()) mb_ed_in(pkt);
+        if (MB_ED_HERE()) mb_ed_in(pkt);       /* (Studio: on the computer's link only) */
+#endif
         return;
     }
+#ifdef MSX_ROUTES
+    if (status >= 0x80u && status < 0xF8u)
+        msx_byte(status, MSX_BLE);              /* (another status ends a synth's frame) */
 #endif
     /* Route performance messages and clock only. OTA/editor framing stays USB. */
     if (!mb.on || l->closing || !((status >= 0x80u && status < 0xF0u) ||

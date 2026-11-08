@@ -18,34 +18,21 @@ static uint32_t mod_pst_of(uint32_t e);             /* eng_module_main.c: the sl
 static int mod_pst_get(uint32_t s, uint32_t k, preset_t *pr, char *name, uint8_t *patch, uint32_t cap);   /* .. */
 static int mod_pst_name(uint32_t s, uint32_t k, char *nm, uint32_t cap);                                   /* .. */
 #endif
-/* the patch built-in engine e's preset k carries (its makers: host builds), its length */
+/* the patch built-in engine e's preset k carries (its makers: host builds, engines.c), its length */
 static uint32_t preset_patch_make(uint32_t e, uint32_t k, uint8_t *p)
 {
-#if MELODEE_P5_BUILTIN
-    if (e == ENGI_PROPHET) {
-        p5_patch_t q;
-        if (k && k <= P5_FACTORY_N) p5_factory(k - 1u, &q); else p5_patch_init(&q);
-        memcpy(p, &q, sizeof q);
-        return sizeof q;
-    }
-#endif
-#if MELODEE_CZ_BUILTIN
-    if (e == ENGI_CZ) {
-        if (k) cz_factory(k - 1u, p); else cz_patch_init(p);
-        return CZ_BYTES;
-    }
-#endif
-#if MELODEE_FM6_BUILTIN
-    if (e == ENGI_FM6) {
-        if (k < FM6_NFAC) fm6_factory(k, p); else memcpy(p, FM6_INIT, FM6_PACKED);
-        return FM6_PACKED;
-    }
-#endif
+#if MELODEE_P5_BUILTIN || MELODEE_CZ_BUILTIN || MELODEE_FM6_BUILTIN
+    uint8_t q[MOD3_PATCH_MAX];
+    uint32_t n = preset_builtin_patch(e, k, q);
+    if (n > PST_PATCH_MAX)
+        n = 0;
+    memcpy(p, q, n);
+    return n;
+#else
     (void)e; (void)k; (void)p;
     return 0;
+#endif
 }
-_Static_assert(PST_PATCH_MAX >= sizeof(p5_patch_t) && PST_PATCH_MAX >= CZ_BYTES && PST_PATCH_MAX >= FM6_PACKED,
-               "a preset's patch");
 /* engine e's preset k (< eng_npresets(e)) into x; patch: with its patch (else x->plen 0) */
 static void preset_fetch_into(uint32_t e, uint32_t k, preset_entry_t *x, int patch)
 {

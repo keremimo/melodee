@@ -174,7 +174,7 @@ static int proj_ok(const project_t *q)
         q->sel >= NTRK || q->parts > NTRK || q->phys > PROJ_PHYS ||
         !chain_legacy_valid(&q->chain) || !motion_valid(&q->motion)) return 0;
     for (uint32_t k = 0; k < PROJ_TRK; k++) if (q->t[k].engine >= NENGINES || q->t[k].mpc_octave < -3 || q->t[k].mpc_octave > 3 || q->pattern[k] >= NPAT ||
-        !p4_store_valid(MOD_SCH_STORE_KIT, q->drum[k]) || !p4_store_valid(MOD_SCH_STORE_PROGRAM, q->p5[k])) return 0;
+        !patch_stored_ok(MOD_SCH_STORE_KIT, q->drum[k]) || !patch_stored_ok(MOD_SCH_STORE_PROGRAM, q->p5[k])) return 0;
     for (uint32_t i = 0; i < RECORD_MAX; i++) if (!recording_valid(&q->recording[i])) return 0;
     return 1;
 }
@@ -356,14 +356,14 @@ static int proj_pack(project_store_t *out, const project_t *q)
     b[PROJ_MPC_OCT_WIRE+1u] = (uint8_t)(octword >> 8);
     memcpy(b + PROJ_FM6_OFF, q->fm6, sizeof q->fm6);
     for (t = 0; t < PROJ_TRK; t++) {
-        if (!p4_store_valid(MOD_SCH_STORE_TONE, q->cz[t])) return 0;
+        if (!patch_stored_ok(MOD_SCH_STORE_TONE, q->cz[t])) return 0;
         memcpy(b + PROJ_CZ_OFF + t*PROJ_TONE_BYTES, q->cz[t], PROJ_TONE_BYTES);
     }
     for (i = 0; i < RECORD_MAX; i++) if (!recording_valid(&q->recording[i])) return 0;
     if(!proj_record_pack(b,q))return 0;
-    for(t=0;t<PROJ_TRK;t++){if(!p4_store_valid(MOD_SCH_STORE_KIT,q->drum[t]))return 0;}
+    for(t=0;t<PROJ_TRK;t++){if(!patch_stored_ok(MOD_SCH_STORE_KIT,q->drum[t]))return 0;}
     for(t=0;t<PROJ_TRK;t++)kit_wire_pack(b+PROJ_DRUM_OFF+t*KIT_WIRE_BYTES,q->drum[t]);
-    for(t=0;t<PROJ_TRK;t++){if(!p4_store_valid(MOD_SCH_STORE_PROGRAM,q->p5[t]))return 0;memcpy(b+PROJ_P5_OFF+t*PROJ_PROGRAM_BYTES,q->p5[t],PROJ_PROGRAM_BYTES);}
+    for(t=0;t<PROJ_TRK;t++){if(!patch_stored_ok(MOD_SCH_STORE_PROGRAM,q->p5[t]))return 0;memcpy(b+PROJ_P5_OFF+t*PROJ_PROGRAM_BYTES,q->p5[t],PROJ_PROGRAM_BYTES);}
     {   /* the name (0-padded; stops at the first 0) */
         char n[PROJ_NAME_LEN + 1u];
         memcpy(b + PROJ_NAME_OFF, n, proj_name_get(n, (const uint8_t *)q->name));
@@ -470,11 +470,11 @@ static int proj_unpack(project_t *q, const uint8_t *b)
             q->fm6[t][i] = b[end + t * PROJ_VOICE_BYTES + i] & 0x7Fu;
     for (t = 0; t < PROJ_TRK; t++) {               /* (each area as 1.x checked it: phase 4's checks by layout) */
         memcpy(q->cz[t], b + PROJ_CZ_OFF + t * PROJ_TONE_BYTES, PROJ_TONE_BYTES);
-        if (!p4_store_valid(MOD_SCH_STORE_TONE, q->cz[t])) return 0;
+        if (!patch_stored_ok(MOD_SCH_STORE_TONE, q->cz[t])) return 0;
         memcpy(q->p5[t], b + PROJ_P5_OFF + t * PROJ_PROGRAM_BYTES, PROJ_PROGRAM_BYTES);
-        if (!p4_store_valid(MOD_SCH_STORE_PROGRAM, q->p5[t])) return 0;
+        if (!patch_stored_ok(MOD_SCH_STORE_PROGRAM, q->p5[t])) return 0;
         kit_wire_unpack(q->drum[t], b + PROJ_DRUM_OFF + t * KIT_WIRE_BYTES);
-        if (!p4_store_valid(MOD_SCH_STORE_KIT, q->drum[t])) return 0;
+        if (!patch_stored_ok(MOD_SCH_STORE_KIT, q->drum[t])) return 0;
     }
     if (!proj_record_unpack(q, b)) return 0;
     for (i = 0; i < RECORD_MAX; i++) if (!recording_valid(&q->recording[i])) return 0;
@@ -524,29 +524,30 @@ static char proj_name[PROJ_NAME_LEN + 1u]    /* the name of the music as it is n
 #define PROJ_NO_SLOT 0xFFu
 static uint8_t proj_cur = PROJ_NO_SLOT;      /* the slot the music was loaded from or last saved to (a rename of it
                                               * renames the music too); PROJ_NO_SLOT none (the editor's restore) */
-/* Small synchronous jobs (DX7 dumps, settings and OTA) retain bounded RAM: proj_wire_u, which DX7 frames coming in
- * share (eng_fm6.c fm6_sx_byte). Flash project/archive images stream through unpublished A/B copies. */
+/* Small synchronous jobs (a synth's dumps out, settings and OTA) retain bounded RAM: proj_wire_u, which the synths'
+ * SysEx coming in shares (sysex_rx.c msx_byte). Flash project/archive images stream through unpublished A/B copies. */
 #if !(MELODEE_FLASH && !MELODEE_AUDIO_PROFILE)
 _Static_assert(sizeof proj_wire_u.raw >= PROJ_BANK_BYTES, "a bank record fits the serialized scratch");
 #endif
 static int sysex_cancel_staged(void);        /* sysex_library.c: drop an import of a frame staged in the scratch */
-/* a main-loop job's use of the scratch, until the main loop's next turn: a DX7 frame being collected or waiting there
- * is lost, an import staged there cancelled (fm6_service, which owns the frame it reads, is not such a job) */
-static uint8_t fm6_rx_serving;
+/* a main-loop job's use of the scratch, until the main loop's next turn: a synth's frame being collected or waiting
+ * there is lost (its module told: MOD3_SX_ABORT), an import staged there cancelled (the module served its frame by
+ * sysex_route.c, which may take the scratch for its answer, is not such a job) */
 static uint8_t *wire_take(void)
 {
     uint32_t f = motion_guard(), lost;
     wire_job = 1;
-    lost = fm6_rx_on || (fm6_rx_ready == 1u && !fm6_rx_serving);
-    fm6_rx_on = 0;
-    if (lost) fm6_rx_ready = 0;
+    lost = !msx_serving && msx.eng != 0xFFu && msx.ready != 2u && !msx.abort;
+    if (lost) { RING_PUBLISH(); msx.abort = 1; }
+    msx.on = 0;
     motion_unguard(f);
     if (lost) ui_message("SYSEX DROPPED");
-    if (fm6_rx_ready == 2u && !fm6_rx_serving) sysex_cancel_staged();
+    if (msx.ready == 2u && !msx_serving) sysex_cancel_staged();
     return proj_wire_u.raw;
 }
 static void wire_release(void) { wire_job = 0; }   /* main.c: the top of a turn, every job done */
-static int wire_waiting(void) { return fm6_rx_on || fm6_rx_ready; }   /* a frame would be lost: optional jobs wait */
+static int wire_waiting(void) { return msx.on || msx.ready || msx.eng != 0xFFu; }   /* a frame would be lost: optional
+                                                                                  * jobs wait */
 static uint8_t *proj_wire_borrow(void) { proj_wire_gen++; return wire_take(); }   /* scratch for another job */
 
 static void proj_steps(step_t *s)            /* a loaded sequence stays inside its fixed fields */
@@ -1191,9 +1192,9 @@ static int tmpl_blob_valid(const uint8_t *b,uint32_t len)
     int32_t delta=(int32_t)(PROJ_TRK*2u)*((int32_t)P_COUNT-(int32_t)np);   /* (TPLK: more parameters, below 0) */
     for(uint32_t k=0;k<PROJ_TRK;k++){
         if(b[2u*PROJ_GLOBALS+2u+k*(2u+2u*np)]>=NENGINES)return 0;
-        if(!p4_store_valid(MOD_SCH_STORE_TONE,b+((int32_t)__builtin_offsetof(tmpl_t,cz)-delta)+k*PROJ_TONE_BYTES) ||
-           !p4_store_valid(MOD_SCH_STORE_PROGRAM,b+((int32_t)__builtin_offsetof(tmpl_t,p5)-delta)+k*PROJ_PROGRAM_BYTES) ||
-           !p4_store_valid(MOD_SCH_STORE_KIT,b+((int32_t)__builtin_offsetof(tmpl_t,drum)-delta)+k*PROJ_KIT_BYTES))return 0;
+        if(!patch_stored_ok(MOD_SCH_STORE_TONE,b+((int32_t)__builtin_offsetof(tmpl_t,cz)-delta)+k*PROJ_TONE_BYTES) ||
+           !patch_stored_ok(MOD_SCH_STORE_PROGRAM,b+((int32_t)__builtin_offsetof(tmpl_t,p5)-delta)+k*PROJ_PROGRAM_BYTES) ||
+           !patch_stored_ok(MOD_SCH_STORE_KIT,b+((int32_t)__builtin_offsetof(tmpl_t,drum)-delta)+k*PROJ_KIT_BYTES))return 0;
     }
     if(np>=117u){uint32_t off=(uint32_t)((int32_t)__builtin_offsetof(tmpl_t,master)-delta);
         for(uint32_t i=0;i<13u;i++)if(b[off+i]>GP[G_MFXTYPE+i].max)return 0;

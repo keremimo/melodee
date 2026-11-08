@@ -90,6 +90,22 @@ static int sch_rd(uint32_t e, uint32_t off, void *dst, uint32_t n)
     return 1;
 }
 static uint32_t sch_u16(const uint8_t *b) { return b[0] | (uint32_t)b[1] << 8; }
+/* e's schema's bytes, 0 none */
+static uint32_t sch_size(uint32_t e)
+{
+    e %= NENGINES;
+#if MELODEE_MODULES
+    uint32_t k = sch_slot(e);
+    if (k < NMOD)
+        return mods[k].sch_len;
+#endif
+#if MELODEE_SCH_BUILTIN
+    uint32_t len;
+    return sch_builtin(e, &len) ? len : 0u;
+#else
+    return 0;
+#endif
+}
 static uint8_t sch_gen = 1;                      /* +1 when a schema may have changed (module_store.c: a file listed,
                                                   * written or deleted) */
 /* e's schema's head: 0 ok (1: e has none) */
@@ -450,6 +466,7 @@ static __attribute__((noinline)) uint32_t sch_role_track(const track_t *t, uint3
 /* every engine's patch length, sound, store format and Motion tag in RAM (the audio's song sections read them: never
  * the flash), made again in the main loop when sch_gen moved */
 static struct { uint16_t plen, sound, mmap; uint8_t tag, mtag, mbytes; } sch_info[NENGINES];
+static void msx_routes_sync(void);
 static uint8_t sch_info_gen;
 static void sch_info_sync(void)
 {
@@ -466,6 +483,7 @@ static void sch_info_sync(void)
         sch_info[e].mbytes = !none && (h.flags & MOD_SCH_F_MBYTES);
     }
     sch_info_gen = sch_gen;
+    msx_routes_sync();
 }
 #ifdef FM1_IRQ_TARGET
 #define SCH_INFO() ((void)0)                     /* (the main loop keeps it: mod_service, a listing, power-on) */
@@ -499,6 +517,93 @@ static uint32_t patch_name_place(uint32_t e, uint32_t *off)
     *off = h.name;
     return h.nlen;
 }
+/* ---- what a module says of its stored bytes, read from its schema (the module's code loaded or not): its patch's
+ * checks (MOD3_R_CHECK), the SysEx it answers (MOD3_R_SYSEX) */
+/* n bytes b of e's patch from byte at, as e's checks want them: 1 (none, or no schema: 1), 0 refused */
+static int patch_check(uint32_t e, const uint8_t *b, uint32_t at, uint32_t n)
+{
+    mod_sch_head h;
+    uint32_t id, nr, l, i, j;
+    uint8_t r[MOD_SCH_CREC];
+    if (sch_head(e, &h) || sch_role(e, MOD3_R_CHECK, 0, &id, &nr, &l))
+        return 1;
+    for (i = 0; i < nr; i++) {
+        uint32_t off, st, sh = 0;
+        if (sch_rd(e, h.wid + id + i * MOD_SCH_CREC, r, sizeof r) || !r[4])
+            return 1;
+        off = r[0] | (uint32_t)r[1] << 8;
+        st = r[3] ? r[3] : 1u;
+        while (!(r[4] >> sh & 1u))
+            sh++;
+        for (j = 0; j < r[2]; j++, off += st) {
+            int32_t v, lo = r[6], hi = r[7];
+            if (off < at || off >= at + n)
+                continue;
+            v = (int32_t)((b[off - at] & r[4]) >> sh);
+            if (r[5] & MOD3_CK_SIGNED) {
+                v = (int8_t)b[off - at];
+                lo = (int8_t)r[6];
+                hi = (int8_t)r[7];
+            }
+            if (r[5] & MOD3_CK_PAIR ? v != lo && v != hi : v < lo || v > hi)
+                return 0;
+        }
+    }
+    return 1;
+}
+/* the engine whose patch Melodee 1.x stored as tag (MOD_SCH_STORE_*), NENGINES none */
+static uint32_t patch_store_engine(uint32_t tag)
+{
+    for (uint32_t e = 0; tag && e < NENGINES; e++)
+        if (patch_store_tag(e) == tag)
+            return e;
+    return NENGINES;
+}
+/* a patch as a store of format tag holds it (MOD_SCH_STORE_BYTES[tag] bytes): as its synth accepts it (its synth not
+ * here: as it is; its synth checks it when it loads) */
+static int patch_stored_ok(uint32_t tag, const uint8_t *b)
+{
+    uint32_t e = patch_store_engine(tag);
+    return e >= NENGINES || patch_check(e, b, 0, MOD_SCH_STORE_BYTES[tag % sizeof MOD_SCH_STORE_BYTES]);
+}
+/* the settings a project keeps of a patch of format tag (MOD_SCH_STORE_FN bytes after its sound) */
+static int patch_settings_ok(uint32_t tag, const uint8_t *f)
+{
+    uint32_t e = patch_store_engine(tag);
+    return e >= NENGINES || patch_check(e, f, patch_sound_len(e), MOD_SCH_STORE_FN);
+}
+/* e's patch as n parameter values by their ids 0..n-1 (a song sound's VOICE): each in its parameter's range */
+static int patch_ids_ok(uint32_t e, const uint8_t *v, uint32_t n)
+{
+    sch_param_t p;
+    for (uint32_t i = 0; i < n; i++)
+        if (!sch_param(e, i, &p) && ((int32_t)v[i] < p.min || (int32_t)v[i] > p.max))
+            return 0;
+    return 1;
+}
+/* the SysEx patterns of every synth into the interrupts' table (sysex_rx.c), main loop */
+static void msx_routes_sync(void)
+{
+    mod_sch_head h;
+    uint32_t e, id, n, l, i, m = 0;
+    uint8_t q[4];
+    msx_nroute = 0;
+    RING_PUBLISH();
+    for (e = 0; e < NENGINES; e++) {
+        if (ENGINES[e] == &ENG_RETIRED || sch_head(e, &h) || sch_role(e, MOD3_R_SYSEX, 0, &id, &n, &l))
+            continue;
+        for (i = 0; i < n && m < MSX_ROUTES; i++) {
+            if (sch_rd(e, h.wid + id + 4u * i, q, sizeof q) || !q[0] || q[0] > 3u)
+                break;
+            msx_route[m].engine = (uint8_t)e;
+            msx_route[m].n = q[0];
+            memcpy(msx_route[m].b, q + 1, 3);
+            m++;
+        }
+    }
+    RING_PUBLISH();
+    msx_nroute = (uint8_t)m;
+}
 /* e's starting patch into dst (MOD3_PATCH_MAX bytes: zeros after it) */
 static void patch_default(uint32_t e, uint8_t *dst)
 {
@@ -516,10 +621,8 @@ static void patch_note(uint32_t k, uint32_t how, uint32_t id)
     const engine_t *g = e < NENGINES ? ENGINES[e] : 0;
     if (g && g->patch_changed && !mod_idle(e))
         g->patch_changed(&trk[k], patch_of(k), how, id);
-    if (k < NTRK && how != MOD3_PATCH_EDIT && how != MOD3_PATCH_MOTION) {
+    if (k < NTRK && how != MOD3_PATCH_EDIT && how != MOD3_PATCH_MOTION)
         patch_compare_drop(k);
-        p4_patch_heard(&trk[k]);                 /* TEMPORARY (synths_phase4.h) */
-    }
 }
 /* track k's patch becomes engine e's: n bytes of src, the engine told how. The bytes past n: kept while the patch was
  * already e's (a preset's patch is the sound, a synth's own settings may follow it: FM6's functions), else e's starting

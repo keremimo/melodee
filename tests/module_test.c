@@ -21,10 +21,13 @@
  *   module_test [build/modules/trio.mmod] */
 #define PERSISTENCE_TEST_NO_MAIN
 #include "persistence_test.c"
-#include "../firmware/src/fm6_store.c"         /* (DX7 SysEx in: the FM6 bank phrases) */
+#include "../firmware/src/sysex_route.c"       /* (the synths' SysEx in: the FM6 bank phrases, through the module) */
 #include "../firmware/src/module_store.c"
 #include "module_phrases.h"
 #include "module_preset_golden.h"               /* (the factory presets as c53538c9's makers made them) */
+#if !MELODEE_FM6_BUILTIN
+#include "melodee_fm6.h"                        /* (FM6_INIT for the DX7 voice phrase: no FM6 built in here) */
+#endif
 extern const mod_desc_v3 mod_sid, mod_drum, mod_cz, mod_fm6, mod_p5, mod_trio, mod_wheel;   /* (firmware/modules/: the
                                                  * host's objects, built once) */
 static mod_desc_v3 trio22;                      /* TRIO as a new engine (22) */
@@ -125,7 +128,8 @@ static uint32_t mpr_diff(int pick, const char *how)
                 track_t *t = &trk[1];
                 memset(t->p, 0, sizeof t->p);
                 engine_load_of(t, e, k);
-                uint8_t pe[2] = {t->preset, t->eng_req}, cp[2] = {(uint8_t)cz_user_pick[1], (uint8_t)(cz_user_pick[1] >> 8)};
+                uint32_t pk = (uint32_t)t->p[P_E0] * 17u + (uint32_t)t->p[P_E1];   /* (c53538c9's CZ-1 pick: E1 * 17 + E2) */
+                uint8_t pe[2] = {t->preset, t->eng_req}, cp[2] = {(uint8_t)pk, (uint8_t)(pk >> 8)};
                 h = mpr_fnv(pe, 2, mpr_fnv(t->p, sizeof t->p, 0x811C9DC5u));
                 if (e == ENGI_PROPHET) h = mpr_fnv(patch_of(1), sizeof(p5_patch_t), h);
                 if (e == ENGI_CZ) h = mpr_fnv(patch_of(1), CZ_BYTES, h);
@@ -142,16 +146,21 @@ static uint32_t mpr_diff(int pick, const char *how)
         }
     return bad;
 }
-/* the CZ-1's default banks A..H against c53538c9's (MPR_BANK): how many differ */
-static uint32_t mpr_banks(void)
+/* a DX7 voice (FM6's init voice, VCED) arriving over USB, then the main loop's turn (the synths' SysEx: sysex_rx.c,
+ * sysex_route.c) */
+static void sx_dx7_voice_in(void)
 {
-    static cz_bank_t bk;
-    uint32_t bad = 0;
-    for (uint32_t b = 0; b < 8u; b++) {
-        cz_bank_default(&bk, b);
-        bad += mpr_fnv(&bk, sizeof bk, 0x811C9DC5u) != MPR_BANK[b];
-    }
-    return bad;
+    uint8_t f[163] = {0xF0, 0x43, 0x00, 0x00, 0x01, 0x1B}, v[FP_SIZE + 1u];
+    uint32_t s = 0;
+    fm6_unpack(FM6_INIT, v);
+    memcpy(f + 6, v, 155);
+    for (uint32_t i = 6; i < 161u; i++) s += f[i];
+    f[161] = (uint8_t)(-s & 127u);
+    f[162] = 0xF7;
+    wire_release();
+    memset(&sx_import, 0, sizeof sx_import);
+    for (uint32_t i = 0; i < sizeof f; i++) midi_in_event(0xFu | (uint32_t)f[i] << 8);
+    msx_service();
 }
 static int32_t mp_mod[MP_NB * CTL];
 /* FNV-1a of the TRIO / WHEEL phrases as b8b3e092 rendered them (its built-in references = its ABI 1 modules: e 6..7 x
@@ -490,9 +499,9 @@ int main(int argc, char **argv)
                      "plays, CPU0 and CPU1)",
                      golden == MP_COUNT && same && heard);
         /* the presets: every one read from its module's file as c53538c9's makers made it (built in here: the makers
-         * themselves too), entry, name and category, and picked; the CZ-1's default banks from the file's tones */
+         * themselves too), entry, name and category, and picked */
         {
-            uint32_t fe = mpr_diff(0, "file"), fp = mpr_diff(1, "file"), fb = mpr_banks(), be = 0, bp = 0, bb = 0;
+            uint32_t fe = mpr_diff(0, "file"), fp = mpr_diff(1, "file"), be = 0, bp = 0;
             if (sid_in != &ENG_RETIRED) {
                 const engine_t *ms = ENGINES[3], *md = ENGINES[ENGI_DRUM], *mc = ENGINES[ENGI_CZ],
                                *mf = ENGINES[ENGI_FM6], *mp = ENGINES[ENGI_PROPHET];
@@ -500,7 +509,7 @@ int main(int argc, char **argv)
                 ENGINES[3] = sid_in; ENGINES[ENGI_DRUM] = drum_in; ENGINES[ENGI_CZ] = cz_in; ENGINES[ENGI_FM6] = fm6_in;
                 ENGINES[ENGI_PROPHET] = p5_in;
                 mod_at[3] = mod_at[ENGI_DRUM] = mod_at[ENGI_CZ] = mod_at[ENGI_FM6] = mod_at[ENGI_PROPHET] = 0;
-                be = mpr_diff(0, "built in"); bp = mpr_diff(1, "built in"); bb = mpr_banks();
+                be = mpr_diff(0, "built in"); bp = mpr_diff(1, "built in");
                 ENGINES[3] = ms; ENGINES[ENGI_DRUM] = md; ENGINES[ENGI_CZ] = mc; ENGINES[ENGI_FM6] = mf;
                 ENGINES[ENGI_PROPHET] = mp;
                 mod_at[3] = at[0]; mod_at[ENGI_DRUM] = at[1]; mod_at[ENGI_CZ] = at[2]; mod_at[ENGI_FM6] = at[3];
@@ -509,13 +518,12 @@ int main(int argc, char **argv)
             uint32_t inits = 1;
             for (uint32_t i = 0; i < MPR_NE; i++)
                 inits &= eng_npresets(MPR_E[i]) == MPR_N[i] && preset_init(MPR_E[i]) == MPR_INIT[i];
-            printf("persist: %u presets from the files, %u differ (picked: %u), CZ-1 banks %u differ%s\n", MPR_COUNT, fe,
-                   fp, fb, sid_in != &ENG_RETIRED ? "; the built-in makers too" : "");
+            printf("persist: %u presets from the files, %u differ (picked: %u)%s\n", MPR_COUNT, fe,
+                   fp, sid_in != &ENG_RETIRED ? "; the built-in makers too" : "");
             bad += check("every factory preset decoded from its module's file is byte for byte what the makers made before "
                          "the presets left the firmware (201 Prophet, 65 CZ-1, 25 FM6, 32 SID, 6 DRUM: values, name, "
-                         "category, patch; picked: the part and its patch), the CZ-1's default banks A..D seeded from the "
-                         "file; host builds' makers the same",
-                         !fe && !fp && !fb && !be && !bp && !bb && inits);
+                         "category, patch; picked: the part and its patch); host builds' makers the same",
+                         !fe && !fp && !be && !bp && inits);
         }
         /* the capabilities that replaced the engine-number checks in voice.c, mix.c and main.c: declared by the modules */
         bad += check("capabilities: the Prophet sets its own bend range (its BEND) and plays the wheel itself, FM6 plays the "
@@ -644,19 +652,22 @@ int main(int argc, char **argv)
                          plays(ENGI_PROPHET, &mod_p5) && eng_rank(ENGI_PROPHET) == 0 && SHIPPED_OK());
         }
         {
-            static cz_bank_t bk;
             int cz_idle = mods[7].state == MS_STORED && ENGINES[ENGI_CZ] == &ENG_MOD_IDLE && eng_npresets(ENGI_CZ) == 65 &&
                           SHIPPED_OK(), cz_gone = !mod_delete(7) && ENGINES[ENGI_CZ] == &ENG_RETIRED &&
                           SHIPPED_OK() == MELODEE_CZ_BUILTIN;
-            cz_bank_default(&bk, 0);
-            bad += check("CZ-1 at power-on: listed unloaded; without its module the start asks for setup and its default "
-                         "banks are empty (no factory tones)",
-                         cz_idle && cz_gone && !bk.used && !eng_npresets(ENGI_CZ));
+            bad += check("CZ-1 at power-on: listed unloaded; without its module the start asks for setup, no factory tones",
+                         cz_idle && cz_gone && !eng_npresets(ENGI_CZ));
         }
         /* FM6, the firmware's fallback engine: at power-on listed from its head; without its module retired as any
          * other (its sounds keep the number, silent; a retired sound's place: FM6's, then the first engine's) */
         int fm6_idle = mods[3].state == MS_STORED && ENGINES[ENGI_FM6] == &ENG_MOD_IDLE &&
                        eng_npresets(ENGI_FM6) == MP_FM6_PRESETS && eng_ok(ENGI_FM6) && SHIPPED_OK() == MELODEE_CZ_BUILTIN;
+        sx_dx7_voice_in();                           /* (its module not in SRAM: loaded for the frame, which it takes) */
+        int sx_lazy = mods[3].state == MS_LOADED && sx_import.count == 1u && sx_import.engine == ENGI_FM6 &&
+                      msx.eng == 0xFFu && !msx.ready;
+        memset(&sx_import, 0, sizeof sx_import);
+        mod_unregister(3, 1);
+        mods[3].state = MS_STORED;                    /* (out again: as at power-on) */
         mod_want(ENGI_FM6);
         int fm6_back = mods[3].state == MS_LOADED && plays(ENGI_FM6, &mod_fm6) && eng_rank(4) == 1;
         host_preset(&trk[1], ENGI_FM6, 10);
@@ -666,6 +677,11 @@ int main(int argc, char **argv)
                            eng_sound_idx(ENGI_FM6) == ENGI_FM6 && eng_sound_idx(4) == ENGI_FM6;
         track_render(&trk[1], fb, CTL);
         for (uint32_t i = 0; i < CTL; i++) ok_gone &= MELODEE_FM6_BUILTIN || fb[i] == 0;
+        sx_dx7_voice_in();                           /* (no module: the frame dropped, the collector free) */
+        int sx_gone = !sx_import.count && msx.eng == 0xFFu && !msx.ready;
+        memset(&sx_import, 0, sizeof sx_import);
+        bad += check("a synth's SysEx: its module not in SRAM is loaded for the frame and takes it; without its module the "
+                     "frame is dropped and the collector free", fm6_idle && sx_lazy && sx_gone);
         bad += check("FM6 at power-on: listed unloaded, loaded when wanted; without its module its tracks keep FM6 and go "
                      "silent, a retired sound's place is FM6's (else the first engine's), the start asks for setup",
                      fm6_idle && fm6_back && ok_gone &&

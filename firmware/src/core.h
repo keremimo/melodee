@@ -99,6 +99,7 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #endif
 #define MELODEE_PROPHET 1
 #define ENGI_FM6 12u
+#define ENGI_CZ 15u
 #define ENGI_PROPHET 19u /* 16..18 reserved: historical preset namespaces */
 #define USER_GENERAL 16u
 #define USER_NATIVE_P5 20u
@@ -439,6 +440,10 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     void (*pformat)(const struct track *t, const uint8_t *patch, uint32_t id, int32_t v, char *val, const char **unit);
     int (*pactive)(const struct track *t, const uint8_t *patch, uint32_t id);
     void (*draw)(const struct track *t, const uint8_t *patch, uint32_t widget, const mod_area_v3 *a);
+    /* host 3 (mod_abi3.h): the synth's SysEx (sysex_rx.c routes its schema's patterns' frames to it, main loop), the
+     * patch as its SysEx (the sends) */
+    uint32_t (*sysex)(const uint8_t *f, uint32_t n, uint32_t ev);
+    uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
 } engine_t;
 #endif
 /* Built-in engines that are synth modules on the device (firmware/modules/<name>): host builds compile them in, the
@@ -738,6 +743,25 @@ static uint32_t *mod_imp_paired;
 static uint8_t *patch_play(const track_t *t);
 #define mod_patch(t) patch_play(t)
 static uint32_t eng_paired;                      /* voices paired on CPU1 outside the queue (host paired: AUDIO_STATS) */
+#endif
+/* host 3's main-loop calls (mod_abi3.h: SysEx, the parts' patches): a module's through its host table; a host build's
+ * built-in engine calls the firmware's own (sysex_route.c) */
+#if MOD_SIDE
+#define MOD_HOST3_CALL(f) (mod_host->f)
+#define MOD_HOST3_MS() (*mod_host->ms)
+#else                                            /* (eng_module.c: through the hooks sysex_route.c sets) */
+static mod_part_v3 *mod_h3_part(uint32_t k);
+static uint8_t *mod_h3_part_patch(uint32_t k, uint32_t engine);
+static int mod_h3_patch_put(uint32_t k, uint32_t engine, const uint8_t *src, uint32_t n, uint32_t how);
+static int mod_h3_sx_part(uint32_t engine, uint32_t ch);
+static int mod_h3_sx_send(const uint8_t *f, uint32_t n);
+static uint8_t *mod_h3_sx_scratch(void);
+static int mod_h3_sx_stage(uint32_t engine, const uint8_t *patches, uint32_t count, uint32_t stride);
+static uint32_t mod_h3_slot_get(uint32_t engine, uint32_t slot, uint8_t *patch);
+static uint32_t mod_h3_store_slot(uint32_t engine);
+static void mod_h3_message(const char *s);
+#define MOD_HOST3_CALL(f) (mod_h3_##f)
+#define MOD_HOST3_MS() fm1_ms
 #endif
 
 #if !MOD_SIDE

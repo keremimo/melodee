@@ -33,8 +33,8 @@ static int cache_tests(void)
         bad+=check("one bank cache: a user bank evicted after an edit keeps its index (the new name, no reload)",
                    up_cached==5u && !strcmp(name,"AFTER EDIT"));
         bad+=check("one bank cache: the largest bank's size, not the sum (8208 + 3600 B before)",
-                   sizeof bank_buf==sizeof(up_bank_t) && sizeof(up_bank_t)>=sizeof(p5_bank_t) &&
-                   sizeof(up_bank_t)>=sizeof(cz_bank_t) && sizeof(up_bank_t)>=sizeof(native_fm_t));
+                   sizeof bank_buf==sizeof(up_bank_t) && sizeof(up_bank_t)>=sizeof(program_bank_t) &&
+                   sizeof(up_bank_t)>=sizeof(tone_bank_t) && sizeof(up_bank_t)>=sizeof(native_fm_t));
     }
     flash_ok=0;
     bad+=check("missing flash refuses mutations without evicting committed indexes",native_put(ENGI_FM6,72,fm)==2 && native_put(ENGI_CZ,144,cz)==2 && up_store(0,"NO FLASH")==2 && native_used(ENGI_FM6,72) && native_used(ENGI_CZ,144) && up_used(0));

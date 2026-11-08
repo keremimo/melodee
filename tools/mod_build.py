@@ -5,6 +5,7 @@
 
     tools/mod_build.py firmware/modules/sid/sid.c [-DNAME=V ...] [-o out.mmod] [--version N]
     tools/mod_build.py --check file.mmod      (the file's head, CRC, address list and descriptor, its presets)
+    tools/mod_build.py --wasm file.mmod [-o out.mmod]   (the file with its module built for WebAssembly: a WASM chunk)
 
 Two kinds of source, one file format:
   - an engine-source module (#include "mod_engine.h": SID, DRUM, CZ-1, FM6, the Prophet) is a synth written against
@@ -19,13 +20,22 @@ form) fails the build instead of crashing the device.
 
 A module's factory presets follow its address words as its PRST chunk (firmware/src/module_presets.h,
 tools/mod_presets.py): the presets the host firmware's makers make for its engine (tools/mod_presets.c, built with the
-host's C compiler, HOST_CC or CC or cc), packed; build/modules/<name>.prst keeps the last chunk for the same presets."""
+host's C compiler, HOST_CC or CC or cc), packed; build/modules/<name>.prst keeps the last chunk for the same presets.
+
+--wasm: the same file with a WASM chunk last, the module's source built as a WebAssembly side module (emcc -fPIC
+-sSIDE_MODULE, MOD_IN_CORE: it imports the memory, the function table, memcpy / memset / memcmp and core_nor_ptr (the
+DRUM's user kits play from the core's pool), it exports its descriptor),
+built as the host tests build the module objects (tests/run_tests.sh module_tests). Melodee Studio's virtual FM-1
+(web/core: CORE_MODULES) links it into its own memory and table and installs the file without the chunk: the
+device's file, byte for byte. emcc: a local one, else the emsdk Docker image web/core/build.sh uses (EMSDK_IMAGE).
+Written to build/modules/wasm/<name>.mmod; the device's files stay as they are."""
 import argparse
 import hashlib
 import os
 import re
 import platform
 import shlex
+import shutil
 import struct
 import subprocess
 import sys
@@ -350,15 +360,60 @@ def check(path):
           f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
 
 
+WASM_TAG = 0x4D534157                          # "WASM": the module as a WebAssembly side module (Studio's core)
+EMSDK_IMAGE = os.environ.get("EMSDK_IMAGE", "emscripten/emsdk:3.1.74")
+
+
+def emcc(args):
+    """emcc: a local one, else the emsdk Docker image (as web/core/build.sh)"""
+    if shutil.which("emcc"):
+        cmd = ["emcc", *args]
+    else:
+        cmd = ["docker", "run", "--rm", "-v", f"{SRC}:/src", "-w", "/src", "-u", f"{os.getuid()}:{os.getgid()}",
+               EMSDK_IMAGE, "emcc", *args]
+    r = subprocess.run(cmd, cwd=SRC, capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit(f"mod_build: emcc failed\n{r.stdout}{r.stderr}")
+
+
+def wasm(path, out):
+    """path (a built .mmod) again with its source as a WebAssembly side module in a WASM chunk, last"""
+    b = bytearray(path.read_bytes())
+    magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, r0, key, host, r1 = HEAD.unpack_from(b)
+    if magic != FILE_MAGIC or abi != ABI or total != len(b) or zlib.crc32(b[HEAD.size:]) != crc:
+        raise SystemExit(f"{path}: not an ABI {ABI} module file")
+    end = HEAD.size + image + 4 * nrel
+    if flags and WASM_TAG in mod_presets.chunks(bytes(b), end):
+        raise SystemExit(f"{path}: has a WASM chunk already")
+    stem = path.stem
+    src = SRC / "firmware" / "modules" / stem / (stem + ".c")
+    if not src.exists():
+        raise SystemExit(f"mod_build: no source {src.relative_to(SRC)} for {path.name}")
+    rel = (out.parent / (stem + ".wasm")).resolve().relative_to(SRC)
+    flags_c = ["-O2", "-ffp-contract=off", "-fPIC", "-sSIDE_MODULE=1", "-w", "-Ifirmware/modules/sdk", "-DMOD_IN_CORE=1"]
+    flags_c += ["-Ifirmware/hal", "-Ibuild/gen", "-Ifirmware/src"] if is_engine(src) else ["-DMOD_HOSTED"]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    emcc([*flags_c, str(src.relative_to(SRC)), "-o", str(rel)])
+    w = (SRC / rel).read_bytes()
+    body = bytes(b[HEAD.size:]) + mod_presets.chunk(WASM_TAG, w)
+    head = HEAD.pack(magic, abi, engine, 1, HEAD.size + len(body), image, bss, nrel, desc, zlib.crc32(body), name, version,
+                     npre, r0, key, host, r1)
+    out.write_bytes(head + body)
+    print(f"module {name.rstrip(bytes(1)).decode()}: WebAssembly {len(w)} B, file {len(head) + len(body)} B -> {out}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("src", type=Path)
     ap.add_argument("-o", "--out", type=Path)
     ap.add_argument("--version", type=int, default=1)
     ap.add_argument("--check", action="store_true", help="check a built .mmod file instead")
+    ap.add_argument("--wasm", action="store_true", help="a built .mmod file with its module built for WebAssembly")
     a, rest = ap.parse_known_args()
     if a.check:
         return check(a.src)
+    if a.wasm:
+        return wasm(a.src.resolve(), (a.out or SRC / "build" / "modules" / "wasm" / a.src.name).resolve())
     src = a.src.resolve()
     out = (a.out or SRC / "build" / "modules" / (src.stem + ".mmod")).resolve()
     if any(not d.startswith("-D") for d in rest):

@@ -110,6 +110,7 @@ enum {
 enum { MOD3_WA_NONE, MOD3_WA_LABEL, MOD3_WA_LOOP, MOD3_WA_ROUTES, MOD3_WA_MODS, MOD3_WA_CARS };   /* W_ALG hot[] */
 #define MOD3_ST_NAMED 1u                         /* STORE names the user preset by the patch's own (no NAME screen) */
 #define MOD3_ST_NOUNDO 2u                        /* INIT takes no undo level (a new sound all the same) */
+#define MOD3_ST_SENDMSG 4u                       /* inames [1] SEND's words when sent, [2] when it failed (host 3) */
 /* the actions a TOOLS page's columns may name (ids >= 0xF0; else a parameter the module acts on: pput(id, 1)) */
 enum { MOD3_A_NAME = 0xF0, MOD3_A_COMPARE = 0xF1 };
 /* roles: what the firmware asks a synth for (role records: role, flags, id, label) */
@@ -123,8 +124,24 @@ enum {
     MOD3_R_BANK_FILTER, MOD3_R_BANK_ENV, MOD3_R_BANK_LFO,        /* the SMK-37's knob banks (page indexes) */
     MOD3_R_FEATURE,                              /* (retired: the designer block holds the FEATURES) */
     MOD3_R_CC_GLIDE,                             /* MIDI CC 5 (portamento time) sets it */
+    MOD3_R_SYSEX,                                /* the SysEx it answers (mod_engine_v3.sysex): id the widget data's
+                                                  * offset of flags patterns, 4 bytes each: n (1..3), then the n bytes
+                                                  * after F0 a frame of its begins with ({1, 0x43}: Yamaha's) */
+    MOD3_R_CHECK,                                /* its patch as stored, checked where the module is not loaded (a store,
+                                                  * a project, a user preset read): id the widget data's offset of flags
+                                                  * MOD3_CK_* records (8 bytes each), label 0 */
+    MOD3_R_PICK_BANK, MOD3_R_PICK_SLOT,          /* two of the part's own parameters (MOD3_RF_TRACK) pick its patch:
+                                                  * slot 1.. of bank 0.. (bank b's slot s: the bank Melodee 1.x saved,
+                                                  * else, for b < flags, factory preset b * slots + s; slot 0: the
+                                                  * synth's starting patch); a picked patch is the part's (MOD3_PATCH_SET) */
     MOD3_R_COUNT
 };
+/* a MOD3_R_CHECK record (8 bytes): u16 off, u8 n, u8 stride, u8 mask, u8 flags, u8 lo, u8 hi. The n bytes from off,
+ * stride apart (0: 1), each masked and shifted down by the mask's lowest bit, must be lo..hi (MOD3_CK_SIGNED: the
+ * byte as int8 before the mask, 0xFF; MOD3_CK_PAIR: lo or hi, nothing between). Every record of the role must pass */
+#define MOD_SCH_CREC 8u
+#define MOD3_CK_SIGNED 1u
+#define MOD3_CK_PAIR 2u
 #define MOD3_RF_TRACK 1u                         /* the id is the part's own parameter (a P_* number: E1 ..) */
 #define MOD3_RF_PIC_FILTER 4u                    /* HOME: turning it shows the filter picture */
 #define MOD3_RF_PIC_ENV 8u                       /* HOME: .. the envelope picture */
@@ -274,6 +291,11 @@ typedef struct {
     const char *const *strip;                    /* title prefixes a page's short name leaves out ("P5 FLT ENV" ->
                                                   * "FLT ENV": the first that leaves something), 0-terminated; 0 none */
     const mod_sch_design_src *design;            /* the sound designer's FEATURES, needs, pages (0: the firmware's) */
+    const uint8_t *sysex;                        /* the SysEx it answers: nsysex patterns of 4 bytes (MOD3_R_SYSEX: the
+                                                  * writer puts them after the designer block, a role record naming them) */
+    uint8_t nsysex;
+    const uint8_t *check;                        /* its stored patch's checks: ncheck MOD3_R_CHECK records (8 bytes) */
+    uint8_t ncheck;
 } mod_sch_src;
 
 /* ---- the chunk as it is read */
@@ -437,8 +459,10 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
     static uint8_t str[16384];
     uint32_t nstr = 0, i, k, o, v;
     uint32_t param = MOD_SCH_HEAD, page = param + s->nparam * MOD_SCH_PREC, role = page + s->npage * MOD_SCH_GREC;
-    uint32_t rec = role + s->nrole * MOD_SCH_RREC, def = rec + s->nrec * MOD_SCH_XREC, wid = def + s->patch;
-    uint32_t dsize = mod_sch_dsize(s), at = wid + s->nwid + dsize;
+    uint32_t nrole = s->nrole + (s->nsysex ? 1u : 0u) + (s->ncheck ? 1u : 0u);   /* (+ the SysEx and checks' roles) */
+    uint32_t rec = role + nrole * MOD_SCH_RREC, def = rec + s->nrec * MOD_SCH_XREC, wid = def + s->patch;
+    uint32_t dsize = mod_sch_dsize(s), xat = s->nwid + dsize, cat = xat + 4u * s->nsysex;
+    uint32_t at = wid + cat + MOD_SCH_CREC * s->ncheck;
     if (s->patch > 512u || at > cap || (s->wdef != MOD_SCH_NONE && s->wdef >= s->nwid) ||
         (s->mmap != MOD_SCH_NONE && (uint32_t)s->mmap + 2u * s->patch > s->nwid))
         return 0;
@@ -488,7 +512,8 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
         uint8_t *b = out + page + i * MOD_SCH_GREC;
         uint32_t t = mod_sch_str(str, &nstr, sizeof str, g->title);
         uint32_t in = (g->flags & MOD3_PG_INST) ? mod_sch_strs(str, &nstr, sizeof str, g->inames, g->ninst) :
-                      g->widget == MOD3_W_STORE && g->inames ? mod_sch_str(str, &nstr, sizeof str, g->inames[0]) : MOD_SCH_NONE;
+                      g->widget == MOD3_W_STORE && g->inames ? (g->wid & MOD3_ST_SENDMSG ? mod_sch_strs(str, &nstr, sizeof str, g->inames, 3) :
+                      mod_sch_str(str, &nstr, sizeof str, g->inames[0])) : MOD_SCH_NONE;
         uint32_t sec = mod_sch_str(str, &nstr, sizeof str, g->section);
         if ((t | in | sec) > 0xFFFFu || ((g->widget == MOD3_W_ENV8 || g->widget == MOD3_W_ALG) && g->wid >= s->nwid))
             return 0;
@@ -540,6 +565,35 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
         b[1] = s->role[i].flags;
         mod_sch_w16(b + 2, s->role[i].id);
         mod_sch_w16(b + 4, lab);
+    }
+    for (i = 0; i < s->nsysex; i++) {            /* (patterns: 1..3 bytes after F0, 7-bit) */
+        const uint8_t *q = s->sysex + 4u * i;
+        if (!q[0] || q[0] > 3u || (q[1] | (q[0] > 1u ? q[2] : 0u) | (q[0] > 2u ? q[3] : 0u)) > 127u)
+            return 0;
+    }
+    for (i = 0; i < s->ncheck; i++) {            /* (records inside the patch, a mask each) */
+        const uint8_t *q = s->check + MOD_SCH_CREC * i;
+        uint32_t off = q[0] | (uint32_t)q[1] << 8, st = q[3] ? q[3] : 1u;
+        if (!q[2] || !q[4] || off + (q[2] - 1u) * st >= s->patch)
+            return 0;
+    }
+    if (s->nsysex) {
+        uint8_t *b = out + role + s->nrole * MOD_SCH_RREC;
+        b[0] = MOD3_R_SYSEX;
+        b[1] = s->nsysex;
+        mod_sch_w16(b + 2, xat);
+        mod_sch_w16(b + 4, MOD_SCH_NONE);
+        for (i = 0; i < 4u * s->nsysex; i++)
+            out[wid + xat + i] = s->sysex[i];
+    }
+    if (s->ncheck) {
+        uint8_t *b = out + role + (s->nrole + (s->nsysex ? 1u : 0u)) * MOD_SCH_RREC;
+        b[0] = MOD3_R_CHECK;
+        b[1] = s->ncheck;
+        mod_sch_w16(b + 2, cat);
+        mod_sch_w16(b + 4, MOD_SCH_NONE);
+        for (i = 0; i < MOD_SCH_CREC * s->ncheck; i++)
+            out[wid + cat + i] = s->check[i];
     }
     v = mod_sch_str(str, &nstr, sizeof str, s->abbr);
     if (v > 0xFFFFu)
@@ -644,7 +698,7 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
     mod_sch_w16(out + 2, s->patch);
     mod_sch_w16(out + 4, s->nparam);
     mod_sch_w16(out + 6, s->npage);
-    mod_sch_w16(out + 8, s->nrole);
+    mod_sch_w16(out + 8, nrole);
     mod_sch_w16(out + 10, s->nrec);
     mod_sch_w16(out + 12, def);
     mod_sch_w16(out + 14, param);

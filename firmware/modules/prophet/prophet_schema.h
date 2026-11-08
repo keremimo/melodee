@@ -271,6 +271,15 @@ static const mod_sch_rec_src P5S_REC[] = {
     {MOD3_Q_GOAL, MOD3_GM(FX), P5_KEY_B, 0},
     {MOD3_Q_GOAL | MOD3_RQ_NOTE, MOD3_GM_ALL, P5_UNISON, 0},   /* (its voice settings: the part's) */
 };
+static const uint8_t P5S_SYSEX[] = {2, 0x01, 0x31, 0, 2, 0x01, 0x32, 0};   /* (Sequential's Rev 3 and 4: p5_sysex.c) */
+#define P5S_CK(off, flags, lo, hi) (uint8_t)(off), 0, 1, 0, 0xFF, (flags), (uint8_t)(lo), (uint8_t)(hi)
+static const uint8_t P5S_CHECK[] = {           /* (a program as Sequential's frame carries it: prophet_patch.c) */
+    P5S_CK(133, MOD3_CK_PAIR, 128, 133), P5S_CK(134, 0, 0x31, 0x32), P5S_CK(135, 0, 2, 3), P5S_CK(136, 0, 0, 9),
+    P5S_CK(137, 0, 0, 39),
+};
+#undef P5S_CK
+_Static_assert(sizeof(p5_patch_t) == 138u && __builtin_offsetof(p5_patch_t, size) == 133u &&
+               __builtin_offsetof(p5_patch_t, program) == 137u, "P5S_CHECK: the program's places");
 static const mod_sch_src P5_SCHEMA = {
     .patch = sizeof(p5_patch_t), .def_make = p5_sch_def, .store = MOD_SCH_STORE_PROGRAM, .utag = 'P', .mtag = 1,
     .flags = MOD_SCH_F_MBYTES | MOD_SCH_F_PCT127 | MOD_SCH_F_SNAME, .abbr = "P5", .wdef = MOD_SCH_NONE, .mmap = 0,
@@ -281,4 +290,5 @@ static const mod_sch_src P5_SCHEMA = {
     .wid = P5_SCH_WID, .nwid = sizeof P5_SCH_WID,
     .rec = P5S_REC, .nrec = sizeof P5S_REC / sizeof *P5S_REC,
     .strip = P5S_STRIP, .design = &P5S_DESIGN,
+    .sysex = P5S_SYSEX, .nsysex = 2, .check = P5S_CHECK, .ncheck = sizeof P5S_CHECK / MOD_SCH_CREC,
 };

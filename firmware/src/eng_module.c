@@ -88,7 +88,8 @@ _Static_assert(MOD3_SAME_E(name) && MOD3_SAME_E(page_title) && MOD3_SAME_E(edit)
                MOD3_SAME_E(reuse) && MOD3_SAME_E(batch) && MOD3_SAME_E(render_p) && MOD3_SAME_E(wclass) &&
                MOD3_SAME_E(menv) && MOD3_SAME_E(join) && MOD3_SAME_E(reserve) && MOD3_SAME_E(caps) &&
                MOD3_SAME_E(bend_range) && MOD3_SAME_E(patch_changed) && MOD3_SAME_E(pget) && MOD3_SAME_E(pput) &&
-               MOD3_SAME_E(pformat) && MOD3_SAME_E(pactive) && MOD3_SAME_E(draw) && sizeof(engine_t) == sizeof(mod_engine_v3),
+               MOD3_SAME_E(pformat) && MOD3_SAME_E(pactive) && MOD3_SAME_E(draw) && MOD3_SAME_E(sysex) &&
+               MOD3_SAME_E(sysex_dump) && sizeof(engine_t) == sizeof(mod_engine_v3),
                "engine_t is mod_engine_v3 (mod_abi3.h)");
 _Static_assert(P_COUNT == MOD3_P_COUNT && P_E0 == MOD3_P_E0 && NVOICE == MOD3_NVOICE && NPART == MOD3_NPART &&
                FS == MOD3_RATE && CTL == MOD3_CTL && VOICE_FS == MOD3_VOICE_FS && DITH_N == MOD3_DITH_N &&
@@ -146,6 +147,36 @@ static uint16_t mod_h_color(uint32_t role);
 static void mod_h_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c);
 static void mod_h_rrect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t c);
 static void mod_h_text(int32_t x, int32_t y, const char *s, uint32_t font, uint16_t c);
+/* host 3's main-loop members: the main loop's code (sysex_route.c) sets the hooks at power-on (msx_reset); a build
+ * without it (a host test of a part of the firmware) has none, and its members answer nothing */
+static struct {
+    mod_part_v3 *(*part)(uint32_t k);
+    uint8_t *(*part_patch)(uint32_t k, uint32_t engine);
+    int (*patch_put)(uint32_t k, uint32_t engine, const uint8_t *src, uint32_t n, uint32_t how);
+    int (*sx_part)(uint32_t engine, uint32_t ch);
+    int (*sx_send)(const uint8_t *f, uint32_t n);
+    uint8_t *(*sx_scratch)(void);
+    int (*sx_stage)(uint32_t engine, const uint8_t *patches, uint32_t count, uint32_t stride);
+    uint32_t (*slot_get)(uint32_t engine, uint32_t slot, uint8_t *patch);
+    uint32_t (*store_slot)(uint32_t engine);
+    void (*message)(const char *s);
+} msx_hook;
+static mod_part_v3 *mod_h3_part(uint32_t k) { return msx_hook.part ? msx_hook.part(k) : (mod_part_v3 *)(void *)&trk[k % NTRK]; }
+static uint8_t *mod_h3_part_patch(uint32_t k, uint32_t e) { return msx_hook.part_patch ? msx_hook.part_patch(k, e) : 0; }
+static int mod_h3_patch_put(uint32_t k, uint32_t e, const uint8_t *src, uint32_t n, uint32_t how)
+{
+    return msx_hook.patch_put ? msx_hook.patch_put(k, e, src, n, how) : 1;
+}
+static int mod_h3_sx_part(uint32_t e, uint32_t ch) { return msx_hook.sx_part ? msx_hook.sx_part(e, ch) : -1; }
+static int mod_h3_sx_send(const uint8_t *f, uint32_t n) { return msx_hook.sx_send ? msx_hook.sx_send(f, n) : -1; }
+static uint8_t *mod_h3_sx_scratch(void) { return msx_hook.sx_scratch ? msx_hook.sx_scratch() : 0; }
+static int mod_h3_sx_stage(uint32_t e, const uint8_t *p, uint32_t count, uint32_t stride)
+{
+    return msx_hook.sx_stage ? msx_hook.sx_stage(e, p, count, stride) : 0;
+}
+static uint32_t mod_h3_slot_get(uint32_t e, uint32_t k, uint8_t *p) { return msx_hook.slot_get ? msx_hook.slot_get(e, k, p) : 0; }
+static uint32_t mod_h3_store_slot(uint32_t e) { return msx_hook.store_slot ? msx_hook.store_slot(e) : 0; }
+static void mod_h3_message(const char *s) { if (msx_hook.message) msx_hook.message(s); }
 #define MOD3_CALL(T, f) ((T)(void (*)(void))(f))   /* (track_t, voice_t: read as their views) */
 static const mod_host_v3 MOD_HOST3 = {
     .version = MOD3_HOST, .size = sizeof(mod_host_v3),
@@ -172,6 +203,9 @@ static const mod_host_v3 MOD_HOST3 = {
     .legacy = &MOD_PADS,
     .patch = MOD3_CALL(uint8_t *(*)(const mod_part_v3 *), patch_play),
     .color = mod_h_color, .fill = mod_h_fill, .rrect = mod_h_rrect, .text = mod_h_text, .paired = &eng_paired,
+    .part = mod_h3_part, .part_patch = mod_h3_part_patch, .patch_put = mod_h3_patch_put, .sx_part = mod_h3_sx_part,
+    .sx_send = mod_h3_sx_send, .sx_scratch = mod_h3_sx_scratch, .sx_stage = mod_h3_sx_stage, .slot_get = mod_h3_slot_get,
+    .store_slot = mod_h3_store_slot, .message = mod_h3_message, .ms = &fm1_ms,
 };
 
 /* a stored module's engine while it is not in SRAM: its lists' names come from its file (eng_name), its sounds keep
