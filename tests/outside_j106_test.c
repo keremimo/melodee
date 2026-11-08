@@ -9,13 +9,17 @@
  *                                          its pages from its schema, its SysEx (patch and manual messages imported into
  *                                          user slots, a single control edits the part, the patch out as the
  *                                          instrument's message), a project of it saved and loaded (FBKR), on another
- *                                          device where it has another number. DIR: the project as the device stores
- *                                          it (j106.hpj) and its render, for the .mel round trip (outside_j106_mel.mjs);
- *                                          OUTSIDE_J106_RENDER=DIR also writes the phrases (Saadet's comparison)
+ *                                          device where it has another number; in stereo through the mixer (host 5:
+ *                                          its chorus's sides, PAN a balance, the FX send post balance), mono on a host
+ *                                          4 table (the middle of the sides). DIR: the project as the device stores it
+ *                                          (j106.hpj) and its render, for the .mel round trip (outside_j106_mel.mjs);
+ *                                          OUTSIDE_J106_RENDER=DIR also writes the phrases' sides (L-, R-: Saadet's
+ *                                          comparison)
  *   outside_j106_test --mel J106.mmod DIR  what the web page's .mel import sent (DIR/out-j106.bin) goes in through the
  *                                          backup PUT on a device whose JUNO has its own number, loads and plays the
  *                                          same samples */
 #define BACKUP_TEST_NO_MAIN
+#define MELODEE_USB_AUDIO 1                         /* (the stems the USB capture takes: mix.c track_capture) */
 #include "backup_test.c"
 #include "../firmware/src/sysex_route.c"
 #include "../firmware/src/module_store.c"
@@ -76,7 +80,7 @@ static void install_other(uint32_t k)
     memcpy(other + at + 4, &n, 4);
     memcpy(other + at + 8, &id, n);
     at += 8u + n;
-    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = 22; h.host = MOD3_HOST; h.flags = MOD3_FILE_CHUNKS;
+    h.magic = MOD3_FILE_MAGIC; h.abi = MOD3_ABI; h.engine = 22; h.host = MOD3_HOST_MIN; h.flags = MOD3_FILE_CHUNKS;
     h.image = image; h.bss = 16; h.version = 1; h.uid = id.uid; h.total = at;
     strncpy(h.name, "OTHER", sizeof h.name);
     h.crc = st_crc32(other + MOD3_HEAD, at - MOD3_HEAD);
@@ -112,7 +116,8 @@ static void sx_in(const uint8_t *p, uint32_t n)
 /* the main loop until the parts' modules are in SRAM */
 static void serve(void) { for (uint32_t i = 0; i < 4u; i++) { fm1_ms += 10u; mod_service(fm1_ms); } }
 
-/* ---- sound: notes on parts 0 and 1 (parts whose synth is the JUNO), n samples of their sum into out */
+/* ---- sound: notes on parts 0 and 1 (parts whose synth is the JUNO) through the mixer (mix.c mix_part, as mix_block
+ * renders a part: host 5's stereo), n frames of their mix (L, R) into out */
 static void voices_clear(void)
 {
     for (uint32_t k = 0; k < NPART; k++) memset(trk[k].v, 0, NVOICE * sizeof *trk[k].v), trk[k].rr = trk[k].sp_alt = 0;
@@ -123,8 +128,8 @@ static void voices_clear(void)
 }
 static void play(int32_t *out, uint32_t n, uint32_t parts)
 {
-    static int32_t b[CTL];
     voices_clear();
+    fx_send_on = 0;
     for (uint32_t k = 0; k < parts; k++)            /* (a switch the load asked for: at once, as host_preset does) */
         eng_state_clear(k), trk[k].engine = trk[k].eng_req;
     for (uint32_t i = 0; i < n; i += CTL) {
@@ -138,32 +143,90 @@ static void play(int32_t *out, uint32_t n, uint32_t parts)
                 trk_note_off(&trk[k], 53u + 7u * k);
         }
         dither_block();
-        memset(out + i, 0, CTL * sizeof *out);
-        for (uint32_t k = 0; k < parts; k++) {
-            track_render(&trk[k], b, CTL);
-            for (uint32_t j = 0; j < CTL; j++) out[i + j] += b[j];
-        }
+        memset(mix_l, 0, sizeof mix_l);
+        memset(mix_r, 0, sizeof mix_r);
+        for (uint32_t k = 0; k < parts; k++)
+            mix_part(&trk[k], CTL);
+        for (uint32_t j = 0; j < CTL; j++) out[2u * (i + j)] = mix_l[j], out[2u * (i + j) + 1u] = mix_r[j];
     }
 }
-/* preset p, a chord then a melody, on part 0 (tests/outside_author_test.c's phrase, longer) */
-static void phrase(uint32_t e, uint32_t p, int32_t *out, uint32_t n)
+/* preset p, a chord then a melody, on part 0 (tests/outside_author_test.c's phrase, longer): its block as a render
+ * outside the mixer's has it (track_render: mono). left: as the mixer's has it (host 5: its left side, out L + R) */
+static const uint8_t PH_NOTE[6] = {48, 55, 60, 64, 67, 72};
+static void phrase_notes(uint32_t blk)
 {
-    static const uint8_t NOTE[6] = {48, 55, 60, 64, 67, 72};
+    if (blk == 0)
+        for (uint32_t j = 0; j < 3u; j++) trk_note_on(&trk[0], PH_NOTE[j], 100);
+    if (blk == 300u)
+        for (uint32_t j = 0; j < 3u; j++) trk_note_off(&trk[0], PH_NOTE[j]);
+    if (blk >= 500u && blk < 1100u && (blk - 500u) % 100u == 0) trk_note_on(&trk[0], PH_NOTE[(blk - 500u) / 100u], 90);
+    if (blk > 500u && blk <= 1100u && (blk - 500u) % 100u == 60u) trk_note_off(&trk[0], PH_NOTE[(blk - 500u) / 100u]);
+}
+static void phrase_lr(uint32_t e, uint32_t p, int32_t *out, int32_t *left, uint32_t n)
+{
     host_tracks_init();
     voices_clear();
     eng_state_reset();
     host_preset(&trk[0], e, p);
     for (uint32_t i = 0; i < n; i += CTL) {
-        uint32_t blk = i / CTL;
-        if (blk == 0)
-            for (uint32_t j = 0; j < 3u; j++) trk_note_on(&trk[0], NOTE[j], 100);
-        if (blk == 300u)
-            for (uint32_t j = 0; j < 3u; j++) trk_note_off(&trk[0], NOTE[j]);
-        if (blk >= 500u && blk < 1100u && (blk - 500u) % 100u == 0) trk_note_on(&trk[0], NOTE[(blk - 500u) / 100u], 90);
-        if (blk > 500u && blk <= 1100u && (blk - 500u) % 100u == 60u) trk_note_off(&trk[0], NOTE[(blk - 500u) / 100u]);
+        phrase_notes(i / CTL);
         dither_block();
+        spread_on = 0;
+        mix_st_on = 0;
+        if (left) { mix_st_part = &trk[0]; spread_buf = spread_storage; }
         track_render(&trk[0], out + i, CTL);
+        mix_st_part = 0;
+        if (left)
+            for (uint32_t j = 0; j < CTL; j++) left[i + j] = mix_st_on ? spread_buf[j] : out[i + j];
     }
+}
+static void phrase(uint32_t e, uint32_t p, int32_t *out, uint32_t n) { phrase_lr(e, p, out, 0, n); }
+/* .. through the mixer at PAN pan (and FX SEND send): the part's frames (L, R) into out, its block before the mix (L + R
+ * stereo, else mono) into eng. law: each frame the balance of the part's two sides levelled (stereo) or the mono pan
+ * law, the send post either, the USB capture's stem the middle of the sides (or the mono part). Returns the blocks it
+ * played in stereo */
+static uint32_t mixed(uint32_t e, uint32_t p, int32_t pan, int32_t send, int32_t *out, int32_t *eng, uint32_t n,
+                      uint32_t *law)
+{
+    uint32_t st = 0;
+    host_tracks_init();
+    voices_clear();
+    eng_state_reset();
+    host_preset(&trk[0], e, p);
+    trk[0].p[P_PAN] = (int16_t)pan;
+    trk[0].p[P_FXSEND] = (int16_t)send;
+    fx_send_on = send != 0;
+    *law = 1;
+    for (uint32_t i = 0; i < n; i += CTL) {
+        phrase_notes(i / CTL);
+        dither_block();
+        memset(mix_l, 0, sizeof mix_l);
+        memset(mix_r, 0, sizeof mix_r);
+        memset(fx_send_l, 0, sizeof fx_send_l);
+        memset(fx_send_r, 0, sizeof fx_send_r);
+        memset(track_capture, 0, sizeof track_capture);
+        track_capture_on = 1;
+        mix_part(&trk[0], CTL);
+        track_capture_on = 0;
+        const mix_cache_t *mc = &mix_cache[0];
+        uint32_t heard = 0, g = fx_send_gain(&trk[0]);
+        for (uint32_t j = 0; j < CTL; j++) heard |= mix_l[j] | mix_r[j];
+        st += mix_st_on;
+        for (uint32_t j = 0; j < CTL; j++) {
+            int32_t l, r;
+            if (mix_st_on) l = mix_level(spread_buf[j], mc->lvl, j), r = mix_level(part_buf[j] - spread_buf[j], mc->lvl, j + 4u);
+            else l = r = mix_level(part_buf[j], mc->lvl, j);
+            if (heard)                                   /* (a block with no voice: not mixed, its buffer not written) */
+                *law &= mix_l[j] == ((l * mc->gl) >> 12) && mix_r[j] == ((r * mc->gr) >> 12) &&
+                        fx_send_l[j] == (g ? fx_scale(mix_l[j], g) : 0) && fx_send_r[j] == (g ? fx_scale(mix_r[j], g) : 0) &&
+                        track_capture[j * NPART] == (mix_st_on ? (l + r) >> 1 : l);
+            out[2u * (i + j)] = mix_l[j], out[2u * (i + j) + 1u] = mix_r[j];
+            if (eng) eng[i + j] = heard ? part_buf[j] : 0;
+        }
+    }
+    fx_send_on = 0;
+    spread_on = 0;
+    return st;
 }
 static uint64_t energy(const int32_t *a, uint32_t n)
 {
@@ -179,7 +242,7 @@ static int32_t peak(const int32_t *a, uint32_t n)
 }
 
 #define OJ_N (1400u * CTL)                          /* (about a second) */
-static int32_t snd_a[OJ_N], snd_b[OJ_N];
+static int32_t snd_a[2u * OJ_N], snd_b[2u * OJ_N], eng_a[OJ_N], eng_b[OJ_N];
 
 /* the device the project goes to (.mel and "another device"): the JUNO alone, number 22 */
 static uint32_t fresh_device(void)
@@ -248,20 +311,94 @@ static int run(void)
         phrase(e, p, snd_b, OJ_N);
         uint64_t en = energy(snd_a, OJ_N);
         heard &= en > 1000u && peak(snd_a, OJ_N) < 2000000;
-        same &= !memcmp(snd_a, snd_b, sizeof snd_a);
+        same &= !memcmp(snd_a, snd_b, OJ_N * sizeof *snd_a);
         differ += en != prev;
         prev = en;
     }
     bad += check("it plays: every eighth preset's phrase sounds (chord, melody), within range, the same twice", heard && same &&
                  differ >= 15u);
-    if (getenv("OUTSIDE_J106_RENDER")) {           /* (the phrases for Saadet's comparison: int32 per sample) */
+    /* ---- host 5: its chorus's two sides through the mixer */
+    {
+        uint32_t ch = 0, off = 0, law[6], st[6];
+        for (uint32_t p = 1; p < J106_NPRESETS && (!ch || !off); p++) {
+            if (!ch && j106_chorus(oj_rows[p].patch)) ch = p;
+            if (!off && !j106_chorus(oj_rows[p].patch)) off = p;
+        }
+        st[0] = mixed(e, ch, 0, 0, snd_a, eng_a, OJ_N, &law[0]);
+        uint32_t lr = 0, l0 = 0;
+        uint64_t el = 0, er = 0;
+        for (uint32_t i = 0; i < OJ_N; i++) lr += snd_a[2u * i] != snd_a[2u * i + 1u];
+        bad += check("host 5: a chorus preset's part plays in stereo through the mixer (its post takes the left side)",
+                     ch && st[0] > 1000u && lr > OJ_N / 4u);
+        bad += check(".. each side levelled on its own, centre PAN: the sides as they are; the USB stem their middle", law[0]);
+        st[1] = mixed(e, ch, 40, 0, snd_b, 0, OJ_N, &law[1]);
+        for (uint32_t i = 0; i < OJ_N; i++)
+            el += (uint64_t)((int64_t)snd_b[2u * i] * snd_b[2u * i]) >> 8, er += (uint64_t)((int64_t)snd_b[2u * i + 1u] * snd_b[2u * i + 1u]) >> 8;
+        bad += check(".. PAN right (40): a balance, the left side by the left gain (1,536 / 4,096), the right as it is",
+                     st[1] == st[0] && law[1] && el * 4u < er);
+        st[2] = mixed(e, ch, -64, 90, snd_b, 0, OJ_N, &law[2]);
+        for (uint32_t i = 0; i < OJ_N; i++) l0 += snd_b[2u * i + 1u] != 0;
+        bad += check(".. PAN hard left: the right side gone; the FX SEND (90) takes the sides post balance",
+                     st[2] == st[0] && law[2] && !l0);
+        st[3] = mixed(e, off, 0, 0, snd_b, 0, OJ_N, &law[3]);
+        lr = 0;
+        for (uint32_t i = 0; i < OJ_N; i++) lr += snd_b[2u * i] != snd_b[2u * i + 1u];
+        bad += check("a preset without the chorus stays mono (L = R, the mono pan law)", off && !st[3] && law[3] && !lr);
+        /* the same file on a firmware with a host 4 table: never the stereo member, the middle of the sides */
+        mod_host_v3 h4 = MOD_HOST3;
+        h4.version = 4u;
+        h4.size = (uint16_t)MOD3_HOST_SIZE(4u);
+        int b4 = mod_j106.bind(&h4, 3u | e << 8);
+        st[4] = mixed(e, ch, 0, 0, snd_b, eng_b, OJ_N, &law[4]);
+        int b5 = mod_j106.bind(&MOD_HOST3, 3u | e << 8);
+        lr = 0;
+        uint32_t mid = 1;
+        for (uint32_t i = 0; i < OJ_N; i++) {
+            int32_t d = eng_b[i] - eng_a[i] / 2;      /* (dith((L + R) / 2) against dith(L + R) / 2) */
+            lr += snd_b[2u * i] != snd_b[2u * i + 1u];
+            mid &= d >= -1 && d <= 1;
+        }
+        bad += check("a host 4 table (version 4, its size): it binds, the chorus plays mono, the middle of the sides "
+                     "(within 1 LSB)", !b4 && !b5 && !st[4] && law[4] && !lr && mid);
+        /* the audio's whole block (mix_block: the batch path, the FX bus, punch, the limiter and clip, MASTER) */
+        uint32_t sides[2] = {0, 0}, loud = 0;
+        for (uint32_t k = 0; k < 2u; k++) {
+            static int32_t blk[2u * CTL];
+            host_tracks_init();
+            voices_clear();
+            eng_state_reset();
+            host_preset(&trk[0], e, k ? off : ch);
+            dc_l = dc_r = dce_l = dce_r = 0;            /* (the master's DC blocker: each side's own state) */
+            for (uint32_t i = 0; i < 8u * CTL; i += CTL)  /* (quiet blocks first: the run's first mix_block calls
+                                                         * dropped a chord started with them) */
+                mix_block(blk, CTL);
+            for (uint32_t i = 0; i < 400u * CTL; i += CTL) {
+                phrase_notes(i / CTL);
+                mix_block(blk, CTL);
+                for (uint32_t j = 0; j < CTL; j++) sides[k] += blk[2u * j] != blk[2u * j + 1u], loud |= blk[2u * j] != 0;
+            }
+        }
+        bad += check(".. the audio's whole block (mix_block: CPU1's batch path, the master's limiter and clip): the "
+                     "chorus in stereo to the output, a preset without it L = R", loud && sides[0] > 100u * CTL && !sides[1]);
+        phrase(e, ch, eng_a, OJ_N);
+        bad += check("host 5, a render outside the mixer's (track_render): not now, the same middle as host 4's",
+                     !mix_st_on && !memcmp(eng_a, eng_b, sizeof eng_a));
+        st[5] = mixed(e, ch, 0, 0, snd_b, 0, OJ_N, &law[5]);
+        bad += check(".. through the mixer again: stereo, the same samples", st[5] == st[0] && law[5] &&
+                     !memcmp(snd_a, snd_b, sizeof snd_a));
+    }
+    if (getenv("OUTSIDE_J106_RENDER")) {           /* (the phrases' sides for Saadet's comparison: int32 per sample) */
         const char *rd = getenv("OUTSIDE_J106_RENDER");
         for (uint32_t p = 0; p < J106_NPRESETS; p++) {
             char path[512];
-            phrase(e, p, snd_a, OJ_N);
-            snprintf(path, sizeof path, "%s/j106-%03u.raw", rd, p);
-            FILE *f = fopen(path, "wb");
-            if (f) { fwrite(snd_a, sizeof *snd_a, OJ_N, f); fclose(f); }
+            phrase_lr(e, p, eng_a, eng_b, OJ_N);
+            if (j106_chorus(oj_rows[p].patch))      /* (R = L + R - L; without the chorus mono: L = R = out) */
+                for (uint32_t i = 0; i < OJ_N; i++) eng_a[i] -= eng_b[i];
+            for (uint32_t s2 = 0; s2 < 2u; s2++) {
+                snprintf(path, sizeof path, "%s/%c-%03u.raw", rd, s2 ? 'R' : 'L', p);
+                FILE *f = fopen(path, "wb");
+                if (f) { fwrite(s2 ? eng_a : eng_b, sizeof *eng_a, OJ_N, f); fclose(f); }
+            }
         }
     }
     /* ---- its pages: from its schema (titles, columns, values, dim hints) */
@@ -383,7 +520,10 @@ static int run(void)
     memcpy(p0, patch_of(0), sizeof p0);
     memcpy(p1, patch_of(1), sizeof p1);
     play(snd_a, OJ_N, 2);
-    bad += check("two parts of it (ORGAN I, B12 VIOLIN edited: FREQ 90, CHORUS II) play", energy(snd_a, OJ_N) > 1000u);
+    uint32_t sides = 0;
+    for (uint32_t i = 0; i < OJ_N; i++) sides += snd_a[2u * i] != snd_a[2u * i + 1u];
+    bad += check("two parts of it (ORGAN I, B12 VIOLIN edited: FREQ 90, CHORUS II) play, in stereo",
+                 energy(snd_a, 2u * OJ_N) > 1000u && sides > OJ_N / 4u);
     bad += check("the project saves as FBKR (an outside synth's patch: its end block)",
                  !project_save_as(1, "JUNO SONG") && proj_meta[1].used);
     {
@@ -422,7 +562,7 @@ static int run(void)
 static int run_mel(void)
 {
     int bad = 0;
-    static int32_t want[OJ_N];
+    static int32_t want[2u * OJ_N];
     reset();
     mod_host_desc = oj_desc;
     mod_boot();

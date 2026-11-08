@@ -350,9 +350,9 @@ static void j106_block(mod_part_v3 *t)
 
 /* The chorus: one delay line, two taps swept in opposite directions by a triangle, each tap mixed with the dry signal
  * for one side. I is slower and II faster; both lie between about 1.7 and 5.3 ms. The taps pass a gentle low-pass, as
- * a bucket-brigade line's filters would. A Melodee part is one channel: out holds the middle of the two sides,
- * (L + R) / 2 (Saadet's part is stereo: L and R hard left and right of its PAN). */
-static void j106_chorus_mid(mod_part_v3 *t, j106_part_t *P, int32_t *out, uint32_t n)
+ * a bucket-brigade line's filters would. On a host with a part's stereo output (5) the part is stereo, as Saadet's:
+ * left holds L and out L + R; else (host 4, a render outside the mixer) out holds the middle, (L + R) / 2. */
+static void j106_chorus_out(mod_part_v3 *t, j106_part_t *P, int32_t *out, uint32_t n)
 {
     uint32_t mode = j106_chorus(j106_raw(t));
     if (!P->chorus && mode) {                 /* the line holds nothing older than this */
@@ -361,6 +361,7 @@ static void j106_chorus_mid(mod_part_v3 *t, j106_part_t *P, int32_t *out, uint32
     }
     P->chorus = (uint8_t)mode;
     if (!mode) return;
+    int32_t *left = mh->version >= 5u ? mh->stereo(t) : 0;
     const float rate = mode == 1u ? 0.5f : 0.83f, center = 3.5e-3f * J106_FS,
                 depth = (mode == 1u ? 1.65e-3f : 1.8e-3f) * J106_FS;
     const float lp = 0.67f;                   /* 1 - exp(-2 pi 7.7 kHz / FS) */
@@ -380,7 +381,11 @@ static void j106_chorus_mid(mod_part_v3 *t, j106_part_t *P, int32_t *out, uint32
         l0 += (a + (b - a) * f0 - l0) * lp;
         l1 += (c + (d - c) * f1 - l1) * lp;
         float L = (x + l0) * 0.7071f, R = (x + l1) * 0.7071f;
-        out[i] = j106_dith_cut((L + R) * 0.5f, row[i]);
+        if (left) {
+            left[i] = j106_dith_cut(L, row[i]);
+            out[i] = j106_dith_cut(L + R, row[i]);
+        } else
+            out[i] = j106_dith_cut((L + R) * 0.5f, row[i]);
         w = (w + 1u) & (J106_CH_LEN - 1u);
         ph += inc;
     }
@@ -424,7 +429,7 @@ static void j106_post(mod_part_v3 *t, int32_t *out, uint32_t n, uint32_t nr)
         }
         P->hp_x = x1; P->hp_y = y1;
     }
-    j106_chorus_mid(t, P, out, n);
+    j106_chorus_out(t, P, out, n);
 }
 static uint32_t j106_cap(const mod_part_v3 *t) { (void)t; return J106_POLY; }
 
@@ -533,7 +538,7 @@ MOD3_IDENT("saadet", "J106");                     /* its UID: CRC-32 of "saadet/
 #endif
 _Static_assert(J106_NPRESETS == 129u, "INIT and Roland's 128");
 MOD3_EXPORT(mod_j106) = {
-    .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST,
+    .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_SDK_HOST,
     .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = j106_bind,   /* (MOD3_SDK_HEAD, its own bind) */
     .engine = 22,                                 /* the number it asks for (a device gives the first free one if taken) */
     .name = "JUNO-106",
