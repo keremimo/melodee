@@ -18,6 +18,15 @@ typedef void (*audio_batch_fn)(const void *,int32_t *);
 #endif
 #define AUDIO_BATCH_JOBS 24u
 _Static_assert(AUDIO_BATCH_JOBS<=32u,"Batch worker mask must cover every descriptor");
+#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE
+/* (a native synth module: the firmware's queue, through its imports: module_native.h) */
+static uint8_t *mod_imp_audio_batch_active;
+static void (*mod_imp_audio_batch_push)(audio_batch_fn run,const void *data,uint32_t bytes,int32_t *out,uint32_t n,uint32_t profile_id);
+static void (*mod_imp_audio_batch_push_cost)(audio_batch_fn run,const void *data,uint32_t bytes,int32_t *out,uint32_t n,uint32_t profile_id,uint32_t estimated_cost);
+#define audio_batch_active (*mod_imp_audio_batch_active)
+#define audio_batch_push (*mod_imp_audio_batch_push)
+#define audio_batch_push_cost (*mod_imp_audio_batch_push_cost)
+#else
 typedef struct {
     audio_batch_fn run;int32_t *out;uint32_t n, profile_id,guard;
 #if MELODEE_AUDIO_PROFILE
@@ -187,3 +196,4 @@ static void audio_batch_push(audio_batch_fn run,const void *data,uint32_t bytes,
 {
     audio_batch_push_cost(run,data,bytes,out,n,profile_id,audio_batch_cost[profile_id]);
 }
+#endif

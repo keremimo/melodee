@@ -921,7 +921,7 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
         nr++;
     }
     engine_join();
-    if (spread_on) fm6_join();
+    if (spread_on && e->join) e->join();                /* (FM6: a voice paired on CPU1 outside the queue) */
     if (spread_on && !audio_batch_active) spread_sum(out);
     if (e->post && !audio_batch_active)
         e->post(t, out, n, nr);

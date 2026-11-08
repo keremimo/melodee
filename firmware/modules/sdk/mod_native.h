@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #ifdef FM1_IRQ_TARGET
+#include "fm1_time.h"                            /* (MELODEE_AUDIO_PROFILE: the spans' clock) */
 void *memset(void *d, int c, size_t n);          /* (modules/sdk/mod_rt.c: the module carries its own) */
 void *memcpy(void *d, const void *s, size_t n);
 int memcmp(const void *a, const void *b, size_t n);
@@ -35,4 +36,6 @@ int memcmp(const void *a, const void *b, size_t n);
 #include "drum_map.c"
 #include "drum_kit.h"
 #include "cz_parts.h"
+#include "fm6_parts.h"
+#include "audio_batch.h"                         /* (the firmware's queue for CPU1: its imports) */
 #include "module_native.h"

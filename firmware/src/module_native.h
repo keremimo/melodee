@@ -15,7 +15,7 @@
  *
  * File: mod_file_t with abi MOD_ABI_NATIVE, then the key (u32: a 56-byte head), then the image as for ABI 1 (its
  * first bytes are mod_native_t, mod_file_t.desc 0), the address words, bss after the image in RAM.
- * Included after core.h, dsp.c, drum_map.c, drum_kit.h and cz_parts.h, on both sides. */
+ * Included after core.h, dsp.c, drum_map.c, drum_kit.h, cz_parts.h, fm6_parts.h and audio_batch.h, on both sides. */
 #pragma once
 #include "module_abi.h"
 
@@ -30,7 +30,7 @@
                                                   * checks each native module against it) */
 
 /* the firmware's side, handed over before any call (mod_native_t.bind). Append only, MOD_NATIVE_IMPORTS + 1 */
-#define MOD_NATIVE_IMPORTS 2u
+#define MOD_NATIVE_IMPORTS 3u
 typedef struct {
     track_t *im_trk;                                 /* trk[NTRK] */
     song_t *im_song;
@@ -57,6 +57,29 @@ typedef struct {
     cz_patch_t *im_cz_patch, *im_cz_patch_none;
     float *im_FM6_SIN;
     void (*im_cz_preset_make)(uint32_t k, preset_t *p, char *name);
+    /* 3: FM6. The parts' voices (fm6_parts.h: fm6_patch[NPART], fm6_patch_none, the write counts, the operator
+     * switches, the function settings, the CPU lab's pair count), voice.c's voice count, the firmware's queue for CPU1
+     * (audio_batch.h), CPU1's own pairing (audio_worker.h; without MELODEE_DUAL_CORE a worker never online, no calls),
+     * the profile's spans (0 without MELODEE_AUDIO_PROFILE), the tables dsp_tables_init fills, concert pitch's log
+     * (dsp.c tuning_log) */
+    uint8_t (*im_fm6_patch)[FP_SIZE + 1u];
+    uint8_t *im_fm6_patch_none;
+    volatile uint8_t *im_fm6_pgen, *im_fm6_lgen;
+    uint8_t *im_fm6_on;
+    uint8_t (*im_fm6_fn)[FM6_NFN];
+    uint32_t *im_fm6_pairs;
+    uint32_t (*im_trk_nvoice)(const track_t *t);
+    uint8_t *im_audio_batch_active;
+    void (*im_audio_batch_push)(audio_batch_fn run, const void *data, uint32_t bytes, int32_t *out, uint32_t n,
+                                uint32_t profile_id);
+    void (*im_audio_batch_push_cost)(audio_batch_fn run, const void *data, uint32_t bytes, int32_t *out, uint32_t n,
+                                     uint32_t profile_id, uint32_t estimated_cost);
+    int *im_audio_worker_online;
+    int (*im_audio_worker_submit)(void (*fn)(void *), void *context);
+    int (*im_audio_worker_join)(void);
+    void (*im_audio_profile_add)(uint32_t id, uint32_t ticks);
+    uint16_t *im_FM6_MKI_LOG, *im_FM6_MKI_EXP, *im_FM6_OPL_LOG, *im_FM6_OPL_EXP;
+    const int32_t *im_A4_LOG;
 } mod_imports_t;
 
 /* The layout key: what a native module and the firmware must agree on, hashed (any change: another key) */
@@ -79,7 +102,12 @@ typedef struct {
     MNK(57, AP_808) + MNK(58, AP_909) + MNK(59, AP_FM6) + MNK(60, AP_CZ) + MNK(61, F_ONOFF) + MNK(62, F_ALIAS) +   \
     MNK(63, DK_NUSER) + MNK(64, DRK_KSEC) + MNK(65, BOARD_SMK37) + MNK(66, MELODEE_USER_KITS) +                    \
     MNK(67, MELODEE_SID_FAST) + MNK(68, MELODEE_DRUM_FAST) + MNK(69, V_LEGATO) + MNK(70, Q_MPC) + MNK(71, NSTEP) + \
-    MNK(72, sizeof(cz_patch_t)) + MNK_T(73, engine_t, menv) + MNK(74, MELODEE_CZ_FAST) + MNK(75, NPOLY))
+    MNK(72, sizeof(cz_patch_t)) + MNK_T(73, engine_t, menv) + MNK(74, MELODEE_CZ_FAST) + MNK(75, NPOLY) +          \
+    MNK(76, FP_SIZE) + MNK(77, FM6_NFN) + MNK_T(78, engine_t, join) + MNK_T(79, engine_t, reserve) +                 \
+    MNK(80, MELODEE_FM6_FAST) + MNK(82, MELODEE_AUDIO_PROFILE) +                                                    \
+    MNK(83, AUDIO_BATCH_BYTES) + MNK(84, AP_FM6_CONTROL) + MNK_T(85, track_t, bend_raw) + MNK_T(86, track_t, mw) +   \
+    MNK_T(87, track_t, foot) + MNK_T(88, track_t, porta) + MNK_T(89, voice_t, gate) + MNK_T(90, voice_t, mvel) +    \
+    MNK_T(91, voice_t, stage))
 
 typedef struct {                                  /* the image's first bytes (mod_file_t.desc 0) */
     uint32_t magic;                               /* MOD_NDESC_MAGIC */
@@ -98,7 +126,15 @@ typedef struct {                                  /* the image's first bytes (mo
 static void *(*mod_imp_part_mem)(uint32_t part, uint32_t bytes);
 static void (*mod_imp_voice_scale_pitch)(const track_t *t, voice_t *v, uint32_t note);
 static void (*mod_imp_cz_preset_make)(uint32_t k, preset_t *p, char *name);   /* (modules/cz/cz.c calls it) */
+static uint32_t (*mod_imp_trk_nvoice)(const track_t *t);
+static int *mod_imp_audio_worker_online;
+static int (*mod_imp_audio_worker_submit)(void (*fn)(void *), void *context);
+static int (*mod_imp_audio_worker_join)(void);
 #define voice_scale_pitch (*mod_imp_voice_scale_pitch)
+#define trk_nvoice (*mod_imp_trk_nvoice)
+#define audio_worker_online (*mod_imp_audio_worker_online)
+#define audio_worker_submit (*mod_imp_audio_worker_submit)
+#define audio_worker_join (*mod_imp_audio_worker_join)
 #define mod_part_mem(part, bytes) mod_imp_part_mem(part, bytes)
 static void mod_native_bind(const mod_imports_t *im)
 {
@@ -127,6 +163,28 @@ static void mod_native_bind(const mod_imports_t *im)
     mod_imp_cz_patch_none = im->im_cz_patch_none;
     mod_imp_FM6_SIN = im->im_FM6_SIN;
     mod_imp_cz_preset_make = im->im_cz_preset_make;
+    mod_imp_fm6_patch = im->im_fm6_patch;
+    mod_imp_fm6_patch_none = im->im_fm6_patch_none;
+    mod_imp_fm6_pgen = im->im_fm6_pgen;
+    mod_imp_fm6_lgen = im->im_fm6_lgen;
+    mod_imp_fm6_on = im->im_fm6_on;
+    mod_imp_fm6_fn = im->im_fm6_fn;
+    mod_imp_fm6_pairs = im->im_fm6_pairs;
+    mod_imp_trk_nvoice = im->im_trk_nvoice;
+    mod_imp_audio_batch_active = im->im_audio_batch_active;
+    mod_imp_audio_batch_push = im->im_audio_batch_push;
+    mod_imp_audio_batch_push_cost = im->im_audio_batch_push_cost;
+    mod_imp_audio_worker_online = im->im_audio_worker_online;
+    mod_imp_audio_worker_submit = im->im_audio_worker_submit;
+    mod_imp_audio_worker_join = im->im_audio_worker_join;
+#if MELODEE_AUDIO_PROFILE
+    mod_imp_audio_profile_add = im->im_audio_profile_add;
+#endif
+    mod_imp_FM6_MKI_LOG = im->im_FM6_MKI_LOG;
+    mod_imp_FM6_MKI_EXP = im->im_FM6_MKI_EXP;
+    mod_imp_FM6_OPL_LOG = im->im_FM6_OPL_LOG;
+    mod_imp_FM6_OPL_EXP = im->im_FM6_OPL_EXP;
+    mod_imp_A4_LOG = im->im_A4_LOG;
 }
 #ifdef FM1_IRQ_TARGET
 #define MOD_NATIVE_EXPORT(sym) __attribute__((used, section(".mod_desc"))) const mod_native_t sym

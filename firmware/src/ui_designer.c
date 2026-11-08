@@ -72,7 +72,7 @@ static void designer_open(void)
     if(chain_busy()){ui_message("STOP SONG TO DESIGN");return;}
     browse_commit();momentary_restore();pop_close();smap.on=0;
     memset(&ds,0,sizeof ds);ds.track=song.sel;ds.eng=TSEL->eng_req;
-    if(!eng_ok(ds.eng))ds.eng=ENGI_FM6;
+    if(!eng_ok(ds.eng))ds.eng=eng_ok(ENGI_FM6)?ENGI_FM6:eng_vis(0);   /* (FM6 without its module: the first engine) */
     ds.current=1;ds.old_home=ui.home;ds.old_page=ui.page;
     designer_quit=designer_close;ui.designer_mode=DS_SETUP;ui.home=0;ui.menu=0;ui.layer=ui.lock=ui.ly=0;ui.ly_t0=0;
     ui.pg_down=0;ui.force=1;ui.msg_t=0;ui.act=0;

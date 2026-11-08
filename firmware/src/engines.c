@@ -34,7 +34,12 @@
 #if MELODEE_LEGACY_EXTRAS
 #include "eng_noise.c"
 #endif
-#include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c) */
+#include "fm6_parts.h"          /* the parts' FM6 voices (the firmware's: the engine reads them), the 32 algorithms */
+#include "fm6_voices.c"         /* the function settings, factory voices, patch formats and writes, DX7 SysEx in */
+#if MELODEE_FM6_BUILTIN
+#include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c; a synth module on the
+                                 * device: firmware/modules/fm6) */
+#endif
 #include "eng_midi.c"
 #if MELODEE_SLICE
 #include "eng_slice.c"
@@ -88,7 +93,6 @@ static uint32_t eng_state_size(uint32_t e)
 #if MELODEE_LEGACY_EXTRAS
     case 2: return sizeof(cz_part_t);               /* (PHASE: CZ-1's core; CZ-1's own: engine_t.state) */
 #endif
-    case ENGI_FM6: return sizeof(fm6_part_t);
 #if MELODEE_SLICE
     case ENGI_SLICE: return sizeof(slc_rb_t);
 #endif
@@ -117,7 +121,9 @@ static drk_part_t *drk_part(uint32_t part) { return resource_get(RES_ENGINE0 + p
 #endif
 #endif
 static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + (uint32_t)(t - trk), sizeof(drw_part_t)); }
+#if MELODEE_FM6_BUILTIN
 static fm6_part_t *fm6_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(fm6_part_t)); }
+#endif
 #if MELODEE_CZ_BUILTIN || MELODEE_LEGACY_EXTRAS
 static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(cz_part_t)); }
 #endif
@@ -186,7 +192,11 @@ static const engine_t *const ENGINES[NENGINES] = {
 #else
     &ENG_RETIRED,                /* 11: retired NOISE; stored ID reserved */
 #endif
+#if MELODEE_FM6_BUILTIN
     &ENG_FM6,                    /* 12 (ENGI_FM6) */
+#else
+    &ENG_RETIRED,                /* 12 (ENGI_FM6): FM6, a synth module (firmware/modules/fm6) */
+#endif
 #if MELODEE_SLICE
     &ENG_SLICE,                  /* 13 (ENGI_SLICE) */
 #else
@@ -241,7 +251,9 @@ static uint8_t ENGINE_ORDER[NENG_SHOWN_MAX] = {
 static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
 #endif
     ENGI_PROPHET,                /* Prophet replaces ANALOG in new-sound browsing */
-    12,                          /* FM6 */
+#if MELODEE_FM6_BUILTIN
+    12,                          /* FM6 (else a module: listed when there, at its place below) */
+#endif
 #if MELODEE_LEGACY_EXTRAS
     2, ENGI_CZ, 3, 5,             /* PHASE CZ-1 SID VOICE */
     6, 7, 9,
@@ -262,8 +274,8 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
 #endif
     ENGI_MIDI,
 };
-/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): CZ-1 after FM6, SID
- * after CZ-1, DRUM before the MIDI Track as built in; any other after them all */
+/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): FM6 after the Prophet,
+ * CZ-1 after FM6, SID after CZ-1, DRUM before the MIDI Track as built in; any other after them all */
 static uint32_t eng_order_rank(uint32_t e)
 {
     static const uint8_t R[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, 3, ENGI_DRUM, ENGI_MIDI};
@@ -274,7 +286,8 @@ static uint32_t eng_order_rank(uint32_t e)
 }
 
 /* Retired synth records (ANALOG and DIGITAL since 2.0 too) retain their stored identity and render silence.
- * Never relabel retired records FM6. */
+ * Never relabel retired records FM6. FM6 without its module (MELODEE_FM6_BUILTIN 0): retired as the others, its
+ * sounds keep the number, silent, and the start asks for setup (SHIPPED_OK) */
 static int eng_extra_retired(uint32_t e)
 {
 #if MELODEE_MODULES
@@ -288,7 +301,8 @@ static int eng_extra_retired(uint32_t e)
 #endif
     return e == ENGI_DIGITAL || (!MELODEE_LEGACY_EXTRAS && (e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u)) ||
            (!MELODEE_SID_BUILTIN && e == 3u) || (!MELODEE_DRUM_BUILTIN && e == ENGI_DRUM) ||
-           (!MELODEE_CZ_BUILTIN && e == ENGI_CZ);   /* (no module for them) */
+           (!MELODEE_CZ_BUILTIN && e == ENGI_CZ) ||
+           (!MELODEE_FM6_BUILTIN && e == ENGI_FM6);   /* (no module for them) */
 }
 /* the engines one can pick, in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
@@ -300,6 +314,8 @@ static int eng_ok(uint32_t e)
 #endif
     return e < NENGINES && e != USER_NATIVE_P5 && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != 14u && (MELODEE_SLICE || e != ENGI_SLICE);
 }
+/* an engine number for a sound: its own while it is retired or one can pick it, else FM6's (retired too while FM6
+ * has no module: then such a sound is silent, as any retired one) */
 static uint32_t eng_sound_idx(uint32_t e)
 {
     return eng_extra_retired(e) || eng_ok(e) ? e : ENGI_FM6;
@@ -309,7 +325,8 @@ static uint32_t eng_rank(uint32_t e)
 {
     uint32_t n;
     if (!eng_ok(e))
-        e = ENGI_FM6;                            /* (a retired or reserved engine: FM6's place) */
+        e = ENGI_FM6;                            /* (a retired or reserved engine: FM6's place; without its module
+                                                  * none: the first engine's) */
     for (n = 0; n < eng_nshown && ENGINE_ORDER[n] != e; n++)
         ;
     return n < eng_nshown ? n : 0u;

@@ -243,12 +243,12 @@ static __attribute__((noinline)) void mix_prepare_batch(uint32_t n,uint32_t nt) 
     audio_batch_active=1;
 #if MELODEE_DUAL_CORE
     memset(batch_posted,0,sizeof batch_posted);
-    /* Keep the measured CPU0 service reserve for native FM6 workloads.
-     * Per-voice controls and ghosts themselves are costed queue jobs. */
+    /* Keep the measured CPU0 service reserve for native FM6 workloads (engine_t.reserve: FM6's voices sounding or
+     * running on). Per-voice controls and ghosts themselves are costed queue jobs. */
     audio_batch_native_fm6=0;
-    for(uint32_t p=0;p<nt && !audio_batch_native_fm6;p++)if(trk[p].engine==ENGI_FM6 && resource[RES_ENGINE0+p].size==sizeof(fm6_part_t)){
-        const fm6_part_t *f=resource[RES_ENGINE0+p].ptr;
-        for(uint32_t v=0;v<NVOICE;v++)if(f->v[v].played && !f->v[v].still && !f->v[v].frozen){audio_batch_native_fm6=1;break;}
+    for(uint32_t p=0;p<nt && !audio_batch_native_fm6;p++){
+        const engine_t *g=eng_of(trk[p].engine);
+        if(g->reserve && g->reserve(resource[RES_ENGINE0+p].ptr,resource[RES_ENGINE0+p].size))audio_batch_native_fm6=1;
     }
 #endif
     for(uint32_t p=0;p<nt;p++){

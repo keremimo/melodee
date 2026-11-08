@@ -10,7 +10,10 @@ SECTIONS
     .image : {
         KEEP(*(.mod_desc))
         *(.text*) *(.audio_text*) *(.dsp_text*) *(.ram_text*)   /* (a native module: the firmware's placements, */
-        *(.rodata*) *(.dsp_tables*)                              /* all of them SRAM here) */
+        mod_rodata_ = .;                                         /* all of them SRAM here; a label where the code
+                                                                  * ends: its strings follow, unnamed, and
+                                                                  * tests/target_budget.py reads up to a label) */
+        *(.rodata*) *(.dsp_tables*)
         *(.data*) *(.sdata*)
         . = ALIGN(4);
     }

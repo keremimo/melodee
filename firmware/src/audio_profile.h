@@ -24,6 +24,12 @@ enum {
 #define AUDIO_PROFILE_TICKS() 0u
 #endif
 #endif
+#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE
+/* (a native synth module: its spans go to the firmware's, through its imports: module_native.h) */
+static void (*mod_imp_audio_profile_add)(uint32_t id, uint32_t ticks);
+#define audio_profile_add (*mod_imp_audio_profile_add)
+#define AUDIO_LAB_GUARDED() 0
+#else
 typedef struct { uint32_t ticks, calls, max_ticks; } audio_profile_span_t;
 static audio_profile_span_t audio_profile[AP_COUNT];
 /* 64-us bins, the final bin includes overflow. Raw assembly-envelope timing;
@@ -51,6 +57,7 @@ static __attribute__((noinline)) void audio_profile_add(uint32_t id, uint32_t ti
     s->ticks+=ticks;s->calls++;
     if(ticks>s->max_ticks)s->max_ticks=ticks;
 }
+#endif
 #define AP_START(name) uint32_t name=AUDIO_PROFILE_TICKS()
 #define AP_END(id,name) audio_profile_add((id),AUDIO_PROFILE_TICKS()-(name))
 #else

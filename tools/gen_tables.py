@@ -68,7 +68,7 @@ def main(path):
     L += shared("PITCH_OCT", "uint32_t", arr("PITCH_OCT", "uint32_t", oct_, 8))
     # Device concert pitch: exact frequency ratios and FM6's Q24 octave offsets.
     L += shared("A4_RATIO", "uint32_t", arr("A4_RATIO", "uint32_t", [round((1 << 24) * hz / 440) for hz in range(400, 481)], 8))
-    L += arr("A4_LOG", "int32_t", [round((1 << 24) * math.log2(hz / 440)) for hz in range(400, 481)], 8)
+    L += shared("A4_LOG", "int32_t", arr("A4_LOG", "int32_t", [round((1 << 24) * math.log2(hz / 440)) for hz in range(400, 481)], 8))
     L += ["/* phase increment of pitch p in 1/16 semitone, 0..2047 (MIDI 0..127): 440 Hz * 2^((p / 16 - 69) / 12) */",
           "static inline uint32_t pitch_inc(uint32_t p)",
           "{",
@@ -433,9 +433,9 @@ def fm6_tables():
           for i in range(1024)]
     ex = [int(round(f32((math.pow(2, f32(i / 1024.0)) - 1) * 4096))) for i in range(1024)]
     L += arr("FM6_MKI_LOG_H", "uint16_t", lg, 16)           # FM6_MKI_LOG: lg + reversed: half a cycle (the sign: the phase)
-    L += ["static uint16_t FM6_MKI_LOG[1024];"]
+    L += shared_ram("FM6_MKI_LOG", "uint16_t", "static uint16_t FM6_MKI_LOG[1024];")
     L += arr("FM6_MKI_EXP_D", "uint8_t", nibbles([ex[i] - ex[i - 1] - 2 for i in range(1, 1024)], ex[0]), 16)
-    L += ["static uint16_t FM6_MKI_EXP[1024];             /* 4096 + exp, reversed */"]
+    L += shared_ram("FM6_MKI_EXP", "uint16_t", "static uint16_t FM6_MKI_EXP[1024];             /* 4096 + exp, reversed */")
     # OPL (EngineOpl.cpp): the OPL's quarter-wave log sine and exponent ROMs
     opl_log = [
         2137, 1731, 1543, 1419, 1326, 1252, 1190, 1137, 1091, 1050, 1013, 979, 949, 920, 894, 869,
@@ -455,7 +455,7 @@ def fm6_tables():
         7, 7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2,
         2, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
     L += arr("FM6_OPL_LOG_H", "uint16_t", opl_log, 16)      # FM6_OPL_LOG: half a cycle
-    L += ["static uint16_t FM6_OPL_LOG[256];"]
+    L += shared_ram("FM6_OPL_LOG", "uint16_t", "static uint16_t FM6_OPL_LOG[256];")
     opl_exp = [
         0, 3, 6, 8, 11, 14, 17, 20, 22, 25, 28, 31, 34, 37, 40, 42,
         45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90,
@@ -474,7 +474,7 @@ def fm6_tables():
         854, 859, 864, 869, 874, 880, 885, 890, 895, 900, 906, 911, 916, 921, 927, 932,
         937, 942, 948, 953, 959, 964, 969, 975, 980, 986, 991, 996, 1002, 1007, 1013, 1018]
     L += arr("FM6_OPL_EXP_D", "uint8_t", nibbles([opl_exp[i] - opl_exp[i - 1] - 2 for i in range(1, 256)], opl_exp[0]), 16)
-    L += ["static uint16_t FM6_OPL_EXP[256];              /* (0x400 + exp) << 1, reversed */"]
+    L += shared_ram("FM6_OPL_EXP", "uint16_t", "static uint16_t FM6_OPL_EXP[256];              /* (0x400 + exp) << 1, reversed */")
     L += ["/* the RAM tables above, bit for bit as this script made them before (checked by tests/fm6_parity.sh and the",
           " * goldens); fm1_main calls it before anything renders, host builds before main */",
           "static void dsp_tables_init(void)",

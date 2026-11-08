@@ -108,7 +108,7 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #define USER_NONE 65535u
 #define ENGI_ANALOG 0u           /* retired in 1.2: never selectable (eng_ok), its stored sounds play silent */
 #define ENGI_DIGITAL 1u          /* retired: never selectable (eng_ok), its stored sounds play silent */
-#define NENG_SHOWN (3u + MELODEE_CZ_BUILTIN + MELODEE_SID_BUILTIN + MELODEE_DRUM_BUILTIN + MELODEE_SLICE + 6u * MELODEE_LEGACY_EXTRAS)   /* the engines one can pick: PRESETS, the EDIT
+#define NENG_SHOWN (2u + MELODEE_FM6_BUILTIN + MELODEE_CZ_BUILTIN + MELODEE_SID_BUILTIN + MELODEE_DRUM_BUILTIN + MELODEE_SLICE + 6u * MELODEE_LEGACY_EXTRAS)   /* the engines one can pick: PRESETS, the EDIT
                                                 * layer, the editor, in the display order of engines.c ENGINE_ORDER */
 #define NENG_SHOWN_MAX (NENG_SHOWN + NMOD * MELODEE_MODULES)   /* and the loaded modules after them (eng_nshown) */
 #define ENGI_SLICE 13u           /* reserved without MELODEE_SLICE: never selectable (eng_ok) */
@@ -415,6 +415,12 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     /* optional: the matrix's ENV source instead of the ADSR's, after ENV DEST's pitch, cutoff and shape (CZ-1: its
      * native DCA; env_q15 is ENV DEST's and the matrix's both) */
     int32_t (*menv)(struct track *t, voice_t *v);
+    /* optional: CPU1's work for the part comes back here, after its voices and before the spread voices are summed
+     * (FM6: a voice its own pairing sent there outside the queue) */
+    void (*join)(void);
+    /* optional: 1 = the part keeps CPU0's larger service reserve while CPU1 renders this block (FM6: a voice sounds or
+     * runs on); state, bytes: the part's working memory as it is (bytes 0: none) */
+    int (*reserve)(const void *state, uint32_t bytes);
 } engine_t;
 /* Built-in engines that are synth modules on the device (firmware/modules/<name>): host builds compile them in, the
  * reference the module tests hold the modules to; the device's image leaves them out (eng_module.c plays them) */
@@ -430,6 +436,9 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
 #endif
 #ifndef MELODEE_CZ_BUILTIN
 #define MELODEE_CZ_BUILTIN MELODEE_SID_BUILTIN
+#endif
+#ifndef MELODEE_FM6_BUILTIN
+#define MELODEE_FM6_BUILTIN MELODEE_SID_BUILTIN
 #endif
 /* MOD_NATIVE_SIDE 1: a native synth module's own compile (firmware/modules/sdk/mod_native.h): the firmware's data
  * below is not its own but the firmware's, reached through pointers the loader hands over (module_native.h) */

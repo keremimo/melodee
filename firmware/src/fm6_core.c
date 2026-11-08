@@ -17,50 +17,13 @@
  *
  * Units: logs in Q24 (1 << 24 = one octave or 6 dB); an operator's output is float with 1.0 = a unit sine,
  * added to the next operator's phase as 1.0 = one cycle (OUTPUT 99 at the top of its envelope: 2.0, a 4 pi
- * index). The patch is the 155-byte single-voice layout (FP_* below), operator 0 = the sixth operator. */
+ * index). The patch is the 155-byte single-voice layout (FP_*: fm6_parts.h), operator 0 = the sixth operator. */
 
 #include "x0x/fastmath.h"
 
 
-/* the 155-byte patch: 6 x 21 operator bytes (the sixth operator first), then the voice */
-enum {
-    FP_R1 = 0, FP_L1 = 4, FP_BP = 8, FP_LD, FP_RD, FP_LC, FP_RC, FP_RS, FP_AMS, FP_KVS, FP_OL, FP_MODE, FP_FC, FP_FF,
-    FP_DET, FP_OP = 21,
-    FP_PR1 = 126, FP_PL1 = 130, FP_ALG = 134, FP_FB, FP_OKS, FP_LFS, FP_LFD, FP_LPMD, FP_LAMD, FP_LKS, FP_LFW,
-    FP_LPMS, FP_TRNSP, FP_NAME, FP_SIZE = 155
-};
-
-/* the FM6 function settings (a DX7's function mode; each track its own, as each Dexed instance has, saved with the
- * project and the template; project.c):
- * pitch bend range up / down and step (0 = smooth), portamento (PEDAL: while CC 65 is down, ON) and its time
- * (CC 5 sets it) and glissando, then wheel, foot, breath and aftertouch: range and target (bit 0 pitch, 1
- * amplitude, 2 EG bias), Dexed's velocity scaling to the DX7's range, and ENGINE */
-enum { FN_PBUP, FN_PBDN, FN_PBSTEP, FN_PMODE, FN_PTIME, FN_GLISS, FN_MWR, FN_MWA, FN_FCR, FN_FCA, FN_BCR, FN_BCA,
-       FN_ATR, FN_ATA, FN_VNORM, FN_ENGINE, FM6_NFN };
-enum { FM6_MODERN, FM6_MARK1, FM6_OPL };
-static const uint8_t FM6_FNMAX[FM6_NFN] = {12, 12, 12, 1, 127, 1, 99, 7, 99, 7, 99, 7, 99, 7, 1, 2};
-static const uint8_t FM6_FNDEF[FM6_NFN] = {3, 3, 0, 0, 0, 0, 99, 1, 0, 0, 0, 0, 0, 0, 0, FM6_MARK1};   /* Dexed's */
-static uint8_t fm6_fn[NTRK][FM6_NFN];                    /* per track (fm6_fn_reset at power-on, a new project) */
-static void fm6_fn_reset(void)
-{
-    uint32_t k;
-    for (k = 0; k < NTRK; k++)
-        memcpy(fm6_fn[k], FM6_FNDEF, FM6_NFN);
-}
-static void fm6_fn_set(uint32_t tr, uint32_t k, int32_t v)
-{
-    if (tr < NTRK && k < FM6_NFN)
-        fm6_fn[tr][k] = (uint8_t)clamp(v, 0, FM6_FNMAX[k]);
-}
-static int fm6_fn_ok(const uint8_t *f)                    /* a stored set: every value in its range */
-{
-    uint32_t k;
-    for (k = 0; k < FM6_NFN; k++)
-        if (f[k] > FM6_FNMAX[k])
-            return 0;
-    return 1;
-}
-
+/* (the patch's layout, the function settings and the 32 algorithms: fm6_parts.h, the firmware's and the engine's
+ * both; the settings' ranges and defaults: fm6_voices.c) */
 /* ---------------------------------------------------------- DX7 data --- */
 /* DX7 data, measured for MSFA (Copyright 2012 Google Inc.) and Dexed (Copyright 2013-2017 Pascal Gauthier),
  * Apache License 2.0: output levels below 20; the static times of the envelope (samples at 44.1 kHz, rates
@@ -100,34 +63,6 @@ static const int8_t FM6_PEG_STEP[100] = {
     30, 31, 32, 33, 34, 35, 38, 40, 43, 46, 49, 53, 58, 65, 73, 82, 92, 103, 115, 127};
 _Static_assert(CTL * 2 == FM6_N, "FM6: a Dexed block is two control ticks");
 
-/* ------------------------------------------------------- the algorithms --- */
-/* The 32 algorithms as Dexed (MSFA fm_core.cc) has them, operators in the order they run (the sixth first):
- * bits 0-1 where the output goes (0 = the voice, 1 / 2 = bus A / B), bit 2 adds to it, bits 4-5 the bus that
- * modulates the operator, bits 6 + 7 its own feedback (bit 7 alone: the end of a feedback loop through OP6,
- * algorithms 4 and 6). tests/fm6_test.c checks the modulation graph of each against the DX7 diagrams */
-enum { FM6_OB1 = 1, FM6_OB2 = 2, FM6_OADD = 4, FM6_IB1 = 16, FM6_IB2 = 32, FM6_FBIN = 64, FM6_FBOUT = 128 };
-static const uint8_t FM6_ALG[32][6] = {
-    {0xc1, 0x11, 0x11, 0x14, 0x01, 0x14}, {0x01, 0x11, 0x11, 0x14, 0xc1, 0x14}, {0xc1, 0x11, 0x14, 0x01, 0x11, 0x14},
-    {0xc1, 0x11, 0x94, 0x01, 0x11, 0x14}, {0xc1, 0x14, 0x01, 0x14, 0x01, 0x14}, {0xc1, 0x94, 0x01, 0x14, 0x01, 0x14},
-    {0xc1, 0x11, 0x05, 0x14, 0x01, 0x14}, {0x01, 0x11, 0xc5, 0x14, 0x01, 0x14}, {0x01, 0x11, 0x05, 0x14, 0xc1, 0x14},
-    {0x01, 0x05, 0x14, 0xc1, 0x11, 0x14}, {0xc1, 0x05, 0x14, 0x01, 0x11, 0x14}, {0x01, 0x05, 0x05, 0x14, 0xc1, 0x14},
-    {0xc1, 0x05, 0x05, 0x14, 0x01, 0x14}, {0xc1, 0x05, 0x11, 0x14, 0x01, 0x14}, {0x01, 0x05, 0x11, 0x14, 0xc1, 0x14},
-    {0xc1, 0x11, 0x02, 0x25, 0x05, 0x14}, {0x01, 0x11, 0x02, 0x25, 0xc5, 0x14}, {0x01, 0x11, 0x11, 0xc5, 0x05, 0x14},
-    {0xc1, 0x14, 0x14, 0x01, 0x11, 0x14}, {0x01, 0x05, 0x14, 0xc1, 0x14, 0x14}, {0x01, 0x14, 0x14, 0xc1, 0x14, 0x14},
-    {0xc1, 0x14, 0x14, 0x14, 0x01, 0x14}, {0xc1, 0x14, 0x14, 0x01, 0x14, 0x04}, {0xc1, 0x14, 0x14, 0x14, 0x04, 0x04},
-    {0xc1, 0x14, 0x14, 0x04, 0x04, 0x04}, {0xc1, 0x05, 0x14, 0x01, 0x14, 0x04}, {0x01, 0x05, 0x14, 0xc1, 0x14, 0x04},
-    {0x04, 0xc1, 0x11, 0x14, 0x01, 0x14}, {0xc1, 0x14, 0x01, 0x14, 0x04, 0x04}, {0x04, 0xc1, 0x11, 0x14, 0x04, 0x04},
-    {0xc1, 0x14, 0x04, 0x04, 0x04, 0x04}, {0xc4, 0x04, 0x04, 0x04, 0x04, 0x04}};
-static inline __attribute__((always_inline)) int fm6_carrier(uint32_t alg, uint32_t n) { return !(FM6_ALG[alg & 31u][6u - n] & 3u); }   /* OP n: to the voice */
-/* bit k: operator k (the sixth first) is a carrier of algorithm a: it writes the voice */
-static uint32_t fm6_carriers(uint32_t a)
-{
-    uint32_t k, c = 0;
-    for (k = 0; k < 6u; k++)
-        c |= ((FM6_ALG[a & 31u][k] & 3u) ? 0u : 1u) << k;
-    return c;
-}
-
 /* The chip's discrete envelopes and ROMs remain integer data. Continuous
  * gains, signal mixing and AMS use the native single-precision FPU. */
 /* A Q24 log pitch has more significant bits than float. Preserve its exact
@@ -140,10 +75,6 @@ static inline __attribute__((always_inline)) int32_t fm6_freq(int32_t lf)
     int32_t y=fm6_freq_point(i)+(int32_t)((delta*(f>>7)+((delta*(f&127u))>>7))>>7);
     int32_t sh=20-(lf>>24);
     return sh<=0?y:sh>31?0:y>>sh;
-}
-static inline __attribute__((always_inline)) uint32_t fm6_pow2(int32_t x)
-{
-    return (uint32_t)fm_minf(fm_exp2f((float)x * (1.0f / 65536.0f)) * 65536.0f, 4294967040.0f);
 }
 static int32_t fm6_f32(int32_t x) { return (int32_t)(float)x; }
 static inline __attribute__((always_inline)) uint32_t fm6_ams_pt(uint32_t sa)

@@ -13,7 +13,7 @@
  * nothing has used for MOD_IDLE_MS goes back to the flash. Unloading points its engine at ENG_MOD_IDLE first, so no
  * audio block can be inside the module when its block is released. */
 #include "module_abi.h"
-#include "module_native.h"   /* native modules: an engine's own source, its own engine_t (SID, DRUM, CZ-1) */
+#include "module_native.h"   /* native modules: an engine's own source, its own engine_t (SID, DRUM, CZ-1, FM6) */
 
 enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
        MS_STALE };                                 /* mod_slot_t.state; STALE: a native module of another firmware */
@@ -57,11 +57,34 @@ _Static_assert(CTL == 32 && VOICE_FS == 24000, "ABI 1 freezes the block length a
 /* ---- the firmware's side of a native module (module_native.h): its data and calls, handed over at load */
 static void *mod_part_mem(uint32_t part, uint32_t bytes) { return resource_get(RES_ENGINE0 + part % NPART, bytes); }
 static void voice_scale_pitch(const track_t *t, voice_t *v, uint32_t note);   /* voice.c */
+static uint32_t trk_nvoice(const track_t *t);                                  /* voice.c */
+#if !MELODEE_DUAL_CORE
+static int mod_no_worker;                           /* (no CPU1: a module's own pairing finds it never online) */
+static uint32_t mod_no_pairs;
+#endif
 static const mod_imports_t MOD_IMPORTS = {
     trk, &song, &voice_was, &tuning_a4, dith, dith_f, midi_verb, drum_patch, &drum_patch_none,
     &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen, mod_part_mem, voice_scale_pitch,
     SINE, TANH_Q15, PITCH_OCT, A4_RATIO, P5_TANH,
     cz_patch, &cz_patch_none, FM6_SIN, cz_preset_make,
+    fm6_patch, fm6_patch_none, fm6_pgen, fm6_lgen, fm6_on, fm6_fn,
+#if MELODEE_DUAL_CORE
+    &fm6_pairs,
+#else
+    &mod_no_pairs,
+#endif
+    trk_nvoice, &audio_batch_active, audio_batch_push, audio_batch_push_cost,
+#if MELODEE_DUAL_CORE
+    &audio_worker_online, audio_worker_submit, audio_worker_join,
+#else
+    &mod_no_worker, 0, 0,
+#endif
+#if MELODEE_AUDIO_PROFILE
+    audio_profile_add,
+#else
+    0,
+#endif
+    FM6_MKI_LOG, FM6_MKI_EXP, FM6_OPL_LOG, FM6_OPL_EXP, A4_LOG,
 };
 #ifdef FM1_IRQ_TARGET
 _Static_assert(sizeof(mod_native_t) == 28u && MOD_NHEAD == sizeof(mod_file_t) + 4u, "tools/mod_build.py ABI_NATIVE");

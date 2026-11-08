@@ -49,7 +49,7 @@ NBSS_MAX = int(re.search(r"#define MOD_NBSS_MAX (\d+)u", NATIVE_H)[1])
 NCFLAGS = ["-mcpu=r3", "-mfprev1", "-ffp-contract=off", "-Werror=double-promotion", "-Os", "-ffunction-sections",
            "-fdata-sections", "-fno-builtin", "-Wall", "-Wno-unused-function", "-Wno-unused-variable",
            "-Wno-unused-const-variable", "-DFM1_IRQ_TARGET=1"]
-ENGINE_OK_NATIVE = ENGINE_OK | {3, 10, 15}            # (+ SID, DRUM and CZ-1: eng_module.c mod_engine_ok)
+ENGINE_OK_NATIVE = ENGINE_OK | {3, 10, 12, 15}        # (+ SID, DRUM, FM6 and CZ-1: eng_module.c mod_engine_ok)
 
 
 def toolchain():

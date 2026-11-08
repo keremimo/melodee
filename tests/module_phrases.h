@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The phrases the native-module tests render (tests/module_test.c): SID, DRUM and CZ-1 on part 1, every preset, POLY
- * and LEGATO, the C64 models, ENV3 as ENV DEST, every kit with the drum patch, lane levels, DRV, recorded hit lengths
- * and pitches, every CZ-1 tone edited as it plays, the matrix's ENV (CZ-1's DCA), LFO, a MIDI insert release, concert
- * pitch, each also on the dual-core path (engine_batch_kernel). Each phrase starts from the same state, so its
+/* The phrases the native-module tests render (tests/module_test.c): SID, DRUM, CZ-1 and FM6 on part 1, every preset,
+ * POLY and LEGATO, the C64 models, ENV3 as ENV DEST, every kit with the drum patch, lane levels, DRV, recorded hit
+ * lengths and pitches, every CZ-1 tone edited as it plays, the matrix's ENV (CZ-1's DCA), LFO, a MIDI insert release,
+ * concert pitch, every FM6 voice in POLY, LEGATO and UNISON with every algorithm, feedback, the three ENGINEs, its
+ * controllers, macros and switches as it plays, a DX7 bank by SysEx, each also on the dual-core path
+ * (engine_batch_kernel; FM6: its own queue jobs). Each phrase starts from the same state, so its
  * render is a function of the phrase alone: module_test.c holds the modules to the built-in engines sample for sample
- * and to MP_GOLDEN, the hashes the built-in engines rendered before they left the firmware (203a5c04: this file
- * compiled there with tests/persistence_test.c, mp_golden_print()). Needs persistence_test.c (reset, host_preset). */
+ * and to MP_GOLDEN, the hashes the built-in engines rendered before they left the firmware (SID, DRUM, CZ-1: 203a5c04,
+ * FM6: 0df43be6; this file compiled there with tests/persistence_test.c and fm6_store.c, each phrase's mp_run printed).
+ * Needs persistence_test.c (reset, host_preset) and fm6_store.c (fm6_service). */
 #define MP_NB 200u
 static int32_t mp_out[MP_NB * CTL];
 
@@ -164,6 +167,164 @@ static uint32_t mp_cz(uint32_t pi, uint32_t mono, uint32_t batch)
     return mp_hash(mp_out, MP_NB * CTL);
 }
 
+/* FM6: a block as mix.c runs it: the matrix (mix_part), on CPU1 the part's post (Dexed's DC filter) after the queue */
+static void mp_fm6_block(uint32_t b, uint32_t batch)
+{
+    int32_t *out = mp_out + b * CTL;
+    dither_block();
+    audio_batch_active = (uint8_t)batch;
+    mod_begin(&inst);
+    uint32_t nr = track_render(&inst, out, CTL);
+    if (batch) {
+        audio_batch_flush();
+        audio_batch_active = 0;
+        if (nr && ENGINES[inst.engine]->post)
+            ENGINES[inst.engine]->post(&inst, out, CTL, nr);
+    }
+    if (mod.on)
+        mod_end(&inst);
+    audio_batch_active = 0;
+}
+/* FM6 preset pi (F1..F24, INIT VOICE); mode 0 POLY, 1 LEGATO, 2 UNISON. By pi: ENGINE (MODERN, MARK I, OPL), the
+ * algorithm (ALG: PAT and all 32 over the phrases), FB, velocity scaling, LFO -> FLT / SHP (MLVL, the feedback),
+ * portamento and glissando (LEGATO), a MIDI insert release, a new TRANSPOSE as it plays (the notes stop, as a DX7
+ * program change), concert pitch moved. In every phrase: the wheel, aftertouch, foot and breath with their targets,
+ * pitch bend both ways, an operator switched off, the other macros and the patch edited as the notes sound (the
+ * sounding notes follow), 18 keys at once (POLY: Dexed's 16 voices stolen) */
+static uint32_t mp_fm6(uint32_t pi, uint32_t mode, uint32_t batch)
+{
+    int16_t a4 = tuning_a4;
+    uint8_t *fn = fm6_fn[0];
+    mp_start();
+    memset(midi_verb, 0, sizeof midi_verb);
+    fm6_fn_reset();
+    host_preset(&inst, ENGI_FM6, pi);
+    inst.p[P_VOICE] = (int16_t)(mode == 1u ? V_LEGATO : mode == 2u ? V_UNISON : V_POLY);
+    inst.p[P_E0] = (int16_t)((pi + mode * 25u) % 33u);   /* ALG: PAT, 1..32 */
+    inst.p[P_E1] = (int16_t)((int32_t)(pi % 15u) - 7);   /* FB */
+    fn[FN_ENGINE] = (uint8_t)(pi % 3u);
+    fn[FN_VNORM] = (uint8_t)(pi % 2u);
+    fn[FN_ATR] = 60; fn[FN_ATA] = (uint8_t)(1u + pi % 7u);
+    fn[FN_FCR] = 50; fn[FN_FCA] = 4;
+    fn[FN_BCR] = 80; fn[FN_BCA] = 3;
+    fn[FN_PBSTEP] = (uint8_t)(pi % 5u == 4u ? 2u : 0u);
+    if (mode == 1u && pi % 2u) { fn[FN_PMODE] = 1; fn[FN_PTIME] = (uint8_t)(40u + pi); fn[FN_GLISS] = (uint8_t)(pi % 4u == 1u); }
+    if (pi % 5u == 1u) { inst.p[P_LD_FLT] = 30; inst.p[P_LD_SHP] = 40; }
+    if (pi % 4u == 3u) { inst.p[P_FXTYPE] = FX_MIDIVERB; inst.p[P_FXTYPE + 1] = 40; }   /* (the insert's release) */
+    for (uint32_t b = 0; b < MP_NB; b++) {
+        if (b == 4) trk_note_on(&inst, 48, 100);
+        if (b == 20) { inst.mw = 90; inst.at = 60; }
+        if (b == 30) inst.bend_raw = 3000;
+        if (b == 40) trk_note_on(&inst, 55, 80);
+        if (b == 50) { inst.foot = 100; inst.breath = 70; }
+        if (b == 60) trk_note_off(&inst, 48);
+        if (b == 70) trk_note_on(&inst, 64, 127);
+        if (b == 71) trk_note_on(&inst, 67, 30);
+        if (b == 90) fm6_on[0] = (uint8_t)(FM6_ON_ALL & ~(1u << (pi % 6u)));   /* (an operator switched off) */
+        if (b == 100) {                                  /* MLVL MRAT MEG VMOD DTUN */
+            inst.p[P_E2] = (int16_t)(20 - (int32_t)pi); inst.p[P_E3] = (int16_t)((int32_t)(pi % 5u) - 2);
+            inst.p[P_E4] = (int16_t)((int32_t)(pi * 7u % 60u) - 30); inst.p[P_E5] = (int16_t)((int32_t)(pi % 8u) - 3);
+            inst.p[P_E6] = (int16_t)(pi * 5u % 128u);
+        }
+        if (b == 110) {                                  /* the patch edited as the pages edit it */
+            uint8_t v[FP_SIZE + 1u];
+            memcpy(v, fm6_patch_of(0), FP_SIZE);
+            v[FP_FB] = (uint8_t)((v[FP_FB] + 3u) & 7u);
+            v[(pi % 6u) * FP_OP + FP_OL] = (uint8_t)(v[(pi % 6u) * FP_OP + FP_OL] / 2u + 40u);
+            v[(pi % 6u) * FP_OP + FP_R1 + 3u] = 20;
+            v[FP_LPMD] = 40; v[FP_LPMS] = 3; v[FP_LAMD] = 30;
+            if (pi % 3u == 2u) v[FP_TRNSP] = 26;          /* (another TRANSPOSE: a load, the notes stop) */
+            if (pi % 2u == 0) {                           /* KEY SYNC off, short releases: voices end, run on as */
+                v[FP_OKS] = 0;                            /* Dexed's (fm6_ghost) and are taken again below */
+                for (uint32_t k = 0; k < 6u; k++) { v[k * FP_OP + FP_R1 + 3u] = 80; v[k * FP_OP + FP_L1 + 3u] = 0; }
+            }
+            fm6_set_patch(0, v);
+        }
+        if (b == 120) { trk_note_off(&inst, 55); trk_note_off(&inst, 64); trk_note_off(&inst, 67); inst.bend_raw = -2000; }
+        if (b >= 130 && b < 136)
+            for (uint32_t j = 0; j < 3u; j++) trk_note_on(&inst, 40u + 3u * ((b - 130u) * 3u + j), 50u + (b - 130u) * 12u + j);
+        if (b == 140) fm6_on[0] = FM6_ON_ALL;
+        if (b == 150 && pi % 3u == 0) tuning_a4 = 432;
+        if (b >= 160 && b < 166)
+            for (uint32_t j = 0; j < 3u; j++) trk_note_off(&inst, 40u + 3u * ((b - 160u) * 3u + j));
+        if (b == 175) { inst.bend_raw = 0; inst.mw = 0; trk_note_on(&inst, 36, 90); }
+        if (b >= 178 && b < 184)                         /* (again: voices that ended and ran on are taken) */
+            for (uint32_t j = 0; j < 3u; j++) trk_note_on(&inst, 41u + 2u * ((b - 178u) * 3u + j), 70u + j * 9u);
+        if (b >= 186 && b < 192)
+            for (uint32_t j = 0; j < 3u; j++) trk_note_off(&inst, 41u + 2u * ((b - 186u) * 3u + j));
+        if (b == 190) trk_note_off(&inst, 36);
+        mp_fm6_block(b, batch);
+    }
+    tuning_a4 = a4;
+    midi_verb[0] = 0;
+    inst.mw = inst.at = inst.foot = inst.breath = 0;
+    inst.bend_raw = 0;
+    fm6_on[0] = FM6_ON_ALL;
+    fm6_fn_reset();
+    return mp_hash(mp_out, MP_NB * CTL);
+}
+
+/* DX7 SysEx: a 32-voice bank (F1..F24, then 8 voices of random values in their ranges) through the USB byte
+ * collector, imported into the user slots as the PRESETS page does, then voices 4j..4j+3 of it loaded on the track as
+ * the user list loads them, played; Dexed's live voice and function parameter messages as it plays */
+static uint8_t mp_sx[FM6_RX];
+static void mp_fm6_send(const uint8_t *m, uint32_t n)
+{
+    wire_release();                                       /* (the next main-loop turn: the scratch free) */
+    for (uint32_t i = 0; i < n; i++) fm6_sx_byte(m[i]);
+    fm6_service();
+}
+static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
+{
+    uint8_t v[FP_SIZE + 1u];
+    uint32_t r = 0x13579BDFu;
+    mp_start();
+    memset(midi_verb, 0, sizeof midi_verb);
+    fm6_fn_reset();
+    host_preset(&inst, ENGI_FM6, FM6_NFAC);
+    memcpy(mp_sx, (const uint8_t[]){0xF0, 0x43, 0x00, 0x09, 0x20, 0x00}, 6);
+    for (uint32_t k = 0; k < 32u; k++) {
+        uint8_t *pk = mp_sx + 6u + k * FM6_PACKED;
+        if (k < FM6_NFAC) { fm6_factory(k, pk); continue; }
+        for (uint32_t i = 0; i < FP_SIZE; i++) { r = r * 1664525u + 1013904223u; v[i] = (uint8_t)((r >> 16) % (fm6_max(i) + 1u)); }
+        for (uint32_t i = 0; i < 10u; i++) v[FP_NAME + i] = (uint8_t)('A' + (k + i) % 26u);
+        v[FP_TRNSP] = (uint8_t)(18u + k % 12u);
+        memset(pk, 0, FM6_PACKED);
+        fm6_pack(v, pk);
+    }
+    mp_sx[4102] = sx_checksum(mp_sx + 6, 4096);
+    mp_sx[4103] = 0xF7;
+    mp_fm6_send(mp_sx, FM6_RX);
+    sx_import.first = 0;
+    sysex_commit();
+    for (uint32_t b = 0; b < MP_NB; b++) {
+        if (b % 50u == 0) {
+            native_load(ENGI_FM6, j * 4u + b / 50u, 0);
+            if (j % 2u) { inst.p[P_FXTYPE] = FX_MIDIVERB; inst.p[P_FXTYPE + 1] = (int16_t)(20u + j * 10u); }
+        }
+        if (b % 50u == 2u) trk_note_on(&inst, 48, 100);
+        if (b % 50u == 10u) { trk_note_on(&inst, 60, 90); trk_note_on(&inst, 64, 70); trk_note_on(&inst, 67, 110); }
+        if (b % 50u == 25u) {                            /* Dexed: a voice parameter, the switches, a function */
+            uint8_t m[7] = {0xF0, 0x43, 0x10, 0x01, 0x06, (uint8_t)((j * 5u + b) % 32u), 0xF7};   /* ALG */
+            mp_fm6_send(m, 7);
+            m[3] = 0x00; m[4] = (uint8_t)(16u + 21u * (b / 50u)); m[5] = (uint8_t)(60u + j);      /* an OUTPUT LEVEL */
+            mp_fm6_send(m, 7);
+            m[3] = 0x01; m[4] = 0x1B; m[5] = (uint8_t)(0x3Fu & ~(4u << (j % 4u)));            /* the switches */
+            mp_fm6_send(m, 7);
+            m[3] = 0x08; m[4] = 65; m[5] = (uint8_t)(2u + j);                                   /* bend range */
+            mp_fm6_send(m, 7);
+            inst.bend_raw = (int16_t)(j % 2u ? 4000 : -4000);
+        }
+        if (b % 50u == 30u) { trk_note_off(&inst, 48); trk_note_off(&inst, 60); trk_note_off(&inst, 64); trk_note_off(&inst, 67); }
+        if (b % 50u == 45u) inst.bend_raw = 0;
+        mp_fm6_block(b, batch);
+    }
+    inst.bend_raw = 0;
+    fm6_on[0] = FM6_ON_ALL;
+    fm6_fn_reset();
+    return mp_hash(mp_out, MP_NB * CTL);
+}
+
 /* phrase k (0 .. MP_COUNT - 1) rendered into mp_out: its hash; *what, *a, *b: what it plays */
 #define MP_SID_PRESETS 32u
 #define MP_DRUM_PRESETS 6u
@@ -172,8 +333,12 @@ static uint32_t mp_cz(uint32_t pi, uint32_t mono, uint32_t batch)
 #define MP_SID_B (2u * 4u * 2u * 2u)                     /* MODEL 0..3 x mode x ENV3, serial then on CPU1 */
 #define MP_DRUM (2u * (MP_DRUM_PRESETS + 7u))            /* every preset, KIT 4..10, serial then on CPU1 */
 #define MP_CZ (2u * MP_CZ_PRESETS * 2u)                  /* every tone x POLY / LEGATO, serial then on CPU1 */
-#define MP_COUNT (MP_SID_A + MP_SID_B + MP_DRUM + MP_CZ)
+#define MP_FM6_PRESETS 25u                               /* F1..F24, INIT VOICE */
+#define MP_FM6 (2u * MP_FM6_PRESETS * 3u)                /* every preset x POLY / LEGATO / UNISON, serial then on CPU1 */
+#define MP_FM6_SX (2u * 8u)                              /* the bank's 32 voices four at a time, serial then on CPU1 */
+#define MP_COUNT (MP_SID_A + MP_SID_B + MP_DRUM + MP_CZ + MP_FM6 + MP_FM6_SX)
 #define MP_CZ0 (MP_SID_A + MP_SID_B + MP_DRUM)           /* (the first CZ-1 phrase) */
+#define MP_FM60 (MP_CZ0 + MP_CZ)                         /* (the first FM6 phrase) */
 static uint32_t mp_run(uint32_t k, const char **what, uint32_t *a, uint32_t *b)
 {
     if (k < MP_SID_A) {
@@ -188,6 +353,18 @@ static uint32_t mp_run(uint32_t k, const char **what, uint32_t *a, uint32_t *b)
         return mp_sid(model * 7u + 2u, mono, (int32_t)model, env3, batch);
     }
     k -= MP_SID_B;
+    if (k >= MP_DRUM + MP_CZ + MP_FM6) {                 /* FM6: a DX7 bank by SysEx */
+        k -= MP_DRUM + MP_CZ + MP_FM6;
+        uint32_t batch = k / (MP_FM6_SX / 2u), j = k % (MP_FM6_SX / 2u);
+        *what = batch ? "FM6 SysEx bank (CPU1)" : "FM6 SysEx bank"; *a = j; *b = 0;
+        return mp_fm6_sx(j, batch);
+    }
+    if (k >= MP_DRUM + MP_CZ) {                          /* FM6 */
+        k -= MP_DRUM + MP_CZ;
+        uint32_t batch = k / (MP_FM6 / 2u), pi = k % (MP_FM6 / 2u) / 3u, mode = k % 3u;
+        *what = batch ? "FM6 preset (CPU1)" : "FM6 preset"; *a = pi; *b = mode;
+        return mp_fm6(pi, mode, batch);
+    }
     if (k >= MP_DRUM) {                                  /* CZ-1 */
         k -= MP_DRUM;
         uint32_t batch = k / (MP_CZ / 2u), pi = k % (MP_CZ / 2u) / 2u, mono = k % 2u;
@@ -203,7 +380,8 @@ static uint32_t mp_run(uint32_t k, const char **what, uint32_t *a, uint32_t *b)
     return mp_drum(0, (int32_t)(j - MP_DRUM_PRESETS + 4u), batch);                         /* user kits 1, 2 */
 }
 
-/* what the built-in engines rendered (203a5c04, before SID, DRUM and CZ-1 left the firmware), phrase by phrase */
+/* what the built-in engines rendered (SID, DRUM, CZ-1: 203a5c04, before they left the firmware; FM6: 0df43be6, before
+ * it left), phrase by phrase */
 static const uint32_t MP_GOLDEN[MP_COUNT] = {
     0x49b11ea6u, /*   0 SID preset 0 0 */
     0x12c28a5fu, /*   1 SID preset 0 1 */
@@ -651,4 +829,170 @@ static const uint32_t MP_GOLDEN[MP_COUNT] = {
     0xf3603e1fu, /* 443 CZ-1 tone (CPU1) 63 1 */
     0x06d4db46u, /* 444 CZ-1 tone (CPU1) 64 0 */
     0xb565d365u, /* 445 CZ-1 tone (CPU1) 64 1 */
+    0x24337dedu, /* 446 FM6 preset 0 0 */
+    0x08901515u, /* 447 FM6 preset 0 1 */
+    0xbc592c1fu, /* 448 FM6 preset 0 2 */
+    0xd63b81acu, /* 449 FM6 preset 1 0 */
+    0xca65e77eu, /* 450 FM6 preset 1 1 */
+    0x100c8338u, /* 451 FM6 preset 1 2 */
+    0x93a8285cu, /* 452 FM6 preset 2 0 */
+    0x7e15a53du, /* 453 FM6 preset 2 1 */
+    0x99362c94u, /* 454 FM6 preset 2 2 */
+    0x95c58704u, /* 455 FM6 preset 3 0 */
+    0xe1c0b250u, /* 456 FM6 preset 3 1 */
+    0x5cf0638du, /* 457 FM6 preset 3 2 */
+    0x14ec7f30u, /* 458 FM6 preset 4 0 */
+    0xb043f702u, /* 459 FM6 preset 4 1 */
+    0x19ebd1f3u, /* 460 FM6 preset 4 2 */
+    0xee6e89a1u, /* 461 FM6 preset 5 0 */
+    0x7bf6f065u, /* 462 FM6 preset 5 1 */
+    0xd62d5db2u, /* 463 FM6 preset 5 2 */
+    0xeb0d050fu, /* 464 FM6 preset 6 0 */
+    0x9afd481fu, /* 465 FM6 preset 6 1 */
+    0xd90efd84u, /* 466 FM6 preset 6 2 */
+    0x14f32f32u, /* 467 FM6 preset 7 0 */
+    0x7624efc1u, /* 468 FM6 preset 7 1 */
+    0x8f74064au, /* 469 FM6 preset 7 2 */
+    0xa0199f0cu, /* 470 FM6 preset 8 0 */
+    0x65b29c81u, /* 471 FM6 preset 8 1 */
+    0x2ed3d404u, /* 472 FM6 preset 8 2 */
+    0x29bc7a14u, /* 473 FM6 preset 9 0 */
+    0xf3339f08u, /* 474 FM6 preset 9 1 */
+    0x1e725cc8u, /* 475 FM6 preset 9 2 */
+    0xb36ed443u, /* 476 FM6 preset 10 0 */
+    0x7be99bfeu, /* 477 FM6 preset 10 1 */
+    0xd44f1af6u, /* 478 FM6 preset 10 2 */
+    0xd50c4b62u, /* 479 FM6 preset 11 0 */
+    0x4b98cdc3u, /* 480 FM6 preset 11 1 */
+    0x6d88be7au, /* 481 FM6 preset 11 2 */
+    0xbea92acbu, /* 482 FM6 preset 12 0 */
+    0x97855239u, /* 483 FM6 preset 12 1 */
+    0xb1fb7d02u, /* 484 FM6 preset 12 2 */
+    0x52fea2f4u, /* 485 FM6 preset 13 0 */
+    0xdb150ddfu, /* 486 FM6 preset 13 1 */
+    0xbe5da7f6u, /* 487 FM6 preset 13 2 */
+    0x47dddc7cu, /* 488 FM6 preset 14 0 */
+    0xaefc289au, /* 489 FM6 preset 14 1 */
+    0x0ae8c2c0u, /* 490 FM6 preset 14 2 */
+    0x8d0bac34u, /* 491 FM6 preset 15 0 */
+    0xbd16e385u, /* 492 FM6 preset 15 1 */
+    0x4e94066eu, /* 493 FM6 preset 15 2 */
+    0x89c95bbdu, /* 494 FM6 preset 16 0 */
+    0xd0e185ebu, /* 495 FM6 preset 16 1 */
+    0x71d19ad8u, /* 496 FM6 preset 16 2 */
+    0xe2d7bbaeu, /* 497 FM6 preset 17 0 */
+    0xe9c468e6u, /* 498 FM6 preset 17 1 */
+    0x97ebe25du, /* 499 FM6 preset 17 2 */
+    0x7aa2ff01u, /* 500 FM6 preset 18 0 */
+    0x49fdd278u, /* 501 FM6 preset 18 1 */
+    0xc7f2144cu, /* 502 FM6 preset 18 2 */
+    0xadb67c4eu, /* 503 FM6 preset 19 0 */
+    0x4c0ab74du, /* 504 FM6 preset 19 1 */
+    0x768e1936u, /* 505 FM6 preset 19 2 */
+    0xfca2344cu, /* 506 FM6 preset 20 0 */
+    0xc6d55051u, /* 507 FM6 preset 20 1 */
+    0x5d526bd7u, /* 508 FM6 preset 20 2 */
+    0xb240b931u, /* 509 FM6 preset 21 0 */
+    0x5082b849u, /* 510 FM6 preset 21 1 */
+    0x53c508b7u, /* 511 FM6 preset 21 2 */
+    0xeaa829a8u, /* 512 FM6 preset 22 0 */
+    0xe1c10d67u, /* 513 FM6 preset 22 1 */
+    0x001bc2b5u, /* 514 FM6 preset 22 2 */
+    0xef96b1e5u, /* 515 FM6 preset 23 0 */
+    0xba1ba672u, /* 516 FM6 preset 23 1 */
+    0x0b017a4du, /* 517 FM6 preset 23 2 */
+    0x16363bffu, /* 518 FM6 preset 24 0 */
+    0xabfba4bbu, /* 519 FM6 preset 24 1 */
+    0xa89da008u, /* 520 FM6 preset 24 2 */
+    0x24337dedu, /* 521 FM6 preset (CPU1) 0 0 */
+    0x08901515u, /* 522 FM6 preset (CPU1) 0 1 */
+    0xbc592c1fu, /* 523 FM6 preset (CPU1) 0 2 */
+    0xd63b81acu, /* 524 FM6 preset (CPU1) 1 0 */
+    0xca65e77eu, /* 525 FM6 preset (CPU1) 1 1 */
+    0x100c8338u, /* 526 FM6 preset (CPU1) 1 2 */
+    0x93a8285cu, /* 527 FM6 preset (CPU1) 2 0 */
+    0x7e15a53du, /* 528 FM6 preset (CPU1) 2 1 */
+    0x99362c94u, /* 529 FM6 preset (CPU1) 2 2 */
+    0x95c58704u, /* 530 FM6 preset (CPU1) 3 0 */
+    0xe1c0b250u, /* 531 FM6 preset (CPU1) 3 1 */
+    0x5cf0638du, /* 532 FM6 preset (CPU1) 3 2 */
+    0x14ec7f30u, /* 533 FM6 preset (CPU1) 4 0 */
+    0xb043f702u, /* 534 FM6 preset (CPU1) 4 1 */
+    0x19ebd1f3u, /* 535 FM6 preset (CPU1) 4 2 */
+    0xee6e89a1u, /* 536 FM6 preset (CPU1) 5 0 */
+    0x7bf6f065u, /* 537 FM6 preset (CPU1) 5 1 */
+    0xd62d5db2u, /* 538 FM6 preset (CPU1) 5 2 */
+    0xeb0d050fu, /* 539 FM6 preset (CPU1) 6 0 */
+    0x9afd481fu, /* 540 FM6 preset (CPU1) 6 1 */
+    0xd90efd84u, /* 541 FM6 preset (CPU1) 6 2 */
+    0x14f32f32u, /* 542 FM6 preset (CPU1) 7 0 */
+    0x7624efc1u, /* 543 FM6 preset (CPU1) 7 1 */
+    0x8f74064au, /* 544 FM6 preset (CPU1) 7 2 */
+    0xa0199f0cu, /* 545 FM6 preset (CPU1) 8 0 */
+    0x65b29c81u, /* 546 FM6 preset (CPU1) 8 1 */
+    0x2ed3d404u, /* 547 FM6 preset (CPU1) 8 2 */
+    0x29bc7a14u, /* 548 FM6 preset (CPU1) 9 0 */
+    0xf3339f08u, /* 549 FM6 preset (CPU1) 9 1 */
+    0x1e725cc8u, /* 550 FM6 preset (CPU1) 9 2 */
+    0xb36ed443u, /* 551 FM6 preset (CPU1) 10 0 */
+    0x7be99bfeu, /* 552 FM6 preset (CPU1) 10 1 */
+    0xd44f1af6u, /* 553 FM6 preset (CPU1) 10 2 */
+    0xd50c4b62u, /* 554 FM6 preset (CPU1) 11 0 */
+    0x4b98cdc3u, /* 555 FM6 preset (CPU1) 11 1 */
+    0x6d88be7au, /* 556 FM6 preset (CPU1) 11 2 */
+    0xbea92acbu, /* 557 FM6 preset (CPU1) 12 0 */
+    0x97855239u, /* 558 FM6 preset (CPU1) 12 1 */
+    0xb1fb7d02u, /* 559 FM6 preset (CPU1) 12 2 */
+    0x52fea2f4u, /* 560 FM6 preset (CPU1) 13 0 */
+    0xdb150ddfu, /* 561 FM6 preset (CPU1) 13 1 */
+    0xbe5da7f6u, /* 562 FM6 preset (CPU1) 13 2 */
+    0x47dddc7cu, /* 563 FM6 preset (CPU1) 14 0 */
+    0xaefc289au, /* 564 FM6 preset (CPU1) 14 1 */
+    0x0ae8c2c0u, /* 565 FM6 preset (CPU1) 14 2 */
+    0x8d0bac34u, /* 566 FM6 preset (CPU1) 15 0 */
+    0xbd16e385u, /* 567 FM6 preset (CPU1) 15 1 */
+    0x4e94066eu, /* 568 FM6 preset (CPU1) 15 2 */
+    0x89c95bbdu, /* 569 FM6 preset (CPU1) 16 0 */
+    0xd0e185ebu, /* 570 FM6 preset (CPU1) 16 1 */
+    0x71d19ad8u, /* 571 FM6 preset (CPU1) 16 2 */
+    0xe2d7bbaeu, /* 572 FM6 preset (CPU1) 17 0 */
+    0xe9c468e6u, /* 573 FM6 preset (CPU1) 17 1 */
+    0x97ebe25du, /* 574 FM6 preset (CPU1) 17 2 */
+    0x7aa2ff01u, /* 575 FM6 preset (CPU1) 18 0 */
+    0x49fdd278u, /* 576 FM6 preset (CPU1) 18 1 */
+    0xc7f2144cu, /* 577 FM6 preset (CPU1) 18 2 */
+    0xadb67c4eu, /* 578 FM6 preset (CPU1) 19 0 */
+    0x4c0ab74du, /* 579 FM6 preset (CPU1) 19 1 */
+    0x768e1936u, /* 580 FM6 preset (CPU1) 19 2 */
+    0xfca2344cu, /* 581 FM6 preset (CPU1) 20 0 */
+    0xc6d55051u, /* 582 FM6 preset (CPU1) 20 1 */
+    0x5d526bd7u, /* 583 FM6 preset (CPU1) 20 2 */
+    0xb240b931u, /* 584 FM6 preset (CPU1) 21 0 */
+    0x5082b849u, /* 585 FM6 preset (CPU1) 21 1 */
+    0x53c508b7u, /* 586 FM6 preset (CPU1) 21 2 */
+    0xeaa829a8u, /* 587 FM6 preset (CPU1) 22 0 */
+    0xe1c10d67u, /* 588 FM6 preset (CPU1) 22 1 */
+    0x001bc2b5u, /* 589 FM6 preset (CPU1) 22 2 */
+    0xef96b1e5u, /* 590 FM6 preset (CPU1) 23 0 */
+    0xba1ba672u, /* 591 FM6 preset (CPU1) 23 1 */
+    0x0b017a4du, /* 592 FM6 preset (CPU1) 23 2 */
+    0x16363bffu, /* 593 FM6 preset (CPU1) 24 0 */
+    0xabfba4bbu, /* 594 FM6 preset (CPU1) 24 1 */
+    0xa89da008u, /* 595 FM6 preset (CPU1) 24 2 */
+    0x5c529b3fu, /* 596 FM6 SysEx bank 0 0 */
+    0xd554ad45u, /* 597 FM6 SysEx bank 1 0 */
+    0x0d20f51du, /* 598 FM6 SysEx bank 2 0 */
+    0x73e40eb8u, /* 599 FM6 SysEx bank 3 0 */
+    0x31aeb099u, /* 600 FM6 SysEx bank 4 0 */
+    0x33d60df6u, /* 601 FM6 SysEx bank 5 0 */
+    0x6ab552c4u, /* 602 FM6 SysEx bank 6 0 */
+    0x6233c272u, /* 603 FM6 SysEx bank 7 0 */
+    0x5c529b3fu, /* 604 FM6 SysEx bank (CPU1) 0 0 */
+    0xd554ad45u, /* 605 FM6 SysEx bank (CPU1) 1 0 */
+    0x0d20f51du, /* 606 FM6 SysEx bank (CPU1) 2 0 */
+    0x73e40eb8u, /* 607 FM6 SysEx bank (CPU1) 3 0 */
+    0x31aeb099u, /* 608 FM6 SysEx bank (CPU1) 4 0 */
+    0x33d60df6u, /* 609 FM6 SysEx bank (CPU1) 5 0 */
+    0x6ab552c4u, /* 610 FM6 SysEx bank (CPU1) 6 0 */
+    0x6233c272u, /* 611 FM6 SysEx bank (CPU1) 7 0 */
 };
