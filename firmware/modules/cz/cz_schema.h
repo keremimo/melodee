@@ -9,6 +9,7 @@ static const char *const CZS_LINES[] = {"LINE1", "LINE2", "1+2", "1+1"};
 static const char *const CZS_MODES[] = {"OFF", "RING", "NOISE"};
 static const char *const CZS_VWAVES[] = {"TRI", "SAW UP", "SAW DN", "SQR"};
 static const char *const CZS_STAGES[] = {"1", "2", "3", "4", "5", "6", "7", "8", "-"};
+/* (the waves' names whole in their cells where they fit: MOD3_SF2_WHOLE, "Square") */
 static const char *const CZS_CARRIERS[] = {"SAW", "SQUARE", "PULSE", "NULL", "DBL SINE", "SAW-PULS", "MULTISIN", "PULSE2"};
 static const char *const CZS_CARRIERS2[] = {"OFF", "SAW", "SQUARE", "PULSE", "NULL", "DBL SINE", "SAW-PULS", "MULTISIN", "PULSE2"};
 static const char *const CZS_WINDOWS[] = {"OFF", "SAW DN", "TRIANGLE", "TRAPEZ", "HALF SAW", "2 SAW UP", "2 SAW 6", "2 SAW 7"};
@@ -24,16 +25,16 @@ static const mod_sch_param_src CZ_SCH_PARAM[] = {
     {8, MOD3_SK_CALL, MOD3_F_INT, 0, 99, 50, 0, 0, 0, MOD3_SF_DIM, "RATE", 0, 0, 0, 0},
     {9, MOD3_SK_CALL, MOD3_F_INT, 0, 99, 0, 0, 0, 0, MOD3_SF_DIM, "DEPTH", 0, 0, 0, 0},
     {10, MOD3_SK_CALL, MOD3_F_INT, 0, 99, 0, 0, 0, 0, MOD3_SF_DIM, "DELAY", 0, 0, 0, 0},
-    {23, MOD3_SK_CALL, MOD3_F_ENUM, 0, 7, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE", 0, CZS_CARRIERS, 0, 0},
-    {24, MOD3_SK_CALL, MOD3_F_ENUM, 0, 8, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE2", 0, CZS_CARRIERS2, 0, 0},
+    {23, MOD3_SK_CALL, MOD3_F_ENUM, 0, 7, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE", 0, CZS_CARRIERS, 0, 0, MOD3_SF2_WHOLE},
+    {24, MOD3_SK_CALL, MOD3_F_ENUM, 0, 8, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE2", 0, CZS_CARRIERS2, 0, 0, MOD3_SF2_WHOLE},
     {25, MOD3_SK_CALL, MOD3_F_INT, 0, 9, 0, 0, 0, 0, MOD3_SF_DIM, "W.KEY", 0, 0, 0, 0},
     {26, MOD3_SK_CALL, MOD3_F_INT, 0, 9, 0, 0, 0, 0, MOD3_SF_DIM, "A.KEY", 0, 0, 0, 0},
     {27, MOD3_SK_CALL, MOD3_F_INT, 1, 15, 15, 0, 0, 0, MOD3_SF_DIM, "LEVEL", 0, 0, 0, 0},
     {28, MOD3_SK_CALL, MOD3_F_INT, 0, 15, 0, 0, 0, 0, MOD3_SF_DIM, "V.PIT", 0, 0, 0, 0},
     {29, MOD3_SK_CALL, MOD3_F_INT, 0, 15, 0, 0, 0, 0, MOD3_SF_DIM, "V.WAV", 0, 0, 0, 0},
     {30, MOD3_SK_CALL, MOD3_F_INT, 0, 15, 0, 0, 0, 0, MOD3_SF_DIM, "V.AMP", 0, 0, 0, 0},
-    {31, MOD3_SK_CALL, MOD3_F_ENUM, 0, 7, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE", 0, CZS_CARRIERS, 0, 0},
-    {32, MOD3_SK_CALL, MOD3_F_ENUM, 0, 8, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE2", 0, CZS_CARRIERS2, 0, 0},
+    {31, MOD3_SK_CALL, MOD3_F_ENUM, 0, 7, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE", 0, CZS_CARRIERS, 0, 0, MOD3_SF2_WHOLE},
+    {32, MOD3_SK_CALL, MOD3_F_ENUM, 0, 8, 0, 0, 0, 0, MOD3_SF_DIM, "WAVE2", 0, CZS_CARRIERS2, 0, 0, MOD3_SF2_WHOLE},
     {33, MOD3_SK_CALL, MOD3_F_INT, 0, 9, 0, 0, 0, 0, MOD3_SF_DIM, "W.KEY", 0, 0, 0, 0},
     {34, MOD3_SK_CALL, MOD3_F_INT, 0, 9, 0, 0, 0, 0, MOD3_SF_DIM, "A.KEY", 0, 0, 0, 0},
     {35, MOD3_SK_CALL, MOD3_F_INT, 1, 15, 15, 0, 0, 0, MOD3_SF_DIM, "LEVEL", 0, 0, 0, 0},

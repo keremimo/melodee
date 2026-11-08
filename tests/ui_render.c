@@ -1915,9 +1915,7 @@ static void sweep_columns(void)
             cur_name = name;
             for (c = 0; c < 4u; c++) {
                 int16_t *vp;
-                int mod = PG(i).scope == SC_MOD && e != ENGI_CZ;   /* (a synth's page: a copy, its patch put back
-                                                     * after; the CZ-1's not swept, as before: CZ1 / CZ2 WAVE's
-                                                     * "Square" is cut by its column) */
+                int mod = PG(i).scope == SC_MOD;   /* (a synth's page: a copy, its patch put back after) */
                 uint8_t before[MOD3_PATCH_MAX];
                 memcpy(before, patch_of(song.sel), sizeof before);
                 const param_desc_t *d = PG(i).scope == SC_GLOBAL || PG(i).scope == SC_TRACK || PG(i).scope == SC_ENGINE || mod

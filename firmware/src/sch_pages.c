@@ -150,7 +150,7 @@ static struct {
     char nbuf[100];
     int16_t cell;
     uint16_t id;
-    uint8_t eng, flags, ok;
+    uint8_t eng, flags, flags2, ok;
 } sch_col[5] __attribute__((section(".pool")));  /* (the four columns; [4] SEQ > MOTION's lanes: sch_param_desc) */
 static const param_desc_t SCH_STORE_D[4] = {
     {"SLOT", F_INT, 1, UP_SLOTS, 1, 0, 0}, {"STORE", F_INT, 0, 1, 0, 0, 0}, {"SEND", F_INT, 0, 1, 0, 0, 0},
@@ -187,6 +187,7 @@ static const param_desc_t *sch_desc_fill(uint32_t c, uint32_t e, const sch_param
     s->id = p->id;
     s->eng = (uint8_t)e;
     s->flags = p->flags;
+    s->flags2 = p->flags2;
     s->ok = 1;
     return &s->d;
 }
@@ -266,6 +267,14 @@ static int sch_format(const param_desc_t *d, int32_t v, char *val, const char **
         g->pformat(TSEL, patch_of(song.sel), sch_col[c].id, v, val, unit);
         return 1;
     }
+    return 0;
+}
+/* a column whose names its cell shows whole where they fit (MOD3_SF2_WHOLE) */
+static int sch_whole(const param_desc_t *d)
+{
+    for (uint32_t c = 0; c < 4u; c++)
+        if (d == &sch_col[c].d && sch_col[c].ok)
+            return (sch_col[c].flags2 & MOD3_SF2_WHOLE) != 0;
     return 0;
 }
 /* a column of a synth's page drawn dim: the module says its value has no effect now (MOD3_SF_DIM) */

@@ -106,7 +106,7 @@ typedef struct {
     uint8_t kind, fmt;
     int16_t min, max, def;
     uint16_t off;
-    uint8_t shift, width, flags;
+    uint8_t shift, width, flags, flags2;
     uint16_t label, name, names, unit;           /* string offsets (MOD_SCH_NONE: none) */
 } sch_param_t;
 static void sch_param_decode(const uint8_t *b, sch_param_t *p)
@@ -121,6 +121,7 @@ static void sch_param_decode(const uint8_t *b, sch_param_t *p)
     p->shift = b[12];
     p->width = b[13];
     p->flags = b[14];
+    p->flags2 = b[15];
     p->label = (uint16_t)sch_u16(b + 16);
     p->name = (uint16_t)sch_u16(b + 18);
     p->names = (uint16_t)sch_u16(b + 20);

@@ -60,6 +60,9 @@ enum {
 #define MOD3_SF_DIM 32u                          /* the module says when it has no effect (pactive) */
 #define MOD3_SF_NOTIFY 64u                       /* an edit tells the module (patch_changed EDIT with its id) */
 #define MOD3_SF_DESC 128u                        /* its descriptor now is the module's: desc(t, MOD3_DESC_ID + id) */
+/* a parameter's flags2 */
+#define MOD3_SF2_WHOLE 1u                        /* MOD3_F_ENUM: a name shown whole in a page's cell where it fits there
+                                                  * (every name: its first five characters) */
 #define MOD_SCH_F_SNAME 8u                       /* (head flags) a part's sound is called by its patch's own name */
 #define MOD_SCH_F_NOEDIT 4u                      /* (head flags) no EDIT 1 / EDIT 2 pages (its E values are not a panel) */
 #define MOD_SCH_F_PCT127 2u                      /* (head flags) Stage's cards show its 0..127 values as a share (%) */
@@ -143,6 +146,7 @@ typedef struct {
     const char *const *names;                    /* MOD3_F_ENUM: max - min + 1 names */
     const char *unit;
     const char *icon;                            /* (0: its label's picture) */
+    uint8_t flags2;                              /* MOD3_SF2_* */
 } mod_sch_param_src;
 /* ---- the sound designer (Melodee's tone wizard). START asks a question (MOD3_Q_GOAL: a goal, MOD3_G_*) and puts that
  * goal's recipe (the recipe records answering it, in order; a synth without any: the firmware's from its roles), then
@@ -282,7 +286,7 @@ typedef struct {
     uint32_t crc;
 } mod_sch_head;
 _Static_assert(sizeof(mod_sch_head) == MOD_SCH_HEAD, "SCHM head");
-/* a parameter record (28 bytes): id, kind, fmt, min, max, def, off, shift, width, flags, 0, label, name, names,
+/* a parameter record (28 bytes): id, kind, fmt, min, max, def, off, shift, width, flags, flags2, label, name, names,
  * unit, icon (string offsets, MOD_SCH_NONE: none; icon: a label whose picture it has, else its label's), 0 */
 /* a page record (24 bytes): title, widget, flags, id[4], ninst, chip (the title's characters its short name leaves
  * out), istride[4] (a column's id step per instance), inames
@@ -473,6 +477,7 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
         b[12] = p->shift;
         b[13] = p->width;
         b[14] = p->flags;
+        b[15] = p->flags2;
         mod_sch_w16(b + 16, lab);
         mod_sch_w16(b + 18, nam);
         mod_sch_w16(b + 20, nms);

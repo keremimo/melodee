@@ -499,6 +499,21 @@ static const struct { const char *k, *s; } CELL_SHORT[] = {
     {"SECTION", "SECT"}, {"LENGTH", "LEN"}, {"REPEAT", "REP"}, {"JITTER", "JITT"}, {"VIBRATO", "VIB"},
     {"TEMPO", "BPM"}, {"SNAPPY", "SNAP"}, {"SEND 1", "FX 1"}, {"SEND 2", "FX 2"}, {"SEND 3", "FX 3"},
     {"DIFFUSE", "DIFF"}};
+/* a name drawn whole in a knob's cell (draw_column: the text face, else the label face by its ink), 1; else 0 */
+static int cell_whole(const char *name)
+{
+    char lb[12], v[16], u[8];
+    int32_t l, r, w;
+    pv_words("", name, "", lb, v, u);
+    if ((w = text_w(TY_TX, v)) <= COL_W) {
+        text_ink(TY_TX, v, &l, &r);
+        return COL_W / 2 - w / 2 + l >= 0 && COL_W / 2 - w / 2 + r <= COL_W;
+    }
+    text_ink(TY_LB, v, &l, &r);
+    if ((w = text_w(TY_LB, v)) <= COL_W)
+        return COL_W / 2 - w / 2 + l >= 0 && COL_W / 2 - w / 2 + r <= COL_W;
+    return r - l <= COL_W;
+}
 static const char *cell_label(const char *label, int32_t room)
 {
     uint32_t i;
@@ -594,8 +609,16 @@ static void draw_column(uint32_t c, const char *label0, const char *val0, const 
             x = COL_W - 6;
         } else if (vf == TY_TX)                         /* the value rolls */
             x = roll_text(c, vx, ROLL_Y, val, vc);
-        else if (val[0] >= 'A' && val[0] <= 'Z' && val[1] >= 'a' && val[1] <= 'z')   /* a name ("Chorus"): free text */
-            x = cv_free_text(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
+        else if (val[0] >= 'A' && val[0] <= 'Z' && val[1] >= 'a' && val[1] <= 'z') {   /* a name ("Chorus"): free text;
+                                                                                        * its ink fitting, centred by it */
+            int32_t l = 0, r = 0x7FFF;
+            if (vw > room)
+                text_ink(vf, val, &l, &r);
+            if (r - l <= room - uw)
+                x = cv_text_on((COL_W - (r - l)) / 2 - l, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg);
+            else
+                x = cv_free_text(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
+        }
         else
             x = cv_text_fit(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
         if (unit[0])                                    /* the unit on the value's baseline */
@@ -998,6 +1021,9 @@ static void draw_cards(void)
 #endif
                 )
                 str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);
+            else if (d->fmt == F_ENUM && d->names && sch_whole(d) && cell_whole(d->names[clamp(*vp, d->min, d->max)]))
+                str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);   /* (a synth's name whole where it fits:
+                                                                                  * the CZ-1's waves) */
             else if (fx_names(d))                       /* a rack's KNOB 1: the effect's family (its row names it) */
                 str_cpy(val, FX_FAM_NAME[fx_family(*vp)], sizeof val);
         }
