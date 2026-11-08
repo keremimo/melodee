@@ -99,7 +99,7 @@ static void song_project(uint32_t pats, uint32_t density, uint32_t notes, uint32
         char name[16];
         uint32_t k = i % NPART, id;
         snprintf(name, sizeof name, "SOUND %u", (unsigned)(i + 1u));
-        apply_preset_to(&trk[k], 3u + i); song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s));
+        apply_preset_to(&trk[k], 3u + i); song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s, 0));
         if (!(id = song_sound_store(&s))) break;
         chain_config.sound[i % rows][k] = (uint8_t)id; apply_preset_to(&trk[k], k);
     }
@@ -148,7 +148,7 @@ enum { T_KEYS, T_DRUM2, T_OTHER, T_DRUM };           /* tracks: a synth, drums, 
 static uint32_t snap(uint32_t k, const char *name)   /* track k's sound as it is: a sound of the song's */
 {
     song_sound_t s;
-    song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s));
+    song_sound_capture(&s, &trk[k], name); assert(song_sound_valid(&s, 0));
     uint32_t id = song_sound_store(&s); assert(id);
     return id;
 }

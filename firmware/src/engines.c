@@ -6,9 +6,11 @@
 #include "dsp.c"
 #include "audio_batch.h"
 #include "module_presets.h"     /* a synth module's factory presets, in its file (module_store.c reads them) */
+#include "module_schema.h"      /* .. its patch and parameters (schema.c reads them) */
+#include "patch.c"              /* the parts' patches: their engines' bytes */
+#include "synths_phase4.h"      /* TEMPORARY (phase 4: SysEx, the editor): the shipped synths' layouts for that code */
 static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (below: factory preset k's patch) */
 #if MELODEE_PROPHET
-#include "p5_parts.h"           /* the parts' Prophet programs (the firmware's: the engine reads them), the voice count */
 #include "prophet_programs.c"   /* Sequential's programs, the presets made from them, a program accepted on a part */
 #if MELODEE_P5_BUILTIN
 #include "eng_prophet_test.c"   /* PROPHET: Sequential's Rev 4 (a synth module on the device: firmware/modules/prophet) */
@@ -16,7 +18,6 @@ static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (be
 #error "MELODEE_PROPHET_PROTOTYPE plays the built-in Prophet as engine 0: MELODEE_P5_BUILTIN=1"
 #endif
 #endif
-#include "cz_parts.h"           /* the parts' CZ-1 tones (the firmware's: the engine reads them) */
 #if MELODEE_CZ_BUILTIN || MELODEE_LEGACY_EXTRAS
 #include "eng_phase.c"          /* PHASE (retired), the core CZ-1 keeps */
 #endif
@@ -42,7 +43,6 @@ static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (be
 #if MELODEE_LEGACY_EXTRAS
 #include "eng_noise.c"
 #endif
-#include "fm6_parts.h"          /* the parts' FM6 voices (the firmware's: the engine reads them), the 32 algorithms */
 #include "fm6_voices.c"         /* the function settings, factory voices, patch formats and writes, DX7 SysEx in */
 #if MELODEE_FM6_BUILTIN
 #include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c; a synth module on the
@@ -217,6 +217,37 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED,   /* none is loaded */
 };
 
+#if MELODEE_SCH_BUILTIN
+/* the built-in engines' schemas (host builds: the descriptions their modules' files are built from; schema.c writes the
+ * same SCHM bytes from them) */
+#if MELODEE_SID_BUILTIN
+#include "../modules/sid/sid_schema.h"
+#endif
+#if MELODEE_DRUM_BUILTIN
+#include "../modules/drum/drum_schema.h"
+#endif
+static const mod_sch_src *sch_builtin_src(uint32_t e)
+{
+    if (e >= NENGINES || ENGINES[e] == &ENG_RETIRED)
+        return 0;
+#if MELODEE_P5_BUILTIN
+    if (ENGINES[e] == &ENG_P5_TEST) return &P5_SCHEMA;
+#endif
+#if MELODEE_CZ_BUILTIN
+    if (ENGINES[e] == &ENG_CZ) return &CZ_SCHEMA;
+#endif
+#if MELODEE_FM6_BUILTIN
+    if (ENGINES[e] == &ENG_FM6) return &FM6_SCHEMA;
+#endif
+#if MELODEE_SID_BUILTIN
+    if (ENGINES[e] == &ENG_SID) return &SID_SCHEMA;
+#endif
+#if MELODEE_DRUM_BUILTIN
+    if (ENGINES[e] == &ENG_DRUM) return &DRUM_SCHEMA;
+#endif
+    return 0;
+}
+#endif
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
 static inline uint32_t eng_idx(uint32_t e) { return e < NENGINES ? e : 0u; }
 static const engine_t *eng_of(uint32_t e) { return ENGINES[eng_idx(e)]; }
@@ -337,9 +368,12 @@ static uint32_t trk_def_preset(uint32_t k) { return k < NPART ? TRK_DEF[k][1] : 
 #if MELODEE_MODULES
 #include "eng_module.c"         /* synth modules: engines loaded into SRAM (module_store.c keeps them) */
 #include "eng_module_main.c"    /* (their lists, loading, registration: main loop) */
+#include "schema.c"             /* a synth's schema (its file's or built in), the patches by it */
 #define SHIPPED_OK() mod_shipped_ok()  /* the synth modules the image needs are on the device (else: setup) */
 #else
 #define SHIPPED_OK() 1
+static int mod_idle(uint32_t e) { (void)e; return 0; }
+#include "schema.c"
 static const char *eng_name(uint32_t e) { return ENGINES[e % NENGINES]->name; }
 static uint32_t eng_npresets(uint32_t e) { return ENGINES[e % NENGINES]->npresets; }
 static void mod_want(uint32_t e) { (void)e; }

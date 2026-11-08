@@ -187,13 +187,13 @@ static uint32_t active_voices(const track_t *t)
 static void prophet_allocation(void)
 {
     setup_case(0,0,0);
-    memset(p5_ready,0,sizeof p5_ready);
+    p5_parts_init();
     host_preset(&trk[0],ENGI_PROPHET,0);
     audio_worker_online=0;
     for(uint32_t i=0;i<8;i++)trk_note_on(&trk[0],48+i,100);
     assert(active_voices(&trk[0])==5 && voices_busy()==15);
     setup_case(0,0,0);
-    memset(p5_ready,0,sizeof p5_ready);
+    p5_parts_init();
     host_preset(&trk[0],ENGI_PROPHET,0);
     audio_worker_online=1;
     for(uint32_t i=0;i<8;i++)trk_note_on(&trk[0],48+i,100);
@@ -203,7 +203,7 @@ static void prophet_allocation(void)
     for(uint32_t i=1;i<NPART;i++)assert(active_voices(&trk[i])==1);
     /* Native factory unison stays at its requested five; an explicit count
      * of eight is allowed only with an online worker. */
-    setup_case(0,0,0);memset(p5_ready,0,sizeof p5_ready);
+    setup_case(0,0,0);p5_parts_init();
     host_preset(&trk[0],ENGI_PROPHET,0);
     p5_patch_t *p=p5_patch_of(&trk[0]);p->raw[P5_UNISON]=1;p->raw[P5_UNISON_COUNT]=5;
     p5_track_accept(&trk[0]);trk_note_on(&trk[0],60,100);
@@ -222,7 +222,7 @@ static void prophet_allocation(void)
 static void prophet_retire(void)
 {
     setup_case(0,0,0);
-    memset(p5_ready,0,sizeof p5_ready);
+    p5_parts_init();
     audio_worker_online=1;serial_render=0;
     host_preset(&trk[0],ENGI_PROPHET,0);
     for(uint32_t i=0;i<8;i++)trk_note_on(&trk[0],48+i*3,100);
@@ -249,7 +249,7 @@ static void prophet_retire(void)
 static void prophet_case(int parallel,uint32_t preset,uint32_t mode,uint32_t voices,int mixed)
 {
     setup_case(0,0,0);
-    memset(p5_ready,0,sizeof p5_ready);
+    p5_parts_init();
     audio_worker_online=1;
     serial_render=!parallel;
     host_preset(&trk[0],ENGI_PROPHET,preset);
@@ -423,7 +423,7 @@ static int dual_core_suite(void)
     assert(AW_LOAD(&audio_worker.request) == 0);
     assert(!pthread_cancel(thread));
     assert(!pthread_join(thread, 0));
-    printf("dual-core: 1536 FM6 + %u Prophet serial/concurrent cases identical; %u FM6 / %u Prophet pairs; eight-voice allocation, retire mid-song, busy/offline/wrap ok\n", prophet_cases,fm6_pairs,p5_pairs);
+    printf("dual-core: 1536 FM6 + %u Prophet serial/concurrent cases identical; %u FM6 / %u Prophet pairs; eight-voice allocation, retire mid-song, busy/offline/wrap ok\n", prophet_cases,eng_paired,p5_pairs);
     return 0;
 }
 

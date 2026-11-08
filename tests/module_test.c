@@ -127,9 +127,13 @@ static uint32_t mpr_diff(int pick, const char *how)
                 engine_load_of(t, e, k);
                 uint8_t pe[2] = {t->preset, t->eng_req}, cp[2] = {(uint8_t)cz_user_pick[1], (uint8_t)(cz_user_pick[1] >> 8)};
                 h = mpr_fnv(pe, 2, mpr_fnv(t->p, sizeof t->p, 0x811C9DC5u));
-                if (e == ENGI_PROPHET) h = mpr_fnv(p5_patch_of(t), sizeof(p5_patch_t), h);
-                if (e == ENGI_CZ) h = mpr_fnv(cz_patch_of(1)->raw, CZ_BYTES, h);
-                if (e == ENGI_FM6) h = mpr_fnv(&fm6_on[1], 1, mpr_fnv(fm6_patch_of(1), FP_SIZE + 1u, h));
+                if (e == ENGI_PROPHET) h = mpr_fnv(patch_of(1), sizeof(p5_patch_t), h);
+                if (e == ENGI_CZ) h = mpr_fnv(patch_of(1), CZ_BYTES, h);
+                if (e == ENGI_FM6) {                    /* (as 1.x kept it: the voice unpacked, then its switches) */
+                    uint8_t v[FP_SIZE + 1u];
+                    fm6_voice_of(1, v);
+                    h = mpr_fnv(patch_of(1) + FM6_B_ON, 1, mpr_fnv(v, FP_SIZE + 1u, h));
+                }
                 if (mpr_fnv(cp, 2, h) != MPR_PICK[j]) {
                     if (!bad) printf("  %s: engine %u preset %u picked: the part differs\n", how, e, k);
                     bad++;
@@ -381,13 +385,13 @@ int main(int argc, char **argv)
         for (uint32_t k = 0; k < NMOD; k++) mod_delete(k);
         ENGINES[3] = ENGINES[ENGI_DRUM] = ENGINES[ENGI_CZ] = ENGINES[ENGI_FM6] = ENGINES[ENGI_PROPHET] =
             &ENG_RETIRED;                                /* (the numbers free for the modules) */
-        uint32_t ns = make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
+        uint32_t ns = make_file(nf[0], 3, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
         mod_file3_t sid_head;
         memcpy(&sid_head, nf[0], sizeof sid_head);
-        uint32_t nd = make_file(nf[1], ENGI_DRUM, "DRUM", 48000, 12, MOD3_LEGACY_KEY, MP_DRUM_PRESETS, "drum");
-        uint32_t nc = make_file(nf[2], ENGI_CZ, "CZ-1", 9000, 12, MOD3_LEGACY_KEY, MP_CZ_PRESETS, "cz");
-        uint32_t nm = make_file(nf[3], ENGI_FM6, "FM6", 20000, 12, MOD3_LEGACY_KEY, MP_FM6_PRESETS, "fm6");
-        uint32_t np = make_file(nf[4], ENGI_PROPHET, "PROPHET", 16000, 12, MOD3_LEGACY_KEY, MP_P5_PRESETS, "prophet");
+        uint32_t nd = make_file(nf[1], ENGI_DRUM, "DRUM", 48000, 12, MOD3_PADS_KEY, MP_DRUM_PRESETS, "drum");
+        uint32_t nc = make_file(nf[2], ENGI_CZ, "CZ-1", 9000, 12, 0, MP_CZ_PRESETS, "cz");
+        uint32_t nm = make_file(nf[3], ENGI_FM6, "FM6", 20000, 12, 0, MP_FM6_PRESETS, "fm6");
+        uint32_t np = make_file(nf[4], ENGI_PROPHET, "PROPHET", 16000, 12, 0, MP_P5_PRESETS, "prophet");
         bad += check("the device build's module files carry their factory presets (build/modules/*.mmod: a PRST chunk "
                      "each, tools/mod_build.py)",
                      sid_head.flags == MOD3_FILE_CHUNKS && ((const mod_file3_t *)(const void *)nf[1])->flags &&
@@ -525,7 +529,7 @@ int main(int argc, char **argv)
                      ENGINES[3]->wclass == 4 && ENGINES[ENGI_DRUM]->wclass == 5 && !ENGINES[ENGI_MIDI]->caps);
         {   /* the Prophet's bend: the wheel's target from its program's BEND (voice.c trk_bend_own), as before */
             host_preset(&trk[2], ENGI_PROPHET, 3);
-            p5_patch_of(&trk[2])->raw[P5_BEND] = 7;
+            patch_of(2)[P5_BEND] = 7;
             trk[2].bend_raw = -4096;
             int32_t pb[CTL];
             track_render(&trk[2], pb, CTL);
@@ -539,36 +543,36 @@ int main(int argc, char **argv)
          * another layout (its key), a newer host table */
         int rk = 0;
         for (uint32_t w = 0; w < 4u; w++) {
-            uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
-            make_other(nf[0], w == 0 ? 1u : w == 1 ? 2u : MOD3_ABI, w == 2 ? MOD3_LEGACY_KEY + 1u : MOD3_LEGACY_KEY,
+            uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
+            make_other(nf[0], w == 0 ? 1u : w == 1 ? 2u : MOD3_ABI, w == 2 ? MOD3_PADS_KEY + 1u : 0u,
                        w == 3 ? MOD3_HOST + 1u : MOD3_HOST);
             rk += put(6, nf[0], nk) == -2 && !st_exists(ST_MFILE0 + 6);
         }
         bad += check("another firmware's module (ABI 1, ABI 2, another legacy key, a newer host table): refused, not published",
                      rk == 4);
-        uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY + 1u, MP_SID_PRESETS, "sid");
+        uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, MOD3_PADS_KEY + 1u, MP_SID_PRESETS, "sid");
         /* .. and one stored before the firmware changed (a record already there): known by engine and name, not
          * played, not counted as the engine's module; the installer (web/fm1mods.js) replaces it in its slot */
         int shipped = SHIPPED_OK();
         int saved = !st_project_save(ST_MFILE0 + 6, nf[0], nk);
         int rs6 = mod_catalog(6);
-        make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
+        make_file(nf[0], 3, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
         make_other(nf[0], 2u, 0x6b73df3fu, 0);          /* (b8b3e092's native SID: ABI 2, its layout key at 52) */
         int saved2 = !st_project_save(ST_MFILE0 + 0, nf[0], nk), rs0 = mod_catalog(0);
-        make_file(nf[0], 3, "SID", 12000, 12, MOD3_LEGACY_KEY, MP_SID_PRESETS, "sid");
-        make_other(nf[0], MOD3_ABI, MOD3_LEGACY_KEY, MOD3_HOST + 1u);
+        make_file(nf[0], 3, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
+        make_other(nf[0], MOD3_ABI, 0u, MOD3_HOST + 1u);
         int saved3 = !st_project_save(ST_MFILE0 + 1, nf[0], nk), rs1 = mod_catalog(1);
         bad += check("stored modules of another firmware: an older one (another legacy key, ABI 2) MS_STALE, a newer one "
                      "MS_NEWER; each keeps its engine and name, none listed or played",
                      saved && rs6 == MS_STALE && mods[6].engine == 3 && !strcmp(mods[6].name, "SID") &&
-                     mods[6].key == MOD3_LEGACY_KEY + 1u && saved2 && rs0 == MS_STALE && mods[0].abi == 2u &&
+                     mods[6].key == MOD3_PADS_KEY + 1u && saved2 && rs0 == MS_STALE && mods[0].abi == 2u &&
                      mods[0].key == 0x6b73df3fu && saved3 && rs1 == MS_NEWER && mods[1].host == MOD3_HOST + 1u &&
                      !strcmp(mods[1].name, "SID") && mod_slot_of(3) == 4 && plays(3, &mod_sid));
         (void)mod_delete(0);
         (void)mod_delete(1);
         bad += check("the slots report what the installer compares: each file's CRC and layout key (editor command 84 op 5)",
                      mods[4].crc == sid_head.crc && mods[4].len == sid_head.total &&
-                     mods[5].key == MOD3_LEGACY_KEY && mods[4].key == MOD3_LEGACY_KEY && mods[5].abi == MOD3_ABI);
+                     mods[5].key == MOD3_PADS_KEY && mods[4].key == 0u && mods[5].abi == MOD3_ABI);
         (void)mod_delete(6);
         bad += check("SID, DRUM, CZ-1, FM6 and the Prophet on the device: the start asks for no setup (main.c, ui_boot.c)",
                      shipped);
@@ -626,9 +630,9 @@ int main(int argc, char **argv)
             track_render(&trk[1], pb, CTL);
             for (uint32_t i = 0; i < CTL; i++) p5_gone &= MELODEE_P5_BUILTIN || pb[i] == 0;
             eng_preset_name(ENGI_PROPHET, 5, gone_nm, sizeof gone_nm);
-            p5_preset_loaded(&trk[1], 7);                /* (a program loaded, edited: the firmware's) */
-            p5_edit_value(&trk[1], P5_CUTOFF, 33);
-            p5_gone &= p5_patch_of(&trk[1])->raw[P5_CUTOFF] == 33 && nm[0] && strcmp(nm, "-") &&
+            p5_preset_loaded(&trk[1], 7);                /* (a program loaded, its bytes kept: the firmware's) */
+            patch_of(1)[P5_CUTOFF] = 33;
+            p5_gone &= patch_of(1)[P5_CUTOFF] == 33 && nm[0] && strcmp(nm, "-") &&
                        !strcmp(gone_nm, "-") && !eng_npresets(ENGI_PROPHET);
             bad += check("the Prophet at power-on: listed unloaded, loaded when wanted, first; without its module its "
                          "tracks keep 19 and go silent, its parts' programs stay editable, its factory presets go with its "

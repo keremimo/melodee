@@ -35,12 +35,12 @@
 #define BANK_MOTION_OFF (BANK_CHAIN_OFF + CHAIN_LEGACY_ROWS * PROJ_TRK)
 #define BANK_FN_OFF (BANK_MOTION_OFF + MOTION_MAX)
 #define BANK_FN_MAGIC 0x31364E46u
-_Static_assert(BANK_FN_OFF + 4u + PROJ_TRK * FM6_NFN <= BANK_STORE_SIZE - 4u, "bank project extent");
+_Static_assert(BANK_FN_OFF + 4u + PROJ_TRK * PROJ_FN_BYTES <= BANK_STORE_SIZE - 4u, "bank project extent");
 #define BANKL_TIMING_OFF (BANK_ACTIVE_OFF + NTRK)
 #define BANKL_CHAIN_OFF (BANKL_TIMING_OFF + NTRK * NPAT_V1 * BANK_TIME_SIZE)
 #define BANKL_MOTION_OFF (BANKL_CHAIN_OFF + CHAIN_LEGACY_ROWS * NTRK)
 #define BANKL_FN_OFF (BANKL_MOTION_OFF + MOTION_MAX)
-#define BANKL_REC_OFF (BANKL_FN_OFF + 4u + PROJ_TRK * FM6_NFN)
+#define BANKL_REC_OFF (BANKL_FN_OFF + 4u + PROJ_TRK * PROJ_FN_BYTES)
 #define BANKL_TRK_OFF (BANKL_REC_OFF + PROJ_REC_DIR_BYTES)
 #define BANKL_TRK_BYTES (P_COUNT + 1u)                  /* the parameters + 64, the MPC octave + 3 */
 #define BANKL_STEPS_OFF (BANKL_TRK_OFF + NMIDI * BANKL_TRK_BYTES)
@@ -52,7 +52,7 @@ _Static_assert(sizeof(chain_fx_t) == 3u, "song punch wire event");
 #define BANKP_CHAIN_OFF (BANKL_TIMING_OFF + NTRK * NPAT * BANK_TIME_SIZE)
 #define BANKP_MOTION_OFF (BANKP_CHAIN_OFF + CHAIN_LEGACY_ROWS * NTRK)
 #define BANKP_FN_OFF (BANKP_MOTION_OFF + MOTION_MAX)
-#define BANKP_REC_OFF (BANKP_FN_OFF + 4u + PROJ_TRK * FM6_NFN)
+#define BANKP_REC_OFF (BANKP_FN_OFF + 4u + PROJ_TRK * PROJ_FN_BYTES)
 #define BANKP_TRK_OFF (BANKP_REC_OFF + BANKP_REC_BYTES)
 #define BANKP_STEPS_OFF (BANKP_TRK_OFF + NMIDI * BANKL_TRK_BYTES)
 /* the FBKL family's layout: FBKL..FBKO (NPAT_V1 a track, one mask byte) or FBKP (NPAT, two) */
@@ -157,8 +157,12 @@ static int bankl_pack_tail(uint8_t *raw, const project_t *q)   /* runtime only (
         out[2] = (uint8_t)sizeof(song_sound_t); out[3] = (uint8_t)(sizeof(song_sound_t) >> 8);
         for (uint32_t j = 0; j < bank_sound_count; j++) {
             const song_sound_t *sound = song_sound_get(bank_sound_ids[j]);
-            if (!sound || !song_sound_valid(sound)) { motion_unguard(f); return 0; }
-            memcpy(out + BANKO_HEAD_BYTES + j * sizeof *sound, sound, sizeof *sound);
+            if (!sound || !song_sound_valid(sound, 0)) { motion_unguard(f); return 0; }
+            {
+                song_sound_t st;
+                song_sound_stored(&st, sound);         /* (its synth's store form) */
+                memcpy(out + BANKO_HEAD_BYTES + j * sizeof *sound, &st, sizeof st);
+            }
         }
         for (uint32_t r = 0; r < chain_config.count; r++) for (uint32_t k = 0; k < NTRK; k++) {
             uint32_t src = cap_map(k), id = src < NTRK ? chain_config.sound[r][src] : 0;
@@ -337,8 +341,8 @@ static int bank_tail_common(const uint8_t *raw, uint32_t motion_off, uint32_t fn
         memcpy(&m, raw + BT(fn_off), 4);
         if (m == BANK_FN_MAGIC) {
             const uint8_t *f = raw + BT(fn_off) + 4u;
-            for (k = 0; k < PROJ_TRK; k++)
-                if (!fm6_fn_ok(f + k * FM6_NFN))
+            for (k = 0; k < PROJ_TRK; k++)               /* (as 1.x checked them: synths_phase4.h) */
+                if (!p4_voice_fn_valid(f + k * PROJ_FN_BYTES))
                     return 0;
             memcpy(proj_scratch.fm6_fn, f, sizeof proj_scratch.fm6_fn);
             proj_scratch.fm6_fn_ok = 1;
@@ -401,7 +405,7 @@ static int bankl_tail_valid(const uint8_t *raw)
             if (!any) return 0;
         }
         for (uint32_t j = 0; j < count; j++)
-            if (!used[j] || !song_sound_valid((const song_sound_t *)(in + BANKO_HEAD_BYTES + j * size))) return 0;
+            if (!used[j] || !song_sound_valid((const song_sound_t *)(in + BANKO_HEAD_BYTES + j * size), 1)) return 0;
     }
     uint32_t pos = BT(bank_steps_off());
     if (!bank_song64 && proj_scratch.parts <= PROJ_TRK) return 0;
@@ -538,6 +542,8 @@ static void bankl_restore_tail(const uint8_t *raw)
         song_sound_count = in[0];
         memcpy(chain_config.sound, in + 4u, CHAIN_ROWS * NTRK);
         memcpy(song_sound_pool(), in + BANKO_HEAD_BYTES, song_sound_count * sizeof(song_sound_t));
+        for (uint32_t j = 0; j < song_sound_count; j++)
+            song_sound_ram(song_sound_pool() + j);   /* (its synth's own bytes) */
     } else { song_sound_count = 0; resource_release(RES_SONG_SOUNDS); }
     if (bank_patterns) memcpy(pattern_sound, raw + bank_pattern_off(), sizeof pattern_sound);
     song_base_reserved = 0;

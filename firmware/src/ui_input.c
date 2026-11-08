@@ -1652,29 +1652,17 @@ static void edit_param(uint32_t slot, int32_t steps)
        ((uint32_t)(vp-song.g)-G_MFXTYPE)%FX_PARAMS==0u){
         uint32_t flags=motion_guard();shared_fx_select(song.g,((uint32_t)(vp-song.g)-G_MFXTYPE)/FX_PARAMS,v);motion_unguard(flags);
     }else *vp = (int16_t)v;
-    if(pg->scope==SC_P5){
-        uint8_t old[MO_NATIVE_N];uint32_t f=motion_guard();
-        motion_native_peek(TSEL,old);p5_edit_value(TSEL,pg->id[slot],p5_panel_raw(TSEL,pg->id[slot],v));native_motion(old);
-        motion_unguard(f);return;
-    }
-    if(pg->scope==SC_P5STORE){p5_store_slot=(int16_t)v;return;}
-    if (pg->scope == SC_CZ1) {                           /* (a copy of the tone's value: written back there) */
-        uint8_t raw[CZ_BYTES], old[MO_NATIVE_N];
-        uint32_t tr = song.sel % NTRK, f = motion_guard();
-        motion_native_peek(TSEL, old);
-        if (cz_ed_put(tr, pg->id[slot], (uint32_t)v, raw)) {
-            if (!momentary.active) cz_compare_take(tr);
-            memcpy(cz_patch_of(tr)->raw, raw, 128u);
-            native_motion(old);
-        }
-        motion_unguard(f);
-        return;
-    }
-    if (pg->scope == SC_FM6 || pg->scope == SC_FMOP) {   /* (a copy of FM6's value: written back there) */
+    if (pg->scope == SC_MOD) {                           /* a synth's own page (a copy: written into its patch) */
         uint8_t old[MO_NATIVE_N];
-        uint32_t f = motion_guard();
+        uint32_t f;
+        if (pg->graph == GR_STORE && sch_pg_index(pg) < SCH_PG_MAX) {   /* (STORE's slot) */
+            if (!slot)
+                sch_store_slot[eng_idx(TSEL->eng_req)] = (uint16_t)(v - 1);
+            return;
+        }
+        f = motion_guard();
         motion_native_peek(TSEL, old);
-        fm6_page_put(pg, slot, v);
+        sch_page_put(pg, slot, v, !momentary.active);
         native_motion(old);
         motion_unguard(f);
         return;
@@ -1704,34 +1692,6 @@ static void edit_param(uint32_t slot, int32_t steps)
         scale_share(TSEL);
 }
 
-/* CZ TOOLS 1 > 2 / 2 > 1: line src's wave, window, key follow, level, velocity and envelopes over the other
- * line (Casio's 57-byte line block); MOD stays line 1's. Undoable as a sound load */
-static void cz_line_copy(track_t *t, uint32_t src)
-{
-    uint8_t *b = cz_patch_of(trk_index(t))->raw;
-    uint32_t s = src ? 71u : 14u, d = src ? 14u : 71u, mod = b[d + 1u] & 0x38u;
-    cz_compare_take(trk_index(t));
-    load_begin(t, UNDO_SOUND);
-    fm1_irq_off();
-    memcpy(b + d, b + s, 57u);
-    b[d + 1u] = (uint8_t)((b[d + 1u] & ~0x38u) | mod);
-    fm1_irq_on();
-    load_end(t);
-}
-
-/* CZ TOOLS COMP: the tone before the first edit and the edited one change places; 0 = nothing edited */
-static int cz_compare_swap(uint32_t tr)
-{
-    cz_patch_t x = (*cz_patch_of(tr % NTRK));
-    if (cz_compare_tr != tr % NTRK + 1u)
-        return 0;
-    fm1_irq_off();
-    (*cz_patch_of(tr % NTRK)) = cz_compare;
-    fm1_irq_on();
-    cz_compare = x;
-    return 1;
-}
-
 /* OCT+ on an action page: the picked action. A load stays picked (browse and load again); the others
  * are dropped once done. Flash writes only while stopped; over the user's data: the dialog */
 static void act_do(void)
@@ -1739,23 +1699,49 @@ static void act_do(void)
     uint32_t c = act_col(), id, k = (uint32_t)song.g[G_SLOT] - 1u;
     if (!c--)
         return;
-    if(cur_page()->scope==SC_P5STORE){
-        uint32_t slot=(uint32_t)p5_store_slot-1u;
-        if(c==1u){if(transport_busy())ui_message("STOP TO SAVE");else if(up_used(slot) || up_old(slot))confirm_open(CF_OVR_USER,slot);else name_open(NK_USER_SAVE,slot);}
-        else if(c==2u)p5_send(song.sel);
-        else {load_begin(TSEL,UNDO_SOUND);panic_req|=1u<<song.sel;fm1_irq_off();p5_patch_init(p5_patch_of(TSEL));p5_track_accept(TSEL);fm1_irq_on();load_end(TSEL);ui_message("PROPHET INIT");}
-        ui.act=0;return;
+    if (cur_page()->graph == GR_STORE) {                 /* a synth's STORE: 1 STORE, 2 SEND, 3 INIT */
+        uint32_t e = eng_idx(TSEL->eng_req), slot = sch_store_slot[e] % UP_SLOTS, how = sch_store_how(cur_page());
+        if (c == 1u) {
+            if (transport_busy()) ui_message("STOP TO SAVE");
+            else if (up_used(slot) || up_old(slot)) confirm_open(CF_OVR_USER, slot);
+            else if (how & MOD3_ST_NAMED) patch_store_named(slot);   /* (by the patch's own name: no NAME screen) */
+            else name_open(NK_USER_SAVE, slot);
+        } else if (c == 2u) {
+            p4_send(e, song.sel);                        /* TEMPORARY (synths_phase4.h: the SysEx out) */
+        } else if (c == 3u) {
+            char m[MOD_SCH_NAME + 8u];
+            if (!(how & MOD3_ST_NOUNDO)) { load_begin(TSEL, UNDO_SOUND); panic_req |= (uint8_t)(1u << song.sel); }
+            fm1_irq_off();
+            patch_init_sound(song.sel % NTRK, e);
+            fm1_irq_on();
+            if (!(how & MOD3_ST_NOUNDO)) load_end(TSEL);
+            sch_store_init_msg(cur_page(), m, sizeof m);
+            ui_message(m);
+        }
+        ui.act = 0;
+        return;
     }
-    if (cur_page()->graph == GR_CZTOOLS) {               /* CZ-1: NAME, copy a line over the other, COMPARE */
-        uint32_t tr = song.sel % NTRK;
+    if (cur_page()->graph == GR_TOOLS) {                 /* a synth's actions: NAME, COMPARE, its own */
+        uint32_t tr = song.sel % NTRK, id = sch_col_id(cur_page(), c);
         if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
-        if (c == 0u) {
-            name_open(NK_CZ_NAME, tr);
-        } else if (c < 3u) {
-            cz_line_copy(TSEL, c == 1u ? 0u : 1u);
-            ui_message(c == 1u ? "LINE 1 > 2" : "LINE 2 > 1");
+        if (id == MOD3_A_NAME) {
+            name_open(NK_PATCH_NAME, tr);
+        } else if (id == MOD3_A_COMPARE) {
+            int swapped;
+            fm1_irq_off();
+            swapped = patch_compare_swap(tr);
+            fm1_irq_on();
+            ui_message(swapped ? "COMPARE / EDIT" : "NO EDITS");
         } else {
-            ui_message(cz_compare_swap(tr) ? "COMPARE / EDIT" : "NO EDITS");
+            char m[24];
+            patch_compare_take(tr);
+            load_begin(TSEL, UNDO_SOUND);
+            fm1_irq_off();
+            sch_page_act(cur_page(), c);
+            fm1_irq_on();
+            load_end(TSEL);
+            sch_param_name(eng_idx(TSEL->eng_req), id, m, sizeof m);
+            ui_message(m);
         }
         ui.act = 0;
         ui.force = 1;
@@ -1768,19 +1754,6 @@ static void act_do(void)
         return;
     }
 #endif
-    if (cur_page()->graph == GR_FMSTORE) {                /* FM6: 1 STORE (into fm6_bslot), 2 SEND, 3 INIT */
-        if (c == 1u) {
-            if (transport_busy()) ui_message("STOP TO SAVE");
-            else if (up_used(fm6_bslot) || up_old(fm6_bslot)) confirm_open(CF_OVR_USER, fm6_bslot);
-            else fm6_store(fm6_bslot);
-        }
-        else if (c == 2u)
-            fm6_send();
-        else if (c == 3u)
-            fm6_init_voice();
-        ui.act = 0;
-        return;
-    }
     if (cur_page()->graph == GR_USER) {                   /* 1 LOAD, 2 ERASE, 3 SAVE (the NAME screen first) */
         if (c > 1u)
             ui.act = 0;
@@ -2310,8 +2283,8 @@ static uint32_t fx_slot_page(uint32_t shared, uint32_t r)
 {
     uint32_t i, id = (shared ? G_MFXMIX : P_FXMIX) + r * FX_PARAMS;
     for (i = 0; i < NPAGES; i++)
-        if (PAGES[i].fam == FAM_FX && PAGES[i].graph == GR_NONE && (PAGES[i].scope == SC_GLOBAL) == (shared != 0u) &&
-            PAGES[i].id[0] == id)
+        if (PG(i).fam == FAM_FX && PG(i).graph == GR_NONE && (PG(i).scope == SC_GLOBAL) == (shared != 0u) &&
+            PG(i).id[0] == id)
             return i;
     return NPAGES;
 }
@@ -2456,7 +2429,7 @@ static int bulk_jog(int32_t delta)
     if(!bulk.on||bulk.on==2u){bulk.anchor=(uint16_t)cur;bulk.engine=(uint8_t)library_engine();bulk.track=song.sel;bulk.pattern=TSEL->pattern;bulk.generation=TSEL->pattern_gen;}
     bulk.on=1;uint32_t limit=slots?UP_SLOTS:step_pattern_len(TSEL);
     uint32_t to=(uint32_t)clamp((int32_t)cur+delta,0,(int32_t)limit-1);
-    if(slots==SK_FM6)fm6_bslot=(uint16_t)to;else if(slots==SK_P5)p5_store_slot=(uint16_t)(to+1u);else if(slots)ui.uslot=(uint16_t)to;else cursor_set((int32_t)to);
+    if(slots==SK_STORE)sch_store_slot[eng_idx(TSEL->eng_req)]=(uint16_t)to;else if(slots)ui.uslot=(uint16_t)to;else cursor_set((int32_t)to);
     bulk.end=(uint16_t)to;ui.bulk_hold=0;oct_eat|=2u;ui.oct_t0|=2u;ui.force=1;ui_message(slots?"PRESETS SELECTED":"Moving..");return 1;
 }
 static int song_range_jog(int32_t delta)
@@ -2934,7 +2907,7 @@ static void ui_input(void)
     if (lytap)                                          /* a layer's button acts on release (held: the layer) */
         layer_tap(lytap);
     if (seq == BT_HOLD) {                               /* SEQ held: PATTERNS, the song under it (SONG: SELECT) */
-        for (k = 0; k < NPAGES; k++) if (PAGES[k].graph == GR_PATGRID) break;
+        for (k = 0; k < NPAGES; k++) if (PG(k).graph == GR_PATGRID) break;
         ui.home = 0; ui.page = (uint8_t)k; ui.fam_last[FAM_SEQ] = ui.page; page_entered();
     } else if (seq == BT_TAP) {
         open_family(FAM_SEQ);
@@ -3137,8 +3110,8 @@ static void ui_input(void)
     } else if (s && sec_on()) {                         /* an engine in sections: the next / previous one (FM6's
                                                          * operators are sections: ui_sections.c) */
         sec_turn(s);
-    } else if (s && !ui.home && cur_page()->scope == SC_FMOP) {   /* FM6's operator pages: the operator */
-        fm6_opsel = (uint8_t)clamp((int32_t)fm6_opsel + (s > 0 ? 1 : -1), 0, 5);
+    } else if (s && !ui.home && sch_pg_ninst(cur_page())) {   /* an instanced page (FM6's operators): the instance */
+        sch_inst = (uint8_t)clamp((int32_t)sch_inst + (s > 0 ? 1 : -1), 0, (int32_t)sch_pg_ninst(cur_page()) - 1);
         ui.force = 1;
     }
     if ((s = panel_enc(EN_ALGO)) != 0) {           /* ALGORITHM: the selected track, on every page (PATTERNS' Copy

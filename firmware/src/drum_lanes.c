@@ -138,7 +138,7 @@ static void dlk_hit(track_t *t, uint32_t note, uint32_t vel)
     if (!K)
         return;
     uint32_t lane = DV_TYPE_LANE[drum_gm(t->p, note, &st)], sound = drum_sound_of(t, note) & 15u;
-    const int8_t *pc = drum_patch_of(trk_ix(t))->c[sound];
+    const int8_t *pc = drum_offs(t)->c[sound];
     dlk_ch_t *c = &K->ch[lane];
     if (lane == DV_HATC && K->ch[DV_HATO].on && !K->ch[DV_HATO].fade)
         K->ch[DV_HATO].fade = DLK_FADE;

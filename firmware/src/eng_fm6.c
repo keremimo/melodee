@@ -27,17 +27,22 @@
  * Voices are chosen and handed over as Dexed does (16 of them, engine_t.alloc / legato / mono_key); a voice that
  * has ended keeps its control path running as Dexed keeps its voices computing (fm6_ghost), so its next note
  * starts where Dexed's would. Their state lives in the part's engine state (engines.c eng_state).
- * The patches are the firmware's (fm6_parts.h, fm6_voices.c); this engine is a synth module on the device
- * (firmware/modules/fm6), built in on the host (MELODEE_FM6_BUILTIN). */
+ * The part's patch is its module's bytes in the firmware (modules/fm6/fm6_patch.h: the voice packed, the
+ * functions, the switches; mod_patch); this engine is a synth module on the device (firmware/modules/fm6), built in
+ * on the host (MELODEE_FM6_BUILTIN). */
+#include "../modules/fm6/fm6_patch.h"
 #include "fm6_core.c"
-/* (the parts' patches, their switches and function settings: the firmware's, fm6_parts.h; their formats, the
- * factory voices, the writes and DX7 SysEx: fm6_voices.c, fm6_store.c) */
+static volatile uint8_t fm6_pgen[NPART];         /* +1 after each write of a part's patch (fm6_patch_changed) */
+static volatile uint8_t fm6_lgen[NPART];         /* +1 when the write was another voice (a load): the notes stop */
 static struct {                                  /* the patch through the macros: the audio ISR's copy */
+    uint8_t raw[FP_SIZE + 1u];                   /* the patch's voice unpacked (when fm6_pgen moved) */
     uint8_t p[FP_SIZE + 1u];
-    uint8_t gen, ok;
+    uint8_t gen, ok, on;                         /* (on: the patch's switches as raw was made) */
     int16_t e[7];                                /* P_E0..P_E6 it was made with */
     int32_t dt[6];                               /* DTUN: per operator, Q24 log2 */
 } fm6_eff[NPART];
+#undef fm6_op_on                                 /* (the switches the voices play: the copy the block made) */
+#define fm6_op_on(t, k) ((fm6_eff[trk_ix(t) % NPART].on >> (k)) & 1u)
 
 /* -------------------------------------------------------------- macros --- */
 /* the patch through E0..E6 (audio ISR; cheap when nothing changed). With every macro at 0 it is the patch.
@@ -47,7 +52,7 @@ static int fm6_eff_build(const track_t *t)
     uint32_t tr = trk_ix(t), k, j, car, n = 0;
     const int16_t *e = &t->p[P_E0];
     int32_t meg, step;
-    if (tr >= NTRK)
+    if (tr >= NPART)
         return 0;
     if (fm6_eff[tr].ok && fm6_eff[tr].gen == fm6_pgen[tr]) {
         for (k = 0; k < 7u && fm6_eff[tr].e[k] == e[k]; k++)
@@ -55,8 +60,13 @@ static int fm6_eff_build(const track_t *t)
         if (k == 7u)
             return 0;
     }
-    fm6_eff[tr].gen = fm6_pgen[tr];
-    memcpy(fm6_eff[tr].p, fm6_patch_of(tr), FP_SIZE);
+    if (!fm6_eff[tr].ok || fm6_eff[tr].gen != fm6_pgen[tr]) {
+        const uint8_t *b = mod_patch(t);
+        fm6_eff[tr].gen = fm6_pgen[tr];
+        fm6_unpack(b, fm6_eff[tr].raw);              /* (sanitized: the voice as fm6_put_patch kept it) */
+        fm6_eff[tr].on = b[FM6_B_ON] & FM6_ON_ALL;
+    }
+    memcpy(fm6_eff[tr].p, fm6_eff[tr].raw, FP_SIZE);
     for (k = 0; k < 7u; k++)
         fm6_eff[tr].e[k] = e[k];
     {
@@ -128,7 +138,6 @@ typedef struct {                                         /* a part's (engines.c 
 } fm6_part_t;
 static fm6_part_t *fm6_part(uint32_t part);             /* engines.c */
 #define FM6P(t) fm6_part(trk_ix(t))
-#define FM6F(t) fm6_fn[trk_ix(t) % NTRK]   /* the track's function settings */
 
 static void fm6_lfo_step(fm6_lfo_t *l, const uint8_t *ed)   /* one block of the LFO: Lfo::getsample, getdelay */
 {
@@ -241,7 +250,7 @@ static void fm6_ctl_block(track_t *t, const uint8_t *ed)
 
 /* ------------------------------------------------------------ the voice --- */
 static fm6_voice_t *fm6_state(const track_t *t, const voice_t *v) { return &FM6P(t)->v[voice_ix(t, v)]; }
-static inline __attribute__((always_inline)) const uint8_t *fm6_ed(const track_t *t) { return fm6_eff[trk_ix(t) % NTRK].p; }
+static inline __attribute__((always_inline)) const uint8_t *fm6_ed(const track_t *t) { return fm6_eff[trk_ix(t) % NPART].p; }
 static uint32_t fm6_note(const track_t *t, const voice_t *v)   /* the note the DX7 rules see: + TRANSPOSE */
 {
     return (uint32_t)clamp((int32_t)v->note + fm6_ed(t)[FP_TRNSP] - 24, 0, 127);
@@ -729,7 +738,7 @@ static struct {
     float bus[2][CTL], sum[CTL];
     int32_t pcm[CTL];
 } fm6_job;
-static int fm6_pending;                           /* (fm6_pairs: the firmware's, fm6_parts.h) */
+static int fm6_pending;
 static int32_t *fm6_pending_out;
 
 static void fm6_worker_kernel(void *unused)
@@ -814,7 +823,7 @@ static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const v
     FM6_TAP(fm6_sum, n);
 #endif
 #if MELODEE_DUAL_CORE
-    if (fm6_pending) fm6_pairs++;
+    if (fm6_pending) eng_paired++;   /* (the CPU lab's count: host paired) */
     fm6_join();
     fm6_output_run(fm6_sum, out, n, m, k, 1);
 #else
@@ -828,15 +837,15 @@ static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const v
 static void fm6_sync(track_t *t, const voice_t *self)
 {
     fm6_part_t *P = FM6P(t);
-    uint32_t tr = trk_ix(t) % NTRK, i, h = 2166136261u;
+    uint32_t tr = trk_ix(t) % NPART, i, h = 2166136261u;
     const uint8_t *ed;
     int panic;
-    if (!fm6_eff_build(t) && P->pt.hash && P->pt.on == fm6_on[tr] && P->pt.lgen == fm6_lgen[tr])
+    if (!fm6_eff_build(t) && P->pt.hash && P->pt.on == fm6_eff[tr].on && P->pt.lgen == fm6_lgen[tr])
         return;                                          /* nothing changed (every block: keep it cheap) */
     ed = fm6_ed(t);
     for (i = 0; i < FP_SIZE; i++)
         h = (h ^ ed[i]) * 16777619u;
-    h = (h ^ fm6_on[tr]) * 16777619u;
+    h = (h ^ fm6_eff[tr].on) * 16777619u;
     panic = P->pt.lgen != fm6_lgen[tr] || (P->pt.hash && ed[FP_TRNSP] != P->pt.trn);
     if (h == P->pt.hash && !panic)
         return;
@@ -869,7 +878,7 @@ static void fm6_sync(track_t *t, const voice_t *self)
     P->pt.hash = h;
     P->pt.trn = ed[FP_TRNSP];
     P->pt.lgen = fm6_lgen[tr];
-    P->pt.on = fm6_on[tr];
+    P->pt.on = fm6_eff[tr].on;
 }
 
 static void fm6_block(track_t *t)                        /* per part and block: the patch, controllers, LFO */
@@ -948,6 +957,35 @@ _Static_assert(NELEM(FM6_PRESETS) == FM6_NFAC + 1u, "FM6: F1..F24, then INIT VOI
 #endif
 
 static uint32_t fm6_pstate(const track_t *t) { (void)t; return sizeof(fm6_part_t); }   /* (its part memory) */
+#include "../modules/fm6/fm6_ui.c"   /* its pages: an operator's frequency as the schema's columns show it */
+/* the part's patch written (main loop; Motion: the audio): the voice sanitized as the DX7's ranges have it, the
+ * functions Dexed's when a stored set is out of range; another voice (a new sound, or a whole patch with another name
+ * or TRANSPOSE: a DX7 program change) switches every operator on and stops the notes */
+static uint8_t fm6_seen[NPART][11];              /* the name and TRANSPOSE last written (SET: another voice?) */
+static uint8_t fm6_known;                        /* bit k: fm6_seen[k] holds them */
+static void fm6_patch_changed(track_t *t, uint8_t *b, uint32_t how, uint32_t id)
+{
+    uint32_t tr = trk_ix(t) % NPART;
+    uint8_t v[FP_SIZE + 1u];
+    (void)id;
+    if (how != MOD3_PATCH_MOTION) {
+        fm6_unpack(b, v);                                /* (in range: the copy the ISR makes is the same) */
+        fm6_pack(v, b);
+        if (!fm6_fn_ok(b + FM6_B_FN))
+            memcpy(b + FM6_B_FN, FM6_FNDEF, FM6_NFN);
+        b[FM6_B_ON] &= FM6_ON_ALL;
+        if (how == MOD3_PATCH_NEW || ((how == MOD3_PATCH_SET || how == MOD3_PATCH_LOAD) && (!((fm6_known >> tr) & 1u) ||
+            memcmp(fm6_seen[tr], v + FP_NAME, 10) || fm6_seen[tr][10] != v[FP_TRNSP]))) {
+            b[FM6_B_ON] = FM6_ON_ALL;
+            fm6_lgen[tr]++;
+        }
+        memcpy(fm6_seen[tr], v + FP_NAME, 10);
+        fm6_seen[tr][10] = v[FP_TRNSP];
+        fm6_known |= (uint8_t)(1u << tr);
+    }
+    RING_PUBLISH();
+    fm6_pgen[tr]++;
+}
 /* the part's memory as it is (bytes 0: none): a voice sounds or runs on (CPU0 keeps its larger service reserve while
  * CPU1 renders: mix.c mix_prepare_batch) */
 static int fm6_reserve(const void *state, uint32_t bytes)
@@ -996,4 +1034,5 @@ static const engine_t ENG_FM6 = {
 #endif
     .reserve = fm6_reserve,
     .caps = MOD3_CAP_WHEEL,      /* (its DX7 controllers read the wheel: no SMK-37 vibrato) */
+    .patch_changed = fm6_patch_changed, .pformat = fm6_pformat, .pget = fm6_pget, .pput = fm6_pput,
 };

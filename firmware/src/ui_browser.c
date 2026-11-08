@@ -96,7 +96,8 @@ static void browser_list(uint32_t cur, uint32_t total)
                     src = preset_at((uint32_t)n, &k);
                     hc = T_KNOB(eng_rank(src_engine(src, k)));
                     entry_label(src, k, tag, nm);
-                    if (src == ENGI_PROPHET)                /* (the Prophet's own name, whole) */
+                    if (src < NENGINES && sch_flag(src, MOD_SCH_F_SNAME))   /* (a sound called by its patch's
+                                                                             * own name, whole: the Prophet's) */
                         eng_preset_name(src, k, nm, sizeof nm);
                     if (!r) {                               /* the card: the name, its engine, its star */
                         uint16_t bg = out ? T_SURF : ux_mix(T_BG, hc, 18);

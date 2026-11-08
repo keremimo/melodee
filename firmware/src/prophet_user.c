@@ -42,7 +42,7 @@ static int p5_favorite_set(uint32_t slot,int on,int factory)
 static void p5_send(uint32_t tr)
 {
 #if MELODEE_OTA
-    p5_patch_t p=*p5_patch_of(&trk[tr%NTRK]);uint8_t frame[P5_FRAME_MAX];p.command=3;
+    p5_patch_t p=*p5_prog(tr%NTRK);uint8_t frame[P5_FRAME_MAX];p.command=3;
     uint32_t n=p5_patch_encode(&p,frame,sizeof frame);if(n)ota_wire_send(frame,n);
 #else
     (void)tr;

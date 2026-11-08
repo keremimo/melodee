@@ -13,7 +13,6 @@
  * Picking it (mod_want) or a part, a song section or a pattern using it (module_store.c mod_service) loads it; one
  * nothing has used for MOD_IDLE_MS goes back to the flash. Unloading points its engine at ENG_MOD_IDLE first, so no
  * audio block can be inside the module when its block is released. */
-#include "module_legacy.h"   /* TEMPORARY: the five shipped synths' data, until the patch blob */
 
 enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
        MS_STALE,                                   /* an older ABI's module, or another firmware's legacy data (key) */
@@ -35,6 +34,8 @@ typedef struct {
                                                      * in the file, its length (0: none), its dictionary's place in it */
     uint16_t pst_init, pst_dict, pst_ulen;          /* .. its INIT, dictionary and entry bytes */
     uint16_t cat_at;                                /* .. their categories in mod_cat (MOD_PST_NONE: in the file) */
+    uint32_t sch, sch_len;                          /* its schema (module_schema.h SCHM): its payload's place, length
+                                                     * (0: none) */
     const mod_desc_v3 *d;                           /* MS_LOADED: its descriptor in the block */
 } mod_slot_t;
 static mod_slot_t mods[NMOD];
@@ -86,7 +87,8 @@ _Static_assert(MOD3_SAME_E(name) && MOD3_SAME_E(page_title) && MOD3_SAME_E(edit)
                MOD3_SAME_E(preset_make) && MOD3_SAME_E(state) && MOD3_SAME_E(env_q15) && MOD3_SAME_E(chord) &&
                MOD3_SAME_E(reuse) && MOD3_SAME_E(batch) && MOD3_SAME_E(render_p) && MOD3_SAME_E(wclass) &&
                MOD3_SAME_E(menv) && MOD3_SAME_E(join) && MOD3_SAME_E(reserve) && MOD3_SAME_E(caps) &&
-               MOD3_SAME_E(bend_range) && sizeof(engine_t) == sizeof(mod_engine_v3),
+               MOD3_SAME_E(bend_range) && MOD3_SAME_E(patch_changed) && MOD3_SAME_E(pget) && MOD3_SAME_E(pput) &&
+               MOD3_SAME_E(pformat) && MOD3_SAME_E(pactive) && MOD3_SAME_E(draw) && sizeof(engine_t) == sizeof(mod_engine_v3),
                "engine_t is mod_engine_v3 (mod_abi3.h)");
 _Static_assert(P_COUNT == MOD3_P_COUNT && P_E0 == MOD3_P_E0 && NVOICE == MOD3_NVOICE && NPART == MOD3_NPART &&
                FS == MOD3_RATE && CTL == MOD3_CTL && VOICE_FS == MOD3_VOICE_FS && DITH_N == MOD3_DITH_N &&
@@ -136,17 +138,14 @@ static const void *mod_h_table(uint32_t id)
     }
 }
 static int mod_h_file_read(uint32_t self, uint32_t off, void *dst, uint32_t n);   /* eng_module_main.c */
-static const mod_legacy_v3 MOD_LEGACY = {          /* TEMPORARY (module_legacy.h) */
-    drum_patch, &drum_patch_none, &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen,
-    cz_patch, &cz_patch_none,
-    fm6_patch, fm6_patch_none, fm6_pgen, fm6_lgen, fm6_on, fm6_fn,
-#if MELODEE_DUAL_CORE
-    &fm6_pairs,
-#else
-    &mod_no_pairs,
-#endif
-    p5_patch, p5_ready,
+static const mod_legacy_v3 MOD_PADS = {            /* TEMPORARY (phase 5: drum_kit.h) */
+    &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen,
 };
+/* the host's drawing for a module's own widget (schema.c sch_draw sets the canvas it draws into) */
+static uint16_t mod_h_color(uint32_t role);
+static void mod_h_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c);
+static void mod_h_rrect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t c);
+static void mod_h_text(int32_t x, int32_t y, const char *s, uint32_t font, uint16_t c);
 #define MOD3_CALL(T, f) ((T)(void (*)(void))(f))   /* (track_t, voice_t: read as their views) */
 static const mod_host_v3 MOD_HOST3 = {
     .version = MOD3_HOST, .size = sizeof(mod_host_v3),
@@ -170,7 +169,9 @@ static const mod_host_v3 MOD_HOST3 = {
 #endif
     .lz_unpack = lz_unpack,
     .file_read = mod_h_file_read,
-    .legacy = &MOD_LEGACY,
+    .legacy = &MOD_PADS,
+    .patch = MOD3_CALL(uint8_t *(*)(const mod_part_v3 *), patch_play),
+    .color = mod_h_color, .fill = mod_h_fill, .rrect = mod_h_rrect, .text = mod_h_text, .paired = &eng_paired,
 };
 
 /* a stored module's engine while it is not in SRAM: its lists' names come from its file (eng_name), its sounds keep

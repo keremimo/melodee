@@ -580,7 +580,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             snapshot[28] = audio_worker.max_job_ticks / FM1_TICKS_PER_US;
             snapshot[29] = audio_worker.max_wait_ticks / FM1_TICKS_PER_US;
             snapshot[30] = audio_worker.timeouts;
-            snapshot[31] = fm6_pairs;
+            snapshot[31] = eng_paired;
             snapshot[22] = audio_worker.rejected;    /* (22, 23: OBXF's, retired) misread requests, */
             snapshot[23] = fm1_core1_fault.count;     /* CPU1 faults: either retires the worker */
         }

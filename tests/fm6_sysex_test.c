@@ -10,7 +10,7 @@ static void fresh_sysex(void)
 {
     reset(); fm6_init();
     wire_release();
-    fm6_rx_ready = fm6_rx_on = 0; fm6_rx_n = 0; fm6_bslot = 0;
+    fm6_rx_ready = fm6_rx_on = 0; fm6_rx_n = 0; sch_store_slot[ENGI_FM6] = 0;
     usb.sx_on = 0;
     set_engine_of(&trk[0], ENGI_FM6);
     up_cache_reset();
@@ -112,7 +112,7 @@ int main(void)
     bad += check("chosen user preset can be loaded explicitly after importing", !memcmp(fm6_patch_of(0),unpacked,FP_SIZE) && !trk[0].user_native && trk[0].user == 1);
     dump_request(7,9);
     bad += check("bank dump reply round trips every byte and request channel", host_wire_n == FM6_RX && !memcmp(host_wire,cartridge,FM6_RX));
-    fm6_bslot = 32; make_bank(15); usb_dump(cartridge, sizeof cartridge);ui.uslot=32;sysex_choose();ui.confirm=0;sysex_commit();native_load(ENGI_FM6,32,0);
+    sch_store_slot[ENGI_FM6] = 32; make_bank(15); usb_dump(cartridge, sizeof cartridge);ui.uslot=32;sysex_choose();ui.confirm=0;sysex_commit();native_load(ENGI_FM6,32,0);
     bad += check("STORE slot F033 selects the upper half for bank receive", up_count() == 64 && !memcmp(native_raw(ENGI_FM6,32),cartridge+6,128) && trk[0].user == 33);
     dump_request(15,9);
     bad += check("upper bank dump returns its 32 voices on channel 16", host_wire_n == FM6_RX && !memcmp(host_wire,cartridge,FM6_RX));

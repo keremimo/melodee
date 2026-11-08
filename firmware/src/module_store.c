@@ -33,7 +33,7 @@ static int mod_head_ok(const mod_file3_t *f, uint32_t len)
 /* a file this firmware plays: ABI 3, a host table it has, the legacy data as it lays it out (or none) */
 static int mod_head_mine(const mod_file3_t *f)
 {
-    return f->abi == MOD3_ABI && f->host <= MOD3_HOST && (!f->key || f->key == MOD3_LEGACY_KEY);
+    return f->abi == MOD3_ABI && f->host <= MOD3_HOST && (!f->key || f->key == MOD3_PADS_KEY);
 }
 /* the relocated descriptor: this ABI, its file's head, every address it holds inside the block (target), the calls
  * the firmware needs set */
@@ -204,6 +204,36 @@ static int mod_pst_find(uint32_t k, const mod_file3_t *f)
     mod_cat_n = (uint16_t)(mod_cat_n + n);
     return 1;
 }
+/* slot k's schema (module_schema.h SCHM): found and checked (its CRC, its places inside the chunk): 1, 0 none, -1 bad */
+static int mod_sch_find(uint32_t k, const mod_file3_t *f)
+{
+    mod_slot_t *s = &mods[k];
+    uint32_t at = MOD3_HEAD + f->image + 4u * f->nrel, c[2] = {0, 0}, crc = 0xFFFFFFFFu, off, m;
+    mod_sch_head h;
+    uint8_t w[64];
+    for (;; at += 8u + ((c[1] + 3u) & ~3u)) {
+        if (!(f->flags & MOD3_FILE_CHUNKS) || at + 8u > f->total || mod_rd(k, at, c, 8u) || c[1] > f->total - at - 8u)
+            return 0;
+        if (c[0] == MOD_SCH_TAG)
+            break;
+    }
+    at += 8u;
+    if (c[1] < MOD_SCH_HEAD || mod_rd(k, at, &h, sizeof h) || h.version != MOD_SCH_VERSION || h.patch > MOD3_PATCH_MAX ||
+        h.str + h.nstr > c[1] || h.def + h.patch > c[1] || h.param + h.nparam * MOD_SCH_PREC > c[1] ||
+        h.page + h.npage * MOD_SCH_GREC > c[1] || h.role + h.nrole * MOD_SCH_RREC > c[1])
+        return -1;
+    for (off = MOD_SCH_HEAD; off < c[1]; off += m) {
+        m = c[1] - off < sizeof w ? c[1] - off : sizeof w;
+        if (mod_rd(k, at + off, w, m))
+            return -1;
+        crc = st_crc32_update(crc, w, m);
+    }
+    if (~crc != h.crc)
+        return -1;
+    s->sch = at;
+    s->sch_len = c[1];
+    return 1;
+}
 /* slot k listed from its record's head, nothing loaded (power-on, an upload): MS_STORED or why not */
 static int mod_catalog(uint32_t k)
 {
@@ -212,6 +242,8 @@ static int mod_catalog(uint32_t k)
     mod_unregister(k, 0);
     memset(s, 0, sizeof *s);
     mod_win_drop(k);
+    sch_win_drop(k);
+    sch_gen++;
     uint32_t len = mod_open(k);
     if (!len)
         return MS_EMPTY;
@@ -226,7 +258,7 @@ static int mod_catalog(uint32_t k)
     s->crc = f.crc;
     s->key = f.abi == 1u ? 0u : f.key;              /* (a native ABI 2 file's layout key sits where ABI 3's key is) */
     memcpy(s->name, f.name, MOD3_NAME_MAX);
-    if (f.abi != MOD3_ABI || (f.key && f.key != MOD3_LEGACY_KEY))
+    if (f.abi != MOD3_ABI || (f.key && f.key != MOD3_PADS_KEY))
         return s->state = MS_STALE;                 /* (an older firmware's: the installer replaces it, editor_module.c) */
     if (f.host > MOD3_HOST)
         return s->state = MS_NEWER;                 /* (a later firmware's: it needs Melodee's newer host table) */
@@ -241,7 +273,11 @@ static int mod_catalog(uint32_t k)
         if (f.npresets)
             return s->state = MS_BAD;
     }
+    if (mod_sch_find(k, &f) < 0)
+        return s->state = MS_BAD;                   /* (a schema it carries must read: its patch is its pages') */
     mod_list_idle(k);
+    sch_gen++;
+    sch_info_sync();
     return MS_STORED;
 }
 /* slot k into SRAM (eng_module.c mod_fetch): when the arena is full, the modules nothing uses go first */
@@ -297,6 +333,8 @@ static int mod_used(uint32_t k)
 static void mod_service(uint32_t now)
 {
     static uint32_t tried;
+    sch_info_sync();                                /* (the synths' patches in RAM for the audio: schema.c) */
+    sch_part_sync();
     for (uint32_t k = 0; k < NMOD; k++) {
         if (!mod_listed(k))
             continue;
@@ -329,7 +367,10 @@ static int mod_put_begin(uint32_t k, uint32_t len)
     int rc = st_stream_begin(&mod_up, mod_obj(k), len < ST_PROJECT_MAX ? len : ST_PROJECT_MAX);
     if (!rc) {
         mods[k].pst = 0;                            /* (its presets: the new file's, once it is committed) */
+        mods[k].sch = mods[k].sch_len = 0;          /* (its schema too) */
         mod_win_drop(k);
+        sch_win_drop(k);
+        sch_gen++;
         mod_up_slot = (uint8_t)k;
         mod_up_part = 0;
         mod_up_len = len;

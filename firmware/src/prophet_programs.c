@@ -8,14 +8,7 @@
 #endif
 /* Native performance controls become the track's allocator settings at load
  * or native edit. Afterwards Melodee's VOICE/PRIO/DETUNE pages can override. */
-static void p5_track_accept(track_t *t)
-{
-    const uint8_t *p=p5_patch_of(t)->raw;
-    t->p[P_VOICE]=p[P5_UNISON]?V_UNISON:V_POLY;
-    t->p[P_PRIO]=p[P5_RETRIGGER]<2u?1:0;
-    t->p[P_DETUNE]=clamp(p[P5_UNISON_DETUNE],0,7)*127/7;
-    t->p[P_ALLOC]=1; /* repeated keys reuse a voice, as the original does */
-}
+static void p5_track_accept(track_t *t) { p5_track_accept_raw(t, p5_prog((uint32_t)(t - trk))->raw); }
 /* Sequential's factory program k (0..P5_FACTORY_N-1): unpacked (tools/gen_prophet_factory.py pack) on host builds,
  * the Prophet module's preset k + 1 on the device; INIT without either */
 static void p5_factory(uint32_t k,p5_patch_t *p)
@@ -48,7 +41,7 @@ static void p5_preset_make(uint32_t k,preset_t *pr,char *name)
 /* A factory preset's native program; preset 0 is INIT. */
 static void p5_preset_loaded(track_t *t,uint32_t pi)
 {
-    p5_patch_t *p=p5_patch_of(t);
+    p5_patch_t *p=p5_prog((uint32_t)(t - trk));
     if(pi && pi<=P5_FACTORY_N)p5_factory(pi-1u,p);else p5_patch_init(p);
     p5_track_accept(t);
 }

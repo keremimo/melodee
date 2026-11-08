@@ -24,6 +24,18 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
     return 0;
 }
 #include "../firmware/src/storage.c"
+/* the shipped synths' store formats and patch lengths as their schemas give them (schema.c: the firmware reads them
+ * from the synths' files; this test builds the record code alone) */
+#define MOD_SCH_NO_WRITER
+#include "../firmware/modules/sdk/mod_schema.h"
+static uint32_t patch_store_tag(uint32_t e)
+{
+    return e == ENGI_FM6 ? MOD_SCH_STORE_VOICE : e == ENGI_PROPHET ? MOD_SCH_STORE_PROGRAM : e == 15u ? MOD_SCH_STORE_TONE :
+           e == ENGI_DRUM ? MOD_SCH_STORE_KIT : MOD_SCH_STORE_NONE;
+}
+static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == 15u ? 144u : e == ENGI_DRUM ? 64u : 0u; }
+static uint32_t patch_sound_len(uint32_t e) { return e == ENGI_FM6 ? 128u : patch_len(e); }
+#include "../firmware/src/cz_patch.h"                /* (a CZ-1 tone record's check: the stored layout's) */
 #include "../firmware/src/upreset.c"
 
 static int up_pat_empty(const up_rec_t *r)          /* (the record's 16 steps: no note) */

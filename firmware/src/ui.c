@@ -7,9 +7,6 @@
  * every element remembers what it last drew and is redrawn only on change. */
 static int live_rec_sel(void);
 static int project_save(uint32_t slot);
-static void fm6_store(uint32_t k);                   /* FM6's STORE page: fm6_store.c */
-static void fm6_send(void);
-static void fm6_init_voice(void);
 static void panel_setup(void);
 static void project_load(uint32_t slot);
 static int project_used(uint32_t slot);
@@ -45,7 +42,6 @@ static int up_old_bank(uint32_t k);
 static void native_name(uint32_t e, uint32_t k, char *out);
 static int native_load(uint32_t e, uint32_t k, uint32_t tr);
 static const uint8_t *native_raw(uint32_t e, uint32_t k);
-static void p5_send(uint32_t tr);
 static int native_store(uint32_t e,uint32_t k,uint32_t tr,const char *name);
 static int native_put(uint32_t e, uint32_t k, const uint8_t *raw);
 static uint32_t native_size(uint32_t e);
@@ -256,7 +252,7 @@ enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER,
 
 static const page_t *page_over;   /* a quick layer's own four knobs (ui_layer.c), while it edits or draws them */
 static uint32_t drum_hit_selected(void);
-static const page_t *cur_page(void) { return page_over ? page_over : &PAGES[ui.page]; }
+static const page_t *cur_page(void) { return page_over ? page_over : &PG(ui.page); }
 
 /* the quick layers (ui_layer.c): a button held, the keys and KNOB 1..4 are its shortcuts, its map over the page */
 enum { LAYER_NONE, LAYER_FX, LAYER_GLO, LAYER_SCL, LAYER_N };
@@ -271,27 +267,16 @@ static int list_gone(uint32_t i);                        /* ui_list.c: a page in
 /* ENV / LFO on the engines with envelopes and LFOs of their own (Prophet, FM6, CZ-1: engine_t.ownenv, the track's
  * ADSR and ENV DEST do nothing there): their own pages (FAM_EDIT, by title). ENV: only those; LFO: those first, then
  * the track LFO's pages and MOD (the track LFO modulates any engine through LFO DEST and is the matrix's source) */
-static const char *const *native_titles(uint32_t fam)
+static int native_page(uint32_t i, uint32_t fam)       /* page i: one of fam's native pages (its schema's flags) */
 {
-    static const char *const P5_ENV[] = {"P5 FLT ENV", "P5 AMP ENV", "P5 ENV MOD", 0};
-    static const char *const FM_ENV[] = {"EG RATE", "EG LVL", "PITCH EG", "PITCH LV", 0};
-    static const char *const CZ_ENV[] = {"C1 PIT R1-4", "C1 WAV R1-4", "C1 AMP R1-4", "C2 PIT R1-4", "C2 WAV R1-4",
-                                         "C2 AMP R1-4", 0};
-    static const char *const P5_LFO[] = {"P5 LFO", "P5 WHEEL", 0};
-    static const char *const FM_LFO[] = {"FM LFO", 0};
-    static const char *const CZ_LFO[] = {"CZ VIBRATO", 0};
-    uint32_t e = TSEL->eng_req;
-    if (fam == FAM_ENV)
-        return e == ENGI_PROPHET ? P5_ENV : e == ENGI_FM6 ? FM_ENV : e == ENGI_CZ ? CZ_ENV : 0;
-    if (fam == FAM_LFO)
-        return e == ENGI_PROPHET ? P5_LFO : e == ENGI_FM6 ? FM_LFO : e == ENGI_CZ ? CZ_LFO : 0;
-    return 0;
+    const page_t *pg = page_at(i);
+    uint32_t f = fam == FAM_ENV ? MOD3_PG_ENV : fam == FAM_LFO ? MOD3_PG_LFO : 0u;
+    return f && pg->scope == SC_MOD && (sch_pg_flags(pg) & f) != 0u;
 }
-static int native_page(uint32_t i, uint32_t fam)       /* page i: one of fam's native pages (a prefix of its title) */
+static int native_has(uint32_t fam)                     /* the selected synth has fam's pages of its own */
 {
-    const char *const *t = native_titles(fam);
-    for (; t && *t; t++)
-        if (str_prefix(PAGES[i].title, *t))
+    for (uint32_t i = 0; i < NPAGES; i++)
+        if (PAGE_TAB[i].scope == SC_MOD && native_page(i, fam))
             return 1;
     return 0;
 }
@@ -299,52 +284,49 @@ static int native_page(uint32_t i, uint32_t fam)       /* page i: one of fam's n
 static int page_visible(uint32_t i)
 {
     if (midi_track_only(TSEL)) {
-        if (trk_midi_slot(song.sel) && PAGES[i].graph == GR_BROWSE) return 0;   /* (tracks 5..8: no other sound) */
-        if (PAGES[i].fam == FAM_ENV || PAGES[i].fam == FAM_LFO) return 0;
-        if (PAGES[i].scope == SC_TRACK && PAGES[i].fam == FAM_EDIT) return 0;
-        if (PAGES[i].fam == FAM_FX && PAGES[i].scope == SC_TRACK && PAGES[i].graph != GR_FXRACK) return 0;
-        if (PAGES[i].scope == SC_ENGINE && PAGES[i].id[0] == P_E4) return 0;
+        if (trk_midi_slot(song.sel) && PG(i).graph == GR_BROWSE) return 0;   /* (tracks 5..8: no other sound) */
+        if (PG(i).fam == FAM_ENV || PG(i).fam == FAM_LFO) return 0;
+        if (PG(i).scope == SC_TRACK && PG(i).fam == FAM_EDIT) return 0;
+        if (PG(i).fam == FAM_FX && PG(i).scope == SC_TRACK && PG(i).graph != GR_FXRACK) return 0;
+        if (PG(i).scope == SC_ENGINE && PG(i).id[0] == P_E4) return 0;
     }
-    if (PAGES[i].fam == FAM_FX && PAGES[i].graph != GR_FXRACK) {   /* a slot's page (its MIX first): while it holds
+    if (PG(i).fam == FAM_FX && PG(i).graph != GR_FXRACK) {   /* a slot's page (its MIX first): while it holds
                                                                      * an effect (the rack shows it either way); NOTE
                                                                      * TAIL none: its row is all of it, KNOB 4 REL */
-        int16_t t = (PAGES[i].scope == SC_GLOBAL ? song.g : TSEL->p)[PAGES[i].id[0] - 1u];
+        int16_t t = (PG(i).scope == SC_GLOBAL ? song.g : TSEL->p)[PG(i).id[0] - 1u];
         return t != FX_OFF && t != FX_MIDIVERB;
     }
     if (list_gone(i))
         return 0;
-    if (PAGES[i].graph == GR_MOTION)                   /* MOTION: once there is motion (Kerem: an empty page; the one
+    if (PG(i).graph == GR_MOTION)                   /* MOTION: once there is motion (Kerem: an empty page; the one
                                                          * shown stays until it is left) */
         return motion_has_lanes(TSEL) || (!ui.home && ui.page == i);
-    if (PAGES[i].fam == FAM_ENV && native_titles(FAM_ENV))   /* (the track's ADSR, ENV DEST: nothing there) */
+    if (PG(i).fam == FAM_ENV && native_has(FAM_ENV))      /* (the track's ADSR, ENV DEST: nothing there) */
         return 0;
-    if(PAGES[i].scope==SC_DRUM || PAGES[i].scope==SC_DRUMHIT)return drum_track(TSEL);
-    if (PAGES[i].scope == SC_TRACK && PAGES[i].id[0] >= P_LN0 && PAGES[i].id[0] <= P_LN7)
+    if(PG(i).scope==SC_DRUM || PG(i).scope==SC_DRUMHIT)return drum_track(TSEL);
+    if (PG(i).scope == SC_TRACK && PG(i).id[0] >= P_LN0 && PG(i).id[0] <= P_LN7)
         return drum_track(TSEL);
-    if(TSEL->eng_req==ENGI_CZ && PAGES[i].scope==SC_ENGINE && PAGES[i].fam==FAM_EDIT && (PAGES[i].id[0]==P_E0 || PAGES[i].id[0]==P_E4))return 0;
-    if (PAGES[i].scope == SC_CZ)                       /* (PHASE's CZ mode; PHASE retired without MELODEE_LEGACY_EXTRAS) */
+    if(PG(i).scope==SC_ENGINE && PG(i).fam==FAM_EDIT && (PG(i).id[0]==P_E0 || PG(i).id[0]==P_E4) && sch_noedit(TSEL->eng_req))return 0;
+    if (PG(i).scope == SC_CZ)                       /* (PHASE's CZ mode; PHASE retired without MELODEE_LEGACY_EXTRAS) */
         return TSEL->eng_req == 2u && eng_ok(2u) && TSEL->p[P_E7] == 1;
-    if(PAGES[i].scope==SC_P5 || PAGES[i].scope==SC_P5STORE)return TSEL->eng_req==ENGI_PROPHET;
-    if (PAGES[i].scope == SC_CZ1)
-        return TSEL->eng_req == ENGI_CZ;               /* CZ-1's tone: every panel value */
-    if (PAGES[i].scope == SC_FM6 || PAGES[i].scope == SC_FMOP)
-        return TSEL->eng_req == ENGI_FM6;              /* FM6's patch, operators and functions */
+    if (PG(i).scope == SC_MOD)
+        return sch_page_shown(i);                      /* the synth's own pages (its schema) */
 #if MELODEE_SLICE
-    if (PAGES[i].graph == GR_SLICES)
+    if (PG(i).graph == GR_SLICES)
         return SMP_USER_SLOTS && ENGINES[TSEL->eng_req % NENGINES] == &ENG_SLICE;
 #else
-    if (PAGES[i].graph == GR_SLICES)
+    if (PG(i).graph == GR_SLICES)
         return 0;
 #endif
-    return !(PAGES[i].fam == FAM_EDIT && PAGES[i].id[0] >= P_FM1_ATK &&
-             PAGES[i].id[0] <= P_FM4_LEVEL);
+    return !(PG(i).fam == FAM_EDIT && PG(i).id[0] >= P_FM1_ATK &&
+             PG(i).id[0] <= P_FM4_LEVEL);
 }
 
 static uint32_t page_first(uint32_t fam)
 {
     uint32_t i;
     for (i = 0; i < NPAGES; i++)
-        if (PAGES[i].fam == fam && page_visible(i))
+        if (PG(i).fam == fam && page_visible(i))
             return i;
     return 0;
 }
@@ -578,7 +560,7 @@ static void page_scroll(int32_t dir)
     uint32_t fam = cur_page()->fam, n, i = ui.page;
     for (n = 0; n < NPAGES; n++) {
         i = (i + (dir > 0 ? 1u : NPAGES - 1u)) % NPAGES;
-        if (PAGES[i].fam == fam && page_visible(i))
+        if (PG(i).fam == fam && page_visible(i))
             break;
     }
     if (i == ui.page)
@@ -588,7 +570,7 @@ static void page_scroll(int32_t dir)
     page_entered();
 }
 
-/* the pages a family's button visits, in order: ENV / LFO on an engine with its own (native_titles) its pages
+/* the pages a family's button visits, in order: ENV / LFO on an engine with its own (native_has) its pages
  * first; n = 0: none */
 static uint32_t fam_pages(uint32_t fam, uint8_t *pg)
 {
@@ -597,19 +579,19 @@ static uint32_t fam_pages(uint32_t fam, uint8_t *pg)
         if (native_page(i, fam) && page_visible(i))
             pg[n++] = (uint8_t)i;
     for (i = 0; i < NPAGES; i++)
-        if (PAGES[i].fam == fam && page_visible(i) && !native_page(i, fam))
+        if (PG(i).fam == fam && page_visible(i) && !native_page(i, fam))
             pg[n++] = (uint8_t)i;
     return n;
 }
 static int fam_has(uint32_t fam, uint32_t page)         /* page: one the family's button visits */
 {
-    return page < NPAGES && (native_page(page, fam) || PAGES[page].fam == fam) && page_visible(page);
+    return page < NPAGES && (native_page(page, fam) || PG(page).fam == fam) && page_visible(page);
 }
 
 static void open_family(uint32_t fam)
 {
     if (midi_track_only(TSEL) && (fam == FAM_ENV || fam == FAM_LFO)) return;
-    if ((fam == FAM_ENV || fam == FAM_LFO) && native_titles(fam)) {   /* ENV / LFO of the Prophet, FM6, CZ-1 */
+    if ((fam == FAM_ENV || fam == FAM_LFO) && native_has(fam)) {   /* ENV / LFO of a synth with its own */
         uint8_t pg[NPAGES];
         uint32_t n = fam_pages(fam, pg), k;
         for (k = 0; k < n && pg[k] != ui.page; k++) {}
@@ -624,16 +606,16 @@ static void open_family(uint32_t fam)
         uint32_t n, i = ui.page;
         for (n = 0; n < NPAGES; n++) {
             i = (i + 1u) % NPAGES;
-            if (PAGES[i].fam == fam && page_visible(i)) break;
+            if (PG(i).fam == fam && page_visible(i)) break;
         }
         ui.page = (uint8_t)i;
     } else if (fam == FAM_SAVE) {
         uint32_t i;
         for (i = 0; i < NPAGES; i++)
-            if (PAGES[i].graph == GR_USER) break;
+            if (PG(i).graph == GR_USER) break;
         ui.page = (uint8_t)i;                         /* SAVE enters the sound save screen directly */
     } else {
-        ui.page = ui.fam_last[fam] && PAGES[ui.fam_last[fam]].fam == fam && page_visible(ui.fam_last[fam]) ? ui.fam_last[fam]
+        ui.page = ui.fam_last[fam] && PG(ui.fam_last[fam]).fam == fam && page_visible(ui.fam_last[fam]) ? ui.fam_last[fam]
                                                                           : (uint8_t)page_first(fam);
     }
     ui.fam_last[fam] = ui.page;
@@ -651,7 +633,7 @@ static void open_global(void)
     if (!ui.home && cur_page()->fam == FAM_TRK) {
         ui.page = (uint8_t)page_first(FAM_GLO);
     } else if (!ui.home && cur_page()->fam == FAM_GLO) {
-        for (i = ui.page + 1u; i < NPAGES && (PAGES[i].fam != FAM_GLO || !page_visible(i)); i++) {}
+        for (i = ui.page + 1u; i < NPAGES && (PG(i).fam != FAM_GLO || !page_visible(i)); i++) {}
         ui.page = (uint8_t)(i < NPAGES ? i : page_first(FAM_TRK));
     } else {
         ui.page = (uint8_t)page_first(FAM_TRK);
@@ -697,10 +679,8 @@ typedef struct {
     uint8_t what;                /* UNDO_SOUND | UNDO_PAT: what the loads since the copy changed (undo_step) */
     uint8_t eng, preset, user_native, patn, pattern_sound;
     uint16_t user;
-    uint8_t fm6[FP_SIZE + 1u];   /* the track's complete patch */
-    cz_patch_t cz;
-    p5_patch_t p5;
-    drum_patch_t drum;
+    uint8_t peng;                /* the patch's engine */
+    uint8_t patch[MOD3_PATCH_MAX];   /* the track's patch (patch.c) */
     int16_t p[P_COUNT];
     step_snapshot_t step[NSTEP];
     motion_store_t motion_backup; /* one track only, swaps with the shared event pool on undo */
@@ -750,10 +730,7 @@ static uint32_t track_sig(const track_t *t)      /* the sound (an FM6 track's pa
 {
     uint8_t id[5] = {t->eng_req, t->preset, (uint8_t)t->user, (uint8_t)(t->user>>8), t->user_native};
     uint32_t h = fnv(fnv(steps_sig(t), t->p, sizeof t->p), id, 3), k = trk_index(t);
-    h = fnv(h, fm6_patch_of(k), FP_SIZE + 1u);   /* (a patch the editor sent between two loads) */
-    h = fnv(h, cz_patch_of(k)->raw, CZ_BYTES);
-    h = fnv(h,p5_patch_of(&trk[k]),sizeof(p5_patch_t));
-    h = fnv(h,drum_patch_of(k),sizeof(drum_patch_t));
+    h = fnv(h, patch_of(k), patch_len(t->eng_req));   /* (a patch the editor sent between two loads) */
     for (uint32_t j = 0; j < motion.count; j++)
         if ((motion.event[j].place >> 6) == k) h = fnv(h, &motion.event[j], sizeof motion.event[j]);
     return h ^ ((motion.on >> k) & 1u);
@@ -761,25 +738,25 @@ static uint32_t track_sig(const track_t *t)      /* the sound (an FM6 track's pa
 
 static const param_desc_t *home_param(uint32_t k,int16_t **vp);
 static int scale_shared(uint32_t id);
-/* Parameter IDs resolve against the captured track; native patch snapshots
- * are mutually exclusive. This state is never serialized. */
+/* Parameter IDs resolve against the captured track; a synth's own page edits its patch, which is taken whole, with
+ * the voice settings a patch may bring (mod_abi3.h patch_changed). This state is never serialized. */
+static const uint8_t MOMENTARY_VOICE[4] = {P_VOICE, P_PRIO, P_DETUNE, P_ALLOC};
 static struct {
     uint8_t active, track, count, native;
     uint8_t id[P_COUNT+G_COUNT]; int16_t value[P_COUNT+G_COUNT];
-    union {
-        struct {uint8_t fm[FP_SIZE+1u], fn[FM6_NFN], on;};
-        cz_patch_t cz;
-        struct {p5_patch_t p5;int16_t p5_voice,p5_prio,p5_detune,p5_alloc;};
-    };
-} momentary;
+    uint8_t patch[MOD3_PATCH_MAX];
+    int16_t voice[4];
+} momentary __attribute__((section(".pool")));
 _Static_assert(P_COUNT+G_COUNT<=256u,"momentary IDs fit byte");
 static void momentary_restore(void)
 {
     if(!momentary.active)return;
     uint32_t tr=momentary.track;fm1_irq_off();
-    if(momentary.native==1){fm6_put_patch(tr,momentary.fm,0);memcpy(fm6_fn[tr],momentary.fn,FM6_NFN);fm6_on[tr]=momentary.on;}
-    else if(momentary.native==2)(*cz_patch_of(tr))=momentary.cz;
-    else if(momentary.native==3){p5_patch[tr]=momentary.p5;trk[tr].p[P_VOICE]=momentary.p5_voice;trk[tr].p[P_PRIO]=momentary.p5_prio;trk[tr].p[P_DETUNE]=momentary.p5_detune;trk[tr].p[P_ALLOC]=momentary.p5_alloc;}
+    if(momentary.native){
+        memcpy(patch_of(tr),momentary.patch,MOD3_PATCH_MAX);
+        for(uint32_t k=0;k<4u;k++)trk[tr].p[MOMENTARY_VOICE[k]]=momentary.voice[k];
+        patch_note(tr,MOD3_PATCH_RESTORE,0xFFFFu);
+    }
     for(uint32_t i=0;i<momentary.count;i++){uint32_t id=momentary.id[i];*(id<P_COUNT?&trk[tr].p[id]:&song.g[id-P_COUNT])=momentary.value[i];}
     momentary.active=momentary.count=momentary.native=0;fm1_irq_on();ui.force=1;
 }
@@ -787,19 +764,19 @@ static const page_t *stage_page(void);
 static void momentary_take(uint32_t slot)
 {
     const page_t *pg=page_over?page_over:ui.home?stage_page():cur_page();int16_t *vp;const param_desc_t *d;   /* (HOME: Stage's knobs; a bank's: ui_smk.c) */
-    if(!(fm1_in.buttons&(1u<<panel.btn[B_LFO])) || pg->graph==GR_FMSTORE || pg->graph==GR_CZTOOLS)return;
+    if(!(fm1_in.buttons&(1u<<panel.btn[B_LFO])) || pg->graph==GR_STORE || pg->graph==GR_TOOLS)return;
     d=page_desc(pg,slot,&vp);
     if(!d || !vp || d->max==d->min)return;
-    uint32_t native=pg->scope==SC_FM6 || pg->scope==SC_FMOP?1:pg->scope==SC_CZ1?2:pg->scope==SC_P5?3:0;
+    uint32_t native=pg->scope==SC_MOD;
     if(!native && pg->scope!=SC_TRACK && pg->scope!=SC_ENGINE &&
        !(pg->scope==SC_GLOBAL && (pg->id[slot]<=G_SWING)))return;
     if(!native && pg->scope==SC_TRACK && scale_shared((uint32_t)(vp-TSEL->p)))return;
     if(!momentary.active){momentary.track=song.sel;momentary.active=1;}
     if(native && !momentary.native){
         uint32_t tr=song.sel;fm1_irq_off();momentary.native=(uint8_t)native;
-        if(native==1){memcpy(momentary.fm,fm6_patch_of(tr),sizeof momentary.fm);memcpy(momentary.fn,fm6_fn[tr],FM6_NFN);momentary.on=fm6_on[tr];}
-        else if(native==2)momentary.cz=(*cz_patch_of(tr));
-        else{momentary.p5=*p5_patch_of(TSEL);momentary.p5_voice=TSEL->p[P_VOICE];momentary.p5_prio=TSEL->p[P_PRIO];momentary.p5_detune=TSEL->p[P_DETUNE];momentary.p5_alloc=TSEL->p[P_ALLOC];}fm1_irq_on();
+        memcpy(momentary.patch,patch_of(tr),MOD3_PATCH_MAX);
+        for(uint32_t k=0;k<4u;k++)momentary.voice[k]=TSEL->p[MOMENTARY_VOICE[k]];
+        fm1_irq_on();
     }
     if(!native){uint32_t id=pg->scope==SC_GLOBAL?P_COUNT+(uint32_t)(vp-song.g):(uint32_t)(vp-trk[momentary.track].p); uint32_t i;for(i=0;i<momentary.count && momentary.id[i]!=id;i++);
         if(i==momentary.count && i<P_COUNT+G_COUNT){momentary.id[i]=(uint8_t)id;momentary.value[i]=*vp;momentary.count++;}}
@@ -840,10 +817,8 @@ static void load_begin_guarded(track_t *t, uint32_t what)
     u->user_native=t->user_native;
     memcpy(u->p, t->p, sizeof u->p);
     step_snapshot_save(u->step, t->step);
-    memcpy(u->fm6, fm6_patch_of(i), FP_SIZE);
-    u->cz = (*cz_patch_of(i));
-    u->p5 = *p5_patch_of(&trk[i]);
-    u->drum=(*drum_patch_of(i));
+    u->peng = patch_eng_of(i);
+    memcpy(u->patch, patch_of(i), MOD3_PATCH_MAX);
     u->pat = pat_sig[i];
     u->patn = pat_last[i];
     u->pattern_sound = pattern_sound[i][t->pattern];
@@ -976,17 +951,13 @@ static void undo_step_guarded(int redo)
             step_snapshot_put(&u->step[i], &s);
         }
     }
-    if (u->what & UNDO_SOUND) {                 /* FM6: the track's patch as it was (edited, a project's, a
-                                                   * converted DIGITAL sound), preserved with the sound */
+    if (u->what & UNDO_SOUND) {                 /* the track's patch as it was (edited, a project's), with the sound */
         uint32_t tr = trk_index(t);
-        uint8_t v[FP_SIZE + 1u];
-        memcpy(v, fm6_patch_of(tr), FP_SIZE);
-        fm6_set_patch(tr, u->fm6);
-        memcpy(u->fm6, v, FP_SIZE);
-        {drum_patch_t dp=(*drum_patch_of(tr));(*drum_patch_of(tr))=u->drum;u->drum=dp;}
-        { p5_patch_t pp=*p5_patch_of(t);p5_patch[tr]=u->p5;u->p5=pp;p5_ready[tr]=1; }
-        { cz_patch_t cp = (*cz_patch_of(tr)); (*cz_patch_of(tr)) = u->cz; u->cz = cp; cz_track_accept(t); }
-
+        uint8_t v[MOD3_PATCH_MAX], ve = (uint8_t)patch_eng_of(tr);
+        memcpy(v, patch_of(tr), MOD3_PATCH_MAX);
+        patch_set(tr, u->peng, u->patch, MOD3_PATCH_MAX, MOD3_PATCH_SET);
+        memcpy(u->patch, v, MOD3_PATCH_MAX);
+        u->peng = ve;
     }
     u->keep = 0;                                /* the next load copies the track as it is now */
     undo_top = (uint8_t)(redo ? undo_top + 1u : undo_top - 1u);
@@ -1068,7 +1039,6 @@ static void apply_preset_with(track_t *t, uint32_t pi, const preset_entry_t *x)
     }
     pi %= np;
     t->preset = (uint8_t)pi;
-    memset(drum_patch_of(t-trk),0,sizeof(drum_patch_t));
     for (i = 0; i < P_E0; i++)                        /* the rest of the sound to its defaults: a preset */
         if (!param_kept(i))                           /* sounds the same after any edit */
             t->p[i] = TP[i].def;
@@ -1088,8 +1058,7 @@ static void apply_preset_with(track_t *t, uint32_t pi, const preset_entry_t *x)
     t->p[P_REL] = pr->env[3];
     t->p[P_ED_FLT] = pr->fenv;
     t->p[P_VOICE] = pr->mono ? V_LEGATO : V_POLY;   /* mono presets keep the legato feel */
-    preset_patch_put(t, x);                           /* the Prophet's program, the CZ-1's tone, FM6's voice */
-    cz_track_accept(t);
+    preset_patch_put(t, x);                           /* the synth's own patch (its module's) */
     load_end(t);
 }
 static void apply_preset_to(track_t *t, uint32_t pi)
@@ -1116,8 +1085,8 @@ static void engine_load_of(track_t *t, uint32_t ei, uint32_t pi)
     fm1_irq_on();
     load_end(t);
 }
-/* the engine's defaults and its first preset (PROPHET: Sequential's first factory program, not INIT) */
-static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET ? 1u : 0u); }
+/* the engine's defaults and its first preset (its schema may name another: the Prophet's first factory program) */
+static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, sch_first(ei % NENGINES)); }
 
 /* the engine's own starting point, nothing changed: its INIT preset (Prophet, CZ-1, SID, FM6: "INIT .."), else
  * its first (DRUM: the 808 kit) */
@@ -1166,13 +1135,13 @@ static int preset_favorite(void)
 {
     uint32_t k = user_of(TSEL);
     uint32_t e=TSEL->eng_req;
-    return favorite_has(k<USER_NONE ? (TSEL->user_native?(e==ENGI_PROPHET?USER_NATIVE_P5:e==ENGI_FM6?USER_NATIVE_FM:USER_NATIVE_CZ):USER_GENERAL) : e,k<USER_NONE?k:TSEL->preset);
+    return favorite_has(k<USER_NONE ? (TSEL->user_native?user_native_ns(e):USER_GENERAL) : e,k<USER_NONE?k:TSEL->preset);
 }
 static void preset_mark(int on)
 {
     uint32_t k = user_of(TSEL);
     uint32_t e=TSEL->eng_req;
-    if (favorite_set(k<USER_NONE ? (TSEL->user_native?(e==ENGI_PROPHET?USER_NATIVE_P5:e==ENGI_FM6?USER_NATIVE_FM:USER_NATIVE_CZ):USER_GENERAL) : e,k<USER_NONE?k:TSEL->preset,on)) {
+    if (favorite_set(k<USER_NONE ? (TSEL->user_native?user_native_ns(e):USER_GENERAL) : e,k<USER_NONE?k:TSEL->preset,on)) {
         ui.force = 1;
         settings_save();
     }
@@ -1183,7 +1152,7 @@ static void preset_hinted(void) { ui.force = 1; }  /* after a sound load (the ph
 static void preset_go(uint32_t n)                    /* load list index n into the selected track (the sound only) */
 {
     uint32_t k, e = preset_at(n, &k);
-    if(e==USER_NATIVE_P5 || e==USER_NATIVE_FM || e==USER_NATIVE_CZ){native_load(e==USER_NATIVE_P5?ENGI_PROPHET:e==USER_NATIVE_FM?ENGI_FM6:ENGI_CZ,k,song.sel);}
+    if(e==USER_NATIVE_P5 || e==USER_NATIVE_FM || e==USER_NATIVE_CZ){native_load(user_native_eng(e),k,song.sel);}
     else if (e == USER_GENERAL) {
         up_load(k);
     } else {
@@ -1209,15 +1178,13 @@ static void preset_go(uint32_t n)                    /* load list index n into t
 static page_t stage_pg;
 static const page_t *stage_page(void)
 {
-    static const uint8_t P5_K[4] = {P5_CUTOFF, P5_RESONANCE, P5_ENV_FILTER, P5_RELEASE_AMP};
-    static const uint8_t CZ_K[4] = {LCZ_LBASE(0) + LCZ_W1, LCZ_EBASE(0, 1) + 8, LCZ_FINE, LCZ_VDEP};
-    uint32_t e = eng_idx(TSEL->eng_req), k;
+    uint32_t e = eng_idx(TSEL->eng_req), k, id[4];
     stage_pg.title = "STAGE";
     stage_pg.fam = FAM_HOME;
     stage_pg.graph = GR_NONE;
-    stage_pg.scope = e == ENGI_PROPHET ? SC_P5 : e == ENGI_CZ ? SC_CZ1 : SC_ENGINE;
+    stage_pg.scope = sch_home(e, id) ? SC_MOD : SC_ENGINE;   /* (a synth's own: its schema's HOME roles) */
     for (k = 0; k < 4u; k++)
-        stage_pg.id[k] = e == ENGI_PROPHET ? P5_K[k] : e == ENGI_CZ ? CZ_K[k] : ENGINES[e]->knob[k];
+        stage_pg.id[k] = (uint8_t)(stage_pg.scope == SC_MOD ? (id[k] < 0xFFu ? id[k] : 0xFFu) : ENGINES[e]->knob[k]);
     return &stage_pg;
 }
 /* HOME: what KNOB k edits (0: nothing there) */
@@ -1263,8 +1230,8 @@ static uint32_t act_cols(void)                   /* the columns that are actions
         return 0;
     if (pg->graph == GR_SLICES)
         return slice_page_ok() ? 12u : 0u;       /* SPLIT JOIN (a SLICE track only) */
-    if (pg->graph == GR_CZTOOLS)
-        return 15u;                              /* NAME 1>2 2>1 COMP */
+    if (pg->graph == GR_TOOLS)
+        return 15u;                              /* a synth's actions (its schema's TOOLS page: NAME 1>2 2>1 COMP) */
     return 0;
 }
 
@@ -1278,7 +1245,11 @@ static const char *act_name(uint32_t c)          /* column c's action (the foote
 {
     if (cur_page()->graph == GR_SLICES)
         return c == 3u ? "JOIN" : "SPLIT";
-    return CZ_ACTIONS[c & 3u].label;             /* (CZ TOOLS) */
+    {
+        int16_t *vp;
+        const param_desc_t *d = page_desc(cur_page(), c & 3u, &vp);
+        return d && d->label ? d->label : "";    /* (a TOOLS page: its column's) */
+    }
 }
 
 /* the picked action would do something now (OCT+ blinks) */

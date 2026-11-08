@@ -109,7 +109,7 @@ static void sheet_open(const char *title, const char *sub, const sheet_row_t *ro
 static void ps_save(void)
 {
     uint32_t i;
-    for (i = 0; i < NPAGES && PAGES[i].graph != GR_USER; i++)
+    for (i = 0; i < NPAGES && PG(i).graph != GR_USER; i++)
         ;
     ui.home = 0;
     ui.page = (uint8_t)i;
@@ -520,7 +520,7 @@ static int32_t enum_value(const param_desc_t *d,int32_t rank)
     for(int32_t v=d->min;v<=d->max;v++)if(d->names[v][0] && !rank--)return v;return d->min;
 }
 static struct { uint8_t page, slot; int16_t sel; } vl;
-static const param_desc_t *vlist_desc(int16_t **vp) { return page_desc(&PAGES[vl.page], vl.slot, vp); }
+static const param_desc_t *vlist_desc(int16_t **vp) { return page_desc(&PG(vl.page), vl.slot, vp); }
 static void vlist_open(uint8_t page, uint8_t slot)
 {
     int16_t *vp;
@@ -636,7 +636,7 @@ static const char *const FX_KNOB_WORDS[NELEM(FX_ORDER)] = {"", "SIZE DECAY TONE"
 #define FXL_H (240 - H_HEAD)
 static void fxl_draw(const param_desc_t *d)
 {
-    const page_t *pg = &PAGES[vl.page];
+    const page_t *pg = &PG(vl.page);
     uint32_t sh = pg->scope == SC_GLOBAL, r = fx_rack_row[sh] % FX_SLOTS, f = fx_family(vl.sel), rank = fx_rank(vl.sel), i;
     uint32_t a = FX_FAM_FIRST[f], b = FX_FAM_FIRST[f + 1u] < fx_order_n(d) ? FX_FAM_FIRST[f + 1u] : fx_order_n(d);
     uint16_t fc = fx_fam_col(f), sc = T_KNOB(1);
@@ -814,7 +814,7 @@ static void preset_pick_draw(void)
     pop.sig = sig;
     draw_head();
     entry_label(src, k, tag, nm);
-    if (src == ENGI_PROPHET)
+    if (src < NENGINES && sch_flag(src, MOD_SCH_F_SNAME))
         eng_preset_name(src, k, nm, sizeof nm);   /* (its name whole: its module's file, loaded or not) */
     title[1] = (char)('1' + song.sel);
     for (uint32_t band = 0; band < 104u; band += CV_MAX / POP_W) {

@@ -13,7 +13,7 @@
  * GFX_HOOK_CELL) without lying inside it, though still on the screen (the FX map's REVERSE).
  * MONO: every pixel of every screen is RGB565 gray (R = B, G = 2 R).
  * Rolling digits: every frame of a header BPM roll and a card roll, up and down, in every palette (lint, MONO).
- * FM6 charts (ui_graph.c graph_fm6, its parts through FM6_CHART_HOOK), every algorithm and every chart drawn: no two
+ * FM6 charts (ui_graph.c graph_alg, its parts through ALG_CHART_HOOK), every algorithm and every chart drawn: no two
  * operator boxes overlapping or touching, no route, loop, bus or label inside a box or touching one it does not
  * connect, no two nets (one gap's routes that share an operator, the output, the loop, the label) sharing or
  * touching a pixel, everything inside the panel.
@@ -81,7 +81,7 @@ static void hk_whole(uint32_t x, uint32_t y, uint32_t r0, uint32_t fill);
 #define GFX_HOOK_PIXELS(n) (px_visited += (n))
 #define UI_FILL_HOOK(x, y, w, h) hk_fill(x, y, w, h)
 static void fm6_hook(uint32_t kind, uint32_t a, uint32_t b);
-#define FM6_CHART_HOOK(kind, a, b) fm6_hook(kind, a, b)
+#define ALG_CHART_HOOK(kind, a, b) fm6_hook(kind, a, b)
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -806,7 +806,7 @@ static void ref_scene(int s)
         break;
     case S_REF_MAP_FM6:                              /* (R7) FM6's map from OP3 EG RATE */
         set_engine_of(&trk[1], ENGI_FM6); trk[1].engine = ENGI_FM6; song.playing = 0;
-        fm6_opsel = 2; go_title("EG RATE"); smap_open();
+        sch_inst = 2; go_title("EG RATE"); smap_open();
         break;
     case S_REF_SHEET_SOUND:                          /* (R6) the sound's sheet over its first EDIT page */
         song.playing = 0; ui.home = 0; ui.page = (uint8_t)page_first(FAM_EDIT); page_entered(); page_sheet_open();
@@ -879,13 +879,10 @@ static void ref_scene(int s)
     }
     case S_REF_FMEG: {                               /* (R6) FM6 Tine EP, OP3's EG: R 95 20 20 50, R3 turning */
         static const uint8_t R[4] = {95, 20, 20, 50}, L[4] = {99, 74, 58, 0};
-        uint8_t *op;
-        uint32_t i;
+        uint32_t i, op = (5u - 2u) * FP_OP;                /* (OP3's VCED ids) */
         set_engine_of(&trk[1], ENGI_FM6); apply_preset_to(&trk[1], preset_named(ENGI_FM6, "TINE EP")); trk[1].engine = ENGI_FM6;
-        song.playing = 0; trk[1].pattern_next = 0xFF; fm6_opsel = 2;
-        op = &fm6_patch_of(1)[(5u - 2u) * FP_OP];
-        for (i = 0; i < 4u; i++) { op[FP_R1 + i] = R[i]; op[FP_L1 + i] = L[i]; }
-        fm6_pgen[1]++;
+        song.playing = 0; trk[1].pattern_next = 0xFF; sch_inst = 2;
+        for (i = 0; i < 4u; i++) { sch_set_t(1, op + FP_R1 + i, R[i]); sch_set_t(1, op + FP_L1 + i, L[i]); }
         go_title("EG RATE"); ui.hot_col = 2; ui.hot_t = 30;
         break;
     }
@@ -1466,18 +1463,18 @@ static void setup(int s)
     case S_FM6_ALG5: eng(ENGI_FM6); TSEL->p[P_E0] = 5; TSEL->p[P_E1] = 3; go_title("EDIT 1"); ui.hot_col = 1; ui.hot_t = 30; break;
     case S_FM6_ALG22: eng(ENGI_FM6); TSEL->p[P_E0] = 22; TSEL->p[P_E6] = 40; go_title("EDIT 2"); ui.hot_col = 2; ui.hot_t = 30; break;
     case S_FM6_ALG32:
-        eng(ENGI_FM6); TSEL->p[P_E0] = 32; fm6_patch_of(song.sel)[FP_OL] = 0; fm6_pgen[song.sel]++;   /* (op 6: the patch's first) */
+        eng(ENGI_FM6); TSEL->p[P_E0] = 32; sch_set_t(song.sel, FP_OL, 0);   /* (op 6: the patch's first) */
         go_title("EDIT 1"); ui.hot_col = 2; ui.hot_t = 30;
         break;
     /* FM6's own pages: operator 2's FREQ (KNOB 1 just turned), operator 3's EG RATE, the pitch EG, STORE onto B3
      * (a patch there: its name) */
-    case S_FM6_FREQ: eng(ENGI_FM6); go_title("FREQ"); fm6_opsel = 1; ui.hot_col = 1; ui.hot_t = 30; break;
-    case S_FM6_EG: eng(ENGI_FM6); go_title("EG RATE"); fm6_opsel = 2; break;
-    case S_FM6_PEG: eng(ENGI_FM6); fm6_factory(3, fm6_pk); fm6_unpack(fm6_pk, fm6_patch_of(song.sel)); fm6_pgen[song.sel]++;
+    case S_FM6_FREQ: eng(ENGI_FM6); go_title("FREQ"); sch_inst = 1; ui.hot_col = 1; ui.hot_t = 30; break;
+    case S_FM6_EG: eng(ENGI_FM6); go_title("EG RATE"); sch_inst = 2; break;
+    case S_FM6_PEG: eng(ENGI_FM6); fm6_factory(3, fm6_pk); patch_set(song.sel, ENGI_FM6, fm6_pk, FM6_PACKED, MOD3_PATCH_SET);
         go_title("PITCH EG"); break;
     case S_FM6_STORE:
         eng(ENGI_FM6); song.playing = 0; fm6_factory(5, fm6_pk); (void)native_store(ENGI_FM6, 63, song.sel, "WOOD BARS");
-        go_title("STORE"); fm6_bslot = 383;
+        go_title("STORE"); sch_store_slot[ENGI_FM6] = 383;
         break;
     case S_CZ1_ENV: eng(ENGI_CZ); go_title("C1 WAV R1-4"); break;   /* INIT TONE: R1 R2 live, R3 R4 dim (END 2) */
     case S_CONFIRM_SEQ: ui.confirm = CF_CLEAR_SEQ; ui.confirm_trk = 2; break;
@@ -1861,14 +1858,14 @@ static void sweep_list_rows(void)
                     uint16_t color;
                     int16_t *vp;
                     const lrow_t *rw = list_at(&LISTS[l], r);
-                    const page_t *source = &PAGES[page_titled(rw->page)];
+                    const page_t *source = page_at(page_titled(rw->page));
                     const param_desc_t *d = page_desc(source, rw->slot, &vp);
-                    int fm6 = source->scope == SC_FM6 || source->scope == SC_FMOP;
+                    int fm6 = source->scope == SC_MOD;   /* (a synth's page: its patch, through the page) */
                     int32_t old = vp ? *vp : 0, v, lo = old, hi = old;
                     if (d && d->fmt == F_ENUM) { lo = d->min; hi = d->max; }
                     for (v = lo; v <= hi; v++) {
                         uint32_t i, label_seen = 0, value_seen = 0;
-                        if (fm6) fm6_page_put(source, rw->slot, v);
+                        if (fm6) sch_page_put(source, rw->slot, v, 0);
                         else if (vp) *vp = (int16_t)v;
                         snprintf(name, sizeof name, "%s%s/%s row %u value %d", render_pixel ? "PIXEL " : "",
                                  ENGINES[e]->name, LISTS[l].title, r, v);
@@ -1890,7 +1887,7 @@ static void sweep_list_rows(void)
                         }
                         count++;
                     }
-                    if (fm6) fm6_page_put(source, rw->slot, old);
+                    if (fm6) sch_page_put(source, rw->slot, old, 0);
                     else if (vp) *vp = (int16_t)old;
                 }
             }
@@ -1914,23 +1911,23 @@ static void sweep_columns(void)
             eng(e);
             ui.home = 0; ui.page = (uint8_t)i; page_entered();
             if (!page_visible(i)) continue;
-            snprintf(name, sizeof name, "%s%s/%s", render_pixel ? "PIXEL " : "", ENGINES[e]->name, PAGES[i].title);
+            snprintf(name, sizeof name, "%s%s/%s", render_pixel ? "PIXEL " : "", ENGINES[e]->name, PG(i).title);
             cur_name = name;
             for (c = 0; c < 4u; c++) {
                 int16_t *vp;
-                int fm6 = PAGES[i].scope == SC_FM6 || PAGES[i].scope == SC_FMOP;   /* (a copy: written back) */
-                int p5 = PAGES[i].scope == SC_P5;
-                p5_patch_t p5_before=*p5_patch_of(TSEL);
-                const param_desc_t *d = PAGES[i].scope == SC_GLOBAL || PAGES[i].scope == SC_TRACK || PAGES[i].scope == SC_ENGINE || fm6 || p5
+                int mod = PG(i).scope == SC_MOD && e != ENGI_CZ;   /* (a synth's page: a copy, its patch put back
+                                                     * after; the CZ-1's not swept, as before: CZ1 / CZ2 WAVE's
+                                                     * "Square" is cut by its column) */
+                uint8_t before[MOD3_PATCH_MAX];
+                memcpy(before, patch_of(song.sel), sizeof before);
+                const param_desc_t *d = PG(i).scope == SC_GLOBAL || PG(i).scope == SC_TRACK || PG(i).scope == SC_ENGINE || mod
                                         ? page_desc(cur_page(), c, &vp) : 0;
                 int32_t v, v0;
-                if (!d || !d->label || d->label[0] == '-' || PAGES[i].graph == GR_MOD) continue;
+                if (!d || !d->label || d->label[0] == '-' || PG(i).graph == GR_MOD) continue;
                 v0 = *vp;
                 for (v = d->min; v <= d->max; v++) {
-                    if (fm6)
-                        fm6_page_put(cur_page(), c, v);
-                    else if (p5)
-                        p5_edit_value(TSEL,PAGES[i].id[c],p5_panel_raw(TSEL,PAGES[i].id[c],v));
+                    if (mod)
+                        sch_page_put(cur_page(), c, v, 0);
                     else
                         *vp = (int16_t)v;
                     nscr = npend = 0;
@@ -1940,12 +1937,8 @@ static void sweep_columns(void)
                     nsweep++;
                     if (v - d->min > 300 && v < d->max - 1) v = d->max - 1;      /* wide ranges: the ends */
                 }
-                if (fm6)
-                    fm6_page_put(cur_page(), c, v0);
-                else if (p5) {
-                    *p5_patch_of(TSEL)=p5_before;
-                    p5_track_accept(TSEL);
-                }
+                if (mod)
+                    patch_set(song.sel, eng_idx(TSEL->eng_req), before, sizeof before, MOD3_PATCH_RESTORE);
                 else
                     *vp = (int16_t)v0;
             }
@@ -2193,8 +2186,8 @@ static void audit_sends(FILE *rep)
                 } else {
                     ui.home = 0; ui.page = (uint8_t)i; page_entered();
                     if (!page_visible(i)) continue;
-                    if (playing && PAGES[i].fam != FAM_SEQ) continue;
-                    snprintf(name, sizeof name, "%s/%s", ENGINES[e]->name, PAGES[i].title);
+                    if (playing && PG(i).fam != FAM_SEQ) continue;
+                    snprintf(name, sizeof name, "%s/%s", ENGINES[e]->name, PG(i).title);
                 }
                 cur_name = name;
                 aud_page(name, (int)playing);
@@ -2308,10 +2301,10 @@ static void designer_sweep(const char *out)
                 if(night){snprintf(file,sizeof file,"designer_features_%u",TSEL->eng_req);write_ppm(out,"NIGHT",file);}
                 continue;
             }
-            snprintf(name,sizeof name,"%s/designer %s %s OP%u",UI_PALETTES[palid].name,ENGINES[TSEL->eng_req]->name,cur_page()->title,fm6_opsel+1);cur_name=name;
+            snprintf(name,sizeof name,"%s/designer %s %s OP%u",UI_PALETTES[palid].name,ENGINES[TSEL->eng_req]->name,cur_page()->title,sch_inst+1u);cur_name=name;
             nscr=npend=0;ui.force=1;ui_draw();lint();if(palid==UI_GRAY_INDEX)mono_check();
             if(night && ((TSEL->eng_req==ENGI_PROPHET && str_eq(cur_page()->title,"P5 POLYMOD")) ||
-                (TSEL->eng_req==ENGI_FM6 && str_eq(cur_page()->title,"FREQ") && fm6_opsel==0) ||
+                (TSEL->eng_req==ENGI_FM6 && str_eq(cur_page()->title,"FREQ") && sch_inst==0) ||
                 (TSEL->eng_req==ENGI_CZ && str_eq(cur_page()->title,"CZ1 WAVE")))){
                 snprintf(file,sizeof file,"designer_%u",TSEL->eng_req);write_ppm(out,"NIGHT",file);
             }

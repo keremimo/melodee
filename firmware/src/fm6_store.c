@@ -41,7 +41,7 @@ static uint8_t fm6_chk(const uint8_t *p, uint32_t n)    /* DX7 checksum: data + 
     return sx_checksum(p,n);
 }
 
-static uint32_t fm6_sx_first(void) { return (fm6_bslot/32u)*32u; }
+static uint32_t fm6_sx_first(void) { return (sch_store_slot[ENGI_FM6]%UP_SLOTS/32u)*32u; }   /* (the STORE page's slot) */
 
 /* ------------------------------------------------------------- out --- */
 #if MELODEE_OTA
@@ -53,7 +53,11 @@ static int fm6_send_voice(uint32_t tr, uint32_t ch)       /* VCED: the track's p
     fm6_buf = proj_wire_borrow();
     memcpy(fm6_buf, H, 6);
     fm6_buf[2] = (uint8_t)(ch & 15u);
-    memcpy(fm6_buf + 6, fm6_patch_of(tr % NTRK), 155);
+    {
+        uint8_t v[FP_SIZE + 1u];
+        fm6_voice_of(tr % NTRK, v);
+        memcpy(fm6_buf + 6, v, 155);
+    }
     fm6_buf[161] = fm6_chk(fm6_buf + 6, 155);
     fm6_buf[162] = 0xF7;
     return ota_wire_send(fm6_buf, 163);
@@ -101,11 +105,11 @@ static void fm6_sysex(const uint8_t *b, uint32_t n)
         uint32_t k = (uint32_t)(b[3] & 3u) << 7 | b[4];
         if (k < 155u) {
             uint8_t v[FP_SIZE + 1u];
-            memcpy(v, fm6_patch_of(tr), FP_SIZE);
+            fm6_voice_of((uint32_t)tr, v);
             v[k] = b[5];
             fm6_put_patch((uint32_t)tr, v, 0);
         } else if (k == 155u) {
-            fm6_on[tr] = b[5] & FM6_ON_ALL;              /* bit 0 OP6 .. bit 5 OP1, as fm6_on */
+            fm6_on_set((uint32_t)tr, b[5]);              /* bit 0 OP6 .. bit 5 OP1, as the switches */
         }
         ui.force = 1;
     } else if (n == 7u && st == 0x10u && b[3] == 0x08u && tr >= 0) {   /* a function parameter: the track's */
@@ -157,8 +161,10 @@ static void fm6_service(void)                            /* main loop: a DX7 fra
 static void fm6_store(uint32_t k)
 {
     char nm[12];
+    uint8_t v[FP_SIZE + 1u];
     if (!fm6_is(song.sel) || k >= UP_SLOTS) return;
-    fm6_name(nm, fm6_patch_of(song.sel));
+    fm6_voice_of(song.sel, v);
+    fm6_name(nm, v);
     up_ui_named(2, k, nm);
 }
 

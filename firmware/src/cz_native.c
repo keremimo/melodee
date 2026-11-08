@@ -65,7 +65,7 @@ static float cz_native_env_tick(cz_native_env_t *e,const cz_native_def_t *d,uint
 static void cz_native_block(track_t *t)
 {
     cz_part_t *c=cz_part(trk_ix(t)%NTRK);
-    const uint8_t *b=cz_patch_of(trk_ix(t)%NTRK)->raw;
+    const uint8_t *b=cz_tone(t)->raw;
     if(c->native_valid && !memcmp(c->native_raw,b,128u))return;
     memcpy(c->native_raw,b,128u);c->native_valid=1;
     for(uint32_t l=0;l<2u;l++)for(uint32_t e=0;e<3u;e++){
@@ -181,7 +181,7 @@ static __attribute__((noinline)) uint32_t cz_native_inc(float note,int32_t fine)
 static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int32_t *out,uint32_t n,const vmod_t *m)
 {
     if(!n)return;
-    const uint8_t *b=cz_patch_of(trk_ix(t)%NTRK)->raw;
+    const uint8_t *b=cz_tone(t)->raw;
     cz_voice_t *c=cz_voice(t,v);const cz_native_def_t (*defs)[3]=cz_part(trk_ix(t)%NTRK)->native_def;cz_hw_pd_t pd[2];
     uint32_t inc[2],ph[2]={v->ph[0],v->ph[1]},tg[2]={(uint32_t)v->s[0],(uint32_t)v->s[1]};
     float amp[2][2],step[2];

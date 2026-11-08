@@ -117,23 +117,10 @@ static void eng_preset_name(uint32_t e, uint32_t k, char *nm, uint32_t cap)
 #endif
     str_cpy(nm, k < ENGINES[e]->npresets ? eng_preset(ENGINES[e], k)->name : "-", cap);
 }
-/* a factory preset's patch onto track t (its engine's own data, the firmware's: the Prophet's program and the voice
- * settings it brings, the CZ-1's tone, FM6's voice); a preset without one: the engine's INIT patch */
+/* a factory preset's patch onto track t (its synth's patch: the preset's bytes, the rest of the patch kept; a preset
+ * without one: the synth's starting patch), a new sound */
 static void preset_patch_put(track_t *t, const preset_entry_t *x)
 {
     uint32_t tr = (uint32_t)(t - trk);
-    if (t->eng_req == ENGI_PROPHET) {
-        p5_patch_t *p = p5_patch_of(t);
-        if (x->plen == sizeof *p) memcpy(p, x->patch, sizeof *p); else p5_patch_init(p);
-        p5_track_accept(t);
-    }
-    if (t->eng_req == ENGI_CZ && t->p[P_E7] == CZ_NATIVE) {
-        uint8_t *raw = cz_patch_of(tr % NTRK)->raw;
-        if (x->plen == CZ_BYTES) memcpy(raw, x->patch, CZ_BYTES); else cz_patch_init(raw);
-    }
-    if (t->eng_req == ENGI_FM6 && tr < NTRK) {
-        uint8_t v[FP_SIZE + 1u];
-        fm6_unpack(x->plen == FM6_PACKED ? x->patch : FM6_INIT, v);
-        fm6_put_patch(tr, v, 1);
-    }
+    patch_set(tr, t->eng_req % NENGINES, x->plen ? x->patch : 0, x->plen, MOD3_PATCH_NEW);
 }

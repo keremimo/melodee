@@ -2,35 +2,13 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* What the firmware keeps of FM6 (the engine: eng_fm6.c, a synth module on the device: firmware/modules/fm6): the
- * function settings, the factory voices (F1..F24) as the presets and the editor have them, the patch formats (155-byte
- * voice, 128-byte packed record, INIT VOICE), the parts' patches as the stores, the pages and SysEx write them
- * (fm6_parts.h holds them), and the DX7 SysEx bytes the USB interrupt collects (fm6_store.c serves them). The device's
+ * factory voices (F1..F24) as the presets and the editor have them and the DX7 SysEx bytes the USB interrupt
+ * collects (fm6_store.c serves them); the patch, its formats and writes: modules/fm6/fm6_patch.h, synths_phase4.h
+ * (TEMPORARY until phase 4). The device's
  * image makes no factory voice: F1..F24 are the FM6 module's presets (its file's PRST chunk, module_presets.h), which
  * tools/mod_build.py writes from the makers below as host builds compile them (MELODEE_FM6_BUILTIN) */
 #include "x0x/fastmath.h"
 #include "melodee_fm6.h"         /* tools/gen_fm6_patches.py: FM6_INIT, FM6_FACTORY[FM6_NFACTORY] (F1..F8: host builds) */
-
-static const uint8_t FM6_FNMAX[FM6_NFN] = {12, 12, 12, 1, 127, 1, 99, 7, 99, 7, 99, 7, 99, 7, 1, 2};
-static const uint8_t FM6_FNDEF[FM6_NFN] = {3, 3, 0, 0, 0, 0, 99, 1, 0, 0, 0, 0, 0, 0, 0, FM6_MARK1};   /* Dexed's */
-static void fm6_fn_reset(void)
-{
-    uint32_t k;
-    for (k = 0; k < NTRK; k++)
-        memcpy(fm6_fn[k], FM6_FNDEF, FM6_NFN);
-}
-static void fm6_fn_set(uint32_t tr, uint32_t k, int32_t v)
-{
-    if (tr < NTRK && k < FM6_NFN)
-        fm6_fn[tr][k] = (uint8_t)clamp(v, 0, FM6_FNMAX[k]);
-}
-static int fm6_fn_ok(const uint8_t *f)                    /* a stored set: every value in its range */
-{
-    uint32_t k;
-    for (k = 0; k < FM6_NFN; k++)
-        if (f[k] > FM6_FNMAX[k])
-            return 0;
-    return 1;
-}
 
 #if MELODEE_FM6_BUILTIN
 /* a Melodee factory voice: OP1..OP6 in patch order within an operator (DET 0..14, 7 = none), ALG 0..31,
@@ -44,96 +22,7 @@ typedef struct {
 _Static_assert(FM6_NROM == 16u && FM6_NFACTORY + FM6_NROM == FM6_NFAC, "FM6: F1..F8, F9..F24");
 #endif
 
-/* ------------------------------------------------------- patch formats --- */
-/* the highest value of each byte of the 155-byte voice */
-static uint32_t fm6_max(uint32_t i)
-{
-    static const uint8_t OPMAX[21] = {99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 3, 3, 7, 3, 7, 99, 1, 31, 99, 14};
-    static const uint8_t VMAX[19] = {99, 99, 99, 99, 99, 99, 99, 99, 31, 7, 1, 99, 99, 99, 99, 1, 5, 7, 48};
-    if (i < 126u)
-        return OPMAX[i % 21u];
-    if (i < FP_NAME)
-        return VMAX[i - 126u];
-    return 126u;
-}
-
-/* every value inside its range (a name byte outside 32..126 becomes a space) */
-static void fm6_sanitize(uint8_t *v)
-{
-    uint32_t i;
-    for (i = 0; i < FP_SIZE; i++) {
-        if (i >= FP_NAME)
-            v[i] = v[i] < 32u || v[i] > 126u ? ' ' : v[i];
-        else if (v[i] > fm6_max(i))
-            v[i] = (uint8_t)fm6_max(i);
-    }
-    v[FP_SIZE] = 0;
-}
-
-/* 128-byte packed record (VMEM, the 32-voice bank's) -> 155-byte voice; bits a record does not use are ignored */
-static void fm6_unpack(const uint8_t *b, uint8_t *v)
-{
-    uint32_t k, i;
-    for (k = 0; k < 6u; k++) {
-        const uint8_t *o = b + k * 17u;
-        uint8_t *d = v + k * FP_OP;
-        for (i = 0; i < 11u; i++)
-            d[i] = o[i] & 0x7Fu;
-        d[FP_LC] = o[11] & 3u;
-        d[FP_RC] = (o[11] >> 2) & 3u;
-        d[FP_RS] = o[12] & 7u;
-        d[FP_DET] = (o[12] >> 3) & 15u;
-        d[FP_AMS] = o[13] & 3u;
-        d[FP_KVS] = (o[13] >> 2) & 7u;
-        d[FP_OL] = o[14] & 0x7Fu;
-        d[FP_MODE] = o[15] & 1u;
-        d[FP_FC] = (o[15] >> 1) & 31u;
-        d[FP_FF] = o[16] & 0x7Fu;
-    }
-    for (i = 0; i < 9u; i++)
-        v[FP_PR1 + i] = b[102 + i] & 0x7Fu;              /* pitch EG, algorithm */
-    v[FP_ALG] &= 31u;
-    v[FP_FB] = b[111] & 7u;
-    v[FP_OKS] = (b[111] >> 3) & 1u;
-    for (i = 0; i < 4u; i++)
-        v[FP_LFS + i] = b[112 + i] & 0x7Fu;
-    v[FP_LKS] = b[116] & 1u;
-    v[FP_LFW] = (b[116] >> 1) & 7u;
-    v[FP_LPMS] = (b[116] >> 4) & 7u;
-    v[FP_TRNSP] = b[117] & 0x7Fu;
-    for (i = 0; i < 10u; i++)
-        v[FP_NAME + i] = b[118 + i] & 0x7Fu;
-    fm6_sanitize(v);
-}
-
-/* 155-byte voice -> 128-byte packed record (7-bit bytes: it travels in SysEx as it is) */
-static void fm6_pack(const uint8_t *v, uint8_t *b)
-{
-    uint32_t k, i;
-    for (k = 0; k < 6u; k++) {
-        const uint8_t *o = v + k * FP_OP;
-        uint8_t *d = b + k * 17u;
-        for (i = 0; i < 11u; i++)
-            d[i] = o[i] & 0x7Fu;
-        d[11] = (uint8_t)((o[FP_LC] & 3u) | (o[FP_RC] & 3u) << 2);
-        d[12] = (uint8_t)((o[FP_RS] & 7u) | (o[FP_DET] & 15u) << 3);
-        d[13] = (uint8_t)((o[FP_AMS] & 3u) | (o[FP_KVS] & 7u) << 2);
-        d[14] = o[FP_OL] & 0x7Fu;
-        d[15] = (uint8_t)((o[FP_MODE] & 1u) | (o[FP_FC] & 31u) << 1);
-        d[16] = o[FP_FF] & 0x7Fu;
-    }
-    for (i = 0; i < 9u; i++)
-        b[102 + i] = v[FP_PR1 + i] & 0x7Fu;
-    b[110] &= 31u;
-    b[111] = (uint8_t)((v[FP_FB] & 7u) | (v[FP_OKS] & 1u) << 3);
-    for (i = 0; i < 4u; i++)
-        b[112 + i] = v[FP_LFS + i] & 0x7Fu;
-    b[116] = (uint8_t)((v[FP_LKS] & 1u) | (v[FP_LFW] & 7u) << 1 | (v[FP_LPMS] & 7u) << 4);
-    b[117] = v[FP_TRNSP] & 0x7Fu;
-    for (i = 0; i < 10u; i++)
-        b[118 + i] = v[FP_NAME + i] & 0x7Fu;
-}
-
+/* (the patch formats: modules/fm6/fm6_patch.h) */
 #if MELODEE_FM6_BUILTIN
 static void fm6_rom_patch(const fm6_rom_t *r, uint8_t *v)   /* a Melodee factory voice -> 155-byte voice */
 {
@@ -193,31 +82,6 @@ static void fm6_name(char *d, const uint8_t *v)          /* the voice name, trai
     d[n] = 0;
 }
 
-/* ---------------------------------------------------- the track's patch --- */
-/* track tr's patch = v (155 bytes, sanitized). load: a new voice, as a DX7 program change (the notes stop); else
- * an edit, which the sounding notes follow. Main loop: the ISR takes it at its next block */
-static void fm6_put_patch(uint32_t tr, const uint8_t *v, int load)
-{
-    uint8_t s[FP_SIZE + 1u];
-    tr %= NTRK;
-    memcpy(s, v, FP_SIZE);
-    fm6_sanitize(s);                                /* not in place: the ISR must never copy an unsanitized byte */
-    memcpy(fm6_patch_of(tr), s, FP_SIZE + 1u);
-    if (load) {
-        fm6_on[tr] = FM6_ON_ALL;
-        fm6_lgen[tr]++;
-    }
-    RING_PUBLISH();
-    fm6_pgen[tr]++;
-}
-
-/* .. a load when its name or TRANSPOSE is another (a patch sent whole, an undo, a project), else an edit */
-static void fm6_set_patch(uint32_t tr, const uint8_t *v)
-{
-    const uint8_t *o = fm6_patch_of(tr % NTRK);
-    fm6_put_patch(tr, v, memcmp(o + FP_NAME, v + FP_NAME, 10) || o[FP_TRNSP] != v[FP_TRNSP]);
-}
-
 /* A factory preset loads its corresponding voice directly. */
 static void fm6_track_loaded(const track_t *t)
 {
@@ -229,25 +93,6 @@ static void fm6_track_loaded(const track_t *t)
         fm6_unpack(t->preset < FM6_NFAC ? pk : FM6_INIT, v);   /* (past F24: INIT VOICE) */
         fm6_put_patch(tr, v, 1);
     }
-}
-
-/* power-on: every track the init voice (what a project stores for the tracks that never played FM6), the
- * function settings Dexed's (a project or the template loaded then brings its own) */
-static void fm6_init(void)
-{
-    uint8_t v[FP_SIZE + 1u];
-    uint32_t tr;
-    fm6_fn_reset();
-    fm6_unpack(FM6_INIT, v);
-    for (tr = 0; tr < NTRK; tr++) {
-        fm6_put_patch(tr, v, 1);
-    }
-}
-
-/* an operator frequency the pages show (params.c F_FMFRQ): 2^(x / 65536) in Q16 */
-static inline __attribute__((always_inline)) uint32_t fm6_pow2(int32_t x)
-{
-    return (uint32_t)fm_minf(fm_exp2f((float)x * (1.0f / 65536.0f)) * 65536.0f, 4294967040.0f);
 }
 
 /* ------------------------------------------------------ DX7 SysEx in --- */

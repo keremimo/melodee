@@ -23,7 +23,8 @@ static int proj_image_valid(const project_t *q)
     for(uint32_t i=0;i<FX_SLOTS;i++)if(q->g[G_MFXTONE+i]<-FX_TONE_MAX||q->g[G_MFXTONE+i]>FX_TONE_MAX)return 0;
     for(uint32_t k=0;k<PROJ_TRK;k++){
         oct[k]=q->t[k].mpc_octave;
-        if(q->t[k].engine>=NENGINES||q->pattern[k]>=NPAT||!cz_patch_valid(q->cz[k].raw)||!p5_patch_valid(&q->p5[k])||!drum_patch_valid(&q->drum[k]))return 0;
+        if(q->t[k].engine>=NENGINES||q->pattern[k]>=NPAT||!p4_store_valid(MOD_SCH_STORE_TONE,q->cz[k])||
+           !p4_store_valid(MOD_SCH_STORE_PROGRAM,q->p5[k])||!p4_store_valid(MOD_SCH_STORE_KIT,q->drum[k]))return 0;
         for(uint32_t i=0;i<FM6_PACKED;i++)if(q->fm6[k][i]>127u)return 0;
         for(uint32_t i=0;i<P_COUNT;i++)if(q->t[k].p[i]<-64||q->t[k].p[i]>127)return 0;
         for(uint32_t i=0;i<NSTEP;i++)if(!proj_step_pack(step,&q->t[k].step[i]))return 0;

@@ -325,6 +325,10 @@ static int fm6_patches(void)
     memcpy(pk, FM6_FACTORY[3], FM6_PACKED);
     memcpy(pk + 118, "MY PATCH  ", 10);
     a[0] = ED_FM6_TRACK; a[1] = 2; memcpy(a + 2, pk, FM6_PACKED);
+    set_engine_of(&trk[2], ENGI_CZ);
+    n = request(ED_FM6_PUT, a, sizeof a);
+    bad += check("FM6_PUT a track not playing FM6: rc 2, nothing written", n == 9u && host_wire[7] == 2);
+    set_engine_of(&trk[2], ENGI_FM6);
     n = request(ED_FM6_PUT, a, sizeof a);
     bad += check("FM6_PUT track 3: rc 0, the track's patch", n == 9u && host_wire[7] == 0 &&
                  !memcmp(fm6_patch_of(2) + FP_NAME, "MY PATCH  ", 10));
@@ -452,7 +456,7 @@ static int cz_native_protocol(void)
     static uint8_t banked[BANK_STORE_SIZE];
     bad+=check("native tones survive full pattern-bank serialization",bank_pack(banked,&q,1) && bank_valid(banked,sizeof banked) && !memcmp(q.cz,proj_scratch.cz,sizeof q.cz));
     template_save(); static tmpl_t saved; saved=tmpl;
-    memset(cz_patch,0,sizeof cz_patch); memset(&tmpl,0,sizeof tmpl);
+    for(uint32_t k=0;k<NTRK;k++)memset(patch_of(k),0,MOD3_PATCH_MAX); memset(&tmpl,0,sizeof tmpl);
     int restored=tmpl_take((const uint8_t *)&saved,sizeof saved);template_load();
     bad+=check("native tone bytes and mode survive a saved template",restored && trk[1].p[P_E7]==CZ_NATIVE && !memcmp(cz_patch_of(1)->raw,raw,CZ_BYTES));
     const uint32_t sizes[]={sizeof(tmpl_fx_legacy_t),sizeof(tmpl_fx_single_t),sizeof(tmpl_t)-NPART*2u*(P_COUNT-116u)-20u,sizeof(tmpl_t)-NPART*2u*(P_COUNT-117u)-4u,sizeof(tmpl_t)-NPART*2u*(P_COUNT-119u)-4u,sizeof(tmpl_t)+NPART*2u*(125u-P_COUNT),sizeof(tmpl_t)-NPART*2u*(P_COUNT-122u),sizeof(tmpl_t)};

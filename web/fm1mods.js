@@ -3,9 +3,9 @@
 // The synth modules a build ships (SID, DRUM, CZ-1, FM6, the Prophet: ABI 3, firmware/modules/sdk/mod_abi3.h), written
 // after an update through editor command 84 into the device's module slots: pool records, taken first come first served
 // like projects and preset banks. The file is build/melodee-mods.bin: the build's .mmod files one after another (each
-// head gives its length). A shipped module reads the firmware's own synth data (its legacy key, the head's u32 at 52:
-// firmware/src/module_legacy.h): a slot holding a module for the same engine (from an older firmware, damaged, or this
-// one) is emptied and written again; one already holding the very file is left.
+// head gives its length). A shipped module may read the firmware's own pads data (DRUM: its pads key, the head's u32 at
+// 52, firmware/src/drum_kit.h MOD3_PADS_KEY; 0 for the others): a slot holding a module for the same engine (from an
+// older firmware, damaged, or this one) is emptied and written again; one already holding the very file is left.
 // Errors carry a code for the installer's words: modfile (not a whole bundle), modnocmd (the firmware has no
 // command 84), modbuild (another build's), modbusy (playing), modroom (the storage is full), modslots (no free slot),
 // modwrite, modcheck.

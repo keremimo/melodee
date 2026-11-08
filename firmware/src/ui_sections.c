@@ -1,38 +1,41 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* An engine's EDIT pages in sections (docs/design README "Sound pages, fast", mock/r7_sound_nav): Prophet's Osc,
- * Mixer, Filter ..; FM6's Algo, OP1 .. OP6 (the operator pages, once per operator: fm6_opsel), Pitch, LFO, Ctrl; CZ-1's
- * Line, Line 1, Pitch 1 ..; Store and Tools last. PRESETS jumps a section (to the page last used in it), SELECT turns
+/* An engine's EDIT pages in sections (docs/design README "Sound pages, fast", mock/r7_sound_nav): a synth's from its
+ * schema (the Prophet's Osc, Mixer, Filter ..; FM6's Algo, OP1 .. OP6 (its instanced pages, once per instance:
+ * sch_inst), Pitch, LFO, Ctrl; CZ-1's Line, Line 1, Pitch 1 ..; Store and Tools last: MOD3_PG_LAST), the firmware's
+ * pages by their titles. PRESETS jumps a section (to the page last used in it), SELECT turns
  * the pages (on across the sections, as ever); the sections as tabs under the header, a section's pages as the
  * header's dots. EDIT pressed on an EDIT page: the map, a row a section, a tile a page (KNOB 1 or SELECT a page of
  * the section, KNOB 2 the section, OCT+ opens, OCT- or EDIT closes).
  * Included by ui_draw.c */
 #define SEC_MAX 16
 #define SEC_TAB_H 26                                    /* the tabs: rows 30 .. 55 (a pill 24 tall at 31) */
-static const struct { const char *prefix, *name; } SEC_RULE[] = {   /* a page's section by its title (first match) */
-    {"P5 OSC", "Osc"}, {"P5 B WAVES", "Osc"}, {"P5 MIXER", "Mixer"}, {"P5 FILTER", "Filter"}, {"P5 FLT ENV", "Filter"},
-    {"P5 AMP", "Amp"}, {"P5 ENV MOD", "Mod"}, {"P5 POLYMOD", "Mod"}, {"P5 MOD FLT", "Mod"}, {"P5 LFO", "LFO"},
-    {"P5 WHEEL", "Wheel"}, {"P5 UNISON", "Voice"}, {"P5 BEND", "Voice"}, {"P5 STORE", "Store"},
-    {"STORE", "Store"}, {"ALGO", "Algo"}, {"PITCH", "Pitch"}, {"FM LFO", "LFO"}, {"FM ", "Ctrl"},
-    {"CZ TOOLS", "Tools"}, {"CZ1 ", "Line 1"}, {"C1 PIT", "Pitch 1"}, {"C1 WAV", "Wave 1"}, {"C1 AMP", "Amp 1"},
-    {"CZ2 ", "Line 2"}, {"C2 PIT", "Pitch 2"}, {"C2 WAV", "Wave 2"}, {"C2 AMP", "Amp 2"}, {"CZ ", "Line"},
-    {"DCW", "Env"}, {"DCA", "Env"}, {"DCO", "Env"}, {"CZ LEVEL", "Env"}, {"OP", "Env"},
+static const struct { const char *prefix, *name; } SEC_RULE[] = {   /* a firmware page's section by its title (first
+                                                                     * match; a synth's page: its schema's) */
+    {"CZ ", "Line"}, {"DCW", "Env"}, {"DCA", "Env"}, {"DCO", "Env"}, {"CZ LEVEL", "Env"}, {"OP", "Env"},
     {"DRUM", "Drum"}, {"LANES", "Lanes"}, {"VOICE", "Voice"}, {"EDIT", "Sound"}};
-static const char *const SEC_OP[6] = {"OP1", "OP2", "OP3", "OP4", "OP5", "OP6"};
 static struct {
-    uint8_t n, eng, e7, ok;
+    uint8_t n, eng, e7, ok, gen;
     const char *name[SEC_MAX];
-    uint8_t first[SEC_MAX], op[SEC_MAX], last[SEC_MAX];   /* op: an operator's (+1), 0 none; last: its page last used */
+    uint8_t first[SEC_MAX], op[SEC_MAX], last[SEC_MAX];   /* op: an instance's (+1), 0 none; last: its page last used */
 } sec;
+static char sec_nm[SEC_MAX][MOD_SCH_NAME + 1u] __attribute__((section(".pool")));   /* (a synth's section names) */
+/* page i is one of a synth's instanced pages (FM6's operator pages: a section per instance) */
+static int sec_inst(uint32_t i) { return PG(i).scope == SC_MOD && sch_pg_ninst(page_at(i)) != 0u; }
 static struct { uint8_t on, row, col; uint32_t sig; } smap;   /* the map: open, its cursor */
 static int sec_map_on(void) { return smap.on; }
 
 static const char *sec_rule(uint32_t i, uint32_t *plen)   /* page i's section name, the prefix it matched */
 {
+    static char b[MOD_SCH_NAME + 1u];
     uint32_t r;
+    if (PG(i).scope == SC_MOD) {                     /* (a synth's page: its schema's section, else "Sound") */
+        if (plen) *plen = 0;
+        return sch_pg_section(page_at(i), b, sizeof b) ? b : "Sound";
+    }
     for (r = 0; r < NELEM(SEC_RULE); r++) {
         uint32_t n = str_len(SEC_RULE[r].prefix);
-        if (str_prefix(PAGES[i].title, SEC_RULE[r].prefix)) {
+        if (str_prefix(PG(i).title, SEC_RULE[r].prefix)) {
             if (plen) *plen = n;
             return SEC_RULE[r].name;
         }
@@ -40,41 +43,51 @@ static const char *sec_rule(uint32_t i, uint32_t *plen)   /* page i's section na
     if (plen) *plen = 0;
     return "Sound";
 }
-static int sec_store(const char *n) { return str_eq(n, "Store") || str_eq(n, "Tools"); }
+/* page i's section goes last (a synth's MOD3_PG_LAST: Store, Tools) */
+static int sec_store(uint32_t i)
+{
+    if (PG(i).scope == SC_MOD)
+        return (sch_pg_flags(page_at(i)) & MOD3_PG_LAST) != 0u;
+    return str_eq(sec_rule(i, 0), "Store") || str_eq(sec_rule(i, 0), "Tools");
+}
 static void menu_words(char *d, const char *s, uint32_t n);   /* ui_menu.c */
 /* the sections of the selected track's engine (rebuilt when the engine changes): in page order, Store and Tools last */
 static void sec_build(void)
 {
     uint32_t i, k, pass;
     uint8_t e = (uint8_t)TSEL->eng_req, e7 = (uint8_t)TSEL->p[P_E7];
-    if (sec.ok && sec.eng == e && sec.e7 == e7)
+    if (sec.ok && sec.eng == e && sec.e7 == e7 && sec.gen == sch_gen)
         return;
     memset(&sec, 0, sizeof sec);
     sec.eng = e;
     sec.e7 = e7;
+    sec.gen = sch_gen;
     sec.ok = 1;
     for (pass = 0; pass < 2u; pass++)
         for (i = 0; i < NPAGES; i++) {
             const char *nm;
-            if (PAGES[i].fam != FAM_EDIT || !page_visible(i))
+            if (PG(i).fam != FAM_EDIT || !page_visible(i))
                 continue;
-            if (PAGES[i].scope == SC_FMOP) {            /* the operators: a section each, on their first page */
+            if (sec_inst(i)) {                       /* the instances: a section each, on their first page */
+                uint32_t ni = sch_pg_ninst(page_at(i));
                 if (pass || (sec.n && sec.op[sec.n - 1u]))
                     continue;
-                for (k = 0; k < 6u && sec.n < SEC_MAX; k++) {
-                    sec.name[sec.n] = SEC_OP[k];
+                for (k = 0; k < ni && sec.n < SEC_MAX; k++) {
+                    sch_inst_name(k, sec_nm[sec.n], sizeof sec_nm[sec.n]);
+                    sec.name[sec.n] = sec_nm[sec.n];
                     sec.first[sec.n] = (uint8_t)i;
                     sec.op[sec.n++] = (uint8_t)(k + 1u);
                 }
                 continue;
             }
-            nm = sec_rule(i, 0);
-            if (sec_store(nm) != (int)pass)
+            if (sec_store(i) != (int)pass)
                 continue;
+            nm = sec_rule(i, 0);
             for (k = 0; k < sec.n && !str_eq(sec.name[k], nm); k++)
                 ;
             if (k == sec.n && sec.n < SEC_MAX) {
-                sec.name[sec.n] = nm;
+                str_cpy(sec_nm[sec.n], nm, sizeof sec_nm[sec.n]);
+                sec.name[sec.n] = sec_nm[sec.n];
                 sec.first[sec.n] = (uint8_t)i;
                 sec.op[sec.n++] = 0;
             }
@@ -82,13 +95,13 @@ static void sec_build(void)
     for (k = 0; k < sec.n; k++)
         sec.last[k] = sec.first[k];
 }
-static uint32_t sec_of(uint32_t i)                      /* page i's section (an operator page: fm6_opsel's) */
+static uint32_t sec_of(uint32_t i)                      /* page i's section (an instanced page: sch_inst's) */
 {
     uint32_t k;
     const char *nm;
     sec_build();
-    if (PAGES[i].scope == SC_FMOP) {
-        for (k = 0; k < sec.n && sec.op[k] != fm6_opsel % 6u + 1u; k++)
+    if (sec_inst(i)) {
+        for (k = 0; k < sec.n && sec.op[k] != sch_inst + 1u; k++)
             ;
         return k < sec.n ? k : 0u;
     }
@@ -112,10 +125,10 @@ static void sec_go(uint32_t k)                          /* to section k: the pag
     if (k >= sec.n)
         return;
     p = sec.last[k];
-    if (PAGES[p].fam != FAM_EDIT || !page_visible(p))
+    if (PG(p).fam != FAM_EDIT || !page_visible(p))
         p = sec.first[k];
     if (sec.op[k])
-        fm6_opsel = (uint8_t)(sec.op[k] - 1u);
+        sch_inst = (uint8_t)(sec.op[k] - 1u);
     ui.home = 0;
     ui.page = (uint8_t)p;
     ui.fam_last[FAM_EDIT] = ui.page;
@@ -133,15 +146,20 @@ static void sec_turn(int32_t s)                         /* PRESETS on an EDIT pa
     sec_go((uint32_t)clamp((int32_t)k + (s > 0 ? 1 : -1), 0, (int32_t)sec.n - 1));
 }
 /* page i's name without its engine's prefix, in capitals ("P5 FLT ENV" -> "FLT ENV", "FM LFO 2" -> "LFO 2", "C1 PIT
- * R1-4" -> "R1-4"; EDIT 1 / 2: the engine's page titles, "OSC") */
+ * R1-4" -> "R1-4": a synth's page, its schema's short name; EDIT 1 / 2: the engine's page titles, "OSC") */
 static void sec_chip(uint32_t i, char *b, uint32_t n)
 {
-    static const char *const STRIP[] = {"P5 ", "FM ", "CZ1 ", "CZ2 ", "CZ ", "C1 PIT ", "C1 WAV ", "C1 AMP ", "C2 PIT ",
-                                        "C2 WAV ", "C2 AMP "};
-    const char *t = PAGES[i].title;
+    static const char *const STRIP[] = {"CZ "};  /* (PHASE's CZ LEVEL) */
+    const char *t = PG(i).title;
     uint32_t k;
-    if (PAGES[i].scope == SC_ENGINE) {
-        str_cpy(b, ENGINES[eng_idx(TSEL->eng_req)]->page_title[PAGES[i].id[0] != P_E0], n);
+    sch_page_t g;
+    if (PG(i).scope == SC_ENGINE) {
+        str_cpy(b, ENGINES[eng_idx(TSEL->eng_req)]->page_title[PG(i).id[0] != P_E0], n);
+        return;
+    }
+    if (PG(i).scope == SC_MOD) {
+        uint32_t j = sch_pg_index(page_at(i));
+        str_cpy(b, t + (j < SCH_PG_MAX && !sch_page_rec(sch_pgs.eng, j, &g) && g.chip < str_len(t) ? g.chip : 0u), n);
         return;
     }
     for (k = 0; k < NELEM(STRIP); k++)
@@ -193,9 +211,9 @@ static uint32_t smap_pages(uint32_t r, uint8_t *pg)     /* section r's pages (an
 {
     uint32_t i, n = 0;
     for (i = 0; i < NPAGES && n < 8u; i++) {
-        if (PAGES[i].fam != FAM_EDIT || !page_visible(i))
+        if (PG(i).fam != FAM_EDIT || !page_visible(i))
             continue;
-        if (sec.op[r] ? PAGES[i].scope == SC_FMOP : PAGES[i].scope != SC_FMOP && str_eq(sec_rule(i, 0), sec.name[r]))
+        if (sec.op[r] ? sec_inst(i) : !sec_inst(i) && str_eq(sec_rule(i, 0), sec.name[r]))
             pg[n++] = (uint8_t)i;
     }
     return n;
@@ -241,7 +259,7 @@ static void smap_input(int32_t pages, int32_t categories, uint32_t oct)
         smap_close();
     } else if ((oct & 2u) && n) {
         if (sec.op[smap.row])
-            fm6_opsel = (uint8_t)(sec.op[smap.row] - 1u);
+            sch_inst = (uint8_t)(sec.op[smap.row] - 1u);
         ui.home = 0;
         ui.page = pg[smap.col];
         ui.fam_last[FAM_EDIT] = ui.page;

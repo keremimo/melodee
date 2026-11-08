@@ -93,6 +93,7 @@ static void mel_ble_radio_start(const struct ble_rf_trims *t) { ble_hw_wl82_star
 #include "../firmware/src/midi_uart.c"                /* TRS MIDI IN: its parser (um_byte) feeds midi_in_q */
 #include "../firmware/src/song_chain.c"
 #include "../firmware/src/seq.c"
+#include "synth_compat.h"                        /* (the synths' patches by their schemas, for the checks) */
 /* Assertions can inspect a bank without exposing mutable pool internals.
  * Mutating fixtures must publish through pattern_write. */
 static const pattern_t *pattern_at(uint32_t k, uint32_t bank)
@@ -132,7 +133,7 @@ static void host_tracks_init(void)                /* as melodee_init: defaults, 
 {
     trk_voices_bind();
     midi_insert_init();
-    cz_init();
+
     pattern_init();
     uint32_t i, k;
     for (i = 0; i < G_COUNT; i++)
@@ -162,9 +163,11 @@ static void host_preset_values(track_t *t, uint32_t e, uint32_t pi, const preset
     t->p[P_REL] = p->env[3];
     t->p[P_ED_FLT] = p->fenv;
     t->p[P_VOICE] = p->mono ? V_LEGATO : V_POLY;
-    cz_factory_loaded(t);
-    if(e==ENGI_PROPHET){uint32_t k=(uint32_t)(t-trk)%NPART;p5_ready[k]=1;p5_preset_loaded(t,pi);}   /* (its program, as ui.c) */
-    fm6_track_loaded(t);                          /* FM6: the preset's patch (ui.c apply_preset_to) */
+    {                                             /* the synth's patch: the preset's (ui.c apply_preset_with) */
+        static preset_entry_t x;
+        preset_fetch_into(e, pi, &x, 1);
+        preset_patch_put(t, &x);
+    }
 }
 static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
 {
@@ -174,6 +177,7 @@ static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
         t->preset = 0;
         for (uint32_t i = 0; i < 8u; i++)
             t->p[P_E0 + i] = ENGINES[e]->edit[i].def;
+        patch_set((uint32_t)(t - trk), e, 0, 0, MOD3_PATCH_NEW);
         return;
     }
     pi %= n;

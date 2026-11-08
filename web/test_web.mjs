@@ -1314,13 +1314,13 @@ async function editorModules() {
   const built = join(HERE, "..", "build", "modules", "trio.mmod");   /* (tools/mod_build.py: the C head's layout) */
   if (existsSync(built)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(built)));
-    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5 && t.key === 0 && t.host === 1,
-       "modules: the built TRIO file's head reads as the firmware's (an SDK module: no legacy key)");
+    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5 && t.key === 0 && t.host === 2,
+       "modules: the built TRIO file's head reads as the firmware's (an SDK module: no key, host table 2)");
   }
   const sid = join(HERE, "..", "build", "modules", "sid.mmod");     /* an engine-source module (modules/sdk/mod_engine.h) */
   if (existsSync(sid)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(sid)));
-    ok(t.name === "SID" && t.engine === 3 && t.key !== 0 && t.host === 1 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (the legacy key it was built against)");
+    ok(t.name === "SID" && t.engine === 3 && t.key === 0 && t.host === 2 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (no key: only DRUM reads the firmware's pads data)");
   }
   let list = await E.MODS.list(rq);
   ok(!list.rc && !list.skipped && list.slots.length === 8 && list.slots.every((x) => !x.len), "modules: eight empty slots listed");

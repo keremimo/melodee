@@ -150,7 +150,7 @@ static int src_slot(uint32_t src)
 }
 static uint32_t src_engine(uint32_t src, uint32_t k)       /* the engine that plays entry src, k */
 {
-    return src == USER_NATIVE_P5 ? ENGI_PROPHET : src == USER_NATIVE_FM ? ENGI_FM6 : src == USER_NATIVE_CZ ? ENGI_CZ :
+    return src == USER_NATIVE_P5 || src == USER_NATIVE_FM || src == USER_NATIVE_CZ ? user_native_eng(src) % NENGINES :
            src == USER_GENERAL ? up_engine(k) % NENGINES : src % NENGINES;
 }
 static uint32_t entry_cat(uint32_t src, uint32_t k)
@@ -191,7 +191,7 @@ static void cur_entry_of(const track_t *t, uint32_t *src, uint32_t *k)
 {
     uint32_t u = user_of(t), e = t->eng_req % NENGINES, np = eng_npresets(e);
     if (u < USER_NONE && t->user_native) {
-        *src = e == ENGI_PROPHET ? USER_NATIVE_P5 : e == ENGI_FM6 ? USER_NATIVE_FM : USER_NATIVE_CZ;
+        *src = user_native_ns(e);                    /* (the user presets of its store format) */
         *k = u;
     } else if (u < UP_SLOTS) {
         *src = USER_GENERAL;

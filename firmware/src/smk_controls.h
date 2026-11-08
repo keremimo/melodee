@@ -25,8 +25,8 @@ static void smo_sync(void)
  * NOTE REPEAT (the FM-1's LFO) held a fader's edit is momentary, as a knob's is (ui.c momentary_take): released, the
  * value before comes back, and motion does not record it. LEVELS works everywhere; the other banks where the page has
  * a strip (bank_knobs_on). */
-/* id: the selected track's parameter the fader sets (P_COUNT: none); native: 2 CZ-1, 3 PROPHET (the whole sound).
- * As ui.c momentary_take: the store keeps parameter ids of the captured track and one native patch */
+/* id: the selected track's parameter the fader sets (P_COUNT: none); native: a synth's own (its patch, taken whole).
+ * As ui.c momentary_take: the store keeps parameter ids of the captured track and one patch */
 static void smk_fader_momentary(uint32_t id, uint32_t native)
 {
     uint32_t i, tr = song.sel;
@@ -38,16 +38,10 @@ static void smk_fader_momentary(uint32_t id, uint32_t native)
     }
     if (native && !momentary.native) {
         fm1_irq_off();
-        momentary.native = (uint8_t)native;
-        if (native == 2u) {
-            momentary.cz = *cz_patch_of(tr);
-        } else {
-            momentary.p5 = *p5_patch_of(TSEL);
-            momentary.p5_voice = TSEL->p[P_VOICE];
-            momentary.p5_prio = TSEL->p[P_PRIO];
-            momentary.p5_detune = TSEL->p[P_DETUNE];
-            momentary.p5_alloc = TSEL->p[P_ALLOC];
-        }
+        momentary.native = 1;
+        memcpy(momentary.patch, patch_of(tr), MOD3_PATCH_MAX);
+        for (i = 0; i < 4u; i++)
+            momentary.voice[i] = TSEL->p[MOMENTARY_VOICE[i]];
         fm1_irq_on();
     }
     if (id < P_COUNT && momentary.track == song.sel) {

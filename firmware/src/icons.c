@@ -111,7 +111,7 @@ static const icon_map_t ICON_MAP[] = {
     {"BUZZ", ICON_PULSE}, {"BRTH", ICON_NOISE}, {"Q", ICON_RESO}, {"RAND", ICON_PROB},
     {"FREQ", ICON_CUTOFF}, {"TRK", ICON_KEYTRACK}, {"DRFT", ICON_SWEEP},   /* NOISE (COLR, DENS, CRSH: above) */
     {"MLVL", ICON_MOD}, {"MRAT", ICON_RATIO}, {"MEG", ICON_DECAY}, {"VMOD", ICON_ACCENT}, {"DTUN", ICON_DETUNE},
-    {"PTCH", ICON_LOAD}, {"STORE", ICON_SAVE}, {"SEND", ICON_MIDI}, {"BOOT", ICON_LOAD}, {"DRUM", ICON_DRUM},           /* FM6 (ALG, FB: above; its pages: fm6_icon) */
+    {"PTCH", ICON_LOAD}, {"STORE", ICON_SAVE}, {"SEND", ICON_MIDI}, {"BOOT", ICON_LOAD}, {"DRUM", ICON_DRUM},           /* FM6 (ALG, FB: above; a synth's pages: its schema's icon keys) */
     /* fixed columns drawn by ui_draw.c (STEP page, preset browser, SYSTEM) */
     {"NOTE", ICON_PITCH}, {"STEP", ICON_STEPS}, {"FLAG", ICON_ACCENT}, {"ACC", ICON_ACCENT}, {"LANE", ICON_DRUM}, {"HIT", ICON_GATE}, {"SLD", ICON_SLIDE}, {"USB", ICON_MIDI},
     {"TRACK", ICON_MIX},                  /* TRACKS page (LEVEL, LEN, PAN: above) */
@@ -137,37 +137,11 @@ static const icon_map_t WAVE_ICON[] = {
     {"RTRP", ICON_W_RTRP},
 };
 
-/* FM6's pages (params.c FM6_OPD / FM6_GD / FM6_FD / FM6_SD): labels of their own (R1 is no ratio here) */
-static uint32_t fm6_icon(const param_desc_t *d)
-{
-    static const uint8_t OP[FP_OP + 1] = {
-        [FP_R1] = ICON_RATE, ICON_RATE, ICON_RATE, ICON_RATE, [FP_L1] = ICON_LEVEL, ICON_LEVEL, ICON_LEVEL, ICON_LEVEL,
-        [FP_BP] = ICON_PITCH, [FP_LD] = ICON_KEYTRACK, [FP_RD] = ICON_KEYTRACK, [FP_LC] = ICON_SHAPE,
-        [FP_RC] = ICON_SHAPE, [FP_RS] = ICON_KEYTRACK, [FP_AMS] = ICON_MOD, [FP_KVS] = ICON_ACCENT,
-        [FP_OL] = ICON_LEVEL, [FP_MODE] = ICON_RATIO, [FP_FC] = ICON_RATIO, [FP_FF] = ICON_TUNE,
-        [FP_DET] = ICON_DETUNE, [FP_OP] = ICON_MUTE};
-    static const uint8_t GV[FP_NAME - FP_PR1] = {   /* FP_PR1 .. FP_TRNSP */
-        ICON_RATE, ICON_RATE, ICON_RATE, ICON_RATE, ICON_PITCH, ICON_PITCH, ICON_PITCH, ICON_PITCH,
-        ICON_ALGORITHM, ICON_FEEDBACK, ICON_PHASE, ICON_RATE, ICON_FADE, ICON_VIBRATO, ICON_MOD, ICON_PHASE,
-        ICON_LFO_WAVE, ICON_VIBRATO, ICON_TRANSPOSE};
-    static const uint8_t FN[FM6_NFN] = {            /* FN_PBUP .. FN_ENGINE */
-        ICON_SWEEP, ICON_SWEEP, ICON_SCALE, ICON_GLIDE, ICON_TIME, ICON_SCALE, ICON_MOD, ICON_MIX,
-        ICON_MOD, ICON_MIX, ICON_MOUTH, ICON_MIX, ICON_ACCENT, ICON_MIX, ICON_ACCENT, ICON_CHIP};
-    static const uint8_t ST[4] = {ICON_SAVE, ICON_SAVE, ICON_MIDI, ICON_CLEAR};   /* SLOT STORE SEND INIT */
-    if (d >= FM6_OPD && d < FM6_OPD + FP_OP + 1) return OP[d - FM6_OPD];
-    if (d >= FM6_GD && d < FM6_GD + (FP_NAME - FP_PR1)) return GV[d - FM6_GD];
-    if (d >= FM6_FD && d < FM6_FD + FM6_NFN) return FN[d - FM6_FD];
-    if (d >= FM6_SD && d < FM6_SD + 4) return ST[d - FM6_SD];
-    return ICON_NONE;
-}
-
 static uint32_t param_icon(const param_desc_t *d, int32_t v)
 {
     uint32_t i;
     if (!d)
         return ICON_NONE;
-    if ((i = fm6_icon(d)) != ICON_NONE)
-        return i;
     if (d->fmt == F_ENUM && d->names && v >= d->min && v <= d->max &&
         (str_eq(d->label, "WAVE") || str_eq(d->label, "WAVE2")))
         for (i = 0; i < sizeof(WAVE_ICON) / sizeof(WAVE_ICON[0]); i++)

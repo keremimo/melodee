@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 #include "performance_options.h"
+#include "../modules/prophet/p5_patch.h"   /* the part's patch: a Rev-4 program (where the firmware keeps it) */
 /* Prophet prototype: native patches and five (experimental dual-core: eight) voices, with two provisional
  * filter characters. Stored engine ID 19 is independent of legacy ANALOG.
  * MELODEE_PROPHET_PROTOTYPE additionally aliases ID 0 for measurement rigs.
@@ -535,6 +536,7 @@ static void p5_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
  * units, so adding another track still steals voices. Validate on hardware. */
 static uint32_t p5_units(const track_t *t) { (void)t; return p5_poly()>5u?2u:3u; }
 static uint32_t p5_state(const track_t *t) { (void)t; return sizeof(p5_part_t); }   /* (engine_t.state) */
+#include "../modules/prophet/p5_ui.c"   /* its panel: the schema's values, hints, the program's voice settings */
 static const engine_t ENG_P5_TEST = {
     .name="PROPHET", .page_title={"FILTER/TUNE","PW/MIX"},
     .edit={{"CUT",F_INT,-63,63,0,0,0},{"RES",F_INT,-63,63,0,0,0},
@@ -552,5 +554,7 @@ static const engine_t ENG_P5_TEST = {
     .wclass=1,
     .menv=p5_env_source,           /* (the matrix's ENV: the amp envelope as it was last rendered) */
     .caps=MOD3_CAP_WHEEL,          /* (its LFO amount and Poly-Mod read the wheel: no SMK-37 vibrato) */
-    .bend_range=p5_bend_range
+    .bend_range=p5_bend_range,
+    .desc=p5_desc,
+    .patch_changed=p5_patch_changed, .pget=p5_pget, .pput=p5_pput, .pactive=p5_pactive,
 };

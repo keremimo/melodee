@@ -196,7 +196,7 @@ static void dsk_hit(track_t *t, uint32_t note, uint32_t vel)
     role = drum_gm(t->p, note, &st);
     lane = DV_TYPE_LANE[role];
     sound = drum_sound_of(t, note) & 15u;
-    pc = drum_patch_of(trk_ix(t))->c[sound];
+    pc = drum_offs(t)->c[sound];
     tune = clamp((st + pc[0] + drum_event_pitch) * 16 + (t->p[P_E1] - 64) * 3, -576, 576);
     K->quiet = 0;
     if (t->p[P_E6] && sound <= D9_SD) {

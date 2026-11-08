@@ -48,12 +48,11 @@ static void graph_adsr_v(int32_t va, int32_t vd, int32_t vs, int32_t vr, int32_t
 #undef EGY
 }
 
-/* FM6: a DX7 envelope, four rates (a segment's width: slower is wider) and four levels, held at L3 while the key is
- * down, then R4 to L4; it starts at L4 (as the DX7's). r, l: 0..99 each. pitch: a pitch envelope (50 = the note's
- * own pitch, a line there). The column just turned in ACCENT */
+/* a 4-rate 4-level envelope (a synth's MOD3_W_ENV8, FM6's: a DX7's): four rates (a segment's width: slower is wider)
+ * and four levels, held at L3 while the key is down, then R4 to L4; it starts at L4 (as the DX7's). r, l: 0..99
+ * each. pitch: a pitch envelope (50 = the note's own pitch, a line there). The column just turned in ACCENT */
 static void graph_dxenv(const uint8_t *r, const uint8_t *l, int pitch, uint16_t c)
 {
-    const page_t *pg = cur_page();
     int32_t x = PANEL_X0, i, top = 6, bot = 88, y0, y1, hot = ui.hot_t ? (int32_t)(ui.hot_col & 3u) : -1;
 #define FMY(v) (bot - (v) * (bot - top) / 99)
     cv_rect(PANEL_X0, bot + 2, PANEL_W, 1, T_RAISE);
@@ -69,12 +68,35 @@ static void graph_dxenv(const uint8_t *r, const uint8_t *l, int pitch, uint16_t 
         }
         xe = x + w;
         y1 = FMY(l[i]);
-        cv_line_t(x, y0, xe, y1, (pg->id[0] == FP_L1 || pg->id[0] == FP_PL1) && i == hot ? T_ACCENT : sc, 2);
+        cv_line_t(x, y0, xe, y1, sc, 2);
         x = xe;
         y0 = y1;
     }
     cv_line_t(x, y0, PANEL_X0 + PANEL_W, y0, T_DIM, 2);
 #undef FMY
+}
+/* the envelope of the selected synth's page pg (MOD3_W_ENV8; instanced: the instance it shows): rates and levels into
+ * v (0..99), a pitch envelope into *pitch, the page's columns the levels into *lv; 0 ok */
+static int env8_values(const page_t *pg, uint8_t *v, int *pitch, int *lv)
+{
+    uint8_t d[18];
+    sch_page_t g;
+    uint32_t e = sch_pgs.eng, k, j = sch_pg_index(pg), step;
+    if (j >= SCH_PG_MAX || sch_page_rec(e, j, &g) || g.widget != MOD3_W_ENV8 || sch_wid(e, g.wid, d, sizeof d))
+        return 1;
+    step = (g.flags & MOD3_PG_INST) ? (uint32_t)((int32_t)(int8_t)d[16] * (int32_t)sch_inst) : 0u;
+    for (k = 0; k < 8u; k++)
+        v[k] = (uint8_t)clamp(sch_val(TSEL, e, (sch_u16(d + 2u * k) + step) & 0xFFFFu, 0), 0, 99);
+    *pitch = d[17] & 1u;
+    *lv = g.id[0] == sch_u16(d + 8);
+    return 0;
+}
+static void graph_env8(const page_t *pg, uint16_t c)
+{
+    uint8_t v[8];
+    int pitch, lv;
+    if (!env8_values(pg, v, &pitch, &lv))
+        graph_dxenv(v, v + 4, pitch, c);
 }
 
 static void graph_lfo(const track_t *t, uint16_t c)
@@ -591,142 +613,191 @@ static void fm_bus(int32_t cl, int32_t cr, int32_t bus)
     cv_line(cr + 20, bus - 3, cr + 23, bus, T_MID); cv_line(cr + 20, bus + 3, cr + 23, bus, T_MID);
 }
 
-#ifndef FM6_CHART_HOOK
-#define FM6_CHART_HOOK(kind, a, b) ((void)0)   /* ui_render.c (host tests): the chart's parts one by one (its lint) */
+#ifndef ALG_CHART_HOOK
+#define ALG_CHART_HOOK(kind, a, b) ((void)0)   /* ui_render.c (host tests): the chart's parts one by one (its lint) */
 #endif
 enum { FMH_BOX, FMH_ROUTE, FMH_CAR, FMH_BUS, FMH_FB, FMH_LABEL, FMH_END };
-/* FM6's 32 algorithms as charts. FM6_CELL: per operator 1..6 its cell, the column in 24 px steps (bits 0..2) and
- * the row above the output bus (bits 4..5; row 0 = the carriers). The routes, the carriers and the feedback
- * operator are fm6_core.c's FM6_ALG itself (fm6_routes, fm6_car_ops, fm6_fb_op). ui_test.c checks the cells
- * against them (a modulator one row above what it modulates, the carriers on the bottom row and only they, one
- * operator per cell) and the routes against the 32 algorithms written out; ui_render.c lints every chart as drawn
- * (no route through a box or touching another route, no two boxes overlapping, all inside the panel). The cells:
- * a search for the fewest and shortest bends, the operators numbered left to right. */
-static const uint8_t FM6_CELL[32][6] = {
-    {0x00, 0x10, 0x01, 0x11, 0x21, 0x31}, {0x00, 0x10, 0x02, 0x12, 0x22, 0x32}, {0x00, 0x10, 0x20, 0x01, 0x11, 0x21},
-    {0x00, 0x10, 0x20, 0x01, 0x11, 0x21}, {0x00, 0x10, 0x01, 0x11, 0x02, 0x12}, {0x00, 0x10, 0x01, 0x11, 0x02, 0x12},
-    {0x00, 0x10, 0x01, 0x11, 0x12, 0x22}, {0x00, 0x10, 0x01, 0x12, 0x11, 0x21}, {0x00, 0x10, 0x02, 0x12, 0x13, 0x23},
-    {0x00, 0x10, 0x20, 0x01, 0x11, 0x12}, {0x00, 0x10, 0x20, 0x01, 0x11, 0x12}, {0x00, 0x10, 0x03, 0x12, 0x13, 0x14},
-    {0x00, 0x10, 0x02, 0x11, 0x12, 0x13}, {0x00, 0x10, 0x01, 0x11, 0x20, 0x21}, {0x00, 0x10, 0x02, 0x12, 0x21, 0x22},
-    {0x01, 0x10, 0x11, 0x21, 0x12, 0x22}, {0x01, 0x12, 0x10, 0x20, 0x11, 0x21}, {0x01, 0x10, 0x12, 0x11, 0x21, 0x31},
-    {0x00, 0x10, 0x20, 0x01, 0x02, 0x11}, {0x00, 0x01, 0x10, 0x02, 0x12, 0x13}, {0x00, 0x01, 0x10, 0x02, 0x03, 0x12},
-    {0x00, 0x10, 0x01, 0x02, 0x03, 0x12}, {0x00, 0x01, 0x11, 0x02, 0x03, 0x12}, {0x00, 0x01, 0x02, 0x03, 0x04, 0x13},
-    {0x00, 0x01, 0x02, 0x03, 0x04, 0x13}, {0x00, 0x01, 0x11, 0x02, 0x12, 0x13}, {0x00, 0x01, 0x11, 0x03, 0x13, 0x14},
-    {0x00, 0x10, 0x01, 0x11, 0x21, 0x02}, {0x00, 0x01, 0x02, 0x12, 0x03, 0x13}, {0x00, 0x01, 0x02, 0x12, 0x22, 0x03},
-    {0x00, 0x01, 0x02, 0x03, 0x04, 0x14}, {0x00, 0x01, 0x02, 0x03, 0x04, 0x05}};
-/* algorithm a's routes: m[i] bit j: operator j + 1 modulates operator i + 1. FM6_ALG runs the operators sixth
- * first, each reading a bus (or none) and writing one (or adding to it): who wrote a bus modulates its reader */
-static void fm6_routes(uint32_t a, uint8_t *m)
+/* A synth's algorithm chart (MOD3_W_ALG: mod_schema.h; FM6's 32, Dexed's): its widget data, the cells per operator
+ * (operator 1 first: the column in 24 px steps, bits 0..2, the row above the output bus, bits 4..6; row 0 = the
+ * carriers) and the routes the synth runs (the last operator first: each reads a bus or none, writes one or adds to
+ * it). ui_test.c checks FM6's cells against its routes (a modulator one row above what it modulates, the carriers on
+ * the bottom row and only they, one operator per cell) and the routes against the 32 algorithms written out;
+ * ui_render.c lints every chart as drawn (no route through a box or touching another route, no two boxes
+ * overlapping, all inside the panel). */
+#define ALG_HEAD 22u
+#define ALG_NOP 8u
+typedef struct {
+    uint16_t alg, fb, mode, ol;
+    int8_t ostep;
+    uint8_t loop, amac, fmac, hot[8], nalg, nop;
+} alg_wid_t;
+static int alg_wid(uint32_t e, uint32_t off, alg_wid_t *w)
 {
-    const uint8_t *f = FM6_ALG[a & 31u];
+    uint8_t d[ALG_HEAD];
+    if (sch_wid(e, off, d, sizeof d))
+        return 1;
+    w->alg = (uint16_t)sch_u16(d);
+    w->fb = (uint16_t)sch_u16(d + 2);
+    w->mode = (uint16_t)sch_u16(d + 4);
+    w->ol = (uint16_t)sch_u16(d + 6);
+    w->ostep = (int8_t)d[8];
+    w->loop = d[9];
+    w->amac = d[10];
+    w->fmac = d[11];
+    memcpy(w->hot, d + 12, 8);
+    w->nalg = d[20];
+    w->nop = d[21];
+    return !w->nalg || !w->nop || w->nop > ALG_NOP;
+}
+/* algorithm a's routes f (the last operator first) into m: m[i] bit j: operator j + 1 modulates operator i + 1 (who
+ * wrote a bus modulates its reader) */
+static void alg_routes(const uint8_t *f, uint32_t nop, uint8_t *m)
+{
     uint8_t bus[4] = {0, 0, 0, 0};
     uint32_t k;
-    for (k = 0; k < 6u; k++) {
-        uint32_t op = 5u - k, in = (f[k] >> 4) & 3u, o = f[k] & 3u;
+    for (k = 0; k < nop; k++) {
+        uint32_t op = nop - 1u - k, in = (f[k] >> 4) & 3u, o = f[k] & 3u;
         m[op] = in ? bus[in] : 0u;
-        bus[o] = (uint8_t)(((f[k] & FM6_OADD) ? bus[o] : 0u) | 1u << op);
+        bus[o] = (uint8_t)(((f[k] & 4u) ? bus[o] : 0u) | 1u << op);
     }
 }
-/* the operator with feedback in algorithm a (0..5: operator 1..6) */
-static uint32_t fm6_fb_op(uint32_t a)
+/* the operator with feedback (0..nop - 1: operator 1..nop) */
+static uint32_t alg_fb_op(const uint8_t *f, uint32_t nop)
 {
     uint32_t k;
-    for (k = 0; k < 5u && (FM6_ALG[a & 31u][5u - k] & 0xC0u) != 0xC0u; k++)
+    for (k = 0; k + 1u < nop && (f[nop - 1u - k] & 0xC0u) != 0xC0u; k++)
         ;
     return k;
 }
-/* MARK I returns OP4 / OP5 in algorithms 4 / 6; MODERN and OPL return OP6 itself. */
-static uint32_t fm6_fb_source(uint32_t a, uint32_t eng)
+/* the operator the feedback loop returns from: itself, or in the loop mode (FM6's MARK I: OP4 / OP5 in algorithms
+ * 4 / 6) the one that closes it */
+static uint32_t alg_fb_source(const uint8_t *f, uint32_t nop, int loop)
 {
-    uint32_t k, src = fm6_fb_op(a);
-    if (eng == FM6_MARK1)
-        for (k = 0; k < 6u; k++)
-            if (FM6_ALG[a & 31u][k] & FM6_FBOUT)
-                src = 5u - k;
+    uint32_t k, src = alg_fb_op(f, nop);
+    if (loop)
+        for (k = 0; k < nop; k++)
+            if (f[k] & 0x80u)
+                src = nop - 1u - k;
     return src;
 }
-/* the carriers of algorithm a: bit k operator k + 1 (fm6_carriers counts the sixth first) */
-static uint32_t fm6_car_ops(uint32_t a)
+/* the carriers: bit k operator k + 1 */
+static uint32_t alg_car_ops(const uint8_t *f, uint32_t nop)
 {
-    uint32_t c = fm6_carriers(a), r = 0, k;
-    for (k = 0; k < 6u; k++)
-        r |= (c >> (5u - k) & 1u) << k;
+    uint32_t r = 0, k;
+    for (k = 0; k < nop; k++)
+        r |= ((f[k] & 3u) ? 0u : 1u) << (nop - 1u - k);
     return r;
 }
-/* the algorithm FM6 plays on track t (0..31): ALG, or the patch's at PAT */
-static uint32_t fm6_alg_of(const track_t *t)
+/* the algorithm track t plays (0..nalg - 1): the part's macro when 1..nalg, else the patch's */
+static uint32_t alg_of(const track_t *t, uint32_t e, const alg_wid_t *w)
 {
-    return t->p[P_E0] >= 1 && t->p[P_E0] <= 32 ? (uint32_t)t->p[P_E0] - 1u : fm6_patch_of((t - trk) % NTRK)[FP_ALG] & 31u;
+    int32_t v = w->amac < P_COUNT ? t->p[w->amac] : 0;
+    return v >= 1 && v <= w->nalg ? (uint32_t)v - 1u : (uint32_t)sch_val(t, e, w->alg, 0) % w->nalg;
 }
-/* FM6's EDIT pages: the algorithm, drawn as graph_fm draws DIGITAL's, "ALG 05" top left. Carriers THEME with INK
+/* The chart, as graph_fm draws DIGITAL's, "ALG 05" top left (the algorithm's label). Carriers THEME with INK
  * numerals, modulators RAISE with THEME ones; an operator at output level 0: a DIM numeral (a carrier on RAISE).
- * Routes THEME, the feedback loop MID (DIM at feedback 0), the output bus MID. The knob just turned in ACCENT:
- * ALG and PTCH the label, FB the loop, MLVL the routes, MRAT MEG VMOD the modulators, DTUN the carriers. */
-static void graph_fm6(const track_t *t, uint16_t c)
+ * Routes THEME, the feedback loop MID (DIM at feedback 0), the output bus MID. The knob just turned in ACCENT: on
+ * EDIT 1 / 2 what the widget says its column lights (the label, the loop, the routes, the modulators, the carriers);
+ * on an instanced page (FM6's operator pages) the operator it shows. */
+static void graph_alg(const track_t *t, uint32_t e, uint32_t off, uint16_t c)
 {
-    uint32_t alg = fm6_alg_of(t), k, j, car = fm6_car_ops(alg), top = 0, hi = 0, fbop = fm6_fb_op(alg), hotset = 0;
-    uint32_t fbsrc = fm6_fb_source(alg, fm6_fn[(t - trk) % NTRK][FN_ENGINE]);
-    uint32_t hot = ui.hot_t ? (uint32_t)cur_page()->id[ui.hot_col & 3u] : 0u;
-    const uint8_t *pt = fm6_patch_of((t - trk) % NTRK);
-    int32_t x[6], y[6], bus, cl = 240, cr = 0, fb = clamp(pt[FP_FB] + t->p[P_E1], 0, 7);
-    uint8_t m[6], fan[6] = {0, 0, 0, 0, 0, 0};
-    uint16_t rc = hot == P_E2 ? T_ACCENT : c;
-    char b[7] = {'A', 'L', 'G', ' ', (char)('0' + (alg + 1u) / 10u), (char)('0' + (alg + 1u) % 10u), 0};
-    if (cur_page()->scope == SC_FMOP)                /* FM6's operator pages: the operator they show */
-        hotset = 1u << (fm6_opsel % 6u), hot = 0;
-    else if (cur_page()->scope == SC_FM6)
-        hot = 0;                                     /* (their columns are no macros) */
-    else if (hot == P_E3 || hot == P_E4 || hot == P_E5)
-        hotset = 63u & ~car;
-    else if (hot == P_E6)
-        hotset = car;
-    fm6_routes(alg, m);
-    for (k = 0; k < 6u; k++) {
-        uint32_t col = FM6_CELL[alg][k] & 7u, row = FM6_CELL[alg][k] >> 4;
+    alg_wid_t w;
+    uint8_t f[ALG_NOP], cell[ALG_NOP], m[ALG_NOP], fan[ALG_NOP] = {0};
+    const page_t *pg = cur_page();
+    uint32_t alg, k, j, car, top = 0, hi = 0, fbop, fbsrc, hotset = 0, hot = 0, fbmax;
+    int32_t x[ALG_NOP], y[ALG_NOP], bus, cl = 240, cr = 0, fb, fbm;
+    uint16_t rc;
+    char b[MOD_SCH_NAME + 4u];
+    sch_param_t ap;
+    if (alg_wid(e, off, &w))
+        return;
+    alg = alg_of(t, e, &w);
+    if (sch_wid(e, off + ALG_HEAD + alg * w.nop, f, w.nop) ||
+        sch_wid(e, off + ALG_HEAD + (uint32_t)w.nalg * w.nop + alg * w.nop, cell, w.nop))
+        return;
+    car = alg_car_ops(f, w.nop);
+    fbop = alg_fb_op(f, w.nop);
+    fbsrc = alg_fb_source(f, w.nop, w.mode != MOD_SCH_NONE && sch_val(t, e, w.mode, 0) == w.loop);
+    fb = sch_val(t, e, w.fb, &fbm);
+    fbmax = (uint32_t)(fbm > 0 ? fbm : 0);
+    fb = clamp(fb + (w.fmac < P_COUNT ? t->p[w.fmac] : 0), 0, (int32_t)fbmax);
+    if (pg->scope == SC_MOD) {
+        if (sch_pg_ninst(pg))                        /* (an operator's page: the operator it shows) */
+            hotset = 1u << (sch_inst % w.nop);
+    } else if (ui.hot_t) {                           /* EDIT 1 / 2: the part's macros */
+        uint32_t id = pg->id[ui.hot_col & 3u];
+        hot = id >= P_E0 && id < P_E0 + 8u ? w.hot[id - P_E0] : MOD3_WA_NONE;
+        if (hot == MOD3_WA_MODS)
+            hotset = ((1u << w.nop) - 1u) & ~car;
+        else if (hot == MOD3_WA_CARS)
+            hotset = car;
+    }
+    rc = hot == MOD3_WA_ROUTES ? T_ACCENT : c;
+    alg_routes(f, w.nop, m);
+    for (k = 0; k < w.nop; k++) {
+        uint32_t col = cell[k] & 7u, row = cell[k] >> 4;
         hi = col > hi ? col : hi;
         top = row > top ? row : top;
-        for (j = 0; j < 6u; j++)
+        for (j = 0; j < w.nop; j++)
             fan[j] += (uint8_t)(m[k] >> j & 1u);
     }
     bus = 50 + (27 + 23 * (int32_t)top) / 2;         /* the chart centred on the 100 px scale */
-    for (k = 0; k < 6u; k++) {
-        x[k] = 120 + (int32_t)(FM6_CELL[alg][k] & 7u) * 24 - (int32_t)hi * 12;
-        y[k] = bus - 6 - FM_BH - 23 * (int32_t)(FM6_CELL[alg][k] >> 4);
+    for (k = 0; k < w.nop; k++) {
+        x[k] = 120 + (int32_t)(cell[k] & 7u) * 24 - (int32_t)hi * 12;
+        y[k] = bus - 6 - FM_BH - 23 * (int32_t)(cell[k] >> 4);
         if (car >> k & 1u) { cl = x[k] < cl ? x[k] : cl; cr = x[k] > cr ? x[k] : cr; }
     }
-    for (k = 0; k < 6u; k++) {                       /* into k: its sources down to its jog row, across, down */
-        for (j = 0; j < 6u; j++)
+    for (k = 0; k < w.nop; k++) {                    /* into k: its sources down to its jog row, across, down */
+        for (j = 0; j < w.nop; j++)
             if (m[k] >> j & 1u) {
-                FM6_CHART_HOOK(FMH_ROUTE, j, k);
+                ALG_CHART_HOOK(FMH_ROUTE, j, k);
                 fm_route(x[j], y[j] + FM_BH, x[k], y[k] - 3, y[k], rc);
                 if (fan[j] > 1u) fm_dot(x[j], y[k] - 3, rc);          /* one operator modulating several */
                 if (m[k] & (m[k] - 1u)) fm_dot(x[k], y[k] - 3, rc);   /* several modulating one */
             }
         if (car >> k & 1u) {
-            FM6_CHART_HOOK(FMH_CAR, k, 0);
+            ALG_CHART_HOOK(FMH_CAR, k, 0);
             cv_rect(x[k], y[k] + FM_BH, 1, bus - y[k] - FM_BH, T_MID);
             if (x[k] != cl) fm_dot(x[k], bus, T_MID);
         }
     }
-    FM6_CHART_HOOK(FMH_BUS, 0, 0);
+    ALG_CHART_HOOK(FMH_BUS, 0, 0);
     fm_bus(cl, cr, bus);
-    FM6_CHART_HOOK(FMH_FB, fbop, fbsrc);
+    ALG_CHART_HOOK(FMH_FB, fbop, fbsrc);
     if (fbsrc != fbop)
-        fm_stack_loop(x[fbop], y[fbsrc], y[fbop], hot == P_E1 ? T_ACCENT : fb ? T_MID : T_DIM);
+        fm_stack_loop(x[fbop], y[fbsrc], y[fbop], hot == MOD3_WA_LOOP ? T_ACCENT : fb ? T_MID : T_DIM);
     else
-        fm_loop(x[fbop], y[fbop], hot == P_E1 ? T_ACCENT : fb ? T_MID : T_DIM);
-    for (k = 0; k < 6u; k++) {
-        uint32_t on = pt[(5u - k) * FP_OP + FP_OL] != 0, fill_c = (car >> k & 1u) && on;
-        uint16_t f = hotset >> k & 1u ? T_ACCENT : c, fill = fill_c ? f : T_RAISE;
+        fm_loop(x[fbop], y[fbop], hot == MOD3_WA_LOOP ? T_ACCENT : fb ? T_MID : T_DIM);
+    for (k = 0; k < w.nop; k++) {
+        uint32_t on = sch_val(t, e, (uint32_t)((int32_t)w.ol + (int32_t)w.ostep * (int32_t)k) & 0xFFFFu, 0) != 0;
+        uint32_t fill_c = (car >> k & 1u) && on;
+        uint16_t fc = hotset >> k & 1u ? T_ACCENT : c, fill = fill_c ? fc : T_RAISE;
         char n[2] = {(char)('1' + k), 0};
-        FM6_CHART_HOOK(FMH_BOX, k, 0);
+        ALG_CHART_HOOK(FMH_BOX, k, 0);
         cv_rrect(x[k] - 10, y[k], 21, FM_BH, 3, fill, T_SURF);
-        cv_text_c(x[k] + 1, ty_y(y[k] + FM_BH / 2, TY_LB), TY_LB, n, fill_c ? T_INK : on ? f : T_DIM, fill);
+        cv_text_c(x[k] + 1, ty_y(y[k] + FM_BH / 2, TY_LB), TY_LB, n, fill_c ? T_INK : on ? fc : T_DIM, fill);
     }
-    FM6_CHART_HOOK(FMH_LABEL, 0, 0);
-    if (graph_oy == GOY)                             /* (raised under the designer's tabs: no room for it) */
-        cv_text(10, ty_y(12 - GOY, TY_LB), TY_LB, b, hot == P_E0 || hot == P_E7 ? T_ACCENT : T_MID);
-    FM6_CHART_HOOK(FMH_END, alg, 0);
+    ALG_CHART_HOOK(FMH_LABEL, 0, 0);
+    if (graph_oy == GOY && !sch_param(e, w.alg, &ap)) {   /* (raised under the designer's tabs: no room for it) */
+        uint32_t n = sch_str(e, ap.label, b, MOD_SCH_NAME + 1u);
+        b[n] = ' ';
+        b[n + 1u] = (char)('0' + (alg + 1u) / 10u);
+        b[n + 2u] = (char)('0' + (alg + 1u) % 10u);
+        b[n + 3u] = 0;
+        cv_text(10, ty_y(12 - GOY, TY_LB), TY_LB, b, hot == MOD3_WA_LABEL ? T_ACCENT : T_MID);
+    }
+    ALG_CHART_HOOK(FMH_END, alg, 0);
+}
+/* the picture of a synth's page without one of its own, and of EDIT 1 / 2: its schema's (wdef), 0 none */
+static int graph_wdef(const track_t *t, uint16_t c)
+{
+    mod_sch_head h;
+    uint8_t d[ALG_HEAD];
+    uint32_t e = eng_idx(t->eng_req);
+    if (sch_head(e, &h) || h.wdef == MOD_SCH_NONE || sch_wid(e, h.wdef, d, sizeof d))
+        return 0;
+    graph_alg(t, e, h.wdef, c);
+    return 1;
 }
 
 /* The slots' names live in project.c's metadata (RAM, filled at boot and on each save); the redraw signature over
@@ -785,19 +856,16 @@ static uint32_t graph_sig(int play)
             h = (h ^ chord_last[song.sel].note[i]) * 16777619u;
         h ^= (uint32_t)t->engine * 389u;             /* (MONO and kits follow the sounding engine) */
     }
-    if (pg->scope == SC_FM6 || pg->scope == SC_FMOP) {   /* FM6's pages: the patch, switches, functions, bank */
-        h ^= fm6_pgen[song.sel % NTRK] * 2654435761u + fm6_on[song.sel % NTRK] * 40503u + fm6_opsel * 131u +
+    if (pg->scope == SC_MOD)                         /* a synth's pages: its patch, the instance shown, its slots */
+        h ^= fnv(2166136261u, patch_of(song.sel), patch_len(eng_idx(t->eng_req))) * 2654435761u + sch_inst * 131u +
              up_gen * 104729u;
-        for (i = 0; i < FM6_NFN; i++)
-            h = (h ^ fm6_fn[song.sel % NTRK][i]) * 16777619u;
-    }
 #if MELODEE_SLICE
     if (pg->graph == GR_SLICES && slice_page_ok()) h ^= slice_sig();
 #endif
-    if (pg->scope == SC_ENGINE && ((MELODEE_LEGACY_EXTRAS && t->eng_req % NENGINES == 7u) || t->eng_req % NENGINES == ENGI_FM6))
+    if (pg->scope == SC_ENGINE && ((MELODEE_LEGACY_EXTRAS && t->eng_req % NENGINES == 7u) || sch_wdef(eng_idx(t->eng_req))))
         h ^= (ui.hot_t ? ui.hot_col + 1u : 0u) * 65537u;
-    if (pg->scope == SC_ENGINE && t->eng_req % NENGINES == ENGI_FM6)   /* the patch (PAT's algorithm, levels, FB) */
-        h ^= (fm6_pgen[(t - trk) % NTRK] + 1u) * 2246822519u + fm6_fn[(t - trk) % NTRK][FN_ENGINE] * 40503u;
+    if (pg->scope == SC_ENGINE && sch_wdef(eng_idx(t->eng_req)))   /* the patch its picture shows (FM6's algorithm) */
+        h ^= (fnv(2166136261u, patch_of(trk_ix(t)), patch_len(eng_idx(t->eng_req))) + 1u) * 2246822519u;
     if (pg->graph == GR_STEPS || pg->graph == GR_ROLL || pg->graph == GR_DRUMHIT) {
         uint32_t ph = song.playing ? t->seq_idx : 0xFFFFu;
         if (pg->graph != GR_STEPS && (ph / 16u != ui.bank || (!play && pg->graph == GR_ROLL)))
@@ -854,7 +922,7 @@ static void entry_label(uint32_t e, uint32_t k, char *tag, char *nm)
 {
     if (e == USER_NATIVE_P5 || e == USER_NATIVE_FM || e == USER_NATIVE_CZ) {
         uint32_t eng = src_engine(e, k);
-        tag[0] = eng == ENGI_PROPHET ? 'P' : eng == ENGI_FM6 ? 'F' : 'Z';
+        tag[0] = sch_utag(eng);
         tag[1] = (char)('0' + (k + 1u) / 100u);
         tag[2] = (char)('0' + (k + 1u) / 10u % 10u);
         tag[3] = (char)('0' + (k + 1u) % 10u);
@@ -867,10 +935,6 @@ static void entry_label(uint32_t e, uint32_t k, char *tag, char *nm)
         str_cpy(tag, eng_abbr(eng_name(e)), 6);
         eng_preset_name(e, k, nm, 13);
     }
-}
-static void p5_short_name(const track_t *t,char *out,uint32_t size)
-{
-    char full[P5_NAME_LEN+1u];p5_patch_name(full,p5_patch_of((track_t *)t));str_cpy(out,full,size);
 }
 /* MIXER page: four SURF columns, one under each card: the circled numeral (filled and in the accent:
  * the selected track) with a REC / ARM / MUTE badge (P_MUTE, KNOB 1), the sound's short name (a MUTE badge
@@ -1049,21 +1113,16 @@ static void draw_graph(void)
                 graph_slices();
                 break;
 #endif
-            case GR_FMEG: {                                  /* FM6: operator fm6_opsel's envelope */
-                const uint8_t *op = &fm6_patch_of(song.sel % NTRK)[(5u - fm6_opsel % 6u) * FP_OP];
-                graph_dxenv(op + FP_R1, op + FP_L1, 0, c);
-                break;
-            }
-            case GR_FMPEG:                                   /* FM6: the pitch envelope */
-                graph_dxenv(fm6_patch_of(song.sel % NTRK) + FP_PR1, fm6_patch_of(song.sel % NTRK) + FP_PL1, 1, c);
+            case GR_ENV8:                                    /* a synth's envelope page (FM6's EG, pitch EG) */
+                graph_env8(pg, c);
                 break;
             default:
 #if MELODEE_LEGACY_EXTRAS
                 if (pg->scope == SC_ENGINE && t->eng_req % NENGINES == 7u) graph_wheel(t, c);
                 else
 #endif
-                if ((pg->scope == SC_ENGINE || pg->scope == SC_FM6 || pg->scope == SC_FMOP) &&
-                         t->eng_req % NENGINES == ENGI_FM6) graph_fm6(t, c);   /* EDIT 1 and 2, FM6's pages */
+                if ((pg->scope == SC_ENGINE || pg->scope == SC_MOD) && graph_wdef(t, c))
+                    ;                                        /* EDIT 1 and 2, a synth's pages: its picture (FM6's) */
                 else { cv_oy = 0; graph_scope(c, 0, H_GRAPH); }
                 break;
             }

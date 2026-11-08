@@ -28,8 +28,10 @@ static int ed_fm6_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
     case ED_FM6_GET:                                       /* target, index -> target, index, rc, [128 bytes] */
         rc = n != 2u || a[0] > ED_FM6_USER ? 1u : 0u;
         if (!rc) {
-            if (a[0] == ED_FM6_TRACK && a[1] < NPART)
-                fm6_pack(fm6_patch_of(a[1]), pk);
+            if (a[0] == ED_FM6_TRACK && a[1] < NPART && patch_eng_of(a[1]) != ENGI_FM6)
+                rc = 2u;                                   /* (a track not playing FM6 holds no FM6 voice) */
+            else if (a[0] == ED_FM6_TRACK && a[1] < NPART)
+                { uint8_t vc[FP_SIZE + 1u]; fm6_voice_of(a[1], vc); fm6_pack(vc, pk); }
             else if (a[0] == ED_FM6_BANK)
                 rc = ED_FM6_NOBANK;
             else if (a[0] == ED_FM6_FACTORY && a[1] < FM6_NFAC)
@@ -45,7 +47,9 @@ static int ed_fm6_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         return 1;
     case ED_FM6_PUT:                                       /* target, index, 128 bytes -> target, index, rc */
         rc = n != 2u + FM6_PACKED ? 1u : 0u;
-        if (!rc && a[0] == ED_FM6_TRACK && a[1] < NPART) {
+        if (!rc && a[0] == ED_FM6_TRACK && a[1] < NPART && trk[a[1] % NTRK].eng_req != ENGI_FM6) {
+            rc = 2u;                                       /* (a track not playing FM6 holds no FM6 voice) */
+        } else if (!rc && a[0] == ED_FM6_TRACK && a[1] < NPART) {
             uint8_t v[FP_SIZE + 1u];
             fm6_unpack(a + 2, v);                          /* (every value into its range) */
             fm6_set_patch(a[1], v);

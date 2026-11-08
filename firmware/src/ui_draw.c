@@ -163,6 +163,7 @@ static uint16_t fx_fam_col(uint32_t f)
 }
 static int sec_on(void);                                /* ui_sections.c */
 static uint32_t sec_of(uint32_t i);
+static int sec_inst(uint32_t i);
 static void sec_chip(uint32_t i, char *b, uint32_t n);
 static int sec_map_on(void);
 static void sound_name(const track_t *t, char *b);
@@ -191,9 +192,13 @@ static void head_chip_text(char *b)
         str_cpy(b, eng_name(e), 16);
     } else if (pg->graph == GR_ROLL && grid_on()) {     /* the drum grid */
         str_cpy(b, "STEP", 16);
-    } else if (pg->graph == GR_FMEG) {                  /* FM6's EG RATE / LVL: "OP3 EG" */
-        str_cpy(b, "OP1 EG", 16);
-        b[2] = (char)('1' + fm6_opsel % 6u);
+    } else if (pg->graph == GR_ENV8 && sch_pg_ninst(pg)) {   /* an instance's envelope (FM6's EG RATE / LVL):
+                                                              * "OP3 EG", the instance and the title's first word */
+        uint32_t n = sch_inst_name(sch_inst, b, 12), k;
+        b[n++] = ' ';
+        for (k = 0; pg->title[k] && pg->title[k] != ' ' && n + 1u < 16u; k++)
+            b[n++] = pg->title[k];
+        b[n] = 0;
     } else if (pg->fam == FAM_FX && pg->graph == GR_NONE) {   /* an FX slot: its effect */
         str_cpy(b, N_FX[clamp((pg->scope == SC_GLOBAL ? song.g : TSEL->p)[pg->id[0] - 1u], 0, FX_COUNT - 1)], 16);
     } else if (pg->scope != SC_ENGINE && sec_on()) {   /* an engine in sections: the page's name in its section */
@@ -213,8 +218,8 @@ static void head_pages(int32_t x, int32_t x1)          /* (x: after the transpor
     if (designer_on() && !name_on())                    /* the designer: its stage's pages */
         designer_pages(&n, &k);
     else for (i = 0; i < NPAGES; i++)                   /* (an engine in sections: the section's pages) */
-        if (PAGES[i].fam == pg->fam && page_visible(i) &&
-            (!sc || (PAGES[i].scope == SC_FMOP ? PAGES[ui.page].scope == SC_FMOP : sec_of(i) + 1u == sc))) {
+        if (PG(i).fam == pg->fam && page_visible(i) &&
+            (!sc || (sec_inst(i) ? sec_inst(ui.page) : sec_of(i) + 1u == sc))) {
             if (i == ui.page)
                 k = n;
             n++;
@@ -632,7 +637,11 @@ static void sound_name(const track_t *t, char *b)
     }
     uint32_t np = eng_npresets(t->eng_req % NENGINES);
     b[0] = 0;
-    if(t->eng_req==ENGI_PROPHET)p5_short_name(t,b,16);
+    if (sch_flag(eng_idx(t->eng_req), MOD_SCH_F_SNAME)) {   /* (a synth whose sound is its patch's own name: the Prophet) */
+        char full[MOD3_PATCH_MAX < 64u ? MOD3_PATCH_MAX : 64u];
+        patch_name_of(eng_idx(t->eng_req), patch_of(trk_ix(t)), full, sizeof full);
+        str_cpy(b, full, 16);
+    }
     else if(t->user_native && user_of(t)<USER_NONE)native_name(t->eng_req,user_of(t),b);
     else if (user_of(t) < UP_SLOTS)
         up_name(user_of(t), b);
@@ -993,9 +1002,7 @@ static void draw_cards(void)
                 str_cpy(val, FX_FAM_NAME[fx_family(*vp)], sizeof val);
         }
         draw_column(c, d->names == N_NOTE_FX ? "NOTE" : d->label, val, unit, fx_names(d) && col_style != CS_CAPTURE ? fx_fam_col(fx_family(*vp)) :
-                    (cur_page()->scope == SC_CZ1 &&   /* CZ-1: no effect on the tone as it is */
-                    !cz_ed_active(cz_patch_of(song.sel % NTRK)->raw, cur_page()->id[c])) ||
-                    (cur_page()->scope == SC_P5 && !p5_ed_active(TSEL, cur_page()->id[c])) ||
+                    sch_col_dim(cur_page(), c) ||     /* a synth's: no effect on its patch as it is */
                     (vp == &TSEL->p[P_LRATE] && TSEL->p[P_LSYNC]) ? T_DIM : VAL(c),   /* LFO 2 SYNC on: RATE does nothing */
                     d->fmt == F_ENUM && d->max < 2 ? -1 : RATIO(d, *vp), param_icon(d, *vp));
     }

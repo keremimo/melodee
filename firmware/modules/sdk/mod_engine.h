@@ -12,8 +12,10 @@
  *     MOD3_ENGINE_EXPORT(mod_x) = {MOD3_ENGINE_HEAD, .engine = N, .name = "X", .npresets = .., .eng = &ENG_X};
  * tools/mod_build.py builds it with the image's flags (tools/build.py: beside the image, for its board); host tests
  * compile the same file natively (no section, the descriptor by its name).
- * TEMPORARY: the five shipped synths read the firmware's per-synth data (module_legacy.h); their descriptor names its
- * key (MOD3_ENGINE_HEAD). */
+ * The part's patch is the firmware's bytes, read through host patch() (core.h mod_patch); the engine's own headers
+ * say what they mean (modules/<name>/: fm6_patch.h, p5_patch.h, cz_tone.h, drum_patch.h).
+ * TEMPORARY (phase 5, the pads): DRUM reads the firmware's lane and recorded-kit data (drum_kit.h mod_legacy_v3);
+ * it defines MOD_USES_PADS before this file and names their key (MOD3_PADS_HEAD). */
 #pragma once
 #define MOD_SIDE 1
 #include "fm1_cc.h"                              /* BOARD_SMK37 */
@@ -42,12 +44,8 @@ int memcmp(const void *a, const void *b, size_t n);
 #include "dsp.c"
 #include "drum_map.c"
 #include "drum_kit.h"
-#include "cz_parts.h"
-#include "fm6_parts.h"
 #include "audio_batch.h"                         /* (the firmware's queue for CPU1: the host's) */
 #include "audio_worker.h"                        /* (CPU1's pairing: the host's) */
-#include "p5_parts.h"
-#include "module_legacy.h"
 
 /* the firmware's calls (an engine's own declaration, `static void voice_scale_pitch(...);`, becomes the pointer's) */
 static const mod_host_v3 *mod_host;
@@ -60,11 +58,11 @@ static int32_t (*mod_imp_input_octave)(const track_t *t);
 #define trk_nvoice (*mod_imp_trk_nvoice)
 #define input_octave (*mod_imp_input_octave)
 #define mod_part_mem(part, bytes) mod_imp_part_mem(part, bytes)
+#define MOD3_CALL_PATCH(f) ((uint8_t *(*)(const track_t *))(void (*)(void))(f))   /* (track_t: the part's view) */
 #define MOD3_TAB(name, id, T) ((name = (T)(uintptr_t)h->table(id)) != 0)
-/* the host table into the pointers: 0, or why not (a table or the legacy data this firmware does not have) */
+/* the host table into the pointers: 0, or why not (a table or the pads data this firmware does not have) */
 static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 {
-    const mod_legacy_v3 *L = h->legacy;
     if (h->version < MOD3_HOST || h->size < sizeof(mod_host_v3))
         return 1;
     mod_host = h;
@@ -79,6 +77,8 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
     mod_imp_voice_scale_pitch = h->scale_pitch;
     mod_imp_trk_nvoice = h->nvoice;
     mod_imp_input_octave = h->octave;
+    mod_imp_patch = MOD3_CALL_PATCH(h->patch);
+    mod_imp_paired = h->paired;
     mod_imp_audio_batch_active = h->batch_active;
     mod_imp_audio_batch_push = h->batch_push;
     mod_imp_audio_batch_push_cost = h->batch_push_cost;
@@ -98,26 +98,16 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
         !MOD3_TAB(mod_imp_FM6_OPL_LOG, MOD3_T_FM6_OPL_LOG, uint16_t *) ||
         !MOD3_TAB(mod_imp_FM6_OPL_EXP, MOD3_T_FM6_OPL_EXP, uint16_t *))
         return 2;
-    if (!L)                                      /* TEMPORARY (module_legacy.h) */
+#ifdef MOD_USES_PADS
+    const mod_legacy_v3 *L = h->legacy;          /* TEMPORARY (phase 5: drum_kit.h) */
+    if (!L)
         return 3;
-    mod_imp_drum_patch = L->lg_drum_patch;
-    mod_imp_drum_patch_none = L->lg_drum_patch_none;
     mod_imp_drum_event_pitch = L->lg_drum_event_pitch;
     mod_imp_drum_event_length = L->lg_drum_event_length;
     mod_imp_drum_flash = L->lg_drum_flash;
     mod_imp_drk_user = L->lg_drk_user;
     mod_imp_drk_user_gen = L->lg_drk_user_gen;
-    mod_imp_cz_patch = L->lg_cz_patch;
-    mod_imp_cz_patch_none = L->lg_cz_patch_none;
-    mod_imp_fm6_patch = L->lg_fm6_patch;
-    mod_imp_fm6_patch_none = L->lg_fm6_patch_none;
-    mod_imp_fm6_pgen = L->lg_fm6_pgen;
-    mod_imp_fm6_lgen = L->lg_fm6_lgen;
-    mod_imp_fm6_on = L->lg_fm6_on;
-    mod_imp_fm6_fn = L->lg_fm6_fn;
-    mod_imp_fm6_pairs = L->lg_fm6_pairs;
-    mod_imp_p5_patch = L->lg_p5_patch;
-    mod_imp_p5_ready = L->lg_p5_ready;
+#endif
     return 0;
 }
 #ifdef FM1_IRQ_TARGET
@@ -126,4 +116,6 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 #define MOD3_ENGINE_EXPORT(sym) const mod_desc_v3 sym      /* (host tests: the descriptor by its name) */
 #endif
 #define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
-    .eng_size = sizeof(mod_engine_v3), .key = MOD3_LEGACY_KEY, .bind = mod_engine_bind
+    .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = mod_engine_bind
+#define MOD3_PADS_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
+    .eng_size = sizeof(mod_engine_v3), .key = MOD3_PADS_KEY, .bind = mod_engine_bind

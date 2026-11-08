@@ -4,6 +4,7 @@
  * 19 full packed groups (133 raw bytes). The 1.4 MIDI guide instead says
  * ID 0x31 and 128 raw bytes. Keep both explicit layouts, including every
  * opaque byte; interpreting a parameter never modifies its stored value. */
+#pragma once
 #define P5_RAW_MAX 133u
 #define P5_FRAME_MAX 159u
 enum {

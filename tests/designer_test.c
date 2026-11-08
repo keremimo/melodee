@@ -6,7 +6,7 @@
 static int failures;
 static void designer_at(const char *title,uint32_t op)
 {
-    for(uint32_t i=0;i<ds.n;i++)if(ds.route[i].page!=DS_FEAT && str_eq(PAGES[ds.route[i].page].title,title) && ds.route[i].op==op){
+    for(uint32_t i=0;i<ds.n;i++)if(ds.route[i].page!=DS_FEAT && str_eq(PG(ds.route[i].page).title,title) && ds.route[i].op==op){
         ds.at=(uint8_t)i;designer_page();return;
     }
     failures+=check("requested sound page is reachable",0);
@@ -71,11 +71,11 @@ static void dependency_tests(void)
     designer_at("P5 FLT ENV",0);p[P5_RELEASE_ON]=0;p[P5_ENV_FILTER]=0;p[P5_POLY_ENV]=0;turn(EN_K4,1);
     failures+=check("turning filter REL switches release and the filter envelope on",p[P5_RELEASE_ON] && p[P5_ENV_FILTER] && designer_need()==DF_NONE);
     designer_close(0);sound_init_of(TSEL,ENGI_FM6);designer_open();press(B_OCTUP);
-    fm6_on[0]=FM6_ON_ALL;fm6_patch_of(0)[3*FP_OP+FP_OL]=50;designer_route();
-    designer_at("OUT",2);fm6_on[0]&=(uint8_t)~(1u<<3);fm6_patch_of(0)[3*FP_OP+FP_OL]=0;turn(EN_K1,-1);
-    failures+=check("a silent operator's level turned down stays silent",!(fm6_on[0]&(1u<<3)) && !fm6_patch_of(0)[3*FP_OP+FP_OL]);
+    fm6_on_set(0,FM6_ON_ALL);sch_set_t(0,3*FP_OP+FP_OL,50);designer_route();
+    designer_at("OUT",2);fm6_on_set(0,fm6_on_of(0)&~(1u<<3));sch_set_t(0,3*FP_OP+FP_OL,0);turn(EN_K1,-1);
+    failures+=check("a silent operator's level turned down stays silent",!(fm6_on_of(0)&(1u<<3)) && !fm6_patch_of(0)[3*FP_OP+FP_OL]);
     turn(EN_K1,1);
-    failures+=check("turned up, the displayed OP3 (not reversed OP4) is switched on",(fm6_on[0]&(1u<<3)) && fm6_patch_of(0)[3*FP_OP+FP_OL]>0);
+    failures+=check("turned up, the displayed OP3 (not reversed OP4) is switched on",(fm6_on_of(0)&(1u<<3)) && fm6_patch_of(0)[3*FP_OP+FP_OL]>0);
     designer_close(0);sound_init_of(TSEL,ENGI_CZ);designer_open();press(B_OCTUP);
     designer_at("CZ VIBRATO",0);designer_cz_put(LCZ_VDEP,0);turn(EN_K2,1);
     failures+=check("turning CZ vibrato RATE gives it depth",cz_patch_of(0)->raw[11]!=0 && designer_need()==DF_NONE);
@@ -168,7 +168,7 @@ static void feature_tests(void)
     /* FM: the knob switches the operator it names; a build without carriers says so */
     ui_power_on();sound_init_of(TSEL,ENGI_FM6);designer_open();press(B_OCTUP);
     uint32_t k=designer_feature(DF_OP1+2);turn(EN_K1+k,-1);
-    failures+=check("FM OP3's knob switches OP3 (the patch keeps OP6 first)",!(fm6_on[0]&(1u<<3)) && (fm6_on[0]&(1u<<2)));
+    failures+=check("FM OP3's knob switches OP3 (the patch keeps OP6 first)",!(fm6_on_of(0)&(1u<<3)) && (fm6_on_of(0)&(1u<<2)));
     for(uint32_t f=DF_OP1;f<=DF_OP6;f++)turn(EN_K1+designer_feature(f),-1);
     failures+=check("FM with every carrier off is reported silent",designer_silent()!=0);
     turn(EN_K1+designer_feature(DF_OP1),1);
@@ -203,9 +203,9 @@ static void route_recipe_tests(void)
         eng_state_reset();ui_power_on();sound_init_of(TSEL,eng_vis(ei));
         designer_open();ds.current=0;ds.goal=(uint8_t)goal;ds.expert=1;press(B_OCTUP);
         for(uint32_t p=0;p<NPAGES;p++)if(designer_page_ok(p)){
-            for(uint32_t op=0;op<(PAGES[p].scope==SC_FMOP?6u:1u);op++){
+            for(uint32_t op=0;op<(sec_inst(p)?6u:1u);op++){
                 int found=0;for(uint32_t i=0;i<ds.n;i++)found|=ds.route[i].page==p && ds.route[i].op==op && ds.route[i].stage!=DT_BUILD;
-                if(designer_live(p) && (PAGES[p].scope!=SC_FMOP || designer_feat_get(DF_OP1+op)))coverage &= found;
+                if(designer_live(p) && (!sec_inst(p) || designer_feat_get(DF_OP1+op)))coverage &= found;
                 else coverage &= !found;            /* (what FEATURES switched off is not shaped) */
             }
         }

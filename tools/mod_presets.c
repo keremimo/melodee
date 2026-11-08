@@ -3,7 +3,8 @@
 /* A built-in engine's factory presets as the host firmware makes them (the engines and their preset makers built in:
  * MELODEE_*_BUILTIN), printed for tools/mod_presets.py, which packs them into the engine's module file (its PRST chunk,
  * firmware/src/module_presets.h). Built and run by tools/mod_build.py with the host's C compiler:
- *     mod_presets ENGINE   ->   N engine init / P k category name common patch (hex; "-": none) */
+ *     mod_presets ENGINE   ->   N engine init / P k category name common patch (hex; "-": none)
+ *     mod_presets S ENGINE ->   S bytes payload: its schema's SCHM chunk (module_schema.h; "-": none) */
 #define PERSISTENCE_TEST_NO_MAIN
 #include "persistence_test.c"
 static void hex(const void *p, uint32_t n)
@@ -18,8 +19,21 @@ static void hex(const void *p, uint32_t n)
 }
 int main(int argc, char **argv)
 {
-    uint32_t e = argc == 2 ? (uint32_t)atoi(argv[1]) : NENGINES;
+    uint32_t e = argc == 2 ? (uint32_t)atoi(argv[1]) : argc == 3 ? (uint32_t)atoi(argv[2]) : NENGINES;
     reset();
+    if (argc == 3 && !strcmp(argv[1], "S")) {      /* the engine's schema (module_schema.h): its SCHM payload, or none */
+        static uint8_t b[16384];
+        const mod_sch_src *s = e < NENGINES ? sch_builtin_src(e) : 0;
+        uint32_t n = s ? mod_sch_write(s, b, sizeof b) : 0;
+        if (s && !n) {
+            fprintf(stderr, "mod_presets: engine %u's schema does not write (mod_sch_write)\n", e);
+            return 1;
+        }
+        printf("S %u", n);
+        hex(b, n);
+        printf("\n");
+        return 0;
+    }
     if (e == 6u && ENGINES[6] == &ENG_RETIRED)    /* (TRIO and WHEEL, retired in the firmware: their modules' sounds */
         ENGINES[6] = &ENG_TRIO;                   /* are the built-in references' rows, eng_trio.c, eng_wheel.c) */
     if (e == 7u && ENGINES[7] == &ENG_RETIRED)

@@ -29,7 +29,8 @@
 #include <stdint.h>
 
 #define MOD3_ABI 3u
-#define MOD3_HOST 1u                             /* the host table version this contract describes */
+#define MOD3_HOST 2u                             /* the host table version this contract describes (2: the patch, its
+                                                  * schema's callbacks, the host's drawing) */
 #define MOD3_FILE_MAGIC 0x31444D4Du              /* "MMD1": every module file's (ABI 1 and 2: older firmware's) */
 #define MOD3_MAGIC 0x33444F4Du                   /* "MOD3": the descriptor, the image's first bytes */
 #define MOD3_FILE_CHUNKS 1u                      /* mod_file3_t.flags: chunks follow the address words */
@@ -57,6 +58,7 @@
 #define MOD3_G_TUNE 3u                           /* mod_host_v3.song_g: TUNE in cents */
 #define MOD3_AP_COUNT 32u                        /* cost classes (the firmware's AP_*): the CPU1 queue's, the profile's */
 #define MOD3_BATCH_BYTES 148u                    /* a CPU1 job's descriptor bytes, at most (host_v3 batch_push) */
+#define MOD3_PATCH_MAX 512u                      /* a part's patch (host 2): the module's own bytes, at most */
 
 /* the parameter formats of a parameter (the firmware's F_*) */
 enum {
@@ -80,6 +82,21 @@ enum {
 };
 /* mod_engine_v3.caps */
 #define MOD3_CAP_WHEEL 1u                        /* it plays the mod wheel itself: the SMK-37's wheel adds no vibrato */
+#define MOD3_DESC_ID 0x100u                      /* mod_engine_v3.desc: a schema parameter's (host 2) */
+/* mod_engine_v3.patch_changed: what wrote the part's patch (host 2) */
+enum {
+    MOD3_PATCH_EDIT,                             /* a parameter (id; 0xFFFF: several) edited: a page, a knob, the editor */
+    MOD3_PATCH_NEW,                              /* a new sound picked (a preset): its notes stop, the module may set the
+                                                  * part's own voice parameters from it (P_VOICE ..) */
+    MOD3_PATCH_SET,                              /* the whole patch replaced (a project, an undo, a sent patch): the module
+                                                  * decides whether it is another sound */
+    MOD3_PATCH_RESTORE,                          /* a snapshot put back as it was (a momentary edit, a compare, a song
+                                                  * section): nothing reset */
+    MOD3_PATCH_MOTION,                           /* Motion moved parameters (id; 0xFFFF: several), audio interrupt */
+    MOD3_PATCH_LOAD                              /* a stored sound loaded (a user preset): the module may set the part's
+                                                  * voice parameters from it and decides whether it is another sound */
+};
+typedef struct mod_area_v3 { int16_t x, y, w, h; } mod_area_v3;   /* a widget's place on the screen (host 2 draw) */
 
 /* ---- the views */
 typedef struct mod_voice_v3 {                    /* a voice: the firmware's voice_t begins with these, its own follow */
@@ -159,7 +176,9 @@ typedef struct mod_engine_v3 {
     void (*note_on)(mod_part_v3 *t, mod_voice_v3 *v);                                               /* (needed) */
     void (*render)(mod_part_v3 *t, mod_voice_v3 *v, int32_t *out, uint32_t n, const mod_vmod_v3 *m); /* (needed) */
     int32_t (*amp)(mod_part_v3 *t, mod_voice_v3 *v, int32_t adsr);   /* the amplitude instead of the ADSR's, Q15 */
-    const mod_param_v3 *(*desc)(const mod_part_v3 *t, uint32_t k);   /* E k's descriptor now (else edit[k]) */
+    const mod_param_v3 *(*desc)(const mod_part_v3 *t, uint32_t k);   /* E k's descriptor now (else edit[k]); host 2:
+                                                  * k = MOD3_DESC_ID + id, its schema's parameter id's (else the
+                                                  * schema's: mod_schema.h MOD3_SF_DESC) */
     void (*block)(mod_part_v3 *t);               /* once per block and part, before its voices */
     int32_t (*keys)(const mod_part_v3 *t, uint32_t k);              /* key k's note, the engine's own map; -1 none */
     uint8_t ownenv;                              /* 1: its own envelopes are the amplitude; done() ends a voice */
@@ -183,6 +202,16 @@ typedef struct mod_engine_v3 {
     int (*reserve)(const void *state, uint32_t bytes);              /* 1: keep CPU0's larger service reserve */
     uint8_t caps;                                /* MOD3_CAP_* */
     int32_t (*bend_range)(const mod_part_v3 *t); /* the pitch wheel's range now, Q8 semitones (else the channel's) */
+    /* host 2: the part's patch (host patch(): the module's bytes, its schema says how many, mod_schema.h) and the
+     * parameters of its schema that are not fields of it (MOD3_SK_CALL). patch is the part's own (main loop) */
+    void (*patch_changed)(mod_part_v3 *t, uint8_t *patch, uint32_t how, uint32_t id);   /* main loop (MOTION: audio):
+                                                  * patch is the part's (the module may correct its own bytes) */
+    int32_t (*pget)(const mod_part_v3 *t, const uint8_t *patch, uint32_t id);       /* a MOD3_SK_CALL value */
+    int (*pput)(mod_part_v3 *t, uint8_t *patch, uint32_t id, int32_t v);            /* .. set: 1 changed */
+    void (*pformat)(const mod_part_v3 *t, const uint8_t *patch, uint32_t id, int32_t v, char *val,
+                    const char **unit);          /* a MOD3_SF_FORMAT parameter's text (val: 8 bytes) */
+    int (*pactive)(const mod_part_v3 *t, const uint8_t *patch, uint32_t id);        /* 0: drawn dim (no effect now) */
+    void (*draw)(const mod_part_v3 *t, const uint8_t *patch, uint32_t widget, const mod_area_v3 *a);  /* MOD3_W_DRAW */
 } mod_engine_v3;
 
 /* ---- the firmware's side, handed to bind() (append only) */
@@ -216,10 +245,22 @@ typedef struct mod_host_v3 {
     /* the main loop's */
     void (*lz_unpack)(uint8_t *dst, const uint8_t *src, uint32_t n);   /* dsp.c's format (module_presets.h) */
     int (*file_read)(uint32_t self, uint32_t off, void *dst, uint32_t n);   /* the module's own file (bind's self) */
-    /* TEMPORARY (until the patch blob): the firmware's own data of the synths it shipped with, laid out as it has it
-     * (the module's key: MOD3_LEGACY_KEY, firmware/src/module_legacy.h); 0 for a module that does not name the key */
+    /* TEMPORARY (phase 5, the pads): the DRUM kits' lanes and recorded kits as this firmware lays them out (the
+     * module's key: MOD3_PADS_KEY, firmware/src/drum_kit.h); 0 for a module that does not name the key. (Host 1 called
+     * it legacy and held the shipped synths' patches too: the patch below replaced them) */
     const struct mod_legacy_v3 *legacy;
+    /* host 2 */
+    uint8_t *(*patch)(const mod_part_v3 *t);     /* the patch the part plays (MOD3_PATCH_MAX bytes room); while its
+                                                  * engine is switching, zeros (never another engine's bytes) */
+    uint16_t (*color)(uint32_t role);            /* the screen's colours (MOD3_C_*), RGB565 */
+    void (*fill)(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c);              /* in the widget's canvas */
+    void (*rrect)(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t c);
+    void (*text)(int32_t x, int32_t y, const char *s, uint32_t font, uint16_t c);      /* font MOD3_FONT_* */
+    uint32_t *paired;                            /* voices an engine rendered on CPU1 outside the worker's queue, paired
+                                                  * with CPU0's (the CPU lab's count: AUDIO_STATS) */
 } mod_host_v3;
+enum { MOD3_C_BG, MOD3_C_INK, MOD3_C_DIM, MOD3_C_ACCENT, MOD3_C_THEME, MOD3_C_SURF, MOD3_C_RAISE, MOD3_C_COUNT };
+enum { MOD3_FONT_SMALL, MOD3_FONT_LABEL, MOD3_FONT_VALUE };
 
 /* ---- the module's side: the image's first bytes */
 typedef struct mod_desc_v3 {

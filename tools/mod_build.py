@@ -262,19 +262,42 @@ def build(src, out, version, defs):
     if len(img) > IMAGE_MAX or nbss > BSS_MAX:
         raise SystemExit(f"mod_build: image {len(img)} B / bss {nbss} B, at most {IMAGE_MAX} / {BSS_MAX}")
     engine, name, npre, key, host = describe(img, words, nbss)
-    if engine_src != (key != 0):
-        raise SystemExit("mod_build: an engine-source module names the legacy key (MOD3_ENGINE_HEAD), an SDK module none")
+    if not engine_src and key:
+        raise SystemExit("mod_build: an SDK module names no key (MOD3_SDK_HEAD)")
     body = img + b"".join(struct.pack("<I", w) for w in words)
     prst = presets_chunk(stem, engine, npre) if npre else b""
-    chunks = mod_presets.chunk(mod_presets.TAG, prst) if prst else b""
+    schm = schema_chunk(stem, engine) if engine_src else b""
+    chunks = (mod_presets.chunk(mod_presets.TAG, prst) if prst else b"") + \
+        (mod_presets.chunk(SCHM_TAG, schm) if schm else b"")
     head = HEAD.pack(FILE_MAGIC, ABI, engine, 1 if chunks else 0, HEAD.size + len(body) + len(chunks), len(img), nbss,
                      len(words), 0, zlib.crc32(body + chunks), name.encode()[:16].ljust(16, b"\0"), version, npre, 0,
                      key, host, 0)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(head + body + chunks)
-    print(f"module {name}: ABI {ABI} host {host}, engine {engine}, " + (f"legacy key {key:08x}, " if key else "") +
+    print(f"module {name}: ABI {ABI} host {host}, engine {engine}, " + (f"pads key {key:08x}, " if key else "") +
           f"image {len(img)} B, bss {nbss} B, {len(words)} address words, stack {need} B, {npre} presets {len(prst)} B, "
+          f"schema {len(schm)} B, "
           f"file {len(head) + len(body) + len(chunks)} B -> {out}")
+
+
+SCHM_TAG = 0x4D484353                          # "SCHM": the module's schema (firmware/modules/sdk/mod_schema.h)
+
+
+def schema_chunk(stem, engine):
+    """engine's schema as the host firmware has it built in (its module source's description, mod_sch_write): the
+    SCHM payload, b"" none"""
+    tool = mod_presets.host_tool(SRC / "build" / "modules" / (stem + "_presets"))
+    r = subprocess.run([str(tool), "S", str(engine)], cwd=SRC, capture_output=True, text=True)
+    if r.returncode:
+        sys.stderr.write(r.stdout + r.stderr)
+        raise SystemExit(f"mod_build: engine {engine}: its schema does not write (tools/mod_presets.c S)")
+    f = r.stdout.split()
+    if len(f) < 3 or f[0] != "S" or f[2] == "-":
+        return b""
+    payload = bytes.fromhex(f[2])
+    if len(payload) != int(f[1]) or zlib.crc32(payload[52:]) != struct.unpack_from("<I", payload, 48)[0]:
+        raise SystemExit(f"mod_build: engine {engine}: the schema's bytes do not check")
+    return payload
 
 
 def presets_chunk(stem, engine, npre):
@@ -320,8 +343,11 @@ def check(path):
         init, presets = mod_presets.parse(chunks[mod_presets.TAG])
         if len(presets) != npre:
             raise SystemExit(f"{path}: PRST holds {len(presets)} presets, the head says {npre}")
-    print(f"{path}: {n} engine {engine}, ABI {abi} host {host}" + (f", legacy key {key:08x}" if key else "") +
-          f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, version {version}: ok")
+    schm = chunks.get(SCHM_TAG, b"")
+    if schm and (len(schm) < 52 or zlib.crc32(schm[52:]) != struct.unpack_from("<I", schm, 48)[0]):
+        raise SystemExit(f"{path}: its SCHM chunk does not check")
+    print(f"{path}: {n} engine {engine}, ABI {abi} host {host}" + (f", pads key {key:08x}" if key else "") +
+          f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
 
 
 def main():

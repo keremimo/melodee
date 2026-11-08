@@ -8,7 +8,7 @@ static void kit(uint32_t model)
     midi_test_reset();set_engine_of(TSEL,ENGI_DRUM);apply_preset_to(TSEL,model==DK_909);TSEL->engine=TSEL->eng_req;panic_req=0;song.master_q12=4096;
 }
 static void scope(uint32_t sc)
-{ui.home=0;for(uint32_t i=0;i<NPAGES;i++)if(PAGES[i].scope==sc){ui.page=(uint8_t)i;break;}ui.force=1;}
+{ui.home=0;for(uint32_t i=0;i<NPAGES;i++)if(PG(i).scope==sc){ui.page=(uint8_t)i;break;}ui.force=1;}
 static uint32_t active_count(void)
 {uint32_t n=0;for(uint32_t i=0;i<NVOICE;i++)n+=TSEL->v[i].active;return n;}
 static int32_t audio(uint32_t blocks)
@@ -54,7 +54,7 @@ static int controls(void)
         bad+=check("ordinary one-shot hits retain their natural decay",active_count()==1);
     }
     kit(DK_909);scope(SC_DRUM);ui.drum_sound=D9_LT;page_over=0;
-    for(uint32_t i=0;i<NPAGES;i++)if(PAGES[i].scope==SC_DRUM && PAGES[i].id[1]==4)ui.page=i;
+    for(uint32_t i=0;i<NPAGES;i++)if(PG(i).scope==SC_DRUM && PG(i).id[1]==4)ui.page=i;
     drum_sound_edit(1,-127);
     bad+=check("low/mid/high tom levels remain independent",drum_patch_of(0)->c[D9_LT][3]==127 && !drum_patch_of(0)->c[D9_MT][3] && !drum_patch_of(0)->c[D9_HT][3]);
     return bad;
@@ -81,11 +81,11 @@ static int edits_and_store(void)
     drum_patch_of(0)->c[D9_BD][0]=5;drum_patch_of(0)->c[D9_LT][3]=19;
     project_capture(&proj_scratch);project_store_t wire;project_t decoded;
     int ok=proj_pack(&wire,&proj_scratch) && proj_import(&decoded,&wire,sizeof wire);
-    bad+=check("project roundtrip keeps sound settings, instrument, pitch and length",ok && decoded.drum[0].c[D9_BD][0]==5 && decoded.drum[0].c[D9_LT][3]==19 && recorded_note(&decoded.recording[0])==36 && decoded.recording[0].pitch==7 && decoded.recording[0].length);
+    bad+=check("project roundtrip keeps sound settings, instrument, pitch and length",ok && PROJ_DRUM(decoded,0)->c[D9_BD][0]==5 && PROJ_DRUM(decoded,0)->c[D9_LT][3]==19 && recorded_note(&decoded.recording[0])==36 && decoded.recording[0].pitch==7 && decoded.recording[0].length);
     bad+=check("new bank schema fits existing atomic flash copies",BANK_STORE_SIZE<=27904u && bank_pack(proj_wire_u.raw,&proj_scratch,1) && bank_valid(proj_wire_u.raw,BANK_STORE_SIZE));
     TSEL->engine=ENGI_DRUM;TSEL->eng_req=ENGI_DRUM;song.playing=0;
-    bad+=check("general drum preset stores its own sound controls",up_store(0,"OWN 909")==3 && (memset(drum_patch,0,sizeof drum_patch),!up_load(0)) && drum_patch_of(0)->c[D9_BD][0]==5 && drum_patch_of(0)->c[D9_LT][3]==19);
-    template_save();memset(drum_patch,0,sizeof drum_patch);template_load();
+    bad+=check("general drum preset stores its own sound controls",up_store(0,"OWN 909")==3 && (drum_patches_zero(),!up_load(0)) && drum_patch_of(0)->c[D9_BD][0]==5 && drum_patch_of(0)->c[D9_LT][3]==19);
+    template_save();drum_patches_zero();template_load();
     bad+=check("template restores the edited drum kit",drum_patch_of(0)->c[D9_BD][0]==5 && drum_patch_of(0)->c[D9_LT][3]==19);
     return bad;
 }
@@ -145,7 +145,7 @@ static int capacity_and_controls(void)
         proj_scratch.recording[i]=(recorded_note_t){.on=(uint16_t)(i*61u), .duration=(uint16_t)(65535u-i), .note7=(uint8_t)(36+i%48), .vel=(uint8_t)(1+i%127), .owner=(uint8_t)((i%8)<<5), .step=(uint8_t)(i%64), .pitch=(int8_t)((int32_t)(i%49)-24), .length=(uint8_t)(i&1)};
         recorded_set_owner(&proj_scratch.recording[i],proj_owner_id(i%32));
     }
-    for(uint32_t t=0;t<NPART;t++)for(uint32_t i=0;i<16;i++){int8_t *c=proj_scratch.drum[t].c[i];c[0]=(int8_t)((i+t)%2?24:-24);c[1]=(int8_t)((i+t)%2?63:-64);c[2]=-c[1]-1;c[3]=(int8_t)(i%2?127:0);}
+    for(uint32_t t=0;t<NPART;t++)for(uint32_t i=0;i<16;i++){int8_t *c=PROJ_DRUM(proj_scratch,t)->c[i];c[0]=(int8_t)((i+t)%2?24:-24);c[1]=(int8_t)((i+t)%2?63:-64);c[2]=-c[1]-1;c[3]=(int8_t)(i%2?127:0);}
     project_store_t wire;project_t decoded;
     int ok=proj_pack(&wire,&proj_scratch) && proj_import(&decoded,&wire,sizeof wire);uint32_t at=0;
     if(ok)for(uint32_t o=0;o<32;o++)for(uint32_t i=0;i<RECORD_MAX;i++)if(recorded_owner(&proj_scratch.recording[i])==proj_owner_id(o))ok&=!memcmp(&decoded.recording[at++],&proj_scratch.recording[i],sizeof(recorded_note_t));

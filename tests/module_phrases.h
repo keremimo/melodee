@@ -36,7 +36,6 @@ static void mp_start(void)
     dith_r = DITH_SEED;
     memset(midi_bend_q8, 0, sizeof midi_bend_q8);
     memset(midi_bend_target, 0, sizeof midi_bend_target);
-    memset(drum_patch, 0, sizeof drum_patch);
     memset((void *)drum_flash, 0, sizeof drum_flash);
     drum_event_pitch = 0;
     drum_event_length = 0;
@@ -90,10 +89,11 @@ static uint32_t mp_drum(uint32_t pi, int32_t kit, uint32_t batch)
     if (kit >= 0)
         inst.p[P_E0] = (int16_t)kit;
     for (uint32_t s = 0; s < 16u; s++) {             /* every sound a little off its factory setting */
-        drum_patch[0].c[s][0] = (int8_t)((int32_t)(s % 5u) - 2);
-        drum_patch[0].c[s][1] = (int8_t)((int32_t)(s * 7u % 21u) - 10);
-        drum_patch[0].c[s][2] = (int8_t)((int32_t)(s * 5u % 17u) - 8);
-        drum_patch[0].c[s][3] = (int8_t)(s % 3u * 10u);
+        int8_t *c = (int8_t *)(void *)patch_of(0) + 4u * s;   /* (the part's patch: DRUM's offsets) */
+        c[0] = (int8_t)((int32_t)(s % 5u) - 2);
+        c[1] = (int8_t)((int32_t)(s * 7u % 21u) - 10);
+        c[2] = (int8_t)((int32_t)(s * 5u % 17u) - 8);
+        c[3] = (int8_t)(s % 3u * 10u);
     }
     for (uint32_t b = 0; b < MP_NB; b++) {
         if (b % 3u == 0 && b < 150u) {
@@ -152,7 +152,7 @@ static uint32_t mp_cz(uint32_t pi, uint32_t mono, uint32_t batch)
         if (b == 70) trk_note_on(&inst, 64, 127);
         if (b == 71) trk_note_on(&inst, 67, 30);
         if (b == 100) {
-            uint8_t *r = cz_patch_of(0)->raw;
+            uint8_t *r = patch_of(0);                    /* (the part's patch: the CZ-1's tone) */
             r[0] = (uint8_t)((r[0] & ~3u) | (pi + 1u) % 4u);                     /* LINE SELECT */
             r[15] = (uint8_t)((r[15] & ~0x38u) | (pi & 1u ? 3u : 4u) << 3);      /* MODULATION: noise, ring */
             r[15] ^= 0x40u;                                                     /* the window */
@@ -198,11 +198,11 @@ static void mp_fm6_block(uint32_t b, uint32_t batch)
 static uint32_t mp_fm6(uint32_t pi, uint32_t mode, uint32_t batch)
 {
     int16_t a4 = tuning_a4;
-    uint8_t *fn = fm6_fn[0];
+    uint8_t *fn = patch_of(0) + FM6_B_FN;               /* (the part's patch: FM6's functions) */
     mp_start();
     memset(midi_verb, 0, sizeof midi_verb);
-    fm6_fn_reset();
     host_preset(&inst, ENGI_FM6, pi);
+    memcpy(fn, FM6_FNDEF, FM6_NFN);
     inst.p[P_VOICE] = (int16_t)(mode == 1u ? V_LEGATO : mode == 2u ? V_UNISON : V_POLY);
     inst.p[P_E0] = (int16_t)((pi + mode * 25u) % 33u);   /* ALG: PAT, 1..32 */
     inst.p[P_E1] = (int16_t)((int32_t)(pi % 15u) - 7);   /* FB */
@@ -224,7 +224,7 @@ static uint32_t mp_fm6(uint32_t pi, uint32_t mode, uint32_t batch)
         if (b == 60) trk_note_off(&inst, 48);
         if (b == 70) trk_note_on(&inst, 64, 127);
         if (b == 71) trk_note_on(&inst, 67, 30);
-        if (b == 90) fm6_on[0] = (uint8_t)(FM6_ON_ALL & ~(1u << (pi % 6u)));   /* (an operator switched off) */
+        if (b == 90) fm6_on_set(0, FM6_ON_ALL & ~(1u << (pi % 6u)));   /* (an operator switched off) */
         if (b == 100) {                                  /* MLVL MRAT MEG VMOD DTUN */
             inst.p[P_E2] = (int16_t)(20 - (int32_t)pi); inst.p[P_E3] = (int16_t)((int32_t)(pi % 5u) - 2);
             inst.p[P_E4] = (int16_t)((int32_t)(pi * 7u % 60u) - 30); inst.p[P_E5] = (int16_t)((int32_t)(pi % 8u) - 3);
@@ -232,7 +232,7 @@ static uint32_t mp_fm6(uint32_t pi, uint32_t mode, uint32_t batch)
         }
         if (b == 110) {                                  /* the patch edited as the pages edit it */
             uint8_t v[FP_SIZE + 1u];
-            memcpy(v, fm6_patch_of(0), FP_SIZE);
+            fm6_voice_of(0, v);
             v[FP_FB] = (uint8_t)((v[FP_FB] + 3u) & 7u);
             v[(pi % 6u) * FP_OP + FP_OL] = (uint8_t)(v[(pi % 6u) * FP_OP + FP_OL] / 2u + 40u);
             v[(pi % 6u) * FP_OP + FP_R1 + 3u] = 20;
@@ -247,7 +247,7 @@ static uint32_t mp_fm6(uint32_t pi, uint32_t mode, uint32_t batch)
         if (b == 120) { trk_note_off(&inst, 55); trk_note_off(&inst, 64); trk_note_off(&inst, 67); inst.bend_raw = -2000; }
         if (b >= 130 && b < 136)
             for (uint32_t j = 0; j < 3u; j++) trk_note_on(&inst, 40u + 3u * ((b - 130u) * 3u + j), 50u + (b - 130u) * 12u + j);
-        if (b == 140) fm6_on[0] = FM6_ON_ALL;
+        if (b == 140) fm6_on_set(0, FM6_ON_ALL);
         if (b == 150 && pi % 3u == 0) tuning_a4 = 432;
         if (b >= 160 && b < 166)
             for (uint32_t j = 0; j < 3u; j++) trk_note_off(&inst, 40u + 3u * ((b - 160u) * 3u + j));
@@ -263,8 +263,6 @@ static uint32_t mp_fm6(uint32_t pi, uint32_t mode, uint32_t batch)
     midi_verb[0] = 0;
     inst.mw = inst.at = inst.foot = inst.breath = 0;
     inst.bend_raw = 0;
-    fm6_on[0] = FM6_ON_ALL;
-    fm6_fn_reset();
     return mp_hash(mp_out, MP_NB * CTL);
 }
 
@@ -284,8 +282,8 @@ static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
     uint32_t r = 0x13579BDFu;
     mp_start();
     memset(midi_verb, 0, sizeof midi_verb);
-    fm6_fn_reset();
     host_preset(&inst, ENGI_FM6, FM6_NFAC);
+    memcpy(patch_of(0) + FM6_B_FN, FM6_FNDEF, FM6_NFN);
     memcpy(mp_sx, (const uint8_t[]){0xF0, 0x43, 0x00, 0x09, 0x20, 0x00}, 6);
     for (uint32_t k = 0; k < 32u; k++) {
         uint8_t *pk = mp_sx + 6u + k * FM6_PACKED;
@@ -324,8 +322,6 @@ static uint32_t mp_fm6_sx(uint32_t j, uint32_t batch)
         mp_fm6_block(b, batch);
     }
     inst.bend_raw = 0;
-    fm6_on[0] = FM6_ON_ALL;
-    fm6_fn_reset();
     return mp_hash(mp_out, MP_NB * CTL);
 }
 
@@ -355,7 +351,7 @@ static uint32_t mp_p5(uint32_t pi, uint32_t mode, uint32_t batch)
     mp_start();
     memset(midi_verb, 0, sizeof midi_verb);
     host_preset(&inst, ENGI_PROPHET, pi);
-    uint8_t *r = p5_patch_of(&inst)->raw;
+    uint8_t *r = patch_of(0);                          /* (the part's patch: the Prophet's program) */
     if (mode) {
         r[P5_UNISON] = 1; r[P5_UNISON_COUNT] = (uint8_t)(pi % 6u); r[P5_UNISON_DETUNE] = (uint8_t)(pi % 8u);
         r[P5_RETRIGGER] = (uint8_t)(pi % 4u);

@@ -145,7 +145,7 @@ static int page_and_local_controls(void)
     bad += check("native CZ absolute parameter reaches minimum", d && *vp == d->min);
     knob_reset(MK_MINILAB, MK_ABSOLUTE);
     set_engine_of(TSEL, ENGI_FM6); apply_preset_to(TSEL, 0);
-    for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].scope == SC_FMOP) { ui.home = 0; ui.page = p; break; }
+    for (uint32_t p = 0; p < NPAGES; p++) if (sec_inst(p)) { ui.home = 0; ui.page = p; break; }
     knob_cc(1, 93, 64); knob_cc(1, 93, 127);
     d = page_desc(cur_page(), 0, &vp);
     bad += check("absolute MIDI follows the current FM6 operator page", d && *vp == d->max);

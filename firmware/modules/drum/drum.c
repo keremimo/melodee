@@ -3,6 +3,7 @@
 /* DRUM (engine 10) as a synth module (ABI 3): firmware/src/eng_drum.c as it was built in, with the 808 (drum_808.c),
  * the 909 (x0x/), KIT SID (drum_sid.c on its own copy of eng_sid.c's chip), CR78 and FM (drum_lanes.c) and the user
  * kits (drum_real.c, reading the firmware's drk_user). tools/mod_build.py */
+#define MOD_USES_PADS 1                           /* (TEMPORARY, phase 5: the lanes' and recorded kits' data) */
 #include "mod_engine.h"
 #ifndef FM1_IRQ_TARGET
 /* (x0x/drum909.h's functions are external: on the host the module's own under names of their own, so a test links it
@@ -32,5 +33,5 @@ static drk_part_t *drk_part(uint32_t part) { return mod_part_mem(part, sizeof(dr
 #endif
 
 MOD3_ENGINE_EXPORT(mod_drum) = {
-    MOD3_ENGINE_HEAD, .engine = ENGI_DRUM, .name = "DRUM", .npresets = DRUM_NPRESETS, .eng = &ENG_DRUM,
+    MOD3_PADS_HEAD, .engine = ENGI_DRUM, .name = "DRUM", .npresets = DRUM_NPRESETS, .eng = &ENG_DRUM,
 };

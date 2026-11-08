@@ -51,4 +51,4 @@ static int legacy_native_used(uint32_t e,uint32_t k)
 }
 static const uint8_t *legacy_native_raw(uint32_t e,uint32_t k){(void)e;return native_fm_bank(k/16u)->tone[k%16u];}
 #endif
-static uint32_t native_size(uint32_t e){return e==ENGI_PROPHET?sizeof(p5_patch_t):e==ENGI_FM6?FM6_PACKED:CZ_BYTES;}
+static uint32_t native_size(uint32_t e){return patch_sound_len(e);}   /* (a native slot's bytes: the patch's sound) */

@@ -45,8 +45,7 @@ static uint32_t pv_kind(void)
         return PV_GRID;
     if (ui.home || act_cols() || grid_on())
         return PV_NONE;
-    if ((pg->graph == GR_ADSR && pg->scope == SC_TRACK) || pg->graph == GR_LFO || pg->graph == GR_FMEG ||
-        pg->graph == GR_FMPEG)
+    if ((pg->graph == GR_ADSR && pg->scope == SC_TRACK) || pg->graph == GR_LFO || pg->graph == GR_ENV8)
         return PV_CURVE;
     if (pg->graph == GR_NONE || pg->graph == GR_ARP || pg->graph == GR_STEPS ||
         pg->graph == GR_CHORD)
@@ -380,17 +379,19 @@ static void pv_lfo(int32_t h)
         cv_text_on(26, ty_y(18, TY_LB), TY_LB, DST_NAME[bi], dc, cb);
     }
 }
-/* FM6's EG RATE / EG LVL (operator fm6_opsel), PITCH EG / LV (mock/r6_pages OP3 EG): the DX7 envelope from L4 by R1..R3
- * to L1..L3, held there, then R4 back to L4 (a slower rate a wider segment); the area under it tinted, a dot at each
- * point; the knob turning: its segment (a rate) or its point (a level) in text. PITCH: the note's own pitch dashed */
+/* A synth's envelope page (MOD3_W_ENV8: FM6's EG RATE / EG LVL of the instance shown, PITCH EG / LV; mock/r6_pages OP3
+ * EG): the DX7 envelope from L4 by R1..R3 to L1..L3, held there, then R4 back to L4 (a slower rate a wider segment);
+ * the area under it tinted, a dot at each point; the knob turning: its segment (a rate) or its point (a level) in
+ * text. A pitch envelope: the note's own pitch dashed */
 static void pv_dxeg(int32_t h)
 {
-    const uint8_t *v = fm6_patch_of(song.sel % NTRK);
-    int pitch = cur_page()->graph == GR_FMPEG, lv = cur_page()->id[0] == FP_L1 || cur_page()->id[0] == FP_PL1;
-    const uint8_t *r = pitch ? v + FP_PR1 : v + (5u - fm6_opsel % 6u) * FP_OP + FP_R1;
-    const uint8_t *l = pitch ? v + FP_PL1 : v + (5u - fm6_opsel % 6u) * FP_OP + FP_L1;
+    uint8_t v[8];
+    int pitch, lv;
+    const uint8_t *r = v, *l = v + 4;
     int32_t x0 = 10, x1 = 222, top = 14, bot = h - 12, px[6], py[6], i, x, hot = pv_hot();
     uint16_t fill = ux_mix(T_PANEL, T_THEME, 22);
+    if (env8_values(cur_page(), v, &pitch, &lv))
+        return;
 #define DXY(a) (bot - (int32_t)(a) * (bot - top) / 99)
     int32_t w[5], sum = 0;
     for (i = 0; i < 4; i++)                             /* (a segment 8..46 wide by its rate, the hold 30: the whole */
@@ -426,7 +427,7 @@ static void pv_dxeg(int32_t h)
 }
 static void pv_curve(int32_t h)
 {
-    if (cur_page()->graph == GR_FMEG || cur_page()->graph == GR_FMPEG)
+    if (cur_page()->graph == GR_ENV8)
         pv_dxeg(h);
     else if (cur_page()->graph == GR_ADSR)
         pv_env(h);
@@ -481,17 +482,17 @@ static void pv_grid(int32_t h)
         }
     }
 }
-/* EG RATE / EG LVL: the operators as tabs over the panel, the one shown filled */
+/* an instanced envelope page (FM6's EG RATE / EG LVL): the instances as tabs over the panel, the one shown filled */
 #define PV_OPTAB_H 24
 static void pv_optabs(int32_t y)
 {
-    uint32_t i;
-    char b[4] = {'O', 'P', '1', 0};
+    uint32_t i, n = sch_pg_ninst(cur_page());
+    char b[MOD_SCH_NAME + 1u];
     cv_begin(240, PV_OPTAB_H + 2, T_BG);                /* (and the 2 rows down to the panel) */
-    for (i = 0; i < 6u; i++) {
-        int on = i == fm6_opsel % 6u;
+    for (i = 0; i < n && i < 6u; i++) {
+        int on = i == sch_inst;
         int32_t x = 2 + (int32_t)i * 40;
-        b[2] = (char)('1' + i);
+        sch_inst_name(i, b, sizeof b);
         cv_rrect(x, 0, 36, PV_OPTAB_H, 6, on ? T_THEME : T_SURF, T_BG);
         cv_text_c(x + 18, ty_y(PV_OPTAB_H / 2, TY_LB), TY_LB, b, on ? T_INK : T_MID, on ? T_THEME : T_SURF);
     }
@@ -506,7 +507,9 @@ static uint32_t pv_curve_sig(void)
                             pg->id[c] < P_COUNT ? TSEL->p[pg->id[c]] : 0)) * 16777619u;
     h = (h ^ (uint32_t)(TSEL->p[P_LD_PIT] + 131 * TSEL->p[P_LD_FLT] + 17161 * TSEL->p[P_LD_SHP])) * 16777619u;
     h = (h ^ (uint32_t)(TSEL->p[P_LD_AMP] + 256 * TSEL->p[P_LPOL] + 65536 * TSEL->p[P_LWAVE])) * 16777619u;
-    h ^= fm6_pgen[song.sel % NTRK] * 2654435761u + fm6_opsel * 131u;   /* (FM6's EG pages: its patch, the operator) */
+    if (sch_wdef(eng_idx(TSEL->eng_req)))               /* (a synth whose pictures its patch draws, FM6's: the patch) */
+        h ^= fnv(2166136261u, patch_of(song.sel), patch_len(eng_idx(TSEL->eng_req))) * 2654435761u;
+    h ^= sch_inst * 131u;                               /* (the instance an instanced page shows: its envelope) */
     return h ^ (uint32_t)(pv_hot() + 1) * 40503u ^ ux.gen * 977u ^ ux.pal * 31u ^ ui.page * 7919u ^ song.sel * 13u;
 }
 
@@ -526,7 +529,7 @@ static void pv_filter(int32_t cut, int32_t res, int32_t h)
         py = y;
     }
 }
-/* which picture: 3 a filter (cut: its knob), 4 FM6's chart, 0 the scope */
+/* which picture: 3 a filter (cut: its knob), 4 a synth's chart (FM6's algorithm), 0 the scope */
 /* ARP (mock/r6_pages ARP): the notes it plays, a block a step (16 at most): the keys held (else C3 E3 G3) over OCT
  * octaves in MODE's order, low to high bottom to top; the notes and the octaves at the top. OFF: dim */
 static void pv_arp(int32_t h)
@@ -594,7 +597,7 @@ static uint32_t pv_pic(int32_t *cut, int32_t *res)
         return 5u;
     if (pg->graph == GR_CHORD)                          /* CHORD: its name, its notes (ui_graph.c) */
         return 8u;
-    if ((pg->scope == SC_ENGINE || pg->scope == SC_FM6 || pg->scope == SC_FMOP) && e == ENGI_FM6)
+    if ((pg->scope == SC_ENGINE || pg->scope == SC_MOD) && sch_wdef(e))
         return 4;
     for (c = 0; c < 4u; c++) {
         int16_t *vp;
@@ -774,7 +777,7 @@ static void pv_picture(void)
             sig = (sig ^ TSEL->held[i]) * 16777619u;
         sig ^= TSEL->nheld * 131u;
     }
-    if (pic == 4u || pic == 8u) {                       /* FM6: its chart, CHORD: its chord, as the panel draws them */
+    if (pic == 4u || pic == 8u) {                       /* a synth's chart (FM6's), CHORD: its chord, as the panel draws them */
         graph_y = y;
         graph_h = h;
         graph_oy = h < H_GRAPH ? GOY - 8 : GOY;         /* (under the designer's tabs: the chart a little higher) */
@@ -984,7 +987,8 @@ static void pv_draw(void)
         return;
     }
     pv_tab_h = (kind == PV_RINGS || kind == PV_CURVE) && designer_on() && designer_tabs_on() ? SEC_TAB_H : 0;
-    if (kind == PV_CURVE && cur_page()->graph == GR_FMEG)   /* (EG RATE / LVL: the operators' tabs) */
+    if (kind == PV_CURVE && cur_page()->graph == GR_ENV8 && sch_pg_ninst(cur_page()))   /* (EG RATE / LVL: the
+                                                                                          * operators' tabs) */
         pv_tab_h = SEC_TAB_H;
     /* RINGS, CURVE: the header, the sections' tabs, the strip, the sound, then the picture (the busiest last) */
     if (ui.force) {                                     /* (the parts then cover what they draw) */
@@ -994,7 +998,7 @@ static void pv_draw(void)
     draw_head();
     if (pv_tab_h && designer_on()) {                    /* the sound designer: its stages */
         designer_tabs();
-    } else if (kind == PV_CURVE && cur_page()->graph == GR_FMEG) {
+    } else if (kind == PV_CURVE && cur_page()->graph == GR_ENV8 && sch_pg_ninst(cur_page())) {
         pv_optabs(H_HEAD + 1);                          /* EG RATE / LVL: the operators */
     }
     if (sec_on())                                       /* an engine in sections: the page noted (the header says where:

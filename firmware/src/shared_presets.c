@@ -28,16 +28,19 @@ static int up_favorite_set(uint32_t k,int on)
 #endif
     return 1;
 }
+/* a synth whose sound is its patch (its user presets: the native layout, upreset.c up_native_ver) */
 static uint32_t native_limit(uint32_t e)
 {
-    return e==ENGI_PROPHET || e==ENGI_FM6 || e==ENGI_CZ ? UP_SLOTS : 0u;
+    uint32_t v=up_native_ver(e);
+    return v!=UP_VER && v!=UP_VER_DRUM ? UP_SLOTS : 0u;
 }
 static void shared_native_record(up_rec_t *r,uint32_t e,const uint8_t *raw)
 {
     memset(r,0,sizeof *r);r->used=UP_USED;r->engine=(uint8_t)e;
-    r->ver=e==ENGI_FM6?UP_VER_FM:e==ENGI_PROPHET?UP_VER_P5:UP_VER_NATIVE_CZ;
+    r->ver=(uint8_t)up_native_ver(e);
     memcpy(r->packed,raw,native_size(e));
-    uint32_t off=e==ENGI_FM6?118u:e==ENGI_PROPHET?P5_NAME:128u,len=e==ENGI_FM6?10u:12u,n=0;
+    uint32_t off=0,len=patch_name_place(e,&off),n=0;
+    if(len>12u)len=12u;
     for(uint32_t i=0;i<len;i++){uint8_t c=raw[off+i];r->name[i]=c>=32u&&c<=126u?(char)c:' ';if(r->name[i]!=' ')n=i+1u;}
     if(!n)memcpy(r->name,"UNTITLED",8u);
 }

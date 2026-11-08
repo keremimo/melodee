@@ -26,8 +26,11 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "editor.c", "editor_cz.c", "cz_bank.c", "cz_patch.h", "pattern_store.c", "editor_fm6.c", "editor_preferences.c", "editor_backup.c", "console.c",
               # main-loop only too: the boot and the main loop (main.c, not its ISR), parameters and their text, the
               # browser, the screen saver, calibration, the CZ / Prophet editing helpers, the update entry
-              "main.c", "smk_controls.h", "boot_lzma.h", "params.c", "browse.c", "screen.c", "panel.c", "cz_edit.h", "prophet_edit.h", "ota.c", "favorites.c",
-              "cz_panel.h",
+              "main.c", "smk_controls.h", "boot_lzma.h", "params.c", "browse.c", "screen.c", "panel.c", "ota.c", "favorites.c",
+              # the synths' device pages from their schemas (schema.c, also read by Motion's audio side, stays -Os)
+              "sch_pages.c",
+              # the synth modules' page code (their schemas' get/put/format; FM6's, which Motion plays, stays -O2)
+              "../modules/cz/cz_panel.h", "../modules/cz/cz_ui.c", "../modules/prophet/p5_ui.c",
               # the song, punch, section sound and Bluetooth screens and the editor's radio command
               "ui_song.c", "ui_song_punch.c", "ui_song_sound.c", "ui_ble.c", "editor_ble.c",
               # the editor's resource-region command (USB only) and the helpers every command shares: all editor code for size

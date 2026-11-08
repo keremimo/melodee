@@ -129,7 +129,7 @@ static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
     if (!K || K->kit < DK_USER0 || K->kit > DK_KIT_MAX || !K->H)
         return;
     uint32_t sound = drum909_ins(note) & 15u, lane = drum_lane(note);
-    const int8_t *pc = drum_patch_of(trk_ix(t))->c[sound];
+    const int8_t *pc = drum_offs(t)->c[sound];
     const drk_map_t *m = &K->H->map[sound];
     uint32_t take = m->sample;
     if (take == 0xFFu)                           /* a pad with nothing recorded */

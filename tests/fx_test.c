@@ -402,7 +402,7 @@ static void tone_test(void)
         go_title("SEND FX 1");turn(EN_K4,1);frame();uint32_t drawn=pv.panel;
         turn(EN_K4,1);frame();assert(pv.panel!=drawn);
     }
-    int16_t *vp;TSEL->p[P_FXTYPE]=FX_CHORUS;assert(!page_desc(&PAGES[page_titled("FX 1")],3,&vp) && !vp);
+    int16_t *vp;TSEL->p[P_FXTYPE]=FX_CHORUS;assert(!page_desc(page_at(page_titled("FX 1")),3,&vp) && !vp);
     TSEL->p[P_FXTYPE]=FX_OFF;assert(!page_visible(page_titled("FX 1")));TSEL->p[P_FXTYPE]=FX_ROOM;assert(page_visible(page_titled("FX 1")));
     char val[32];const char *unit;
     param_format(track_desc(TSEL,P_FXTONE),0,val,&unit);assert(str_eq(val,"FULL"));
@@ -500,7 +500,7 @@ static void rack_test(void)
 {
     ui_power_on();char chip[16];
     press(B_FX);assert(!ui.home && cur_page()->graph==GR_FXRACK && cur_page()->scope==SC_TRACK && str_eq(cur_page()->title,"FX"));
-    for(uint32_t i=0;i<NPAGES;i++)if(PAGES[i].fam==FAM_FX && PAGES[i].graph!=GR_FXRACK)assert(!page_visible(i));   /* (all empty) */
+    for(uint32_t i=0;i<NPAGES;i++)if(PG(i).fam==FAM_FX && PG(i).graph!=GR_FXRACK)assert(!page_visible(i));   /* (all empty) */
     fx_rack_row[0]=0;turn(EN_K1,1);assert(TSEL->p[P_FXTYPE]!=FX_OFF);turn(EN_K4,5);assert(TSEL->p[P_FXMIX]>0);
     for(uint32_t k=0;k<6;k++)turn(EN_K2,1);
     assert(fx_rack_row[0]==3);for(uint32_t k=0;k<6;k++)turn(EN_K2,-1);

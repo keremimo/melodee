@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* CZ-1 is a separate engine: native Casio tone data, never PHASE knob conversion.
- * Envelope state and note reset utilities are shared with the phase family (eng_phase.c). The tones are the
- * firmware's (cz_parts.h), Casio's factory presets too (cz_tones.c cz_preset_make). A synth module on the device:
- * firmware/modules/cz */
+ * Envelope state and note reset utilities are shared with the phase family (eng_phase.c). The part's tone is its
+ * patch (modules/cz/cz_tone.h), its panel the schema's (cz_ui.c); Casio's factory presets are cz_tones.c's makers on
+ * host builds. A synth module on the device: firmware/modules/cz */
+#include "../modules/cz/cz_tone.h"   /* the part's patch: a Casio tone (where the firmware keeps it) */
 #include "cz_native.c"
 static int cz_native_done(track_t *t, voice_t *v)
 {
     cz_voice_t *c = cz_voice(t, v);
-    const uint8_t *b = cz_patch_of(trk_ix(t) % NTRK)->raw;
+    const uint8_t *b = cz_tone(t)->raw;
     uint32_t ls = b[0] & 3u;
     uint32_t a = ls == 1u ? 1u : 0u, z = ls >= 2u ? 1u : a;
     return c->native_eg[a][2].stage > (b[CZ_ENV_END[a][2]] & 7u) &&
@@ -16,6 +17,7 @@ static int cz_native_done(track_t *t, voice_t *v)
 }
 static int32_t cz_batch(const track_t *t) { (void)t; return AP_CZ; }   /* (its voices on CPU1: voice.c engine_render) */
 static uint32_t cz_state(const track_t *t) { (void)t; return sizeof(cz_part_t); }   /* (its part memory) */
+#include "../modules/cz/cz_ui.c"   /* its panel: the schema's values, hints, the TOOLS page's line copies */
 static const engine_t ENG_CZ = {
     .name = "CZ-1", .page_title = {"CZ-1", "TONE"},
     .edit = {
@@ -34,4 +36,5 @@ static const engine_t ENG_CZ = {
     .state = cz_state,
     .batch = cz_batch, .wclass = 2,
     .menv = phase_env_source,    /* (native DCA: the matrix's ENV source) */
+    .pget = cz_pget, .pput = cz_pput, .pactive = cz_pactive,
 };

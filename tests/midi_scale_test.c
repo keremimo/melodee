@@ -264,7 +264,7 @@ static int share_test(void)
     uint32_t k, ok = 1;
     scale_reset();
     ui.home = 0;
-    for (k = 0; k < NPAGES && PAGES[k].graph != GR_SCALE_PICKER; k++) {}
+    for (k = 0; k < NPAGES && PG(k).graph != GR_SCALE_PICKER; k++) {}
     ui.page = (uint8_t)k;                             /* SCALES: outside the SCL cycle, opened from its row */
     edit_param(1, 3);                                 /* SCL */
     edit_param(3, 1);                                 /* QNT */

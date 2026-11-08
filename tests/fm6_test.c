@@ -857,7 +857,7 @@ static double mix_cost(const uint8_t *v, uint32_t notes, uint32_t eng)
     uint32_t i, nb = FS * 2u / CTL;
     uint64_t i0;
     setup(v, 0);
-    fm6_fn[0][FN_ENGINE] = (uint8_t)eng;
+    fm6_fn_set(0, FN_ENGINE, (int32_t)eng);
     for (i = 0; i < notes; i++)
         trk_note_on(T, 48 + 3 * i, 100);
     for (i = 0; i < 64u; i++)

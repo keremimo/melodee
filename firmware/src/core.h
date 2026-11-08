@@ -431,6 +431,14 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     /* optional: the pitch wheel's range now, Q8 semitones, instead of the channel's (the Prophet: its program's BEND);
      * voice.c sets the wheel's target from it at the part's block */
     int32_t (*bend_range)(const struct track *t);
+    /* host 2 (mod_abi3.h): the part's patch written (patch.c patch_note), its schema's computed parameters, their
+     * text, their effect now, a widget the engine draws */
+    void (*patch_changed)(struct track *t, uint8_t *patch, uint32_t how, uint32_t id);
+    int32_t (*pget)(const struct track *t, const uint8_t *patch, uint32_t id);
+    int (*pput)(struct track *t, uint8_t *patch, uint32_t id, int32_t v);
+    void (*pformat)(const struct track *t, const uint8_t *patch, uint32_t id, int32_t v, char *val, const char **unit);
+    int (*pactive)(const struct track *t, const uint8_t *patch, uint32_t id);
+    void (*draw)(const struct track *t, const uint8_t *patch, uint32_t widget, const mod_area_v3 *a);
 } engine_t;
 #endif
 /* Built-in engines that are synth modules on the device (firmware/modules/<name>): host builds compile them in, the
@@ -471,43 +479,35 @@ enum { ST_NOTE, ST_TIE, ST_REST };
 #define RECORD_MAX 1024u
 #define RECORD_UNIT 65536u                     /* fractional onset within its swung step; duration uses an exponent */
 #include "recorded_note.h"
-/* Sound offsets: semitones, decay and voice character; zero preserves the factory kit. */
-typedef struct { int8_t c[16][4]; } drum_patch_t;
-#if MOD_SIDE
-static drum_patch_t *mod_imp_drum_patch, *mod_imp_drum_patch_none;
-#define drum_patch mod_imp_drum_patch
-#define drum_patch_none (*mod_imp_drum_patch_none)
-#else
-static drum_patch_t drum_patch[NPART], drum_patch_none;   /* the parts'; a MIDI-only track's: none (never heard) */
+/* Melodee 1.x's KIT store format (module_schema.h MOD_SCH_STORE_KIT: a patch of 16 x 4 signed bytes, a sound's four
+ * values): projects and user presets keep it bit packed in 54 bytes, per sound one 6-bit value (+ 24), then three
+ * 7-bit ones (+ 64, + 64, + 0) */
+#define KIT_WIRE_BYTES 54u
+#if !MOD_SIDE
+static void kit_wire_pack(uint8_t *b, const uint8_t *patch)
+{
+    const int8_t *c = (const int8_t *)(const void *)patch;
+    uint32_t pos = 0;
+    memset(b, 0, KIT_WIRE_BYTES);
+    for (uint32_t i = 0; i < 16u; i++, c += 4) {
+        wire_bits_put(b, &pos, (uint32_t)(c[0] + 24), 6);
+        wire_bits_put(b, &pos, (uint32_t)(c[1] + 64), 7);
+        wire_bits_put(b, &pos, (uint32_t)(c[2] + 64), 7);
+        wire_bits_put(b, &pos, (uint32_t)c[3], 7);
+    }
+}
+static void kit_wire_unpack(uint8_t *patch, const uint8_t *b)
+{
+    int8_t *c = (int8_t *)(void *)patch;
+    uint32_t pos = 0;
+    for (uint32_t i = 0; i < 16u; i++, c += 4) {
+        c[0] = (int8_t)((int32_t)wire_bits_get(b, &pos, 6) - 24);
+        c[1] = (int8_t)((int32_t)wire_bits_get(b, &pos, 7) - 64);
+        c[2] = (int8_t)((int32_t)wire_bits_get(b, &pos, 7) - 64);
+        c[3] = (int8_t)wire_bits_get(b, &pos, 7);
+    }
+}
 #endif
-static drum_patch_t *drum_patch_of(uint32_t k) { return k < NPART ? &drum_patch[k] : &drum_patch_none; }
-static int drum_patch_valid(const drum_patch_t *p)
-{
-    for(uint32_t i=0;i<16;i++)if(p->c[i][0]<-24 || p->c[i][0]>24 || p->c[i][1]<-64 || p->c[i][1]>63 || p->c[i][2]<-64 || p->c[i][2]>63 || p->c[i][3]<0)return 0;
-    return 1;
-}
-#define DRUM_WIRE_BYTES 54u /* 16 voices x (6-bit tune, 7-bit decay/character/attenuation) */
-static void drum_patch_pack(uint8_t *b,const drum_patch_t *p)
-{
-    memset(b,0,DRUM_WIRE_BYTES);uint32_t pos=0;
-    for(uint32_t i=0;i<16;i++){
-        wire_bits_put(b,&pos,(uint32_t)(p->c[i][0]+24),6);
-        wire_bits_put(b,&pos,(uint32_t)(p->c[i][1]+64),7);
-        wire_bits_put(b,&pos,(uint32_t)(p->c[i][2]+64),7);
-        wire_bits_put(b,&pos,(uint32_t)p->c[i][3],7);
-    }
-}
-static int drum_patch_unpack(drum_patch_t *p,const uint8_t *b)
-{
-    uint32_t pos=0;
-    for(uint32_t i=0;i<16;i++){
-        p->c[i][0]=(int8_t)((int32_t)wire_bits_get(b,&pos,6)-24);
-        p->c[i][1]=(int8_t)((int32_t)wire_bits_get(b,&pos,7)-64);
-        p->c[i][2]=(int8_t)((int32_t)wire_bits_get(b,&pos,7)-64);
-        p->c[i][3]=(int8_t)wire_bits_get(b,&pos,7);
-    }
-    return drum_patch_valid(p);
-}
 
 #define NLANE 8                  /* drum lanes of a step (the DRUM engine's: eng_drum.c DRUM_LANE_NOTE) */
 typedef struct {                 /* acid-style step: up to 4 notes (POLY), time, accent, slide; drum hits */
@@ -727,6 +727,17 @@ static inline int trk_midi_slot(uint32_t k) { return k >= NPART && k < NTRK; }
 #define trk_ix(t) ((uint32_t)((t) - trk))
 #define trk_voice(t, i) (&(t)->v[i])
 #define voice_ix(t, v) ((uint32_t)((v) - (t)->v))
+#endif
+/* the patch a part's engine plays (patch.c: the firmware keeps it; a module reads it through the host table) */
+#if MOD_SIDE
+static uint8_t *(*mod_imp_patch)(const track_t *t);
+#define mod_patch(t) mod_imp_patch(t)
+static uint32_t *mod_imp_paired;
+#define eng_paired (*mod_imp_paired)
+#else
+static uint8_t *patch_play(const track_t *t);
+#define mod_patch(t) patch_play(t)
+static uint32_t eng_paired;                      /* voices paired on CPU1 outside the queue (host paired: AUDIO_STATS) */
 #endif
 
 #if !MOD_SIDE

@@ -5,8 +5,8 @@
  * OCT+ publishes one immutable sound across the selected pattern block. */
 typedef struct {
     song_sound_t base;
-    uint8_t fm[FP_SIZE + 1u], fm_on;
-    cz_patch_t cz; p5_patch_t p5; drum_patch_t drum;
+    uint8_t peng;                                /* the track's patch as it was: its engine, its bytes */
+    uint8_t patch[MOD3_PATCH_MAX];
 } song_preview_t;
 static void song_sound_mark(uint8_t *used, const chain_config_t *c)
 {
@@ -53,9 +53,7 @@ static void song_preset_cancel(void)
     if (song_picker.epoch == pattern_epoch && resource[RES_SONG_PREVIEW].size) {
         uint32_t k = song_picker.track;
         const song_preview_t *preview = resource[RES_SONG_PREVIEW].ptr;
-        memcpy(fm6_patch_of(k), preview->fm, sizeof preview->fm);
-        fm6_on[k] = preview->fm_on; fm6_lgen[k]++; RING_PUBLISH(); fm6_pgen[k]++;
-        *cz_patch_of(k) = preview->cz; *p5_patch_of(&trk[k]) = preview->p5; *drum_patch_of(k) = preview->drum;
+        patch_set(k, preview->peng, preview->patch, MOD3_PATCH_MAX, MOD3_PATCH_NEW);   /* (the patch as it was) */
         panic_req |= (uint8_t)(1u << k);
         song_sound_apply(k, &preview->base);
         /* An external MIDI/editor start can arrive while the browser is open.
@@ -81,15 +79,15 @@ static void local_preset_open(int pattern)
     if (!preview) { motion_unguard(f); ui_message("NO SOUND MEMORY"); return; }
     char name[16]; sound_name(TSEL, name);
     motion_restore(TSEL); song_sound_capture(&preview->base, TSEL, name);
-    memcpy(preview->fm, fm6_patch_of(song.sel), sizeof preview->fm); preview->fm_on = fm6_on[song.sel];
-    preview->cz = *cz_patch_of(song.sel); preview->p5 = *p5_patch_of(TSEL); preview->drum = *drum_patch_of(song.sel);
+    preview->peng = (uint8_t)patch_eng_of(song.sel);
+    memcpy(preview->patch, patch_of(song.sel), MOD3_PATCH_MAX);
     song_picker.pattern = (uint8_t)pattern;
     song_picker.row = pattern ? TSEL->pattern : ui.song_row; song_picker.track = song.sel;
     song_picker.return_page = ui.page; song_picker.epoch = pattern_epoch;
     const song_sound_t *s = song_sound_get(pattern ? pattern_sound_id(song.sel, TSEL->pattern) : resolved_sound_id(ui.song_row, song.sel));
     if (s) { panic_req |= (uint8_t)(1u << song.sel); song_sound_apply(song.sel, s); }
     motion_unguard(f);
-    for (uint32_t i = 0; i < NPAGES; i++) if (PAGES[i].graph == GR_BROWSE) { ui.page = (uint8_t)i; break; }
+    for (uint32_t i = 0; i < NPAGES; i++) if (PG(i).graph == GR_BROWSE) { ui.page = (uint8_t)i; break; }
     ui.home = 0; page_entered(); song_picker.active = 1;
     se.pending = se.range = 0; ui.msg_t = 0; ui.force = 1;
 }
@@ -116,7 +114,7 @@ static void song_preset_finish(int keep)
         /* A sound is independent of the preset slot and the track's settings. */
         sound.user[0] = sound.user[1] = sound.user_native = 0;
         for (uint32_t i = 0; i < P_COUNT; i++) if (param_kept(i)) sound.p[i] = (uint8_t)(param_desc_of(sound.engine, i)->def + 64);
-        if (!song_sound_valid(&sound)) { ui_message("INVALID SOUND"); return; }
+        if (!song_sound_valid(&sound, 0)) { ui_message("INVALID SOUND"); return; }
         f = motion_guard();
         if (song_picker.pattern && !pattern_sounds_any() &&
             (pattern_room() < sizeof pattern_sound || pattern_file_cost() > pattern_room() - sizeof pattern_sound)) {

@@ -97,3 +97,20 @@ static void drk_user_name(uint32_t u, char *b)
         str_cpy(b, t, 6);
 }
 #endif
+
+/* TEMPORARY (phase 5, the pads): the DRUM lanes' and recorded kits' firmware data, handed to the DRUM module through
+ * the host table (mod_abi3.h mod_host_v3.legacy) as this firmware lays them out. A module that reads it names
+ * MOD3_PADS_KEY in its descriptor and file head; a firmware with another key leaves it unplayed (module_store.c:
+ * MS_STALE). The other synths name no key: they play on any firmware with their host table. */
+typedef struct mod_legacy_v3 {
+    int32_t *lg_drum_event_pitch;                   /* drum_map.c: the hit being started */
+    uint32_t *lg_drum_event_length;
+    volatile uint8_t *lg_drum_flash;                /* drum_flash[NTRK]: the pads' lights */
+    drk_user_t *lg_drk_user;                        /* drk_user[DK_NUSER] (kit_store.c keeps it) */
+    volatile uint32_t *lg_drk_user_gen;
+} mod_legacy_v3;
+#define MLK(i, v) ((uint32_t)(v) * (0x9E3779B1u * (uint32_t)(i) | 1u) + (uint32_t)(i) * 0x85EBCA77u)
+#define MOD3_PADS_KEY (MLK(1, sizeof(mod_legacy_v3)) + MLK(3, sizeof(drk_user_t)) + MLK(4, DK_NUSER) +             \
+    MLK(5, DRK_KSEC) + MLK(11, NTRK) + MLK(12, BOARD_SMK37) + MLK(13, MELODEE_USER_KITS) + MLK(14, sizeof(void *)) + \
+    MLK(15, 2u) + 1u)                            /* (+ 1: never 0, a module that reads no pads data names 0) */
+

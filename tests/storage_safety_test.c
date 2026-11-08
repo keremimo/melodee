@@ -11,7 +11,7 @@ static int same_object(uint32_t obj, const void *p, uint32_t len)
 }
 static void user_page(void)
 {
-    for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].graph == GR_USER) { ui.page = (uint8_t)p; break; }
+    for (uint32_t p = 0; p < NPAGES; p++) if (PG(p).graph == GR_USER) { ui.page = (uint8_t)p; break; }
     ui.home = ui.menu = ui.layer = 0; ui.uslot = 0;
 }
 int main(void)
