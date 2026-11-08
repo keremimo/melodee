@@ -14,6 +14,19 @@ static uint32_t eng_npresets(uint32_t e)
     uint32_t k = ENGINES[e % NENGINES] == &ENG_MOD_IDLE ? mod_slot_of(e % NENGINES) : NMOD;
     return k < NMOD ? mods[k].npresets : ENGINES[e % NENGINES]->npresets;
 }
+/* every engine the image left to a synth module (SID, DRUM) has one on the device: a fresh install's setup wrote
+ * them (the web installer: web/fm1mods.js). Else the start asks for setup (main.c, ui_boot.c), as for the resources */
+static int mod_have(uint32_t e)
+{
+    for (uint32_t k = 0; k < NMOD; k++)
+        if (mods[k].engine == e && (mod_listed(k) || mods[k].state == MS_SKIPPED))
+            return 1;
+    return 0;
+}
+static int mod_shipped_ok(void)
+{
+    return (MELODEE_SID_BUILTIN || mod_have(3)) && (MELODEE_DRUM_BUILTIN || mod_have(ENGI_DRUM));
+}
 /* main loop: e is about to be used (picked, its presets listed, a sound or project on it loaded): into SRAM now */
 static void mod_want(uint32_t e)
 {

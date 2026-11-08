@@ -15,7 +15,8 @@
 #include "module_abi.h"
 #include "module_native.h"   /* native modules: an engine's own source, its own engine_t (SID, DRUM) */
 
-enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED };   /* mod_slot_t.state */
+enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
+       MS_STALE };                                 /* mod_slot_t.state; STALE: a native module of another firmware */
 typedef struct {
     uint8_t state, engine;                          /* MS_*; the engine number its file names */
     uint16_t version;
@@ -23,6 +24,8 @@ typedef struct {
     char name[MOD_NAME_MAX + 1u];
     uint8_t npresets;                               /* (its head: the browser's list without loading it) */
     uint8_t abi;                                    /* MOD_ABI or MOD_ABI_NATIVE */
+    uint32_t crc, key;                              /* its head's CRC and (native) layout key: what the installer
+                                                     * compares with its own files (editor_module.c) */
     const mod_desc_t *d;                            /* MS_LOADED, ABI 1: the descriptor in the block */
     const mod_native_t *nd;                         /* MS_LOADED, native: its descriptor */
 } mod_slot_t;

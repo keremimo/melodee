@@ -421,6 +421,7 @@ if core; then
     t "installer crash report (read only)" installer_report_test
     t "update loader: other app -> this build" ldr_test -- old_to_new
     run "installer CLI (fm1_install.py) against a simulated FM-1" "$PY" tests/install_test.py
+    run "synth modules after an update (tools/fm1_modules.py) against a simulated FM-1" "$PY" tests/fm1_modules_test.py
     job smk_tests
     run "ROM USB recovery: backup, protected regions, interrupted writes and transport failures" "$PY" tests/recovery_test.py
     run "recovery diagnostics: legacy and boot-protected retained RAM" "$PY" tests/retained_ram_test.py

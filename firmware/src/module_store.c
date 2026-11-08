@@ -202,14 +202,23 @@ static int mod_catalog(uint32_t k)
     if (!len)
         return MS_EMPTY;
     s->len = len;
-    if (len < sizeof h || mod_flash_read(0, &h, sizeof h) || !mod_head_ok(&h, len))
+    if (len < sizeof h || mod_flash_read(0, &h, sizeof h))
+        return s->state = MS_BAD;
+    mod_head_t hk = h;                              /* (a native module of another firmware: known, not played) */
+    if (hk.f.abi == MOD_ABI_NATIVE)
+        hk.key = MOD_NATIVE_KEY;
+    if (!mod_head_ok(&hk, len))
         return s->state = MS_BAD;
     const mod_file_t f = h.f;
     s->engine = f.engine;
     s->version = f.version;
     s->npresets = f.npresets;
     s->abi = (uint8_t)f.abi;
+    s->crc = f.crc;
+    s->key = f.abi == MOD_ABI_NATIVE ? h.key : 0u;
     memcpy(s->name, f.name, MOD_NAME_MAX);
+    if (hk.key != h.key)
+        return s->state = MS_STALE;                 /* (the installer replaces it: editor_module.c) */
     if (mod_slot_of(f.engine) < NMOD)
         return s->state = MS_CLASH;                 /* two modules for one number: the first one plays */
     if (mod_skipped)
@@ -341,7 +350,8 @@ static int mod_put_check(uint32_t k, uint32_t len)
     if (st_stream_read(&mod_up, 0, &mod_up_head, sizeof mod_up_head) || !mod_head_ok(&mod_up_head, len))
         return -2;
     for (uint32_t j = 0; j < NMOD; j++)
-        if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].engine == mod_up_head.f.engine)
+        if (j != k && mods[j].len && mods[j].state != MS_BAD && mods[j].state != MS_STALE &&
+            mods[j].engine == mod_up_head.f.engine)
             return -3;
     return 0;
 }

@@ -9,13 +9,18 @@
 // m-bootloader's installer instead, step 1 restarts into the same firmware. The device tells the two packages
 // apart by their first bytes, as the real one reads their headers. Nothing is written anywhere.
 //
-// Once it runs the package's firmware it also answers the editor's resource command (82, firmware/src/editor_res.c).
+// Once it runs the package's firmware it also answers the editor's resource command (82, firmware/src/editor_res.c)
+// and its synth module command (84, firmware/src/editor_module.c: eight slots, a native file taken when its layout key
+// is the firmware's).
 //
-//   fakeAccess({ images, identity, after, state, interruptAt, stride, timers, resInstalled, resRefuse }) -> { access, device }
+//   fakeAccess({ images, identity, after, state, interruptAt, stride, timers, resInstalled, resRefuse, modKey,
+//                modRoom }) -> { access, device }
 //     images       { firmware, boot, res }: the logical images the page serves (boot optional), and the resource
 //                  region file the firmware wants (res optional: without it command 82 goes unanswered)
 //     resInstalled the region is already in place
 //     resRefuse    begin's rc (4 busy, 3 no room), once
+//     modKey       the firmware's layout key for native synth modules (default 0x13572468)
+//     modRoom      the bytes of module files the storage has room for (default: plenty)
 //     identity     what the running firmware reports ("FM-1_016": M-VAVE's own)
 //     after        what it reports after a write (the package's identity)
 //     state        "app" (default) or "loader" (an install was interrupted: the device waits in update mode)
@@ -90,6 +95,8 @@ class Device {
     this.reply = null;                        // the pending read's resolver
     this.busy = false;
     this.res = this.images.res ? { region: this.images.res, installed: !!o.resInstalled, refuse: o.resRefuse || 0, got: null } : null;
+    this.mods = { key: o.modKey ?? 0x13572468, room: o.modRoom ?? 1 << 20,
+                  slot: Array.from({ length: 8 }, () => ({ bytes: null, state: 0, up: null })) };
     this.input = new Port(this, "Saadet FM-1", "input");
     this.output = new Port(this, "Saadet FM-1", "output");
   }
@@ -201,6 +208,7 @@ class Device {
   // the region's payload (the real one checks the CRC-32 it reads back).
   editor(cmd, a) {
     const r = this.res;
+    if (cmd === 84 && this.state === "app" && this.identity === this.after) return this.modules(a);
     if (cmd !== 82 || !r || this.state !== "app" || this.identity !== this.after) return;
     const head = new DataView(r.region.buffer, r.region.byteOffset, 32), len = head.getUint32(4, true), crc = head.getUint32(8, true);
     let rc = 1;
@@ -221,6 +229,47 @@ class Device {
     this.emit([0xF0, 0x7D, 0x46, 0x4C, 82, rc, r.installed ? 1 : 0, ...x7(len), ...x7(crc), 0xF7]);
   }
 }
+
+// the synth module command (editor_module.c): [0] list, [1 k len] begin, [2 k off x3 packed] write, [3 k] commit
+// (a native file's key must be the firmware's, the storage's room enough), [4 k] delete, [5 k] its file
+Device.prototype.modules = function (a) {
+  const m = this.mods, k = a[1], s = m.slot[k], x7 = (v) => [0, 7, 14, 21, 28].map((sh) => (v >>> sh) & 127);
+  const head = (b) => b && new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const out = (bytes) => this.emit([0xF0, 0x7D, 0x46, 0x4C, 84, ...bytes, 0xF7]);
+  const used = () => m.slot.reduce((n, x) => n + (x.bytes ? x.bytes.length : 0), 0);
+  if (a.length === 1 && a[0] === 0) {
+    const list = [0, 0, 8];
+    for (const x of m.slot) {
+      const name = x.bytes ? String.fromCharCode(...x.bytes.subarray(32, 48)).replace(/\0.*$/, "") : "";
+      list.push(x.state, x.bytes ? x.bytes[6] : 0, 1, 0, ...x7(x.bytes ? x.bytes.length : 0), ...[...name].map((c) => c.charCodeAt(0)), 0);
+    }
+    return out(list);
+  }
+  if (!s) return out([1]);
+  if (a[0] === 5) {
+    const h = head(s.bytes), abi = h ? h.getUint16(4, true) : 0;
+    return out([0, s.state, s.bytes ? s.bytes[6] : 0, abi, ...x7(h ? h.getUint32(28, true) : 0),
+                ...x7(abi === 2 ? h.getUint32(52, true) : 0), ...x7(m.key)]);
+  }
+  if (a[0] === 1) { const len = a.slice(2, 7).reduce((n, b, j) => n + b * 2 ** (7 * j), 0); s.up = { len, buf: new Uint8Array(len), pos: 0 }; return out([0]); }
+  if (a[0] === 2 && s.up) {
+    const off = a[2] | a[3] << 7 | a[4] << 14, n = a.length - 5, data = bkUnpack(a.slice(5), n - Math.ceil(n / 8));
+    if (off !== s.up.pos || off + data.length > s.up.len) return out([1]);
+    s.up.buf.set(data, off); s.up.pos += data.length;
+    return out([0]);
+  }
+  if (a[0] === 3 && s.up) {
+    const b = s.up.buf, h = head(b);
+    s.up = null;
+    if (h.getUint32(0, true) !== 0x31444d4d || (h.getUint16(4, true) === 2 && h.getUint32(52, true) !== m.key)) return out([5, s.state, 0]);
+    if (used() - (s.bytes ? s.bytes.length : 0) + b.length > m.room) return out([2, s.state, 0]);
+    s.bytes = b; s.state = 1;
+    this.log.push(`module ${String.fromCharCode(...b.subarray(32, 48)).replace(/\0.*$/, "")} installed in slot ${k + 1}`);
+    return out([0, 1, b[6]]);
+  }
+  if (a[0] === 4) { s.bytes = null; s.state = 0; s.up = null; return out([0]); }
+  return out([1]);
+};
 
 export function fakeAccess(options = {}) {
   const device = new Device(options);

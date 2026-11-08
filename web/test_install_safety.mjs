@@ -10,6 +10,8 @@ import {controllerSource} from './installer_test_helpers.mjs';
 import {MELODEE_LOADER, STOCK_LOADER, pack7} from './fm1ota.js';
 import {SteadyUpdater, GAP_MS} from './install/transfer.js';
 import {fakeAccess} from './install/fakefm1.js';
+import {BackupConnection} from './fm1backup.js';
+import {installModules, modulesMissing, modBundle} from './fm1mods.js';
 import {hold, busyElsewhere} from './install/keepalive.js';
 import {createInstallSession} from './install/session.js';
 import {progressModel, remaining} from './install/progress.js';
@@ -146,7 +148,18 @@ const digest = createHash('sha256').update(firmware).digest('hex');
 // a resource region (fm1res.js): MRS1, the payload length, a CRC-32 the fake device reports back, then the payload
 const region = new Uint8Array(32 + 3000).map((_,i) => (i * 13 + 5) & 255);
 new DataView(region.buffer).setUint32(0,0x3153524d,true);new DataView(region.buffer).setUint32(4,3000,true);
+// the build's synth modules (fm1mods.js): native .mmod files (56-byte heads, the fake firmware's layout key), one after another
+const fakeModule = (engine, name, n, key = 0x13572468, seed = 1) => {
+  const b = new Uint8Array(56 + n).map((_, i) => (i * 29 + seed) & 255), v = new DataView(b.buffer);
+  v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 2, true); b[6] = engine; b[7] = 0; v.setUint32(8, b.length, true);
+  v.setUint32(28, 0x1000 * seed + engine, true); b.fill(0, 32, 48); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); });
+  v.setUint32(52, key, true);
+  return b;
+};
+const joinBytes = (...xs) => { const o = new Uint8Array(xs.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of xs) { o.set(x, at); at += x.length; } return o; };
+const mods = joinBytes(fakeModule(10, 'DRUM', 3000), fakeModule(3, 'SID', 900));
 const serve = url => url.includes('-res.bin') ? {ok:true,status:200,arrayBuffer:async()=>region.slice().buffer}
+  : url.includes('-mods.bin') ? {ok:true,status:200,arrayBuffer:async()=>mods.slice().buffer}
   : {ok:true,status:200,arrayBuffer:async()=>firmware.slice().buffer};
 for (const valid of [false,true]) {
   const page = new JSDOM(html.replace(/<script type="module">[\s\S]*?<\/script>/,''),{url:'https://example.test/webapp/installer/',runScripts:'outside-only'});
@@ -182,7 +195,9 @@ for (const valid of [false,true]) {
     assert.equal(win.document.getElementById('bar').getAttribute('aria-valuenow'),'100');
     assert(simulated.device.log.includes('written: '+productOf(firmware)));
     assert(simulated.device.log.includes('resources installed'),win.document.getElementById('log').textContent);
-    assert.match(win.document.getElementById('endtips').textContent,/fonts and factory sounds are installed/);
+    assert(simulated.device.log.includes('module DRUM installed in slot 1') && simulated.device.log.includes('module SID installed in slot 2'),
+           win.document.getElementById('log').textContent);
+    assert.match(win.document.getElementById('endtips').textContent,/the SID and DRUM synths are installed/);
     assert(!win.document.querySelector('#phases [data-ph="setup"]').hidden);
   }else assert(!win.document.getElementById('pagefail').hidden);
   page.window.close();
@@ -222,6 +237,7 @@ for (const scenario of ['refused','offer','other-build']) {
     again.click();await until(()=>$('run').dataset.state==='done');
     assert.equal($('runtitle').textContent,'Finishing setup');assert.equal($('endtitle').textContent,'Setup is finished');
     assert(simulated.device.log.includes('resources installed'));
+    assert(simulated.device.log.some(s=>s.startsWith('module DRUM installed')));
   }else if(scenario==='offer'){
     await until(()=>!$('finish').hidden,3000);
     assert(!$('finish').hidden);assert.equal($('devchip').textContent,'Setup unfinished');assert(!$('go').classList.contains('primary'));
@@ -239,6 +255,37 @@ for (const scenario of ['refused','offer','other-build']) {
   page.window.close();
 }
 console.log('Resource region: refused write shows Finish setup and retries alone; Find offers it for this build only; firmware untouched');
+
+// The synth modules alone (fm1mods.js against the fake firmware's command 84): written into free slots, a current
+// one left, an older one (another firmware's key) emptied and written in its own slot, a damaged one's slot reused,
+// a full storage and a module of another build refused with their codes, Find's check.
+{
+  const sim=fakeAccess({images:{firmware:logicalImage(firmware)},identity:productOf(firmware),after:productOf(firmware),loader:MELODEE_LOADER,timers:clock});
+  const input=sim.access.inputs.values().next().value,output=sim.access.outputs.values().next().value;
+  const link=new BackupConnection(input,output),rq=(r,o)=>link.request(r,o);
+  assert.deepEqual(modBundle(mods).map(f=>[f.engine,f.name,f.abi]),[[10,'DRUM',2],[3,'SID',2]]);
+  assert.throws(()=>modBundle(mods.subarray(0,100)),e=>e.code==='modfile');
+  assert.equal(await modulesMissing(rq,mods),true);
+  let seen=0;assert.equal(await installModules(rq,mods,(d,t)=>{seen=d;assert(d<=t);}),'written');assert.equal(seen,mods.length);
+  assert.equal(await modulesMissing(rq,mods),false);
+  assert.equal(await installModules(rq,mods),'current','the very files already there: nothing written');
+  const slot=sim.device.mods.slot;
+  slot[0].bytes=fakeModule(10,'DRUM',2000,0x55555555,7);slot[0].state=7;   /* DRUM of another firmware (stale) */
+  slot[2].bytes=new Uint8Array(80);slot[2].state=3;                          /* a damaged file */
+  const before=sim.device.log.length;
+  assert.equal(await installModules(rq,mods),'written');
+  assert(sim.device.log.slice(before).includes('module DRUM installed in slot 1'),'an older DRUM is replaced in its own slot');
+  assert(!sim.device.log.slice(before).some(s=>s.includes('SID')),'a current SID is left alone');
+  for(const k of [0,1])slot[k].bytes=null,slot[k].state=0;
+  sim.device.mods.room=3500;
+  await assert.rejects(installModules(rq,mods),e=>e.code==='modroom');
+  await assert.rejects(installModules(rq,joinBytes(fakeModule(10,'DRUM',100,0x2468))),e=>e.code==='modbuild');
+  for(const s of slot)s.bytes=new Uint8Array(fakeModule(22,'X',10)),s.state=1;
+  sim.device.mods.room=1<<20;
+  await assert.rejects(installModules(rq,joinBytes(fakeModule(9,'P',10))),e=>e.code==='modslots');
+  link.close();
+}
+console.log('Synth modules: written into the pool slots, current ones left, older ones replaced in place, room / build / slots refused');
 
 // Saadet's optional last stage, with the real pinned boot package.
 const bootRaw=new Uint8Array(readFileSync(new URL('m-bootloader/fm1-uboot.fwsc',import.meta.url)));
@@ -261,7 +308,7 @@ for(const scenario of ['update+boot','boot-only','refused','bad-boot-hash','wron
  win.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
  win.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
  win.TextEncoder=TextEncoder;Object.defineProperty(win.crypto,'subtle',{value:webcrypto.subtle});
- win.fetch=async url=>url.includes('-res.bin')?{ok:false,status:404}:({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
+ win.fetch=async url=>/-(res|mods)\.bin/.test(url)?{ok:false,status:404}:({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
  win.navigator.requestMIDIAccess=async()=>model.access;
  const metadata={version:'1.4.5',product:PRODUCT,pkg:{dual:'test.fwsc'},sha256:{dual:createHash('sha256').update(releaseRaw).digest('hex')},
   boot:{version:'1.2',pkg:'boot.fwsc',sha256:scenario==='bad-boot-hash'?'0'.repeat(64):bootDigest}};

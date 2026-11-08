@@ -1533,7 +1533,7 @@ const nativeBank = {
 };
 /* Synth modules (src/module_abi.h, tools/mod_build.py): the device's slots, a .mmod file's head, an upload */
 const MODS = {
-  STATE: ["empty", "in RAM", "stored (loads when used)", "bad file", "no RAM", "number taken", "skipped this boot"],
+  STATE: ["empty", "in RAM", "stored (loads when used)", "bad file", "no RAM", "number taken", "skipped this boot", "for another firmware"],
   RC: ["ok", "bad request", "storage full", "flash error", "busy", "not a module for this firmware", "engine number taken", "no RAM"],
   parseList(a) {
     const r = new Reader(a), o = { rc: r.b(), skipped: !!r.b(), slots: [] }, n = r.b();

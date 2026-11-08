@@ -272,6 +272,8 @@ int main(int argc, char **argv)
         mod_host_nmod = nmods;
         ENGINES[3] = ENGINES[ENGI_DRUM] = &ENG_RETIRED;  /* (the numbers free for the modules) */
         uint32_t ns = make_nfile(nf[0], 3, "SID", 12000, MOD_NATIVE_KEY, MP_SID_PRESETS);
+        mod_file_t sid_head;
+        memcpy(&sid_head, nf[0], sizeof sid_head);
         uint32_t nd = make_nfile(nf[1], ENGI_DRUM, "DRUM", 48000, MOD_NATIVE_KEY, MP_DRUM_PRESETS);
         int rs = put(4, nf[0], ns), rd = put(5, nf[1], nd);
         if (rs != MS_LOADED || rd != MS_LOADED) printf("  put: SID %d DRUM %d\n", rs, rd);
@@ -319,6 +321,19 @@ int main(int argc, char **argv)
         int rk = put(6, nf[0], nk);
         bad += check("a native module of another firmware (layout key): refused, not published",
                      rk == -2 && !st_exists(ST_MFILE0 + 6));
+        /* .. and one stored before the firmware changed (a record already there): known by engine and name, not
+         * played, not counted as the engine's module; the installer (web/fm1mods.js) replaces it in its slot */
+        int shipped = SHIPPED_OK();
+        int saved = !st_project_save(ST_MFILE0 + 6, nf[0], nk);
+        int rs6 = mod_catalog(6);
+        bad += check("a stored native module of another firmware: MS_STALE, its engine and name kept, not listed",
+                     saved && rs6 == MS_STALE && mods[6].engine == 3 && !strcmp(mods[6].name, "SID") &&
+                     mods[6].key == MOD_NATIVE_KEY + 1u && mod_slot_of(3) == 4 && ENGINES[3] == mod_native_sid.eng);
+        bad += check("the slots report what the installer compares: each file's CRC and layout key (editor command 84 op 5)",
+                     mods[4].crc == sid_head.crc && mods[4].len == sid_head.total &&
+                     mods[5].key == MOD_NATIVE_KEY && mods[4].key == MOD_NATIVE_KEY && mods[5].abi == MOD_ABI_NATIVE);
+        (void)mod_delete(6);
+        bad += check("SID and DRUM on the device: the start asks for no setup (main.c, ui_boot.c)", shipped);
         /* power-on: listed from their heads, nothing in SRAM; wanting DRUM reads its two records */
         for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k, 0), memset(&mods[k], 0, sizeof mods[k]);
         mod_boot();
@@ -332,6 +347,8 @@ int main(int argc, char **argv)
         bad += check("delete: both of a long file's records gone, DRUM retired, its tracks keep the number",
                      !rdel && !st_exists(ST_MFILE0 + 5) && !st_exists(ST_MXFILE0 + 5) &&
                      ENGINES[ENGI_DRUM] == &ENG_RETIRED && (MELODEE_DRUM_BUILTIN || !eng_ok(ENGI_DRUM)));
+        bad += check("without DRUM's module the start asks for setup (\"Synths missing\"), unless DRUM is built in",
+                     SHIPPED_OK() == MELODEE_DRUM_BUILTIN);
         for (uint32_t k = 0; k < NMOD; k++) mod_delete(k);
         ENGINES[3] = sid_in; ENGINES[ENGI_DRUM] = drum_in;
     }

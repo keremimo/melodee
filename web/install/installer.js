@@ -17,6 +17,7 @@ import { describeDevice, planFor, progressModel, remaining, afterFailure } from 
 import { MELODEE_LOADER, STOCK_LOADER, melodeeLoader } from "../fm1ota.js";
 import { BackupConnection } from "../fm1backup.js";
 import { installResources, resHeader, resStatus, RES_COMMAND } from "../fm1res.js";
+import { installModules, modulesMissing } from "../fm1mods.js";
 import { setupLeaving } from "./leave.js";
 
 const IS_OTA = (id) => /^ota-/i.test(id.model);
@@ -95,10 +96,12 @@ const TEXT = {
     endDone: "The FM-1 has restarted with Melodee {v}. You can unplug it now.",
     endBootH: "m-bootloader is installed", endBoot: "The FM-1 has restarted with Melodee {v}.",
     endStockH: "M-VAVE's firmware is back", endStock: "The FM-1 has restarted with its original firmware.",
-    endSetupDoneH: "Setup is finished", endSetupDone: "The fonts and factory sounds are on the FM-1. You can unplug it now.",
+    endSetupDoneH: "Setup is finished", endSetupDone: "The fonts, factory sounds and synths are on the FM-1. You can unplug it now.",
     endSetupH: "Setup isn't finished",
     endSetup: "Melodee {v} runs, but its fonts and factory sounds weren't written. Until they are, the FM-1 uses a plain font and INIT sounds.",
     tipResOk: "The fonts and factory sounds are installed.",
+    tipResModsOk: "The fonts, factory sounds and the SID and DRUM synths are installed.",
+    endSetupMods: "Melodee {v} runs, but its SID and DRUM synths weren't written. Until they are, tracks on them stay silent.",
     tipResRestart: "Switch the FM-1 off and on once, so every sound list shows the factory sounds.",
     tipEditor: "Open the editor to browse sounds and make backups.",
     tipBoot: "To check m-bootloader: switch the FM-1 off, hold PLAY and switch it on. Its recovery menu appears.",
@@ -124,6 +127,15 @@ const TEXT = {
     e_resroom: "The FM-1 couldn't make room for them. If its storage is full, delete a project you don't need, then press Finish setup.",
     e_reswrite: "Writing stopped part way. Keep the cable connected and press Finish setup.",
     e_rescheck: "What was written didn't check out. Press Finish setup to write it again.",
+    e_modfetch: "They could not be downloaded: {d}", e_modfile: "The downloaded file is damaged. Reload the page, then press Finish setup.",
+    e_modlost: "The FM-1 stopped answering. Keep the cable connected and press Finish setup.",
+    e_modnocmd: "The firmware on the FM-1 can't take them. Install this version first.",
+    e_modbuild: "The FM-1 runs another build than the one selected here. Install this version first.",
+    e_modbusy: "The FM-1 is playing. Stop playback, then press Finish setup.",
+    e_modroom: "The FM-1's storage is full. Delete a project or kit you don't need, then press Finish setup.",
+    e_modslots: "Every synth slot on the FM-1 is taken. Delete one in the editor (Settings), then press Finish setup.",
+    e_modwrite: "Writing stopped part way. Keep the cable connected and press Finish setup.",
+    e_modcheck: "What was written didn't check out. Press Finish setup to write it again.",
     e_notfound: "The FM-1 stopped answering before anything was written.",
     e_model: "The connected device is not an FM-1.",
     e_lost: "The USB connection was lost.", e_stopped: "The FM-1 stopped asking for data.",
@@ -218,10 +230,12 @@ const TEXT = {
     endDone: "FM-1 は Melodee {v} で再起動しました。ケーブルを抜いて構いません。",
     endBootH: "m-bootloader をインストールしました", endBoot: "FM-1 は Melodee {v} で再起動しました。",
     endStockH: "M-VAVE のファームウェアに戻しました", endStock: "FM-1 は純正ファームウェアで再起動しました。",
-    endSetupDoneH: "セットアップが完了しました", endSetupDone: "フォントとファクトリーサウンドを FM-1 に書き込みました。ケーブルを抜いて構いません。",
+    endSetupDoneH: "セットアップが完了しました", endSetupDone: "フォント、ファクトリーサウンド、シンセを FM-1 に書き込みました。ケーブルを抜いて構いません。",
     endSetupH: "セットアップが完了していません",
     endSetup: "Melodee {v} は動いていますが、フォントとファクトリーサウンドを書き込めませんでした。書き込むまでは、FM-1 はシンプルなフォントと INIT サウンドを使います。",
     tipResOk: "フォントとファクトリーサウンドをインストールしました。",
+    tipResModsOk: "フォント、ファクトリーサウンド、SID と DRUM のシンセをインストールしました。",
+    endSetupMods: "Melodee {v} は動いていますが、SID と DRUM のシンセを書き込めませんでした。書き込むまでは、これらのトラックは鳴りません。",
     tipResRestart: "FM-1 の電源を一度切って入れ直すと、すべてのサウンドリストにファクトリーサウンドが表示されます。",
     tipEditor: "エディターでサウンドの閲覧やバックアップができます。",
     tipBoot: "m-bootloader の確認：FM-1 の電源を切り、PLAY を押しながら電源を入れると、リカバリーメニューが表示されます。",
@@ -247,6 +261,15 @@ const TEXT = {
     e_resroom: "FM-1 に書き込む場所を確保できませんでした。保存領域がいっぱいなら、不要なプロジェクトを削除してから「セットアップを完了」を押してください。",
     e_reswrite: "書き込みが途中で止まりました。ケーブルを接続したまま「セットアップを完了」を押してください。",
     e_rescheck: "書き込んだ内容を確認できませんでした。「セットアップを完了」を押して書き込み直してください。",
+    e_modfetch: "ダウンロードできませんでした：{d}", e_modfile: "ダウンロードしたファイルが壊れています。ページを再読み込みしてから「セットアップを完了」を押してください。",
+    e_modlost: "FM-1 が応答しなくなりました。ケーブルを接続したまま「セットアップを完了」を押してください。",
+    e_modnocmd: "FM-1 のファームウェアは書き込みに対応していません。先にこのバージョンをインストールしてください。",
+    e_modbuild: "FM-1 はここで選んだものとは別のビルドで動いています。先にこのバージョンをインストールしてください。",
+    e_modbusy: "FM-1 が再生中です。再生を止めてから「セットアップを完了」を押してください。",
+    e_modroom: "FM-1 の保存領域がいっぱいです。不要なプロジェクトかキットを削除してから「セットアップを完了」を押してください。",
+    e_modslots: "FM-1 のシンセのスロットがすべて使われています。エディター（設定）で一つ削除してから「セットアップを完了」を押してください。",
+    e_modwrite: "書き込みが途中で止まりました。ケーブルを接続したまま「セットアップを完了」を押してください。",
+    e_modcheck: "書き込んだ内容を確認できませんでした。「セットアップを完了」を押して書き込み直してください。",
     e_notfound: "何も書き込まれる前に FM-1 が応答しなくなりました。",
     e_model: "接続されている機器は FM-1 ではありません。",
     e_lost: "USB の接続が切れました。", e_stopped: "FM-1 がデータを要求しなくなりました。",
@@ -336,6 +359,26 @@ async function fetchRegion(chosen) {
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return new Uint8Array(await r.arrayBuffer());
+}
+/* the build's synth modules (fm1mods.js: SID, DRUM, out of the firmware since they became modules), <package>-mods.bin
+   beside its package, fetched as the region is: null when the build has none */
+const bundles = new Map();
+async function fetchBundle(chosen) {
+  const url = chosen.pkg.dual.replace(/(\.fwsc)?$/, "-mods.bin") + (chosen.commit ? "?commit=" + chosen.commit : "");
+  const r = await fetch(url, { cache: "no-cache" });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+function modBundleFile() {
+  if (DEMO) return Promise.resolve(null);
+  const key = buildKey();
+  if (!bundles.has(key)) {
+    const bundle = fetchBundle(st.meta);
+    bundles.set(key, bundle);
+    bundle.catch(() => { if (bundles.get(key) === bundle) bundles.delete(key); });
+  }
+  return bundles.get(key);
 }
 function resRegion() {
   if (DEMO) return Promise.resolve(st.demoRes);
@@ -451,8 +494,11 @@ async function connect() {
       st.access = await midi();dev = await new SteadyUpdater(st.access).find();
       if (dev) {
         dev.link.close();
-        if (["this", "dev"].includes(describeDevice(dev.id, st.meta.product).kind) && await resRegion().catch(() => null))
-          res = await probeRes(dev);
+        if (["this", "dev"].includes(describeDevice(dev.id, st.meta.product).kind)) {
+          if (await resRegion().catch(() => null)) res = await probeRes(dev);
+          const bundle = await modBundleFile().catch(() => null);
+          if (bundle && res) res.modsMissing = await probeMods(dev, bundle);
+        }
       }
     }
     finally { release(); }
@@ -472,12 +518,19 @@ async function probeRes(dev) {
   catch (_) { return null; }
   finally { link.close(); }
 }
+/* the synth modules on a running Melodee against the build's (editor command 84): true when one is missing, null
+   when it cannot tell */
+async function probeMods(dev, bundle) {
+  const link = new BackupConnection(dev.link.input, dev.link.output);
+  try { return await modulesMissing((r, o) => link.request(r, o), bundle); }
+  finally { link.close(); }
+}
 /* Finish setup, offered when the FM-1 runs the selected build (or a development one) without its region and that
-   build has one: the same length and CRC-32 as the device wants */
+   build has one (the same length and CRC-32 as the device wants), or without one of the build's synth modules */
 async function offerSetup() {
   const dev = st.dev, s = dev?.res;
   let ok = false;
-  if (s && !s.installed && ["this", "dev"].includes(dev.kind)) {
+  if (s && (!s.installed || s.modsMissing) && ["this", "dev"].includes(dev.kind)) {
     try { const h = resHeader(await resRegion()); ok = h.length === s.length && h.crc === s.crc; }
     catch (_) { /* nothing to offer */ }
   }
@@ -643,7 +696,7 @@ function setStep(key, phase) {
 function stepper(pm) {
   const r = st.run, share = r.plan.boot ? (r.plan.firmware ? 0.94 : 0) : 1;
   return (k, a, b) => {
-    if (k !== "res" || a === b || a % 8192 < 256) log(`${k} ${a ?? ""}${b != null ? " " + b : ""}`);
+    if ((k !== "res" && k !== "mods") || a === b || a % 8192 < 256) log(`${k} ${a ?? ""}${b != null ? " " + b : ""}`);
     r.lastAt = Date.now();
     $("stall").hidden = true;
     if (k === "start") setStep("stStart", "prepare");
@@ -656,7 +709,7 @@ function stepper(pm) {
       const s = remaining(b, pm.write, Date.now() - r.writeAt);
       $("eta").textContent = s == null ? "" : s >= 60 ? t("etaMin", { n: Math.ceil(s / 60) }) : t("etaSec");
     } else if (k === "reboot") { $("eta").textContent = ""; setStep("stReboot", "restart"); setPct(99 * share); }
-    else if (k === "res") { setStep("stRes", "setup"); if (!r.plan.firmware) setPct((a / b) * 100); }
+    else if (k === "res" || k === "mods") { setStep("stRes", "setup"); if (!r.plan.firmware) setPct((a / b) * 100); }
     else if (k === "done" && r.plan.res) setStep("stRes", "setup");
     else if (k === "done" && r.plan.boot) setStep("stBootWait", "boot");
     else if (k === "bootstart") { setStep("stBoot", "boot"); setPct(share ? 96 : 30); }
@@ -717,7 +770,7 @@ function endRun(state, err) {
   const why = (e) => e ? (e.code && TEXT.en["e_" + e.code] ? t("e_" + e.code, { d: e.detail }) : t("e_other", { m: e.message })) : "";
   const reason = why(err);
   /* the resource region's write (pushResources): null when none ran, { ok } or { ok: false, error } */
-  const resFailed = r.res && !r.res.ok;
+  const resFailed = r.res && !r.res.ok, modsFailed = resFailed && /^mod/.test(r.res.error?.code || "");
   const setupAgain = (primary) => button("btnSetup", primary, () => { closeRun(); finishSetup(); });
   let title, text;
   if (state === "done") {
@@ -727,7 +780,7 @@ function endRun(state, err) {
     else {
       title = t(plan.boot ? "endDoneBootH" : "endDoneH", v);
       text = t("endDone", v);
-      if (r.res?.ok) tips.push(t("tipResOk"));
+      if (r.res?.ok) tips.push(t(r.res.mods ? "tipResModsOk" : "tipResOk"));
       tips.push(t("tipEditor"));
       if (plan.boot) tips.push(t("tipBoot"));
     }
@@ -750,10 +803,10 @@ function endRun(state, err) {
   } else if (state === "partial") {
     title = t("endPartialH"); text = t("endPartial", v);
     if (reason) tips.push(reason);
-    if (resFailed) { tips.push(t("endSetup", v), why(r.res.error)); setupAgain(true); }
+    if (resFailed) { tips.push(t(modsFailed ? "endSetupMods" : "endSetup", v), why(r.res.error)); setupAgain(true); }
     button("btnClose", !resFailed, closeRun);
   } else if (state === "setup") {
-    title = t("endSetupH"); text = t("endSetup", v);
+    title = t("endSetupH"); text = t(modsFailed ? "endSetupMods" : "endSetup", v);
     tips.push(why(r.res?.error));
     if (plan.boot) tips.push(t("tipBoot"));
     setupAgain(true);
@@ -789,25 +842,33 @@ async function resumeWrite(up, image, product, step) {
   if (!await up.resume(image,step,product,own)) throw fail("stopped","The update did not finish");
 }
 /* the resource region (firmware/src/res.c) after the firmware, or alone (Finish setup): the build's region through
- * editor command 82. Never fails the install: without it the FM-1 runs Melodee Pixel and INIT sounds, and the end
- * screen says so and offers Finish setup. -> null (the build has none), { ok: true, how } or { ok: false, error } */
+ * editor command 82, then its synth modules through command 84 (fm1mods.js: into the pool, first come first served,
+ * as projects and preset banks). Never fails the install: without them the FM-1 runs Melodee Pixel and INIT sounds,
+ * SID and DRUM tracks stay silent, and the end screen says so and offers Finish setup.
+ * -> null (the build has neither), { ok: true, how } or { ok: false, error } */
 async function pushResources(up, step) {
-  let region;
+  let region, bundle;
   try { region = await resRegion(); }
   catch (e) { log(`resources: ${e.message}`); return { ok: false, error: fail("resfetch", e.message, e.message) }; }
-  if (!region) return null;
+  try { bundle = await modBundleFile(); }
+  catch (e) { log(`synth modules: ${e.message}`); return { ok: false, error: fail("modfetch", e.message, e.message) }; }
+  if (!region && !bundle) return null;
   for (let tries = 0; tries < 20; tries++) {
     const dev = await up.find(id => id.model === st.meta.product.split("_")[0]);
     if (dev) {
       const input = dev.link.input, output = dev.link.output; dev.link.close();
       const link = new BackupConnection(input, output);
+      let what = "resources";
       try {
-        const how = await installResources((r, o) => link.request(r, o), region, (done, total) => step("res", done, total));
-        log(`resources: ${how}`);
-        return { ok: true, how };
+        const how = region ? await installResources((r, o) => link.request(r, o), region, (done, total) => step("res", done, total)) : null;
+        if (how) log(`resources: ${how}`);
+        what = "synth modules";
+        const mods = bundle ? await installModules((r, o) => link.request(r, o), bundle, (done, total) => step("mods", done, total)) : null;
+        if (mods) log(`synth modules: ${mods}`);
+        return { ok: true, how, mods };
       } catch (e) {
-        log(`resources: ${e.message}`);
-        return { ok: false, error: e.code ? e : fail("reslost", e.message) };   /* (no code: the request timed out) */
+        log(`${what}: ${e.message}`);
+        return { ok: false, error: e.code ? e : fail(what === "resources" ? "reslost" : "modlost", e.message) };   /* (no code: timed out) */
       } finally { link.close(); }
     }
     await sleep(500);
@@ -839,7 +900,7 @@ async function finishSetup() {
   st.running = false;
   release();
   const dev = st.dev;
-  if (dev?.res && st.run.res.ok) { dev.res = { ...dev.res, installed: true }; dev.setup = false; }
+  if (dev?.res && st.run.res.ok) { dev.res = { ...dev.res, installed: true, modsMissing: false }; dev.setup = false; }
   endRun(st.run.res.ok ? "done" : "setup", null);
   render();
 }
@@ -867,7 +928,8 @@ async function start(isStock = false) {
   }
   render();
   /* Setup follows the firmware when the build has a resource region (a failed fetch shows there, with its retry) */
-  if (plan.firmware && !isStock) plan.res = (await resRegion().catch(() => undefined)) !== null;
+  if (plan.firmware && !isStock)
+    plan.res = (await resRegion().catch(() => undefined)) !== null || (await modBundleFile().catch(() => undefined)) !== null;
   openRun(plan, isStock);
   const image = isStock ? st.stock.image : st.image;
   const product = isStock ? st.stock.product : st.meta.product;

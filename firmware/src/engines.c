@@ -315,7 +315,9 @@ static uint32_t trk_def_preset(uint32_t k) { return k < NPART ? TRK_DEF[k][1] : 
 #if MELODEE_MODULES
 #include "eng_module.c"         /* synth modules: engines loaded into SRAM (module_store.c keeps them) */
 #include "eng_module_main.c"    /* (their lists, loading, registration: main loop) */
+#define SHIPPED_OK() mod_shipped_ok()  /* the synth modules the image needs are on the device (else: setup) */
 #else
+#define SHIPPED_OK() 1
 static const char *eng_name(uint32_t e) { return ENGINES[e % NENGINES]->name; }
 static uint32_t eng_npresets(uint32_t e) { return ENGINES[e % NENGINES]->npresets; }
 static void mod_want(uint32_t e) { (void)e; }

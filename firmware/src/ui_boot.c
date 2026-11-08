@@ -34,7 +34,7 @@ static void boot_work_draw(void)
     lcd_fill(0, 0, 240, 240, T_BG);
     if (boot_work.state == 4u) {                /* (the words of the web installer's Finish setup) */
         draw_text_box(12, 12, 216, TY_LB, "Setup unfinished", T_MID, 1);
-        y = boot_lines(40, TY_TX, "Factory sounds missing", T_TEXT, 26);
+        y = boot_lines(40, TY_TX, RES_OK() ? "Synths missing" : "Factory sounds missing", T_TEXT, 26);
         y = boot_lines(y + 12, TY_TX, "Install the update again", T_THEME, 26);
         boot_lines(y + 8, TY_LB, "Your own sounds stay.", T_MID, 20);
         boot_keys(0, "CONTINUE");

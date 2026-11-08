@@ -382,7 +382,8 @@ static void fm1_main(void)
     if (boot_work.state != 2u)
         lcd_fill(0, 0, 240, 240, T_BG);
 #ifdef RES_BASE
-    if (flash_ok && !res_ok && !boot_work.state) {    /* the resource region missing: ask for an install (ui_boot.c) */
+    if (flash_ok && (!res_ok || !SHIPPED_OK()) && !boot_work.state) {   /* the resource region or a shipped synth
+                                                      * module missing: ask for an install (ui_boot.c) */
         boot_work.state = 4u;
         ui.force = 1;
     }

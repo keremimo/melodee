@@ -727,9 +727,17 @@ def main():
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
     # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py);
     # the native ones (SID, DRUM) with the image's options: tied to this build by their layout key
+    shipped = []
     for src in sorted((FW / "modules").glob("*/*.c")):
         if src.parent.name != "sdk" and src.stem == src.parent.name:
             subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src, *APP_DEFS], check=True)
+            if '#include "mod_native.h"' in src.read_text():
+                shipped.append(OUT / "modules" / (src.stem + ".mmod"))
+    # the engines the image left to modules, as the installers write them after it (web/fm1mods.js): one file, the
+    # .mmod files one after another (build/melodee-mods.bin; web/make_site.py publishes it as <package>-mods.bin)
+    mods = b"".join(p.read_bytes() for p in shipped)
+    (OUT / "melodee-mods.bin").write_bytes(mods)
+    print(f"modules  {OUT / 'melodee-mods.bin'}  {len(mods)} B: " + ", ".join(p.stem for p in shipped))
     if a.cpu_manifest:
         if any(hashlib.sha256((SRC / p).read_bytes()).hexdigest() != digest for p, digest in cpu_sources.items()):
             raise SystemExit("Firmware source changed during CPU experiment build; rebuild before measuring")
@@ -747,10 +755,12 @@ def main():
         shutil.rmtree(rel, ignore_errors=True)
         (rel / "LICENSES").mkdir(parents=True)
         app = f"{stem}-{a.release}-app.bin"
+        modsname = f"{stem}-{a.release}-mods.bin"     # (the synth modules this build needs: <package>-mods.bin)
         (rel / name).write_bytes(pkg)
         (rel / app).write_bytes(img)
+        (rel / modsname).write_bytes(mods)
         (rel / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n"
-                                                for n, b in ((name, pkg), (app, bytes(img)))))
+                                                for n, b in ((name, pkg), (app, bytes(img)), (modsname, mods))))
         for f in sorted((SRC / "LICENSES").glob("*.txt")):
             shutil.copy(f, rel / "LICENSES" / f.name)
         for doc in ("LICENSE", "LICENSING.md"):
