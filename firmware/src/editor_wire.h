@@ -17,6 +17,13 @@ static void ed_u35s(const uint32_t *v, uint32_t n)   /* n words, 5 x 7 bits each
     while (n--)
         ed_u35(*v++);
 }
+static void ed_str(const char *s, uint32_t max)   /* ASCII, 0-terminated */
+{
+    uint32_t i;
+    for (i = 0; s && s[i] && i < max; i++)
+        ed_b((uint8_t)s[i] & 0x7Fu);
+    ed_b(0);
+}
 static void ed_bytes(const uint8_t *p, uint32_t n)
 {
     while (n--)

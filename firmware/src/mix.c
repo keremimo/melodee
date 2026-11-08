@@ -46,7 +46,9 @@ static __attribute__((noinline,section(".dsp_text"))) void master_out(int32_t *l
     int32_t al, ar, a;
     *l = dc_block(*l, &dc_l, &dce_l);
     *r = dc_block(*r, &dc_r, &dce_r);
-    
+#ifdef MELODEE_MASTER_RAW
+    if (MELODEE_MASTER_RAW) return;                     /* (web/core/melodee_core.c: an export without the limiter) */
+#endif
     al = *l < 0 ? -*l : *l;
     ar = *r < 0 ? -*r : *r;
     a = al > ar ? al : ar;
@@ -368,4 +370,19 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
     fx_bus_join();
     void (*volatile run)(int32_t *,uint32_t)=master_samples;
     AP_START(output_start);run(out,n);AP_END(AP_OUTPUT,output_start);
+}
+
+/* A track's meter has two readers (0 the screen's meters, 1 the editor's METERS push): each takes the peak (|sample|,
+ * Q15, after level, solo and mute) since its own last read. Main loop only */
+static int32_t peak_seen[2][NTRK];
+static int32_t trk_peak_take(uint32_t k, uint32_t who)
+{
+    int32_t p = trk[k].peak, r;
+    trk[k].peak = 0;
+    for (uint32_t c = 0; c < 2u; c++)
+        if (p > peak_seen[c][k])
+            peak_seen[c][k] = p;
+    r = peak_seen[who][k];
+    peak_seen[who][k] = 0;
+    return r;
 }

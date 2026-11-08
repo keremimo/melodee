@@ -46,6 +46,7 @@ _Static_assert(sizeof(drk_map_t) == 10u && sizeof(drk_sample_t) == 12u && sizeof
 #define DRK_KIT_BYTES ((uint32_t)(sizeof(drk_kit_t) + 7u) & ~7u)
 #define DRK_KIT_MAX (DRK_KSEC * DRK_SECBYTES)
 
+#ifndef DRK_CODEC_ONLY                           /* (web/kit builds the record's format and its decoder alone) */
 /* Each user slot's sectors (4 KB numbers; n 0: empty), set by kit_store.c in the main loop. drk_user_gen is odd
  * while it changes them: the audio side then plays nothing, and a part that took a slot under an older number
  * stops reading its sectors before a later save can erase them (kit_store.c waits two blocks). */
@@ -67,6 +68,7 @@ static volatile uint32_t drk_user_gen;
 #define DRK_XIP(off) ((const uint8_t *)0)        /* (host builds without a flash image: no user kits) */
 #endif
 #endif
+#endif
 
 
 /* the codec (drum_enc.c encodes, drum_real.c decodes): samples per slice of each depth, the 16 scales, the levels */
@@ -80,7 +82,7 @@ static const int8_t DRK_LV[4][16] = {
 };
 
 
-#if !MOD_SIDE
+#if !MOD_SIDE && !defined(DRK_CODEC_ONLY)
 /* a user slot's name for the KIT card (b: 6 bytes): EMPTY when there is none */
 static void drk_user_name(uint32_t u, char *b)
 {
@@ -98,6 +100,7 @@ static void drk_user_name(uint32_t u, char *b)
 }
 #endif
 
+#ifndef DRK_CODEC_ONLY
 /* TEMPORARY (phase 5, the pads): the DRUM lanes' and recorded kits' firmware data, handed to the DRUM module through
  * the host table (mod_abi3.h mod_host_v3.legacy) as this firmware lays them out. A module that reads it names
  * MOD3_PADS_KEY in its descriptor and file head; a firmware with another key leaves it unplayed (module_store.c:
@@ -113,4 +116,4 @@ typedef struct mod_legacy_v3 {
 #define MOD3_PADS_KEY (MLK(1, sizeof(mod_legacy_v3)) + MLK(3, sizeof(drk_user_t)) + MLK(4, DK_NUSER) +             \
     MLK(5, DRK_KSEC) + MLK(11, NTRK) + MLK(12, BOARD_SMK37) + MLK(13, MELODEE_USER_KITS) + MLK(14, sizeof(void *)) + \
     MLK(15, 2u) + 1u)                            /* (+ 1: never 0, a module that reads no pads data names 0) */
-
+#endif

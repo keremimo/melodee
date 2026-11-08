@@ -1281,6 +1281,7 @@ static void confirm_open(uint32_t kind, uint32_t trk)
 #include "sysex_library.c"                       /* staged imports and USB library exports */
 
 #include "note_tools.c"
+#include "pattern_dialog.c"                         /* SEQ's pattern dialog: delete, half, double (the editor's PATTERN too) */
 #include "ui_song.c"
 #include "ui_song_sound.c"
 

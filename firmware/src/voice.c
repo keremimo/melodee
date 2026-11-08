@@ -596,15 +596,20 @@ static void trk_note_off_engine(track_t *t, uint32_t note)
 
 #include "midi_track.c"
 #include "midi_insert.c"
+#ifndef MELODEE_NOTE_TAP
+#define MELODEE_NOTE_TAP(tr, note, vel) ((void)0)      /* (web/core/melodee_core.c: every note a track plays) */
+#endif
 /* All ordinary notes go through the persistent per-track MIDI inserts. */
 static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
 {
+    MELODEE_NOTE_TAP((uint32_t)(t - trk), note, vel);
     if (midi_track_only(t)) {
         if (vel) midi_track_note_on(t, note, vel); else midi_track_note_off(t, note);
     } else if (vel) trk_note_on_raw(t, note, vel); else trk_note_off_raw(t, note);
 }
 static void trk_note_off(track_t *t, uint32_t note)
 {
+    MELODEE_NOTE_TAP((uint32_t)(t - trk), note, 0u);
     midi_track_note_off(t, note); /* releases retain their original output channel */
     if (!midi_track_only(t)) trk_note_off_raw(t, note);
 }

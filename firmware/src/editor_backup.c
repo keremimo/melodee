@@ -96,6 +96,7 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
     if(bank<UP_BANKS){*len=sizeof(up_bank_t);return (const uint8_t *)up_cache_bank(bank);}
 #endif
     if (id == 0u) {
+        if(ed_bk_valid>1u)return ED_BK_RAW;   /* an inventory: no music captured (length 0) */
         *len=BANK_STORE_SIZE;
 #if MELODEE_FLASH
         if(!ed_bk_ram_only()){*len=ed_bk_stage.head.len;ed_bk_from(ed_bk_stage.obj,ed_bk_stage.head.slot,ed_bk_stage.head.crc);}   /* (compact) */
@@ -126,11 +127,15 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
     if(id==8u)return ED_BK_RAW;
     return 0;
 }
-static uint32_t ed_bk_capture(void)
+/* inv: an inventory (LIST 1): the stored objects and the settings, the music not captured: no stop, no flash write */
+static uint32_t ed_bk_capture(uint32_t inv)
 {
+    if(!inv){
     if (ed_flash_stop()) return 3;
     up_favorite_poll();
+    }
     ed_bk_valid=ed_bk_put=0;
+    if(!inv){
     ed_bk_gen=++proj_wire_gen;
 #if MELODEE_FLASH
 #if MELODEE_AUDIO_PROFILE
@@ -147,6 +152,7 @@ static uint32_t ed_bk_capture(void)
     project_capture(&proj_scratch);
     if(!bank_pack(ED_BK_RAW,&proj_scratch,1))return 2;
 #endif
+    }
 #if MELODEE_FLASH
     ed_bk_set.p = persist_saved;                    /* fields absent from this build survive */
 #else
@@ -154,7 +160,7 @@ static uint32_t ed_bk_capture(void)
 #endif
     settings_export(&ed_bk_set.p);                  /* the record as it is stored: the template (tmpl) after the settings */
     ed_bk_set_len = sizeof ed_bk_set.p + (template_used() ? sizeof ed_bk_set.t : 0u);
-    ed_bk_put = 0; ed_bk_valid = 1; ed_bk_usb = usb.resets;
+    ed_bk_valid = (uint8_t)(1u + inv); ed_bk_usb = usb.resets;
     return 0;
 }
 static int ed_bk_panel_valid(const panel_t *p)
@@ -387,7 +393,7 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
 static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
 {
     if (cmd == ED_BACKUP_LIST) {
-        uint32_t rc = n ? 1u : ed_bk_capture();
+        uint32_t rc = n > 1u || (n && a[0] != 1u) ? 1u : ed_bk_capture(n);   /* (1: an inventory) */
         ed_b(1); ed_b(rc); ed_b(rc ? 0u : ED_BK_N);
         if (!rc) for (uint32_t i = 0; i < ED_BK_N; i++) {
             uint32_t len;
@@ -407,7 +413,7 @@ static int ed_backup_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         uint32_t len = 0, off = n >= 6u ? ed_bk_r32(a + 1) : 0u;
         uint32_t count = n == 8u ? (uint32_t)a[6] | (uint32_t)a[7] << 7 : 0u;
         const uint8_t *p = n ? ed_bk_object(a[0], &len) : 0;
-        uint32_t rc = (!ed_bk_valid || ed_bk_usb != usb.resets || (n && !a[0] && ed_bk_gen != proj_wire_gen)) ? 5u : transport_busy() ? 3u :
+        uint32_t rc = (!ed_bk_valid || ed_bk_usb != usb.resets || (n && !a[0] && (ed_bk_gen != proj_wire_gen || ed_bk_valid > 1u))) ? 5u :   /* (playing: read too) */
             n != 8u || a[5] > 15u || !p || !count || count > 256u || off > len || count > len - off ? 1u : 0u;
         uint32_t data_off = off;
 #if MELODEE_FLASH

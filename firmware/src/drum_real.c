@@ -36,6 +36,7 @@ typedef struct {
     dre_t e;
     uint8_t bits, nleft, map, sec, sound, lane, level, on;
 } drk_ch_t;
+#ifndef DRK_CODEC_ONLY
 struct drk_part {                                /* (drk_part_t: eng_drum.c) */
     drk_ch_t ch[DRK_NCH];
     const drk_kit_t *H;                          /* the kit's header (flash); 0: an empty slot */
@@ -98,6 +99,7 @@ static drk_ch_t *drk_channel(drk_part_t *K)
     }
     return b;
 }
+#endif
 
 /* the stream from slice, sector by sector */
 static void drk_seek(drk_ch_t *c, uint32_t slice)
@@ -121,6 +123,7 @@ static void drk_stream_start(drk_ch_t *c, const drk_sample_t *s)
     c->n = s->n;
 }
 
+#ifndef DRK_CODEC_ONLY
 /* a hit on note at velocity vel */
 static void drk_hit(track_t *t, uint32_t note, uint32_t vel)
 {
@@ -192,6 +195,7 @@ static int drk_tick(track_t *t)
             return 1;
     return 0;
 }
+#endif
 
 /* the stream's next sample (tools/drum_codec.c's slice(), step for step) */
 static inline __attribute__((always_inline)) int32_t drk_next(drk_ch_t *restrict c)
@@ -276,6 +280,7 @@ static __attribute__((noinline)) int drk_run(drk_ch_t *restrict c, int32_t *x, u
     return live || s->loop_at;
 }
 
+#ifndef DRK_CODEC_ONLY
 static inline __attribute__((always_inline)) void drk_tone(drk_ch_t *restrict c, int32_t *x, uint32_t n)
 {
     const drk_sample_t *s = c->s;
@@ -349,3 +354,4 @@ static __attribute__((noinline)) void drk_render(track_t *t, int32_t *out, uint3
     dlk_out(y, out, n, m, p);
 }
 
+#endif

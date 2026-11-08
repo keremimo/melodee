@@ -4,9 +4,11 @@
  * no .mel code): the records the web page reads and writes, made and read here by the firmware's own code.
  *   mel_fixture emit DIR    layout.json: where a project record keeps what the page touches; projects as the device
  *                           stores them (.hpj, packed) and whole (.rec); three kits recorded through Record kit's path
- *                           from the firmware's own drum voices; a project naming kits in every place a record can (a
- *                           drum track, a song's and a pattern's own sound, automation), beside values that only look
- *                           like kits, and the same project with its kits renamed here, on the decoded state
+ *                           from the firmware's own drum voices, with the takes it was given (take-KIT-PAD.s16: 16-bit,
+ *                           44.1 kHz, the whole buffer; web/kit/check.mjs makes the same kits from them); a project
+ *                           naming kits in every place a record can (a drum track, a song's and a pattern's own sound,
+ *                           automation), beside values that only look like kits, and the same project with its kits
+ *                           renamed here, on the decoded state
  *   mel_fixture verify DIR  what the page's import sent (out-*.bin, written by test_mel.mjs) goes through the backup
  *                           protocol's PUT as the device takes it: the kit plays, the project loads, every kit it
  *                           names is the new one, everything else as it was */
@@ -128,6 +130,8 @@ static void kit_record(uint32_t u, int32_t k, const char *name)
         for (uint32_t i = 0; i < n; i++) pk = abs(out[i]) > pk ? abs(out[i]) : pk;
         if (pk < 100) continue;                      /* (a voice this kit does not have: an empty pad) */
         for (uint32_t i = 0; i < n; i++) take[i] = (int16_t)((int64_t)out[i] * 20000 / pk);
+        char tname[64];
+        snprintf(tname, sizeof tname, "take-%s-%u.s16", name, (unsigned)d); save(tname, take, n * 2u);
         uint32_t r = kt_keep(u, d, take, n, n);
         assert(r == KM_KEPT);
     }

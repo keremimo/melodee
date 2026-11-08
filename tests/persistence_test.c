@@ -63,7 +63,6 @@ enum { ED_UI_STATE = 34, ED_UI_SET, ED_UI_PALETTES, ED_FAV_GET, ED_FAV_SET };
 static void ed_b(uint32_t n) { (void)n; }
 static void ed_v(int32_t n) { (void)n; }
 static int32_t ed_rv(const uint8_t *a) { return (int32_t)(a[0] | (uint32_t)a[1] << 7) - 8192; }
-static void ed_str(const char *s, uint32_t n) { (void)s; (void)n; }
 #include "../firmware/src/editor_preferences.c"
 
 /* slot 1's current record as the loader reads it (a packed or compact image expanded) */

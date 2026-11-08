@@ -154,7 +154,7 @@ global `G_CLOCK` (id 2, label "CLK") 3 (INT, USB, TRS). `G_MIDI` (id 12) is an e
 | 19 UP_STORE | slot, name | slot, rc. Stores the current sound: engine, parameters, the first 16 sequencer steps as the pattern (TIE steps → flag 4) |
 | 20 UP_LOAD | slot | slot, rc (0 ok, 1 empty/invalid). Applies its sound (not its pattern; the steps stay) |
 | 21 UP_ERASE | slot | slot, rc |
-| 22 WATCH | on (0/1; v4: 3 = also `TRACK_CHANGED`) | on (0/1; v4 firmware: 3 when 3 was asked for). While on, the device pushes cmds 23, 24, 26 (and 32 with bit 1) |
+| 22 WATCH | on (0/1; v4: 3 = also `TRACK_CHANGED`; Studio: bits 2..4, see "Studio session"), then (F4) bits 7..13 in an optional second byte | on (0/1; v4 firmware: 3 when 3 was asked for; Studio firmware: the bits it knows of those asked for), then (a second byte asked) the second byte's. While on, the device pushes cmds 23, 24, 26 (and 32 with bit 1; 55..57 with bits 3, 4) |
 | 23 CHANGED (push) | — | scope, id, v14 |
 | 24 RELOAD (push) | — | engine, preset, then (v3) the selected track, then preset >> 7 |
 | 25 PING | — | 0 |
@@ -607,7 +607,7 @@ earlier objects restored; the file is still the source.
 | 0 | ok |
 | 1 | invalid: arguments, id, size, offset, count, or an id `BACKUP_PUT` does not take |
 | 2 | validation failed: CRC, length or content at commit (and a runtime object that cannot be packed) |
-| 3 | stop playback first (`LIST` and `PUT` stop it themselves, and answer 3 if it does not stop in 100 ms; `GET` answers 3 while it plays) |
+| 3 | stop playback first (`LIST` and `PUT` stop it themselves, and answer 3 if it does not stop in 100 ms; `GET` answered 3 while it played until the Studio session, which reads while playing) |
 | 4 | flash write failed |
 | 5 | stale: no `LIST` yet, the USB bus was reset, 15 s with no `PUT` request, or a project save / load reused the staging RAM (for `GET`, of id 0 only). Start again with `LIST` / `BACKUP_PUT` begin |
 
@@ -1401,6 +1401,624 @@ commands already follow:
 - **Command families** with their own file answer through `ED_HANDLERS[]` (each returns 1 when the command is
   its own); a new family is one more entry.
 
+## Studio session (commands 39–43, 55–57)
+
+Melodee Studio's session layer (branch F1 `feat/editor-studio-session`): what the firmware supports, all eight
+tracks, the transport, the 32 project slots, the storage pool, meters and the pushes that keep Studio in step. The
+commands only add: every earlier command answers byte for byte as before, except `BACKUP_GET` while playing (below)
+and the bounds of `TRACK_MIX` / `TRACK_PARAM` on tracks 5..8 (their pushes now have a place; before, the shadow
+overran). Code: `firmware/src/editor_session.c` (39–41, 55–57, the WATCH bits), `firmware/src/editor_projects.c`
+(42, 43), `firmware/src/editor_backup.c` (inventory). Tests: `tests/editor_test.c` `studio_session`,
+`tests/backup_test.c` `studio_projects` (32 slots and the pool on simulated flash).
+
+**Finding out.** `INFO` ends with one more tagged block, `53 01 27` ('S', version 1, the `CAPS` command 39). The old
+editor parses INFO's trailer by position and by `findIndex` from offset 25 (`web/editor.html` 622–640); the new block
+comes after all of them and matches none of its searches. Firmware without it never answers 39–43.
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 39 CAPS | — | revision (1), then TLV entries until the F7: tag, length, length value bytes |
+| 40 TRACKS | — (query); 1, track (select); 2, solo lo, solo hi (14-bit mask); 3, track, on 0/1 (arm); 4 (add a track); 5, track (remove it) | op (127: query), rc, then the tracks (below) and the sounds' names |
+| 41 TRANSPORT | — (query); 1 (play); 2, row (play the song from row); 3 (stop); 4, on 0/1 (song loop) | op (127: query), rc, then the transport (below) |
+| 42 PROJECTS | — (status); 0, first, count (list); 1, slot (load); 2, slot (save); 3, slot, name (save as); 4, slot, name (rename); 5, slot, to (duplicate); 6, slot (delete) | op (127: status), rc, the music's slot (0..31, 127 none), then per op (below) |
+| 43 STORAGE | — | rc, sectors u14, free u14, bytes per sector u14, then (rc 0) one owner byte per sector |
+| 55 METERS (push) | — | state, the song's row, NPART, NPART × peak, NTRK, NTRK × step |
+| 56 TRACKS_CHANGED (push) | — | the tracks, as in `TRACKS` (no names) |
+| 57 TRANSPORT_CHANGED (push) | — | the transport, as in `TRANSPORT` |
+
+Requests of the wrong length get a reply with rc 1 (and the state), except `CAPS` and `STORAGE`: any argument gets no
+reply. Slots and tracks count from 0 on the wire (slot 0 = the device's slot 01, track 0 = track 1). A name is 0..12
+printable ASCII bytes, 32..126 (`ed_text`), sent without a terminator; replies end names with 0. Every reply fits one
+1024-byte frame; the longest is `PROJECTS` list with all 32 slots (≤ 600 bytes).
+
+### CAPS (39)
+
+| tag | length | value |
+| --- | --- | --- |
+| `B` (0x42) | 1 | board: 0 FM-1, 1 SMK-37 |
+| `L` (0x4C) | 4 | the longest reply, then the longest request, F0 to F7, 14 bits each: 1024, 640 |
+| `T` (0x54) | 3 | `TRACKS` version 1, NTRK (8), NPART (4: the tracks that sound; 5..8 are MIDI-only) |
+| `X` (0x58) | 1 | `TRANSPORT` version 1 |
+| `P` (0x50) | 3 | `PROJECTS` version 1, slots (32), name length (12) |
+| `G` (0x47) | 1 | `STORAGE` version 1 |
+| `K` (0x4B) | 1 | 1: `BACKUP_LIST 1` (an inventory) and `BACKUP_GET` while playing |
+| `W` (0x57) | 1 (F4: 2) | the `WATCH` bits known (31: bits 0..4; 63 with F3's bit 5, "Studio song"; 127 with F2's bit 6, "Studio patterns"); F4: two bytes, 127, 1 (bits 0..13 low first: bit 7, "Studio device", in the second) |
+| `M` (0x4D) | 2 | `METERS` version 1, milliseconds between pushes (66, ~15 Hz) |
+| `S` (0x53) | 6 | (F3) `SONG2`, `SONG_SOUND`, `PUNCH` versions (1, 1, 1), the song's sections (64), its sounds (64), the punch effects (27): see "Studio song" |
+| `D` (0x44) | 4 | (F2) the patterns' version (1: `PATTERN_DATA`, `NOTES`, `MOTION` on a bank, `PATTERN` 3..5, `PATTERN_CHANGED`; 2: also `PATTERN` 2's copy to another track), steps a pattern holds (64), timed notes (1,024, 14 bits): see "Studio patterns" |
+| `C` (0x43) | 4 | (F4) `SETTINGS`, `MLEARN`, `BLE`, `DRUM` versions (1, 2, 1, 1; `MLEARN` 2: the parameters, 1 before them; `BLE` 0 in a build without Bluetooth): see "Studio device" |
+| `E` (0x45) | 2 | (F5, only in a build with `MELODEE_BLE_EDITOR`: the default wherever there is Bluetooth) the link this `CAPS` came on (0 USB, 1 Bluetooth), the Bluetooth command list's version (1): see "Studio over Bluetooth". Without the tag: USB |
+
+Skip unknown tags by their length. Later branches (F2..F5) add tags; a tag's version grows when its command changes.
+
+### TRACKS (40)
+
+The tracks after `op, rc` (and the whole of `TRACKS_CHANGED`):
+
+| bytes | field |
+| --- | --- |
+| 1 | NTRK (8) |
+| 1 | the tracks in use, 1..8 (`trk_n`: always from track 1) |
+| 1 | the selected track, 0..7 (the real one, not `TRACK`'s clamped 0..3) |
+| 2 | solo: the tracks that sound alone, 14 bits (bit k = track k + 1; 0 none) |
+| 2 | armed: the track armed for live recording, 14 bits (REC: one at a time) |
+| NTRK × 5 | per track its sound: engine byte, preset (low 7 bits), preset >> 7, the user slot it came from + 1 (14 bits; 0 none) |
+| NTRK × 3 | per track: level v14 (`P_LEVEL`), mute (0/1) |
+| NTRK × string | (the reply, not the push) the sound's name as the device shows it, ≤ 16 characters |
+
+Tracks past the ones in use keep their place and values (a track added later starts fresh). MIDI-only tracks (5..8)
+report engine 21 (MIDI Track) and no audio.
+
+| op | does | rc |
+| --- | --- | --- |
+| — | nothing (query) | 0 |
+| 1 | selects the track, as ALGORITHM does (no `RELOAD` push for it: the editor re-reads) | 1: not in use |
+| 2 | sets the solo mask (bits past the tracks in use are dropped). It is latched in RAM, not saved; a GLO solo key held on the device wins while held; GLO's "all on" key clears it | 0 |
+| 3 | arms (on 1) or disarms (on 0) the track for live recording, as REC: another armed track is disarmed first; armed while playing it waits for the pattern start | 1: not in use, on > 1; 3: arming while the song plays |
+| 4 | adds the next track (Stage's "Add track"): selected, its power-on sound, every pattern empty; no browser opens on the device | 1: eight already |
+| 5 | removes the track (Stage's "Remove track", Studio asks first): the tracks after it move down with everything that is theirs, the solo and armed bits too | 1: not in use or the only one; 2: failed (the project did not fit, nothing changed); 3: stop playback first (removing never stops it) |
+
+### TRANSPORT (41)
+
+The transport after `op, rc` (and the whole of `TRANSPORT_CHANGED`): state (bit 0 playing, bit 1 the song plays or
+is about to, bit 2 counting in, bit 3 a track armed), clock (`G_CLOCK`: 0 INT, 1 USB, 2 TRS), song loop (0/1), the
+song's row, its rows, repeats left of the row, track 1's step (0..63; track 1 clocks the song).
+
+| op | does | rc |
+| --- | --- | --- |
+| — | nothing (query) | 0 |
+| 1 | plays the patterns, as PLAY on Stage (nothing when playing already) | 2: external clock |
+| 2 | plays the song from row (stops first if playing; the row is the song position) | 1: row past the song or the song invalid; 2: external clock; 3: did not stop in 100 ms; 4: the song's sounds could not be prepared |
+| 3 | stops | 2: external clock |
+| 4 | sets the song loop (as SONG's sheet; works on an external clock too) | 1: on > 1; 3: the song plays (STOP TO EDIT) |
+
+Plays and stops wait until the audio interrupt takes them (at most 100 ms), so the reply shows the new state. While
+the FM-1 follows an external clock (CLK USB or TRS) that clock starts and stops it: play, song and stop answer rc 2 and
+change nothing.
+
+### PROJECTS (42)
+
+After `op, rc` and the music's slot (the slot it was loaded from or last saved to; 127 none):
+
+- status (no arguments): dirty (1: the music differs from its slot, or it has no slot and holds notes or a song with
+  events; as NEW SONG's question), then the music's name. Dirty packs the music to compare: a `BACKUP_GET` of id 0 from
+  an earlier `LIST` then answers rc 5, as after a save.
+- list (op 0): first, count, total (14 bits each, total 32), then count slots: slot, state (0 empty, 1 a project,
+  2 a record this firmware does not read: "OLD FORMAT"), stored bytes (3 × 7 bits, low first), name. count is the
+  slots asked for that exist; all 32 fit one reply.
+- every other op: the slot written or loaded, as a list item (duplicate: the slot copied to).
+
+| op | does | rc |
+| --- | --- | --- |
+| 1 | loads the slot | 1: empty or old format; 2: it did not load |
+| 2 | saves the music to the slot, its name kept (replaces what the slot held: Studio keeps a copy first) | 2: failed (STORAGE FULL, PROJECT FULL, a flash error) |
+| 3 | saves the music to the slot with this name ("" no name) | as 2 |
+| 4 | renames the stored project; the music too when the slot is its slot | 1: empty slot; 2: failed |
+| 5 | copies the stored project to slot `to`, its name kept (replaces what `to` held); when `to` is the music's slot, the music no longer has a slot | 1: empty slot; 2: failed |
+| 6 | deletes the slot (when it is the music's slot, the music no longer has one) | 2: failed |
+
+Every op but list and status may write flash or change the music, so it stops the transport first and leaves it
+stopped (a load, rename or duplicate of an empty slot answers rc 1 without stopping it) (Kerem 2026-11-06: Studio's button says "Stops FM-1 playback"); rc 3 if it does not stop within 100 ms. Studio
+asks about unsaved changes itself (the dirty flag) and reads a slot (`BACKUP_GET`) before it overwrites or deletes
+one. The status of an invalid request (rc 1, wrong length, slot ≥ 32, a bad name) changes nothing. Host builds without
+flash have four slots (total 4).
+
+### STORAGE (43)
+
+rc (0 ok, 4: no flash or a read failed), the linear sectors (FM-1 108: 0x93000..0xFEFFF; SMK-37 60), the free ones
+(what a new record may take), the payload bytes a sector holds (4,056), then one byte per sector, lowest address
+first: 0 free, 1..32 project slot 01..32, 33..40 user kit 1..8, 41 another record (the preset banks), 127 not the
+pool's (the update loader's staging, the settings pair, the resource region). A record holding k sectors stores up to
+k × 4,056 bytes; the list's stored bytes tell how many it holds.
+
+### Backup inventory and reads while playing
+
+- `BACKUP_LIST 1` is an inventory: the stored objects (projects 1..32, presets, kits) and the settings, with sizes and
+  CRCs, as `BACKUP_LIST`. It does not stop the transport, does not capture the music and writes no flash. Object 0
+  (the music) is listed with size 0; `GET` of it answers rc 5 until a `BACKUP_LIST` without the flag captures it.
+  `BACKUP_LIST` with any other argument answers rc 1 (as before).
+- `BACKUP_GET` reads while the transport runs (before: rc 3). Stored objects are read from flash in 256-byte pieces,
+  as a project load does; a save cannot happen meanwhile (saves stop the transport).
+
+### WATCH bits 2..4 and the pushes
+
+`WATCH` takes bits 2..4 on top of bits 0 (on) and 1 (`TRACK_CHANGED`), and answers with the bits it knows of those
+asked for (firmware before: 0..1, so `WATCH 31` answers 3 there). The old editor sends 1 or 3 and gets the same
+answer and pushes as before.
+
+| bit | adds |
+| --- | --- |
+| 2 | the eight tracks: `RELOAD` and `STEP_CHANGED` carry the real selected track (0..7, not clamped to 3), `TRACK` reports it too, and `TRACK_CHANGED` follows tracks 5..8 as well |
+| 3 | `TRACKS_CHANGED` (56) when the tracks in use, the selection, solo, armed or a track's sound change on the device (not level or mute: `CHANGED` / `TRACK_CHANGED` carry those), and `TRANSPORT_CHANGED` (57) when the transport changes but its step (play, stop, a song row, a repeat, the loop, the clock) |
+| 4 | `METERS` (55) every 66 ms (~15 Hz) while watching. Studio sets the bit only while Stage or Mixer is open and its tab visible |
+| 5 | (F3) `SONG_CHANGED` (58) when the song changes on the device: see "Studio song" |
+| 6 | (F2) `PATTERN_CHANGED` (59) when patterns change on the device: see "Studio patterns" |
+| 7 | (F4) `DEVICE_CHANGED` (60) when the settings, MIDI LEARN, Bluetooth or a kit's drums change on the device; sent in `WATCH`'s second byte (bit 0): see "Studio device" |
+
+A `WATCH` with bits 2..4 while watching only changes the bits: the shadows stay, so no push is lost (a `WATCH` of 0..3,
+or one that starts watching, takes the device's values as known, as before). The editor's own `TRACKS` /
+`TRANSPORT` change pushes nothing. Pushes go out at most four per ~5 ms pass and only into a half-empty SysEx ring
+(`usb.c` 64 packets): 56 is 77 bytes, 57 13, 55 22.
+
+`METERS`: state (as `TRANSPORT`), the song's row, NPART (4), per part its peak since the last `METERS`, NTRK (8), per
+track its step (0..63). A peak is 8 × log2 of the largest |sample| (Q15, after level, solo and mute), 0..127: 120 is
+full scale, each 8 is 6 dB (dBFS ≈ (peak − 120) × 0.75), 0 silence. The device's own meters and `METERS` each get
+every peak (`trk_peak_take`: two readers).
+
+## Studio song (commands 47–49, 58)
+
+Melodee Studio's song (branch F3 `feat/editor-song-full`, on F1): the whole song with all eight tracks, the
+sections' lengths, the block sounds, the punch-in effects and a push when the song changes on the device. The
+commands only add: every earlier command answers byte for byte as before (`SONG` 33 and `BANK_SONG` 74 keep
+their four-track rows, and their writes still clear the punch events and block sounds). Code:
+`firmware/src/editor_song.c`; the song page's own operations (`ui_song.c`, `ui_song_sound.c`) do the edits. Tests:
+`tests/editor_test.c` `studio_song`.
+
+**Finding out.** `CAPS` (39) has a tag `S`: `53 06` SONG2 version 1, SONG_SOUND version 1, PUNCH version 1, the
+sections a song holds (64), the song's sounds (64), the punch effects (27); `W` is 63 (bits 0..5). Firmware without
+the tag never answers 47–49.
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 47 SONG2 | — (head); 0, first, count (sections); 1 (the banks' timing); 2, rows, loop, rows × (repeats, 8 cells) (write); 3, at (insert); 4, first, last (duplicate); 5, first, last (delete); 6, first, last, to (move) | op (127: head), rc, the head (below), then 0: the sections; 1: the timing table |
+| 48 SONG_SOUND | 0, first, count (the song's sounds); 1, row, track, engine, preset lo, preset hi; 2, row, track, slot lo, slot hi; 3, row, track, id | op, row, track (0: first, count), rc, the song's sounds (count), then 0: the sounds |
+| 49 PUNCH | — (state); 0 (names); 1, effect (hold); 2 (release); 3 (the song's events); 4, first, n, n × 4 × (effect, start, length) | op (127: state), rc, held, the editor's, the song's, effects (27), then 0: names; 3, 4: the events |
+| 58 SONG_CHANGED (push) | — | the head |
+
+Sections and tracks count from 0 on the wire. A cell is a pattern (0..15 on tracks 1..4; 0..7 on the MIDI-only
+tracks 5..8), 16 a rest, 17 goes on (the block above continues: never on section 1, never after a rest). Every reply
+fits one 1024-byte frame (the paged ones are cut to fit: 41 sections, 50 sounds a reply); the longest request is a
+64-section `SONG2` write, 579 argument bytes (585 with the frame).
+
+rc: 0 done; 1 malformed or invalid (nothing changed); 2 refused by the device (nothing changed: no edit memory,
+the song full, a move onto itself, a sound that could not be kept); 3 busy (the song plays or is about to: STOP TO
+EDIT; SONG_SOUND 1 and 2 also while anything plays, PUNCH 1 while a menu, dialog or NAME is open on the device).
+Unlike the older commands, a request of the wrong length still gets its reply, with rc 1.
+
+### SONG2 (47)
+
+The head (also the whole of `SONG_CHANGED`): the sections (0..64), loop (0/1), BPM (14 bits: 40..240), the song's
+sounds (0..64).
+
+- **Sections** (op 0): `first, count, total` (14 bits each), then `count` sections of 24 bytes:
+
+  | bytes | field |
+  | --- | --- |
+  | 1 | repeats, 1..16 |
+  | 1 | steps: the conductor's (track 1's) pattern length, 1..64; 16 when track 1 rests or goes on |
+  | 1 | division of those steps (`P_SDIV`: 0 1/4, 1 1/8, 2 1/16, 3 1/32, 4 8T, 5 16T, 6 1/2, 7 1/1, 8 2BAR, 9 4BAR); 2 when track 1 rests or goes on |
+  | 5 | the section's length in sequencer units, repeats included (32 bits, five 7-bit groups, low first) |
+  | 8 × 2 | per track: the cell, the block sound id stored on it (0: none) |
+
+  **Time.** A beat (quarter note) is 24,576 units at any tempo; the section lasts `units × 60 / (24,576 × BPM)`
+  seconds and the song the sum of its sections (the device's own `chain_row_samples` / `chain_seconds`, swing
+  included: an odd-length conductor pattern carries its swung step). The device clocks a section by track 1: its
+  pattern's steps × division (with track 1's swing plus global swing), × repeats; a section where track 1 rests or
+  goes on lasts four beats (16 sixteenths) a repeat. The other tracks restart their pattern at each section start
+  (unless they go on) and loop or are cut at its end.
+
+  **Sounds.** A block's sound is the id on its first cell; a goes-on cell with id 0 plays the sound of the block it
+  continues (older songs named only the first section), one with its own id plays that one. 0 on a block's first
+  cell: the track's own sound (or the pattern's, see FBKQ).
+- **Timing** (op 1): global swing (0..100), then per track (8): its patterns (16 or 8), then per pattern its steps
+  (1..64), division (as above), swing (0..100). With them Studio draws each cell's pattern inside its section: a
+  pattern lasts `steps × division + (steps odd ? swing' × division / 250 : 0)` units, `swing'` = the pattern's swing
+  + global swing, at most 100, and the division in units: 1/4 24,576, 1/8 12,288, 1/16 6,144, 1/32 3,072, 8T 8,192,
+  16T 4,096, 1/2 49,152, 1/1 98,304, 2BAR 196,608, 4BAR 393,216.
+- **Write** (op 2): replaces the cells, repeats and loop. The punch events and the block sounds of the sections
+  kept stay (FBKN / FBKO): a cell written as a rest loses its sound; sections past `rows` lose theirs (as a delete).
+  Everything is checked first (repeats 1..16, a pattern the track has, goes-on after a block); any fault: rc 1,
+  nothing changed.
+- **Insert / duplicate / delete / move** (ops 3–6) are the song page's own: insert puts an empty section (all rests,
+  1 repeat) at `at` (past the end: at the end); duplicate copies sections `first..last` right after `last`; delete
+  removes them; move puts them before section `to` (0..rows). Punch events and sounds move with their sections; a
+  block cut by the edit becomes its own block, its first cell named by the pattern it played (as on the device). The
+  device shows the page's message ("SECTION DUPLICATED", ...) and its song cursor moves there. rc 1: `first > last`,
+  `last` past the song, `to` past the end; rc 2 (the page refuses, nothing changed): the song would pass 64
+  sections, a move inside or right after its own range, no edit memory.
+
+Every write is one of the song page's undoable edits: EDIT on the device undoes and redoes it. All writes answer rc 3
+while the song plays or is about to (TRANSPORT bit 1); reads work while playing.
+
+### SONG_SOUND (48)
+
+A block's sound is an immutable snapshot in the song's pool (up to 64; FBKO), as the song sheet's "Set preset" makes
+it. The song's sounds (op 0): `first, count, total` (14 bits each), then `count` sounds: id (1..64), engine, preset
+(low 7 bits, then bit 7), name (≤ 15 characters, 0-terminated): what the sound was made from. A snapshot keeps
+no user slot (as on the device): a sound made from a user slot shows that slot's name and preset 0.
+
+| op | does | rc |
+| --- | --- | --- |
+| 1 | the factory preset `engine, preset` (14 bits) on the block of `track` at `row`: the track auditions it, its snapshot is stored (an identical one is reused) and the block's cells get its id, then the track's own sound comes back | 1: row past the song, a MIDI-only track, engine or preset unknown; 2: the sound could not be kept (an engine this firmware does not play, the pool full, PROJECT FULL, no memory); 3: the transport runs, or the device's own Set preset is open |
+| 2 | as 1 from user slot `slot` (14 bits, 0..383) | 1: as 1, or the slot empty; 2, 3 as 1 |
+| 3 | sound `id` of the pool on the block (0: none, the track's own: "Remove preset") | 1: row past the song, id past the pool, an id on a MIDI-only track; 2: no edit memory; 3: the song plays |
+
+The block is the cell's: from the block's first section (its origin) through every goes-on cell after it. The reply's
+count tells whether a new sound was stored; Studio reads the sections again for the ids.
+
+### PUNCH (49)
+
+The punch-in effects of the FX layer: 27 effects (0..26, as the keyboard F3..G5 maps them: 16 white keys, then 11
+black), the master mix through one at a time.
+
+The state after `op, rc`: held (the effect the keys or the editor hold, 127 none), the editor's (1: the editor's
+hold), the song's (the effect a song section plays now, 127 none), effects (27).
+
+| op | does | rc |
+| --- | --- | --- |
+| 0 | the names follow: 27 × name (0-terminated) | 0 |
+| 1 | holds `effect` (as a held key); a key pressed on the device takes over | 1: effect ≥ 27; 3: a menu, dialog or NAME is open on the device (no layer plays) |
+| 2 | releases the editor's hold (a key's stays) | 0 |
+| 3 | the song's events follow | 0 |
+| 4 | writes the events of sections `first..first+n-1` (n ≥ 1), 4 per section, then the events follow | 1: past the song, an event invalid; 2: no edit memory; 3: the song plays |
+
+The editor's hold ends with STOP, when the device opens a menu, dialog or NAME, and 3 s after the editor's last request
+(Studio sends `PING` while a pad is held). The events: the sections (count), then per section 4 × (effect + 1, 0
+none; start step 0..63; length 1..64 − start; 0, 0, 0 for none), in conductor steps from the section's start,
+repeated with each repeat (FBKN). The later start wins where two overlap; a held effect wins over the song's.
+
+### WATCH bit 5: SONG_CHANGED (58)
+
+`WATCH` with bit 5 (32) pushes `SONG_CHANGED` (the head: 5 bytes, 11 with the frame) when the song changes on the device: its cells,
+repeats, loop, block sounds or punch events (an edit, an undo, a project load, a new song). Studio then reads it again.
+The editor's own writes push nothing. The device notices a change within one screen pass.
+
+## Studio patterns (commands 44, 45, 59; 64 and 73 extended)
+
+Melodee Studio's patterns (branch F2 `feat/editor-patterns-any-bank`, on F3 and the virtual FM-1 core): any track's
+pattern bank, the one playing or another: its steps and timing, its timed notes, its motion, and the edits of SEQ's
+pattern dialog. The commands only add: every earlier command answers byte for byte as before; `MOTION` and `PATTERN`
+take operations that got no reply before. Code: `firmware/src/editor_patterns.c` (44, 45, 59), `editor.c` (64, 73),
+`firmware/src/pattern_dialog.c` (the dialog's delete, half and double, moved out of `ui_input.c` so the editor and the
+virtual FM-1 have them). Tests: `tests/editor_test.c` `studio_patterns`.
+
+**Finding out.** `CAPS` (39) has a tag `D`: `44 04` version 2 (all of the below; version 1 lacked `PATTERN` 2's track), the steps a pattern holds (64), the
+timed notes a project holds (1,024, 14 bits); `W` is 127 (bits 0..6). Firmware without the tag never answers 44 and
+45, ignores `MOTION` op 5 and `PATTERN` ops 3..5, and knows no bit 6.
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 44 PATTERN_DATA | track, bank, half (read); track, bank, half, LEN, DIV, SWING, GATE, 32 × step (write) | track, bank, half, rc, then (a bank the track has) LEN, DIV, SWING, GATE, 32 × step |
+| 45 NOTES | track, bank, 0, first (14 bits), count (list); track, bank, 1, m, m × note (write) | track, bank, op, rc, then 0: first, count, total (14 bits each), count × note; 1: the m notes' ids (14 bits each) |
+| 64 MOTION | track, 5, bank, then a `MOTION` request's bytes after its track: — (query), 1 on, 2 clear, 3 set, 4 delete | as `MOTION`: track, rc, on, count, max, the events, all of that bank |
+| 73 PATTERN | track, 2, source, destination, destination track (copy to another track, v2); track, 3, bank (clear); track, 4, bank (halve); track, 5, bank (double) | as `PATTERN`: track, op, rc, active bank, queued bank (127 none), the track's banks |
+| 59 PATTERN_CHANGED (push) | — | NTRK, then per track: the bank playing, the bank queued (127 none) |
+
+Tracks and banks count from 0 on the wire (16 banks on tracks 1..4, 8 on the MIDI-only tracks 5..8); half 0 is steps
+1..32, half 1 steps 33..64. Every reply fits one 1024-byte frame (`PATTERN_DATA` 398 bytes; `NOTES` pages are cut to
+fit: 59 notes); the longest request is a `NOTES` write of 37 notes (639 bytes with the frame).
+
+rc: 0 done; 1 malformed or invalid (nothing changed); 2 no room (`NOTES`: the 1,024 timed notes in use, or no edit
+memory on the device; `PATTERN`: PATTERN DATA FULL, or the loop-end queue full); 3 busy (a song plays or is about to:
+STOP TO EDIT; `NOTES` also while the track records live); 4 PATTERN STORAGE FULL (the project could not be saved:
+nothing changed); 5 (`PATTERN` 3) waits for the track's loop end. Like F1 / F3, a 44 or 45 request of the wrong length
+still gets its reply, with rc 1.
+
+### PATTERN_DATA (44)
+
+The bank's timing as stored with it (`P_SLEN` .. `P_SGATE`; the bank playing: the track's own): LEN 1..64, DIV
+(`P_SDIV`, as `SONG2`: 0 1/4, 1 1/8, 2 1/16, 3 1/32, 4 8T, 5 16T, 6 1/2, 7 1/1, 8 2BAR, 9 4BAR), SWING 0..100, GATE
+1..127. Then 32 steps of 12 bytes: the step's 11 bytes as the device keeps them (`step_t`), the eighth bits last.
+
+| byte | field |
+| --- | --- |
+| 0..3 | notes, 0..127 (the first n are in use) |
+| 4 | n, the notes in use (0..4) |
+| 5 | time: 0 NOTE, 1 TIE, 2 REST |
+| 6 | flags: 1 accent, 2 slide, 4 the view of timed notes (below) |
+| 7 | velocity (0: the track's) |
+| 8 | the drum lanes hit, lanes 1..7 (bits 0..6) |
+| 9 | with hits: their accents (bits 0..6); without: the step's own gate, 1..255 of a step (0: the track's GATE) |
+| 10 | chance: 0 always (a pattern from before chance), 1..100 %, 101 never |
+| 11 | bit 0: lane 8 hit, bit 1: bit 7 of byte 9 |
+
+A write replaces the half's 32 steps and the timing (the other half stays; the timing is clamped into its ranges). Each
+step must be one the device can hold (n ≤ 4, time ≤ 2, flags ≤ 7, chance ≤ 101, accents only on lanes hit): else rc 1,
+nothing changed. On the bank playing the track hears it at once (as `STEP_SET`). A step written without flag 4 where
+timed notes were drops them (as clearing it on the device does); flag 4 on a step without timed notes plays nothing.
+Not undoable on the device (as `STEP_SET`). rc 3 while a song plays; rc 4 when the project would not save.
+
+### NOTES (45)
+
+Timed notes are notes played in live (or turned into timed notes on the NOTES page): each keeps its onset inside its
+step, its own length and its velocity. The bank's steps are their views: flag 4, the notes whose onset rounds to that
+step (up to four pitches, the highest velocity, accent above 110; on a DRUM track the lanes' hits).
+
+A note, 17 bytes:
+
+| bytes | field |
+| --- | --- |
+| 2 | id: its slot, 0..1023 (14 bits; kept until the next write, take or load) |
+| 1 | step, 0..63 |
+| 5 | onset in the step, 0..65,535 of the step's span (32 bits, five 7-bit groups, low first) |
+| 5 | length: 65,536 a step (unswung), 1..8,388,480 (32 bits) |
+| 1 | note, 0..127 |
+| 1 | velocity, 1..127 |
+| 1 | pitch + 64: a drum hit's own tune, −24..24 (64 for every other note) |
+| 1 | flags: bit 0 a gated drum hit; read only: bit 1 shown on the next step (an onset in the step's second half), bit 2 shown on step 1 (the last step's second half) |
+
+Time: a note starts `onset × span / 65,536` after its step's start, the span being the step's own (its division, swung
+as `SONG2`'s timing describes); its length counts straight steps of the bank's division.
+
+- **List** (op 0): `first, count, total` (14 bits each), then `count` notes of the bank in slot order (`count` cut to
+  fit). Notes past LEN are listed too (they stay hidden, as steps past LEN do).
+- **Write** (op 1): m ≥ 1 notes, all checked before anything changes: an id that is one of the bank's notes, or 16383
+  for a new one (velocity ≥ 1); velocity 0 removes the note; step, onset, length, pitch and flags in their ranges; a
+  note may not land on a step that holds its own notes (rc 1: clear the step, or turn it into timed notes on the
+  device, first). rc 2 when the new notes need more than the free slots (RECORDING FULL); rc 4 when the views would
+  not save; rc 3 while a song plays or the track records live. The notes are then written in order (a later one in the
+  request wins) and the bank's views are made again from its notes: a step that loses its last note becomes a rest; a
+  view keeps its chance and slide. The reply: the m notes' ids (a new note's slot). On the bank playing, stopped: one
+  edit the device's EDIT held undoes (whichever track is selected); on another bank or while playing it is not
+  undoable (as the device's own edits there).
+
+### MOTION (64) on any bank
+
+`track, 5, bank`, then the bytes a `MOTION` request has after its track (none: the query; `1, on`; `2`; `3, step, id,
+v14`; `4, step, id[, v14]`), acts on that bank's events instead of the bank playing's. On / off stays the track's (all
+of its banks). The reply is `MOTION`'s with that bank's count and events. A clear on another bank is the device's
+MOTION CLEARED (undoable as a load). The rules are `MOTION`'s (64 events shared by the parts' banks: rc 2 full; tracks
+5..8 have no motion: no reply; bank ≥ 16: no reply).
+
+### PATTERN (73): copy to another track, clear, halve, double
+
+- **2 copy with a fifth byte** (v2), the destination track: the PATTERNS page's Copy to (`pattern_copy_to`, as on the
+  device). Steps, LEN/DIV timing and timed notes go; motion only between tracks 1..4 of the same engine; the
+  pattern's own sound never (the destination bank plays its track's sound). Refused (rc 1) while a song plays or
+  over the destination track's bank playing, rc 2 when the timed notes or motion do not fit, rc 4 storage. The
+  reply describes the source track (`PATTERN_CHANGED` does not follow: the editor's own change). Four bytes copy
+  within the track, as before.
+
+
+SEQ's pattern dialog on the device (SEQ held, then a pattern key held), with its messages on the device's screen:
+
+- **3 clear** (the dialog's Delete): the bank's steps, timed notes, motion and its own sound (FBKQ); LEN and DIV stay.
+  Stopped: at once; playing: at the track's loop end (rc 5: DELETE AT LOOP END on the device; `PATTERN_CHANGED`
+  follows). An empty bank: rc 0, nothing done.
+- **4 halve**: LEN halved (an odd LEN keeps its middle step); the steps past it stay, hidden. rc 3 at 1 step.
+- **5 double**: LEN doubled, steps 1..LEN copied after themselves with their timed notes and motion (what lay hidden
+  there goes). rc 3 past 32 steps (64 STEPS MAX), rc 2 when the timed notes or the motion do not fit, rc 4 storage.
+
+On the bank playing they are undoable (EDIT held), on another bank not (as on the device). rc 1: a song plays, or a
+bank past the track's.
+
+### WATCH bit 6: PATTERN_CHANGED (59)
+
+`WATCH` with bit 6 (64) pushes `PATTERN_CHANGED` (17 bytes, 23 with the frame) when patterns change on the device: a
+track's steps or timing of the bank playing, a bank written (copied, cleared, halved, doubled, loaded), the banks
+playing or queued, the motion, the timed notes. Studio then reads again what it shows. `PATTERN_DATA`, `NOTES`,
+`MOTION` and `PATTERN` push nothing for the editor's own changes; other commands' do (`STEP_SET`, `TRACK_STEP`, a
+`SET` of LEN, ...). The device looks every push pass (~5 ms) while the bit is set (a hash of ~6 KB).
+
+## Studio device (commands 50–53, 60)
+
+Melodee Studio's FM-1 page (branch F4, on the kit maker `studio-kits-7e034d` ad00b4b0: F1, F3, the virtual FM-1, F2): the
+HOME menu's settings, MIDI LEARN, Bluetooth, a kit track's drum sounds, and a push when they change on the device. The
+commands only add: every earlier command answers byte for byte as before (a `WATCH` of one byte too). Code:
+`firmware/src/editor_device.c` (50, 51, 53, 60), `firmware/src/editor_ble.c` (52), `firmware/src/menu_rows.c` (the menu's
+rows: their values, steps and words, which `ui_menu.c` draws and steps with the same functions). Tests: `tests/editor_test.c`
+`studio_device`, `tests/ble_cal_editor_test.c` (BLE, with one and two links).
+
+**Finding out.** `CAPS` (39) has a tag `C`: `43 04` SETTINGS version 1, MLEARN version 2 (1: F4, the controls only), BLE version 1 (0: a build without
+Bluetooth, the virtual FM-1's: no reply to 52), DRUM version 1; `W` is two bytes, 127 and 1 (bit 7 known). Firmware without
+the tag never answers 50–53 and gets no reply to a `WATCH` of two bytes (its argument check).
+
+| cmd | Request args | Reply args |
+| --- | --- | --- |
+| 50 SETTINGS | — (the values); 0, first, count (the rows); 1, row, value lo, value hi (set) | op (127: values), rc, rows, rows × value (14 bits), then 0: first, count, total (14 bits each), count × row |
+| 51 MLEARN | — (the list); 1, control (forget it); 2 (forget all); 3, control (learn it); 4 (stop learning); (v2) 5, track, parameter [, any] (learn it); 6, k (forget parameter k) | op (127: list), rc, learning (control + 1, 0 none), controls (21), knobs (7), 21 × (kind, number, channel), 21 × name, then (v2) parameters (23), the one waiting (track, parameter; 127, 127 none), 23 × (CC, channel, track, parameter) |
+| 52 BLE | — (state); 1, on (radio); 2, visible (Mode); 3 (disconnect); 4 (the last device); 5 (forget the pairings); 6, on (scan); 7, row (connect to it) | op (127: state), rc, the state (below) |
+| 53 DRUM | track (read); track, first, m, m × (tune + 24, decay, third, level) (write) | track, rc, sounds, sounds × (tune + 24, decay, third, level), sounds × (name, the third's name) |
+| 60 DEVICE_CHANGED (push) | — | what changed (bits), then rows, rows × value (14 bits), as `SETTINGS` |
+
+Controls, rows and tracks count from 0 on the wire. A request of the wrong length still gets its reply, with rc 1 (as F1–F3).
+Every reply fits one 1024-byte frame (`SETTINGS` pages its rows: the FM-1's all fit one, 955 bytes; the SMK-37's may take two).
+
+| rc | `SETTINGS`, `MLEARN` | `BLE` | `DRUM` |
+| --- | --- | --- | --- |
+| 0 | done and saved | done | done |
+| 1 | malformed or invalid (nothing changed) | malformed or invalid | malformed, invalid, not a kit track |
+| 2 | refused: `USB HOST` on (`SETTINGS`); the device's own MIDI LEARN page is open (`MLEARN` 3, 5) | refused: no radio calibration or setup unfinished (1), nothing to connect to (4, 7), the scan cannot run (6: radio off, VISIBLE, connecting, a device linked) | — |
+| 3 | done, not saved (no flash, a failed write) | stop the sound first (1: STOP AUDIO TO START BLE) | — |
+| 4 | done, saved after STOP | — | — |
+
+### SETTINGS (50)
+
+The rows are the HOME menu's (Settings), in its order; the build decides which there are (the FM-1: USB AUDIO, USB INPUT, USB
+VOLUME, USB HOST, BLUETOOTH: 30 rows; the SMK-37: PAD LIGHTS for LIGHTS, TRS MIDI OUT and VELOCITY too: 32; the virtual FM-1:
+no USB or Bluetooth rows: 25). A row's number is that build's: read the list first and key rows by their name.
+
+- **Values** (every reply, and `DEVICE_CHANGED`): rows, then per row its value, 14 bits: a list's or a cycle's index into its
+  words, a percentage, MIDI LEARN's controls learned, 0 for the other pages and actions.
+- **Rows** (op 0): `first, count, total`, then per row: kind (below), values (14 bits: a list's or cycle's count, a
+  percentage's top; 0 a page or action), step (a percentage's: 5; a list or cycle: 1; 0), the row's name as the firmware has
+  it (`ui_menu.c`: "AUDIO CLICK"; the device shows it through `menu_words`, "Audio click"), then for a list or a cycle its
+  values' words as the device shows them ("Lo-fi", "0.4 s", "In + out", "Pixel"). `count` is the rows asked for that exist,
+  cut where the next would not fit.
+
+  | kind | row | KNOB 1 / OCT+ on the device |
+  | --- | --- | --- |
+  | 0 | a list (most rows; ON / OFF switches are two-value lists: Off, On) | steps, stops at both ends / steps and wraps |
+  | 1 | a cycle (COLOR: the palettes, UI_PALETTES' order) | wraps both ways |
+  | 2 | a percentage (CLICK LEVEL, USB VOLUME: 0..100) | 5 a detent / 5, from 100 to 0 |
+  | 3 | a page (BLUETOOTH: `BLE`; MIDI LEARN: `MLEARN`; CALIBRATION, ABOUT, SOUND DESIGNER: the device's own) | opens it |
+  | 4 | an action (FORGET LEARNED: `MLEARN` 2; BACK) | does it |
+- **Set** (op 1): a value the menu reaches (a list or cycle: 0..count − 1; a percentage: 0..100 in steps of 5), else rc 1.
+  It is set as the menu sets it (`menu_put`, with what the menu does then: a new palette or font redraws everything, MIDI
+  KNOBS / MODE drop the old mapping's pending turns, ...), then saved as `UI_SET` saves (the device's menu saves when it
+  closes; the editor at once, or after STOP: rc 4). The reply's values are the device's after it.
+- **Quirks.** HOME SELECT and GLO SELECT count in the menu's order (BPM, MOD WHEEL, LEVEL, SWING, TRANSPOSE, OCTAVE, CHORD,
+  ARP RATE, PATTERN, OFF), not by their stored ids. USB HOST on is refused (rc 2): the USB-C port would host a controller and
+  the editor's own link would end (off is what it is while the editor talks over USB). USB AUDIO and USB INPUT replug the
+  FM-1's USB once the value has rested 0.6 s: the MIDI port goes and comes back (Studio reconnects). FONT reads Pixel while
+  the resource region is missing (Rubik lives there). COLOR, AUDIO CLICK, CLICK LEVEL, COUNT-IN, NOTE PREVIEW, CHORD ENTRY
+  and SCREEN OFF are the same settings as `UI_SET` (34, 35); `UI_SET`'s click level takes any 0..100, `SETTINGS` the menu's
+  steps. The GLO page's KEYS (key backlights) is the global parameter `G_LIGHTS` (`SET` scope 1), not a menu row.
+
+### MLEARN (51)
+
+The controls MIDI LEARN binds (`mlearn_row`, saved with the settings): first the seven knobs (SELECT, ALGORITHM, PRESETS,
+KNOB 1..4; the SMK-37: K6, K7, K8, K1..K4), then the fourteen buttons (the FM-1: by matrix id, named as calibration labels
+them; the SMK-37: by FM-1 function, FX .. OCTAVE+). Each control's message: kind (0 none, 1 a CC on any channel, 2 a note),
+number (0..127), channel (a note's, 0..15; 127 any). The names follow the messages, 0-terminated.
+
+| op | does |
+| --- | --- |
+| 1 | forgets the control (the device forgets only all: FORGET LEARNED) |
+| 2 | forgets all (FORGET LEARNED, without the device's question: Studio asks) |
+| 3 | learns the control from the next message, as the device's page: a CC for a knob, a CC (64 and up down) or a note-on for a button; the message leaves the control it had; meanwhile nothing learned acts and controllers' messages wait (they do not play). rc 2 while the device's own MIDI LEARN page is open |
+| 4 | stops learning |
+
+Learning ends when a message is learned, with op 4, when the device's MIDI LEARN page opens, and 3 s after the editor's last
+request (send `PING` while waiting, as for `PUNCH`). `learning` says whether it still waits; `DEVICE_CHANGED` bit 1 says
+when the table changed. CCs 0, 1, 6, 11, 32, 38, 64, 96..101 and 120..127 are never learned (they keep their meaning).
+
+**v2: parameters (per-parameter learn).** Besides the panel's controls, a CC can be learned for one parameter of one track
+(Studio's "CC 74 → Cutoff · track 2"): it sets that track's parameter on every page, whatever track or page the device
+shows, and it is saved with the settings (rows 5..7 of the favorites, retired engines' rows, tag `M P 1 0` at their end: no
+layout change; it travels in backups; older firmware keeps the rows as stars). Up to 23. Code: `firmware/src/midi_knobs.c`
+`mparam_receive` (the audio interrupt's MIDI dispatch), `firmware/src/menu_rows.c` `mparam_bind`.
+
+| op | does |
+| --- | --- |
+| 5, track, parameter [, any] | learns the parameter (`P_*` id, as `TRACK_PARAM` 4 and the `DESC` ids; 0..`P_COUNT` − 1) of the track (0..7) from the next CC, on that CC's channel (any = 1: on every channel). As op 3 meanwhile: nothing learned acts, messages wait; notes do not end the wait. rc 1: past the tracks or parameters, a reserved one, the project's scale (ROOT, SCL, TUNING, scale QNT, the MPC degree, recording QNT: they are the project's, not a track's), a parameter with no range on that track (a MIDI Track's audio ones); rc 2: the device's own MIDI LEARN page is open |
+| 6, k | forgets parameter k (0..22) |
+| 2 | (FORGET LEARNED) forgets the parameters too |
+| 4 | stops either wait |
+
+After the controls' names: the parameters' count (23), the one waiting (track, parameter; 127, 127: none; op 3's waiting
+control is in `learning`, one wait at a time), then per parameter its CC (0: none, the other three bytes then mean nothing),
+channel (0..15; 127 any), track, parameter. A v1 reader stops at the names. `DEVICE_CHANGED` bit 1 covers both tables; the
+MIDI LEARN row's value (`SETTINGS`) counts both.
+
+- The value: over the parameter's range as `DESC` gives it for the track's engine (a list: over its names in order, its
+  empty, retired entries left out). MIDI MODE applies as to the learned knobs: ABSOLUTE puts the value there (no pickup:
+  the knobs have none), the relative modes step by what the CC says. With REC armed and playing, the moves record as motion
+  (as `TRACK_PARAM`). The steps' parameters (LEN, DIV, SWING, GATE) stay while SONG runs.
+- One job per CC: learning a CC for a parameter takes it from the parameter it had (its channel, or any, overlapping) and
+  from a panel control (whose CCs are on any channel); learning it for a control takes it from the parameters; a parameter
+  learned again keeps one CC, the new one. A CC learned for a parameter no longer does what it did (the channel's own
+  CC 74, CC 7 ...).
+- Precedence (a record where one CC has both, which learning never makes): the parameter. The device checks the
+  parameters first, then the controls.
+- With all 23 taken and none of them the parameter's, the wait ends with nothing learned: Studio offers a place first
+  (it has the list).
+- The device has no gesture of its own for a parameter: Studio learns them; the device shows how many are learned (the
+  MIDI LEARN row) and FORGET LEARNED forgets them with the controls.
+
+### BLE (52)
+
+What the Bluetooth page (Settings > BLUETOOTH, `ui_ble.c`) shows and does. The state after `op, rc`:
+
+| bytes | field |
+| --- | --- |
+| 1 | flags: 1 calibrated (the radio can start), 2 the radio on, 4 Mode VISIBLE (else CONNECT OUT), 8 scanning, 16 connecting out, 32 relinking (looking for the last device) |
+| 1 | links (`BLE_LINKS`: 2, a computer's and a device's at once; 1) |
+| links × 1 | per link: 1 MIDI up, 2 connected. Link 0 is a computer or phone that connected to the FM-1 (Mode VISIBLE); link 1 a device the FM-1 connected out to. With one link it is either |
+| 3 | the code to enter on the peer while pairing, 3 × 7 bits low first (0x1FFFFF none) |
+| string | the status the header shows ("BLE OFF", "VISIBLE 1A2B", "BLE CONNECTED", "COMPUTER + DEVICE", "FORGET ON PEER", ...) |
+| 1 | the computer's pairing kept (1; it keeps no name) |
+| 1 | the last device: 1 kept, 2 paired |
+| string | the last device's name (its address when it has none; "" none) |
+| 1 + n × string | what the scan found (CONNECT OUT; VISIBLE lists nothing): count, then each one's name or address |
+
+| op | does (as the page's row) |
+| --- | --- |
+| 1 | Radio on (1) or off (0). On is refused while anything sounds and the radio never started (rc 3: its start holds interrupts) and without calibration (rc 2). Kept for power-on |
+| 2 | Mode: VISIBLE (1, advertises, never scans) or CONNECT OUT (0). A link up stays up |
+| 3 | Disconnect (every link) |
+| 4 | Last device: connect to it again |
+| 5 | Forget pairings: the computer's and the last device (both, as the page: there is no forgetting one of them) |
+| 6 | scan on (1) or off (0), for the list. The editor's scan ends 3 s after its last request (the page's own scan is the page's) |
+| 7 | connect out to the device in row `row` of the scan's list |
+
+Everything is saved with the settings as the page's (the main loop saves Bluetooth's state when it changes).
+
+### DRUM (53)
+
+A kit track's (engine DRUM, tracks 1..4) DRUM SOUND and DRUM MIX values, one row per sound: 16 (the 808, SID, CR78 and FM
+kits: KICK, SNARE, TOM L, TOM M, TOM H, RIM, CLAP, HAT C, HAT O, CRASH, RIDE, CONGL, CONGM, CONGH, CLAVE, MARAC; the CR78 and
+the 808's BELL / CYMB name theirs) or 11 (the 909 and the user kits KIT 9..16: the 909's eleven), by the patch's own index
+(the device's knob steps through them in `DRUM_ORDER_808` / `DRUM_ORDER_909`, `eng_drum.c`).
+
+| byte | value (as the device shows it) |
+| --- | --- |
+| 0 | TUNE + 24: 0..48 (−24..+24 semitones; 24 the kit's own) |
+| 1 | DECAY, 0..127 (64 the kit's own) |
+| 2 | the third (its name follows: SNAPPY on the snare, ATTACK / TONE on the 909's, SNAP on SID's, else TONE), 0..127 (64 own) |
+| 3 | LEVEL (DRUM MIX), 0..127 (127 full) |
+
+A write replaces sounds `first..first + m − 1` (m ≥ 1, past the kit's sounds: rc 1; TUNE above 48: rc 1, nothing changed) and
+plays from the next hit. As the pages' knobs, it is not an undo step on the device; a sound load's undo copy keeps the values
+with the sound. A recorded hit's own pitch and length are timed notes: `NOTES` (45).
+
+### WATCH bit 7: DEVICE_CHANGED (60)
+
+`WATCH on, 1` (the second byte's bit 0 is bit 7) pushes `DEVICE_CHANGED` when, on the device, the settings' values (bit 0
+of `what`), MIDI LEARN's table (bit 1), Bluetooth's state (bit 2: the radio, Mode, links, pairing, a connection's attempt)
+or a kit's drum values (bit 3) change. It carries the rows' values (2 + 2 × rows bytes: 68 with the frame on the FM-1); Studio
+reads `MLEARN`, `BLE` or `DRUM` again for the others. `WATCH` answers the second byte with the bits it knows (1). The
+editor's own 50–53 push nothing. The device looks every push pass (~5 ms) while the bit is set.
+
+## Studio over Bluetooth (F5, `MELODEE_BLE_EDITOR`, on by default)
+
+Melodee Studio talks to the FM-1 over Bluetooth MIDI with the same frames as over USB (branch F5, on F4
+`pensive-maxwell-0e10c8` 25d17ef2). It was built as an option off by default; since Kerem 2026-11-07 ("can we fit bluetooth editor and make it the
+default?") it is on in every build with `MELODEE_BLE` and `MELODEE_OTA` (both boards), and `MELODEE_BLE_EDITOR=0
+./build.sh` leaves it out (the image then is byte for byte the one without it).
+Code: `firmware/src/midi_ble.c` (`mbe`: the frame in, the reply out, in the BLE interrupt), `firmware/src/editor.c` (the frame
+taken in `ed_service`, the command list `ED_BLE_OK`, the replies' and pushes' link), the `CAPS` tag in `editor_session.c`. Tests:
+`tests/editor_test.c` `studio_bluetooth` (built with `-DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1`, one and two links: requests
+through the stack's own BLE-MIDI encoder and `ble_att_midi_packet`, replies decoded as a computer would), `tests/melodee_ble_test.c`
+(the adapter with the option: gathering, the reply's priority).
+
+- **The link.** Only the computer's link takes frames: a computer or phone that connected to the FM-1 (the peripheral role;
+  with two links, link 0). SysEx on the link the FM-1 connected out on (a keyboard) is not read. The firmware's BLE-MIDI
+  decoder (`ble/ble_midi.c`) joins a frame across BLE packets (a continuation packet: header, then data), and drops a SysEx a
+  status byte cuts (real-time bytes may come inside it). Only editor frames (`F0 7D 46 4C`) are answered; other SysEx (preset
+  files, DX7, CZ, Prophet programs, the installer's and update frames) is USB's and ignored here.
+- **One frame at a time.** The interrupt keeps one frame of at most 640 bytes (`CAPS` `L`); a frame that arrives while one
+  waits is dropped, as over USB: Studio sends one request at a time and asks again after its timeout.
+- **Replies go to the link that asked.** A Bluetooth request's reply goes out on the computer's link only; a USB request's on
+  USB only. `WATCH` sets where the pushes go: the link it came on. `WATCH` ends when that link goes or comes up again (as a USB
+  reset ends it), or after 3 s without a request.
+- **Pacing.** A reply is not copied: the link sends it from the reply buffer as fast as it takes notifications (two a
+  connection event, each up to the ATT MTU − 3 bytes: 20 bytes at the default MTU, 182 at 185), and the editor answers
+  nothing else, on either link, until it is out (`ed_ble_busy`). The link's own MIDI out (notes, MIDI THRU) waits behind it in
+  the link's queue (a channel message inside a SysEx would end it); clock and transport go between its packets. A 1,024-byte
+  reply is 57 notifications at MTU 23 (the encoder packs whole 3-byte USB-MIDI events: 18 bytes a continuation), 6 at MTU 185. If the link goes, the rest of the reply is dropped. Studio should allow
+  ~1.5 s for a reply over Bluetooth.
+- **The command list** (`ED_BLE_OK`, version 1 in `CAPS` `E`): 1–10, 16–22, 25, 27–31, 33–45, 47–53, 64, 68–71, 73–78, 80 and 95:
+  the session, the sounds (presets, user slots, the shared library one sound at a time, FM6 / CZ / native / Prophet patches),
+  steps, patterns, motion, the song and the FM-1 page (settings, MIDI learn, Bluetooth, drums). Not over Bluetooth, no reply:
+  the samples (11–15), `BACKUP_LIST`, `BACKUP_GET` and `BACKUP_PUT` (65–67: complete backups, captures for Export and
+  LIVE's preview, the kits), the audio and CPU1 diagnostics (72, 79, 100, 101), the radio calibration (81), the resource region
+  (82) and the pushes' numbers. Studio greys these out over Bluetooth ("Over USB").
+- **`BLE` (52) over Bluetooth.** Radio off (1, 0), disconnect (3) and forget the pairings (5) end the link the request came
+  on: no reply arrives (Studio asks before it sends them and expects the link to go).
+- **Finding out.** `CAPS` `E` (only in a build with the option): `45 02 link 01`. Over USB in such a build: link 0. A build
+  without the option never answers over Bluetooth at all.
+
 ## Flash ledger (editor commands)
 
 Melodee Studio needs new editor commands (branches F0–F5) in an app body that is nearly full. Every change that
@@ -1435,7 +2053,164 @@ SMK-37's app tail (0x93000..0x9CFFF) has 30,200 B free after `.smkx`.
 After F0: FM-1 image 571,576 B, **5,672 B free**; SMK image 572,092 B, **5,156 B free**. Editor code 18,484 B
 (FM-1) / 18,462 B (SMK). RAM unchanged (the new tables are constants in flash).
 
+| F1 `feat/editor-studio-session` | Studio session (see "Studio session"), per command: the full build minus a build without it | **+2,588 B** | **+2,628 B** |
+|---|---|---:|---:|
+| — CAPS 39 | the TLV table, the INFO tag | +48 B | +32 B |
+| — TRACKS 40 | select, solo latch, arm, add, remove | +320 B | +352 B |
+| — TRANSPORT 41 | play, song from row, stop, loop, external-clock refusal | +192 B | +212 B |
+| — PROJECTS 42 | status (dirty), list, load, save, save as, rename, duplicate, delete; empty-slot check before the stop | +572 B | +556 B |
+| — STORAGE 43 | the pool map | +284 B | +292 B |
+| — pushes 55–57 | TRACKS_CHANGED, TRANSPORT_CHANGED, METERS | +404 B | +336 B |
+| — shared | the TRACKS / TRANSPORT bodies the pushes reuse, WATCH bits 2..4, eight-track TRACK_CHANGED, `BACKUP_LIST 1` and `BACKUP_GET` while playing, `project_copy` (rename and duplicate), the two-reader meters, the solo latch, two handler entries | +768 B | +848 B |
+
+After F1: FM-1 image 574,164 B, **3,084 B free**; SMK image 574,720 B, **2,528 B free**. RAM .data+.bss +128 B
+(FM-1, 95,432 of 98,304) / +80 B (SMK, 95,960): the WATCH bits and signatures, eight tracks' TRACK_CHANGED shadows,
+the editor's meter peaks. Within the F1 estimate (2.5–3.5 KB); F2..F4 (est. 4–7 KB) do not fit what is left without
+further room.
+
+How F1 was checked: `tests/run_tests.sh` once (all green but `CPU live takes`, a load-timing flake: its input
+lateness 5.1 ms over a 3 ms limit under the parallel load; alone it passes), `editor_test` `studio_session` and
+`backup_test` `studio_projects`, and F0's differential harness against nightly c273b78e's `editor*.c`: 200,000 random
+and shaped requests (4 seeds), every reply and the state after it identical, leaving out only what F1 changes on
+purpose (commands 39–43 and 55–57, INFO's trailer, WATCH bits 2..4, `BACKUP_LIST 1`, `BACKUP_GET` while playing,
+`TRACK_MIX` / `TRACK_PARAM` writes on tracks 5..8).
+
 How F0 was checked: `tests/run_tests.sh` (editor_test, backup_test, the old editor's `web/test_web.mjs`), and a
 differential run of the old and new `editor*.c` on the host: 200,000 random and well-formed requests to every
 command (including all sub-operations of 33, 37/38, 64, 68–80 and 95), every reply and the device state after
 it compared byte for byte, identical.
+
+| F3 `feat/editor-song-full` | Studio song (see "Studio song"), per command: the full build minus a build without it | **+2,132 B** | **+2,124 B** |
+|---|---|---:|---:|
+| — SONG2 47 | head, sections paged (cells, sound ids, steps, division, length in units), the banks' timing table, write keeping the punch events and sounds, insert / duplicate / delete / move through the song page | +812 B | +816 B |
+| — SONG_SOUND 48 | the song's sounds paged, a block's sound from a factory preset or user slot (audition, keep, restore), a pool id or none | +460 B | +428 B |
+| — PUNCH 49 | state, names, the editor's hold (and its 3 s release), the song's events read and write | +436 B | +420 B |
+| — push 58 | SONG_CHANGED on WATCH bit 5 | +168 B | +156 B |
+| — shared | the head and paging helpers the commands share, the CAPS `S` tag, WATCH bit 5, the edit counter (`se.edits`), the handler entry, `editor_song.c` built for size; the song sheet's audition and keep split out for the editor (`song_preview_begin`, `song_preset_keep`, `song_block_sound`, `song_rows_clear`: flash-neutral, −1,002 / +962 B on FM-1) | +256 B | +304 B |
+
+After F3: FM-1 image 576,296 B, **952 B free**; SMK image 576,844 B, **404 B free**. RAM .data+.bss +16 B (FM-1,
+95,448 of 98,304) / +0 B (SMK, 95,960): the SONG_CHANGED signature and the edit counter. Within the F3 estimate
+(1.5–2.5 KB). F2 and F4 (est. 2.5–4.5 KB) do not fit what is left on either board without further room.
+
+The commands' costs are not additive to the byte: the board's global layout moves with the code (the compiler merges
+static variables and addresses them from a shared base; a variable pushed past the short offsets costs 4 bytes at every
+access), so a build can grow or shrink by ~150 B with no change of its own. A table of push bodies (56–58 in one loop)
+measured 264 B larger on FM-1 for that reason and was left out.
+
+How F3 was checked: `tests/run_tests.sh` once, `editor_test` `studio_song` (also under ASan/UBSan), the song page's own
+tests (`song_mode_test`, `song_preset_test`, `song_punch_test`: the split-out audition and keep), and F0's differential
+harness against F1's `editor*.c` (012c7ed5): 200,000 random and shaped requests (4 seeds), F1's commands 40–43 among
+them, every reply and the state after it identical, leaving out only what F3 changes on purpose (`CAPS`, commands
+47–49, `WATCH` bit 5).
+
+| F2 `feat/editor-patterns-any-bank` | Studio patterns (see "Studio patterns"), per command: the full build minus a build without it (first build; the total: the final one) | **+3,144 B** | **+1,956 B** |
+|---|---|---:|---:|
+| — PATTERN_DATA 44 | any bank's steps and timing in 32-step halves, read and write (checked, saveable) | +480 B | +504 B |
+| — NOTES 45, list | a bank's timed notes, paged | +404 B | +416 B |
+| — NOTES 45, write | add / change / remove, all checked first; the bank's views made again from its notes; undoable on the bank playing (the edit memory) | +1,508 B | +1,532 B |
+| — MOTION 64 on a bank | `track, 5, bank, ..`: query, set, delete, clear on any bank | +16 B | +48 B |
+| — PATTERN 73 ops 3..5 | clear, halve, double through SEQ's dialog code | +72 B | +96 B |
+| — PATTERN 73 op 2 to a track | (after the moves) a fifth byte copies to another track through `pattern_copy_to`, CAPS `D` 2 | +60 B | +52 B |
+| — push 59 | PATTERN_CHANGED on WATCH bit 6 (the signature, the banks) | +504 B | −640 B |
+| — shared | the CAPS `D` tag, `W` 127, the handler entry, `motion_set_event_at` / `motion_delete_event_at`, SEQ's pattern dialog moved out of `ui_input.c` into `pattern_dialog.c` (built for size with `editor_patterns.c`; left at `-Os` they cost ~0.7 KB more) | +176 B | +128 B |
+| — savings found | NOTES reuses `recording_remove` (−40 / −68 B); `installer_report.c`, `note_history.c`, `ui_midi_learn.c` built for size: main-loop only (−60 / −56 B; SMK RAM +32 B from the regrouped globals) | −100 B | −124 B |
+
+After F2: FM-1 image 579,440 B, **2,192 B over** `BODY_MAX` (577,248); SMK image 578,800 B, **1,552 B over**. The
+build fails its size check ("app body overlaps the commit-marker sector") on both boards: **F2 does not fit**, and the
+cuts are Kerem's (see the options in the side-session note `editor-patterns-any-bank.md`). RAM .data+.bss +16 B
+(FM-1, 95,464) / +32 B (SMK, 95,992). Over the F2 estimate (1.5–2.5 KB) on FM-1: the timed notes' write is most of it.
+Without it (NOTES read-only) F2 measured +1,696 B on FM-1 (744 B over) and +480 B on SMK (76 B over).
+
+The per-command differences are not additive; on SMK-37 they are mostly layout: the merged globals
+(`.L_MergedGlobals*`, 512-byte groups addressed from one base) regroup whenever a static variable is added or grows,
+and the interrupt and main-loop code that reads them grows or shrinks with it. F2's SMK build has ~1 KB of such gains
+outside the editor (`fm1_main` −246 B, `fm1_timer5_irq` −214 B, `mix_block` −86 B, ...); the build without the push
+loses them again, so the push's "−640 B" there is layout, not the push (on FM-1 its code is ~270 B).
+
+| Branch / commit | Change | FM-1 | SMK |
+|---|---|---:|---:|
+| F2 + icons (FM-1) | Kerem 2026-11-06 ("move icons"): the FM-1's 16 and 24 px icon cells (`AI16_DATA`, `AI24_DATA`, 6,368 B) in the resource region (`MELODEE_ICON_BIG` = `.mres`; `icons.c` draws none of them while the region is missing, as the SMK-37 does without its tail); the 12 px cells stay in the app. The resource payload 53,852 -> 60,220 B, 15 of the 15 sectors the FM-1 keeps (1,188 B left; the pool unchanged). The SMK-37's icons were already in its app area tail | **−6,328 B** | ±0 |
+
+| F2 + SID table (SMK) | Kerem 2026-11-06 ("SID wave table"): SID's combined waveforms (`SID_WAVE_LZ`, 4,277 B, `gen_tables.py`) in the SMK-37's app area tail with the icons (`MELODEE_SMKX`; tail 10,760 -> 15,040 B, 25,920 B free). Without the tail (another build's: `smkx_ok` 0) `sid_table` gives zeros: TRI+SAW, TRI+PULSE, SAW+PULSE and all three are silent, the single waveforms play; it unpacks once the tail checks out (`sid_test`). The FM-1 keeps the table in its app | ±0 | **−4,272 B** |
+
+After both: FM-1 image 573,112 B, **4,136 B free** with F2; SMK image 574,528 B, **2,720 B free**. F2 fits both boards.
+With `PATTERN` 2's copy to another track (Kerem 2026-11-06: the device copies across tracks, so the wire does too):
+FM-1 573,172 B, **4,076 B free**; SMK 574,580 B, **2,668 B free**.
+RAM: FM-1 95,464 B (+16 over F3), SMK 95,992 B (+32).
+
+How F2 was checked: `editor_test` `studio_patterns` (also under ASan/UBSan), the virtual FM-1 core (`core_check`: the
+F2 transcripts natively and in WebAssembly byte for byte), `tests/run_tests.sh` once, and F0's differential harness
+against the branch tip (`feat/studio-export` de24e07a, F1 and F3 included): 200,000 random and shaped requests (4
+seeds), every reply and the state after it identical, leaving out only what F2 changes on purpose (`CAPS`, commands 44
+and 45, `MOTION` op 5, `PATTERN` ops 3..5, `WATCH` bit 6).
+
+| F4 (branch from `studio-kits-7e034d` ad00b4b0) | Studio device (see "Studio device"), per command: the full build minus a build without it | FM-1 | SMK |
+|---|---|---:|---:|
+| — savings found (7770da38) | the HOME menu's rows in `menu_rows.c`: a row's values, its step, its value set (`menu_put`) and its words (`menu_value`) once, for the menu's drawing, its knob and OCT+ (one generic step instead of twenty row blocks) and for `SETTINGS`; `menu_words` and MIDI LEARN's table edits moved with them. Removes nothing: every UI render (331 screens x 8 palettes, FM-1 / SMK-37 / Bluetooth builds), `settingsdump`'s table and 2,478 menu gestures (each row: KNOB 1 +1, +2, -1, -3, OCT+, ...; both boards) identical before and after | **−928 B** | **−1,012 B** |
+| — SETTINGS 50 | the rows' values, the rows paged (kind, values, step, name, words), a set through `menu_put` saved as `UI_SET` | +408 B | +432 B |
+| — MLEARN 51 | the controls' messages and names, forget one, forget all, learn from the next message (the wait: its 3 s, the device's page) | +592 B | +560 B |
+| — BLE 52 | the Bluetooth page's state (flags, links, code, status, pairings, the scan's list) and its rows (radio, Mode, disconnect, last device, forget, scan, connect), the editor's scan ending | +660 B | +536 B |
+| — DRUM 53 | a kit track's DRUM SOUND / MIX values, read and write, names | +532 B | +524 B |
+| — push 60 | DEVICE_CHANGED on WATCH bit 7 (four signatures: the rows' values, MIDI LEARN, Bluetooth, the drums) | +268 B | +476 B |
+| — shared | the CAPS `C` tag and `W`'s second byte, `WATCH`'s second byte, the handler entry, `editor_device.c` built for size: the total minus the commands' sum (layout, not additive) | −68 B | +8 B |
+| **F4 total** | the commands over the savings | **+2,392 B** | **+2,536 B** |
+
+After F4: FM-1 image 574,636 B, **2,612 B free**; SMK image 576,104 B, **1,144 B free** (with the savings: +1,464 / +1,524 B over
+the kit maker's 573,172 / 574,580 B). F4 fits both boards. RAM .data+.bss +16 B on both (FM-1 95,480, SMK 96,008 of
+98,304): the four DEVICE_CHANGED signatures, MLEARN's and BLE's editor state.
+
+How F4 was checked: `editor_test` `studio_device` (also under ASan/UBSan), `ble_cal_editor_test` (BLE 52, one and two links,
+ASan/UBSan), the menu's differential above (renders, `settingsdump`, gestures), F0's differential harness against ad00b4b0's
+`editor*.c`: 200,000 random and shaped requests (4 seeds), every reply and the state after it (the drum values, MIDI LEARN's
+table and the settings included) identical, leaving out only what F4 changes on purpose (`CAPS`, commands 50..53, a `WATCH`
+of two bytes), the virtual FM-1's transcripts (`core_check`: SETTINGS, MLEARN, DRUM natively and in WebAssembly) and
+`tests/run_tests.sh` once.
+
+| F5 (branch from F4 `pensive-maxwell-0e10c8` 25d17ef2) | Studio over Bluetooth (see "Studio over Bluetooth"), a build option: `MELODEE_BLE_EDITOR=1` | FM-1 | SMK |
+|---|---|---:|---:|
+| default build (option off) | byte for byte the F4 image (`cmp` of `build/melodee.bin`: FM-1 574,636 B, SMK 576,104 B) | **±0** | **±0** |
+| — the frame in | the BLE interrupt gathers the computer's link's SysEx (`mb_ed_in`, inlined in `att_midi_in`), `ed_service` takes it, checks the header and the command list (`ED_BLE_OK`, 12 B), `ed_frame_done` | +308 B | +308 B |
+| — the reply out | `ble_app_midi_peek` / `ble_app_midi_pop` send the reply from `ed_out` ahead of the link's MIDI; `ed_send`, `ed_room`, `ed_ble_busy`; the link's epoch and the reply dropped when it goes (`ble_app_state`) | +390 B | +390 B |
+| — the pushes' link, CAPS `E` | `WATCH` keeps its link (`ED_GONE` / `ED_EPOCH` in `ed_sync`, `ed_handle`), the tag (`ed_session_handle`) | +118 B | +92 B |
+| — layout | the interrupt's MIDI functions no longer inlined into `ble_ll_hw_event_end` (−118 / −120 B there), alignment; SMK: its merged globals move (`fm6_control_ram` +38, `mix_block` +16, `smk_faders` −14, ...) | −92 B | −106 B |
+| **F5 option total** | the option build minus the default build | **+724 B** | **+684 B** |
+
+With the option: FM-1 image 575,360 B, **1,888 B free**; SMK image 576,788 B, **460 B free**. It fits both boards. RAM .data+.bss
+unchanged (95,480 / 96,008 B); the frame buffer and the reply's state (`mbe`, 672 B) are in the audio pool (`.pool`, zeroed at
+boot): pool 140,228 / 141,848 B of 357,888. Per part above: the size changes of the functions each part adds or grows (`nm -S`,
+the option build against the default; layout = the rest of the image's change), not builds without each part.
+
+How F5 was checked: both boards built with and without the option (default images compared byte for byte with F4's),
+`editor_test` `studio_bluetooth` (two links and one link; ASan/UBSan), `melodee_ble_test` with the option (both via
+`tests/run_tests.sh` and `tests/ble_tests.py`), the virtual FM-1 core and the studio bundle rebuilt from the clean commit
+(`core_check`), `tests/run_tests.sh` once. Not on hardware: nothing was flashed; the radio path (CoreMIDI's or Chrome's BLE-MIDI
+against the FM-1, MTU, connection interval, pairing) is untested.
+
+| MIDI LEARN per parameter (branch from F5 `sweet-haslett-97603a` c1206d82) | `MLEARN` v2 (see "MLEARN (51)", "v2: parameters"): a CC to a track's parameter on every page, kept with the settings | FM-1 | SMK |
+|---|---|---:|---:|
+| — savings found (cf06c4a8) | main-loop-only code built for size (`tools/size_fns.py`): `ui_smk.c` (the SMK-37's knob / fader banks and their picker), `storage_stream.c` (staged store writes), `res.c` (the resource region's reads), and `usb_start`, `pattern_copy_to`, `pattern_double`, `recording_double`, `pattern_half`, `pattern_init`, `motion_valid`, `motion_clear`, `motion_replace_track`, `motion_delete_event_at`, `song_sound_valid`, `chain_valid` (none in the audio interrupt's resident set: `build/melodee_audio.json`). Removes nothing: the code is the same, only its optimisation | **−192 B** | **−784 B** |
+| — the CC to the parameter | `mparam_receive` in the audio interrupt's MIDI dispatch (resident in SRAM, so it travels LZMA-packed in the boot images: 464 B of code, +364 B there), its call from `mlearn_receive` | +382 B | |
+| — `MLEARN` ops 5 / 6 and the list's parameters | `ed_device_handle`, the wait (`ed_device_poll`, `ed_learn_end`), `DEVICE_CHANGED` bit 1's signature over both tables | +446 B | |
+| — the table | learn (`mparam_bind`), one job per CC (`mparam_drop`, `mlearn_bind`), the count and FORGET LEARNED with the parameters (`mlearn_count`, `mlearn_forget`) | +314 B | |
+| — kept with the settings | rows 5..7 of the favorites in and out (`settings_import`, `settings_export`) | +46 B | |
+| **parameter learn** | the full build minus the savings-only build (cf06c4a8) | **+1,132 B** | **+1,084 B** |
+| **total over F5** | | **+940 B** | **+300 B** |
+
+**Default on (Kerem 2026-11-07):** `MELODEE_BLE_EDITOR` defaults to `MELODEE_BLE && MELODEE_OTA`, so a plain build
+carries Studio over Bluetooth: FM-1 576,280 B, **968 B free**; SMK-37 Pro 577,116 B, **132 B free**; Elite and MKE
+577,092 B, **156 B free** (the option builds above, now the default). `MELODEE_BLE_EDITOR=0` gives the 575,576 / 576,404 B
+images.
+
+After it: FM-1 image 575,576 B, **1,672 B free**; SMK image 576,404 B, **844 B free**. With `MELODEE_BLE_EDITOR=1`: FM-1
+576,280 B, **968 B free**; SMK 577,092 B, **156 B free** (savings −216 / −784 B, parameter learn +1,136 / +1,088 B). It fits
+both boards, with and without the option. RAM .data+.bss unchanged (95,480 / 96,008 B); the table (96 B) and the editor's wait
+(2 B) are in the audio pool (`.pool`, zeroed at boot before the settings load): pool 139,652 / 141,272 B of 357,888. Per part:
+`nm -S` against F5 (the savings' own functions left out), FM-1; the SMK-37's parts are the same code.
+
+How it was checked: `editor_test` (`studio_mlearn_params`: the list, a wait and its end, CC on its channel / any, MIDI MODE
+relative, one job per CC both ways, the parameter before a control, forget one / all, the checks, a full table, old stars kept),
+`midi_knob_test` (`param_learn_test`: the whole MIDI path on the device's UI, a menu up, a list over its names, the CC's old job
+gone, notes still playing, the record's rows 5..7 out and in, FORGET LEARNED's question and OCT+), F0's differential harness
+against c1206d82's `editor*.c`: 200,000 random and shaped requests (4 seeds), every reply and the state after it identical,
+leaving out only what this changes on purpose (`CAPS`, `MLEARN`, a `WATCH` of two bytes: 2,491 frames), the virtual FM-1's
+transcripts (`core_check`), the four full builds and `tests/run_tests.sh` once. Not on hardware: nothing was flashed.

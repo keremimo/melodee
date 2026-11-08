@@ -234,7 +234,8 @@ static void layer_key(uint32_t l, uint32_t k)
         } else if (p < NPART) {
             if (g + p < trk_n())                        /* (a track not in use: nothing) */
                 lys.solo |= 1u << k;                    /* (layer_masks: track_solo while held) */
-        } else if (p == 4u) {
+        } else if (p == 4u) {                           /* every track on: no mute, no editor solo */
+            track_solo_latch = 0;
             for (i = 0; i < NTRK; i++)
                 trk[i].p[P_MUTE] = 0;
         } else if (p == 7u) {
@@ -256,7 +257,7 @@ static void layer_keys(uint32_t keys)
     for (k = 0; k < 27u; k++)
         if ((lys.solo >> k) & 1u)
             s |= 1u << (trk_group() + key_place(k));
-    track_solo = (uint8_t)s;
+    track_solo = (uint8_t)(s ? s : track_solo_latch);
 }
 
 /* KNOB 1..4 in the open layer: its own (GLO levels), else the four of its page */

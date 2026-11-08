@@ -35,13 +35,27 @@ SIZE_FILES = ["ui.c", "gfx.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.
               "ui_song.c", "ui_song_punch.c", "ui_song_sound.c", "ui_ble.c", "editor_ble.c",
               # the editor's resource-region command (USB only) and the helpers every command shares: all editor code for size
               "editor_res.c", "editor_wire.h",
+              # Melodee Studio's session commands (CAPS, TRACKS, TRANSPORT, PROJECTS, STORAGE, the pushes)
+              "editor_session.c", "editor_projects.c",
+              # .. and its song commands (SONG2, SONG_SOUND, PUNCH, SONG_CHANGED)
+              "editor_song.c",
+              # .. and its pattern commands (PATTERN_DATA, NOTES, PATTERN_CHANGED); SEQ's pattern dialog (out of ui_input.c)
+              "editor_patterns.c", "pattern_dialog.c",
+              # main-loop only: the installer's log frames (ed_service), the NOTES edit memory's packing (note_tools.c), MIDI LEARN's page
+              "installer_report.c", "note_history.c", "ui_midi_learn.c",
+              # the HOME menu's rows (the menu and the editor's SETTINGS share them); Melodee Studio's FM-1 page commands
+              # (SETTINGS, MLEARN, DRUM, DEVICE_CHANGED)
+              "menu_rows.c", "editor_device.c",
               # the user's drum kits: their store and record check, a take's processing, Record kit's sheet (drum_enc.c,
               # the take's encoder, stays at -Os: its speed is the wait on "Saving")
               "kit_store.c", "kit_take.c", "kit_rec_ui.c",
               # the synth modules' loader, slots, editor command and registration (their audio callbacks: eng_module.c, -Os)
               "module_store.c", "editor_module.c", "eng_module_main.c",
               # the factory presets: fetched, named, a pick's patch put on its part (a module's: read from its file)
-              "presets.c"]
+              "presets.c",
+              # main-loop only too: the SMK-37's knob / fader banks and their picker, the store's staged writes, the resource
+              # region's reads
+              "ui_smk.c", "storage_stream.c", "res.c"]
 DEF = re.compile(
     r"^(?:static|void|int|uint\w*|int\w*|const)\b[^;=(]*?\b([A-Za-z_]\w*)\s*\(", re.M)
 # Stopped note transforms are infrequent main-loop work.
@@ -93,14 +107,19 @@ def size_names():
               "recording_zero", "recording_snapshot", "recording_stop", "recording_pitch_add",
               "recording_queue_remove", "recording_queue_refresh",
               "trk_note_on_engine", "trk_note_on_raw", "input_on", "input_off", "key_off", "mono_play", "voice_victim",
-              "midi_event", "midi_note_event", "midi_parameter", "midi_release", "midi_forget_track", "midi_clock_mode",
+              "midi_event", "midi_note_event", "midi_parameter", "mparam_receive", "midi_release", "midi_forget_track", "midi_clock_mode",
               "midi_insert_release", "midi_insert_controls", "midi_track_note_on", "midi_track_controller",
               "midi_track_flush", "midi_track_all_off",
               "chord_make", "chord_strum_begin", "lcz_sx_encode", "cz_ed_decode", "cz_ed_put", "sysex_byte",
               "fm6_sx_byte", "seq_erase_rebuild", "seq_erase_pass", "seq_stop", "seq_start", "pattern_encode",
               "pattern_apply", "fm6_note_on", "fm6_legato", "fm6_keyed", "fm6_alloc", "p5_note_on", "sid_note_on",
               "cz_native_note_on", "motion_native_edited", "motion_set_event", "motion_native_ok", "motion_capture",
-              "motion_restore", "audition_stop"}
+              "motion_restore", "audition_stop",
+              # main loop: the USB device's (re)start and its configuration, PATTERNS' copy, SEQ's halve / double, the
+              # banks' start, a stored motion's, song's and chain's checks, motion edits
+              "usb_start", "pattern_copy_to", "pattern_double", "recording_double", "pattern_half", "pattern_init",
+              "motion_valid", "motion_clear", "motion_replace_track", "motion_delete_event_at", "song_sound_valid",
+              "chain_valid"}
     for f in SIZE_FILES:
         names.update(n for n in definitions((SRC / f).read_text())
                      if not n.endswith("_irq"))   # (ISRs stay as they are)

@@ -68,25 +68,33 @@ static void song_preset_cancel(void)
     song_picker.active = 0; resource_release(RES_SONG_PREVIEW);
     sync_reload = 1; ui.force = 1; motion_unguard(f);
 }
+/* An audition of track k for song row `row` (or, pattern, its bank `row`): the track's sound kept to restore, the
+ * block's (the pattern's) sound on the track. The song sheet's Set preset and the editor's SONG_SOUND; 0: no memory */
+static int song_preview_begin(uint32_t k, uint32_t row, int pattern)
+{
+    track_t *t = &trk[k];
+    uint32_t f = motion_guard();
+    song_preview_t *preview = resource_get(RES_SONG_PREVIEW, sizeof *preview);
+    if (!preview) { motion_unguard(f); return 0; }
+    char name[16]; sound_name(t, name);
+    motion_restore(t); song_sound_capture(&preview->base, t, name);
+    preview->peng = (uint8_t)patch_eng_of(k);
+    memcpy(preview->patch, patch_of(k), MOD3_PATCH_MAX);
+    song_picker.pattern = (uint8_t)pattern;
+    song_picker.row = (uint8_t)row; song_picker.track = (uint8_t)k;
+    song_picker.return_page = ui.page; song_picker.epoch = pattern_epoch;
+    const song_sound_t *s = song_sound_get(pattern ? pattern_sound_id(k, row) : resolved_sound_id(row, k));
+    if (s) { panic_req |= (uint8_t)(1u << k); song_sound_apply(k, s); }
+    motion_unguard(f);
+    return 1;
+}
 static void local_preset_open(int pattern)
 {
     if (chain_busy() || transport_busy()) { ui_message("STOP TO EDIT"); return; }
     if (!pattern && ui.song_row >= chain_config.count) { ui_message("ADD A SONG ROW"); return; }
     if (trk_midi_slot(song.sel)) { ui_message("MIDI TRACK ONLY"); return; }
     browse_commit(); momentary_restore();
-    uint32_t f = motion_guard();
-    song_preview_t *preview = resource_get(RES_SONG_PREVIEW, sizeof *preview);
-    if (!preview) { motion_unguard(f); ui_message("NO SOUND MEMORY"); return; }
-    char name[16]; sound_name(TSEL, name);
-    motion_restore(TSEL); song_sound_capture(&preview->base, TSEL, name);
-    preview->peng = (uint8_t)patch_eng_of(song.sel);
-    memcpy(preview->patch, patch_of(song.sel), MOD3_PATCH_MAX);
-    song_picker.pattern = (uint8_t)pattern;
-    song_picker.row = pattern ? TSEL->pattern : ui.song_row; song_picker.track = song.sel;
-    song_picker.return_page = ui.page; song_picker.epoch = pattern_epoch;
-    const song_sound_t *s = song_sound_get(pattern ? pattern_sound_id(song.sel, TSEL->pattern) : resolved_sound_id(ui.song_row, song.sel));
-    if (s) { panic_req |= (uint8_t)(1u << song.sel); song_sound_apply(song.sel, s); }
-    motion_unguard(f);
+    if (!song_preview_begin(song.sel, pattern ? TSEL->pattern : ui.song_row, pattern)) { ui_message("NO SOUND MEMORY"); return; }
     for (uint32_t i = 0; i < NPAGES; i++) if (PG(i).graph == GR_BROWSE) { ui.page = (uint8_t)i; break; }
     ui.home = 0; page_entered(); song_picker.active = 1;
     se.pending = se.range = 0; ui.msg_t = 0; ui.force = 1;
@@ -103,62 +111,67 @@ static void pattern_preset_remove(void)
     load_end(TSEL); undo_seal(); motion_unguard(f);
     ui.force = 1;
 }
+/* Song sound `id` (0: the track's own) on the whole block of track k at row: an undoable song edit when it changes
+ * anything (the song sheet's Set / Remove preset, the editor's SONG_SOUND); 0: no edit memory */
+static int song_block_sound(uint32_t row, uint32_t k, uint32_t id)
+{
+    uint32_t first = chain_origin(row, k), end = chain_block_end(first, k), changed = 0;
+    for (uint32_t r = first; r < end; r++) changed |= chain_config.sound[r][k] != id;
+    if (!changed) return 1;
+    if (!song_edit_begin()) return 0;
+    for (uint32_t r = first; r < end; r++) chain_config.sound[r][k] = (uint8_t)id;
+    song_edit_end();
+    return 1;
+}
+/* The audition kept as the block's (the pattern's) sound: 0, or why not (the audition stays open) */
+static const char *song_preset_keep(void)
+{
+    uint32_t row = song_picker.row, k = song_picker.track;
+    if (transport_busy()) return "STOP TO EDIT";
+    browse_commit();
+    song_sound_t sound; char name[16]; sound_name(&trk[k], name);
+    uint32_t f = motion_guard(); song_sound_capture(&sound, &trk[k], name); motion_unguard(f);
+    /* A sound is independent of the preset slot and the track's settings. */
+    sound.user[0] = sound.user[1] = sound.user_native = 0;
+    for (uint32_t i = 0; i < P_COUNT; i++) if (param_kept(i)) sound.p[i] = (uint8_t)(param_desc_of(sound.engine, i)->def + 64);
+    if (!song_sound_valid(&sound, 0)) return "INVALID SOUND";
+    f = motion_guard();
+    if (song_picker.pattern && !pattern_sounds_any() &&
+        (pattern_room() < sizeof pattern_sound || pattern_file_cost() > pattern_room() - sizeof pattern_sound)) {
+        motion_unguard(f); return "PROJECT FULL";
+    }
+    if (song_picker.pattern && !resource_get(RES_SONG_BASE, NTRK * sizeof(song_sound_t))) {
+        motion_unguard(f); return "NO SOUND MEMORY";
+    }
+    uint32_t id = song_sound_store(&sound);
+    if (!id) { motion_unguard(f); return "NO SOUND MEMORY"; }
+    if (song_picker.pattern) {
+        uint8_t old = pattern_sound[k][row];
+        pattern_sound[k][row] = (uint8_t)id;
+        if (pattern_file_cost() > pattern_room()) {
+            pattern_sound[k][row] = old;
+            motion_unguard(f); return "PROJECT FULL";
+        }
+        pattern_sound[k][row] = old;
+        /* Finish audition restoration before capturing the assignment undo. */
+        song_preset_cancel();
+        undo_seal(); load_begin(&trk[k], UNDO_PATTERN_SOUND);
+        pattern_sound[k][row] = (uint8_t)id;
+        load_end(&trk[k]); undo_seal();
+    }
+    else if (!song_block_sound(row, k, id)) { motion_unguard(f); return "NO EDIT MEMORY"; }
+    motion_unguard(f);
+    return 0;
+}
 static void song_preset_finish(int keep)
 {
-    uint32_t page = song_picker.return_page, row = song_picker.row, k = song_picker.track;
-    if (keep) {
-        if (transport_busy()) { ui_message("STOP TO EDIT"); return; }
-        browse_commit();
-        song_sound_t sound; char name[16]; sound_name(&trk[k], name);
-        uint32_t f = motion_guard(); song_sound_capture(&sound, &trk[k], name); motion_unguard(f);
-        /* A sound is independent of the preset slot and the track's settings. */
-        sound.user[0] = sound.user[1] = sound.user_native = 0;
-        for (uint32_t i = 0; i < P_COUNT; i++) if (param_kept(i)) sound.p[i] = (uint8_t)(param_desc_of(sound.engine, i)->def + 64);
-        if (!song_sound_valid(&sound, 0)) { ui_message("INVALID SOUND"); return; }
-        f = motion_guard();
-        if (song_picker.pattern && !pattern_sounds_any() &&
-            (pattern_room() < sizeof pattern_sound || pattern_file_cost() > pattern_room() - sizeof pattern_sound)) {
-            motion_unguard(f); ui_message("PROJECT FULL"); return;
-        }
-        if (song_picker.pattern && !resource_get(RES_SONG_BASE, NTRK * sizeof(song_sound_t))) {
-            motion_unguard(f); ui_message("NO SOUND MEMORY"); return;
-        }
-        uint32_t id = song_sound_store(&sound);
-        if (!id) { motion_unguard(f); ui_message("NO SOUND MEMORY"); return; }
-        if (song_picker.pattern) {
-            uint8_t old = pattern_sound[k][row];
-            pattern_sound[k][row] = (uint8_t)id;
-            if (pattern_file_cost() > pattern_room()) {
-                pattern_sound[k][row] = old;
-                motion_unguard(f); ui_message("PROJECT FULL"); return;
-            }
-            pattern_sound[k][row] = old;
-            /* Finish audition restoration before capturing the assignment undo. */
-            song_preset_cancel();
-            undo_seal(); load_begin(&trk[k], UNDO_PATTERN_SOUND);
-            pattern_sound[k][row] = (uint8_t)id;
-            load_end(&trk[k]); undo_seal();
-        }
-        else {
-            uint32_t first = chain_origin(row, k), end = chain_block_end(first, k), changed = 0;
-            for (uint32_t r = first; r < end; r++) changed |= chain_config.sound[r][k] != id;
-            if (changed) {
-                if (!song_edit_begin()) { motion_unguard(f); return; }
-                for (uint32_t r = first; r < end; r++) chain_config.sound[r][k] = (uint8_t)id;
-                song_edit_end();
-            }
-        }
-        motion_unguard(f);
-    }
+    uint32_t page = song_picker.return_page;
+    const char *why = keep ? song_preset_keep() : 0;
+    if (why) { ui_message(why); return; }
     song_preset_cancel(); ui.page = (uint8_t)page; ui.home = 0; page_entered();
     ui.msg_t = 0;
 }
 static void song_preset_remove(void)
 {
-    if (ui.song_row >= chain_config.count) return;
-    uint32_t first = chain_origin(ui.song_row, song.sel), end = chain_block_end(first, song.sel), any = 0;
-    for (uint32_t r = first; r < end; r++) any |= chain_config.sound[r][song.sel];
-    if (!any || !song_edit_begin()) return;
-    for (uint32_t r = first; r < end; r++) chain_config.sound[r][song.sel] = 0;
-    song_edit_end();
+    if (ui.song_row < chain_config.count) song_block_sound(ui.song_row, song.sel, 0);
 }

@@ -63,6 +63,11 @@
 #                   coder, damaged files refused, a project's kits renamed in every place as the firmware's decoded
 #                   state has them, export / import against a simulated device, then what the page sent through the
 #                   device's own backup PUT; the sizes next to the stored records.
+# Studio bundle (tools/studio_bundle.py -> build/studio-bundle): what Melodee Studio takes from the firmware (desc,
+#                   layout + fixtures, protocol, constants, settings, scales, Prophet factory, palettes, licences), from
+#                   the firmware's own sources (tests/protodump.c, constdump.c, settingsdump.c), checked against itself
+#                   and its manifest's hashes; with web/core/build.sh's WebAssembly, the virtual FM-1 core
+#                   (web/core/core_check.mjs): Studio's commands, a render, taps, events, kits, the NOR, WASM == native.
 # PHYS (tests/phys_test.c): stability over the whole parameter and pitch range, the worst-case cost against
 #                   the heaviest factory preset, demos in build/phys_demo/; tests/phys_ref.cpp compares the
 #                   fixed-point models with DaisySP's float originals when DaisySP is there (DAISYSP=path).
@@ -233,6 +238,24 @@ mel_tests() {                                     # the .mel project file: the p
         echo "== skip the .mel page test (no node)"
     fi
 }
+studio_bundle() {                                 # the firmware's data for Melodee Studio, its own dumpers in $OUT/studio
+    rm -rf build/studio-bundle                    # (a failed build leaves none: nothing stale is verified)
+    step "Studio bundle: tables, records, protocol, constants, menu, scales, palettes -> build/studio-bundle" \
+        "$PY" tools/studio_bundle.py --work "$OUT/studio"
+    [ -f build/studio-bundle/manifest.json ] &&
+        step "Studio bundle: every file matches the manifest" "$PY" tools/studio_bundle.py --verify build/studio-bundle
+    # the virtual FM-1 (web/core/build.sh makes the WebAssembly, emcc in Docker): its replies and its sound against
+    # the same core built here from this tree, byte for byte (a WebAssembly core older than the tree shows here)
+    if [ -f build/core/melodee_core.wasm ] && command -v node >/dev/null 2>&1; then
+        _ver=$(sed -n 's/^#define MELODEE_VERSION "\([^"]*\)".*/\1/p' firmware/src/melodee.c | head -n 1)
+        $CC -O2 -std=gnu99 $FW -Itests -DMELODEE_RAM_AUDIO=1 -DMELODEE_VERSION="\"$_ver\"" -DCORE_NATIVE_MAIN \
+            -o "$OUT/core_native" web/core/melodee_core.c -lm || { fail "compile web/core/melodee_core.c"; return 1; }
+        step "virtual FM-1 core: Studio's commands, a render, taps, MIDI events, kits, the NOR kept (WASM == native)" \
+            node web/core/core_check.mjs --native "$OUT/core_native" --mel "$OUT/studio/mel"
+    else
+        echo "== skip the virtual FM-1 core check (no build/core/melodee_core.wasm: web/core/build.sh; or no node)"
+    fi
+}
 old_to_new() {                                    # a package of another app (this one cut short) -> this build
     head -c 200000 build/melodee.bin > "$OUT/old_app.bin" &&
         "$PY" tools/fm1pkg_make.py "$OUT/old_app.bin" build/loader/ota.bin "$OUT/old.fwsc" >/dev/null &&
@@ -382,6 +405,7 @@ core && t "MIDI Track: host output, reconnect cleanup and USB input loss" midi_t
 core && t "EQ accelerator: register layout, isolated histories and bounded timeout" eq_hw_test
 core && job web_tests
 core && [ $TABLES = 1 ] && job mel_tests
+core && [ $TABLES = 1 ] && job studio_bundle
 sound && [ $TABLES = 1 ] && job dsp_tracks
 
 if core; then
@@ -532,6 +556,9 @@ if core && [ $TABLES = 1 ]; then
     t "full backup: CRC before writes, stale runtime, USB reset / timeout, malformed objects, older projects" backup_test $FW
     t "CPU laboratory: persistence guard and RAM-only preference restoration" backup_lab:backup_test -DMELODEE_AUDIO_PROFILE=1 $FW
     t "editor: real C protocol, malformed transfers and queue recovery" editor_test $FW
+    t "editor over Bluetooth (MELODEE_BLE_EDITOR, two links): SysEx across BLE packets, the command list, replies on the asking link" \
+        editor_ble:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -DBLE_LINKS=2 -Itests/ble_fake $FW
+    t "editor over Bluetooth (MELODEE_BLE_EDITOR, one link)" editor_ble1:editor_test -DMELODEE_BLE=1 -DMELODEE_BLE_EDITOR=1 -Itests/ble_fake $FW
     t "CPU lab controls: native recording/transport, guarded protocol and exact restoration" audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 -DMELODEE_AUDIO_BENCH=1 $FW
     t "CPU lab controls absent in normal firmware" cpu_lab_off:audio_cpu_lab_test -O2 $FW
     t "CPU lab controls absent with profiling only" cpu_lab_profile:audio_cpu_lab_test -O2 -DMELODEE_AUDIO_PROFILE=1 $FW

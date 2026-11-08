@@ -74,6 +74,7 @@ static uint32_t mlearn_btn_bit(uint32_t b);              /* row b's matrix butto
 #else
 #define MLEARN_BIT(b) (1u << (b))
 #endif
+static int mparam_receive(uint32_t ch, uint32_t cc, uint32_t value);   /* (below) */
 static volatile uint8_t mlearn_on;                       /* the page is open: nothing learned acts, messages wait */
 static volatile int16_t mlearn_seen = -1;                /* the last message: mlearn_row's value | channel << 8 */
 static int mlearn_valid(void)
@@ -97,6 +98,7 @@ static int mlearn_receive(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
         if (cc || on) mlearn_seen = (int16_t)(src | ch << 8);
         return cc || on;
     }
+    if (cc && mparam_receive(ch, d1, d2)) return 1;    /* (a parameter first: it names its channel) */
     if (!mlearn_valid()) return 0;
     for (uint32_t k = 0; k < MLEARN_N; k++) {
         if (mlearn_row[k] != src) continue;
@@ -110,6 +112,37 @@ static int mlearn_receive(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
         /* the tap bit outlasts a release faster than the scan; the scan's clearing it can lose to this, harmlessly */
         if (on) { fm1_in.remote |= MLEARN_BIT(b); fm1_in.remote_tap |= MLEARN_BIT(b); }
         else fm1_in.remote &= ~MLEARN_BIT(b);
+        return 1;
+    }
+    return 0;
+}
+/* MIDI LEARN's parameters (midi_knobs.h mparam_row): CC cc on channel ch sets its track's parameter wherever the panel is,
+ * over the parameter's range (a list over its names), as MIDI MODE says: the value, or relative steps. Here in the
+ * audio interrupt, as a CC sets a sound's controls (midi_control.c midi_parameter): the value and its motion; a learned
+ * parameter with no range, the steps' while SONG runs stay. 1: the CC is learned (used up either way) */
+static int motion_capture(track_t *t, uint32_t id, int16_t value);   /* (motion.c) */
+static __attribute__((noinline)) int mparam_receive(uint32_t ch, uint32_t cc, uint32_t value)
+{
+    const uint8_t *m = (const uint8_t *)mparam_row;
+    if (mparam_row[MPARAM_N] != MPARAM_TAG) return 0;
+    for (uint32_t k = 0; k < MPARAM_N; k++, m += 4) {
+        if (m[0] != cc || (m[1] != ch && m[1] != MPARAM_ANY)) continue;
+        uint32_t id = m[3], mode = settings_midi_knob_mode, abs = mode == MK_ABSOLUTE;
+        int32_t step = mode == MK_REL1 ? (int32_t)value - 64 : mode == MK_REL2 ? (value < 64u ? (int32_t)value : (int32_t)value - 128) :
+                       (int32_t)value - 16, v, n = 0, at = 0;   /* (as midi_knob_relative) */
+        track_t *t = &trk[m[2] % NTRK];
+        if (m[2] >= NTRK || !MPARAM_TARGET(id) || ((chain.running || chain.armed) && id >= P_SLEN && id <= P_SGATE)) return 1;
+        const param_desc_t *d = param_desc_of(t->eng_req % NENGINES, id);
+        if (d->max <= d->min) return 1;
+        if (d->fmt == F_ENUM && d->names) {               /* a list: its names in order, past the empty (retired) ones */
+            for (v = d->min; v <= d->max; v++)
+                if (d->names[v][0]) { at += v < t->p[id]; n++; }
+            n = abs ? ((int32_t)value * (n - 1) + 63) / 127 : clamp(at + step, 0, n - 1);
+            for (v = d->min; v < d->max && (!d->names[v][0] || n--); v++) ;
+        } else
+            v = abs ? d->min + ((int32_t)value * (d->max - d->min) + 63) / 127 : clamp(t->p[id] + step, d->min, d->max);
+        t->p[id] = (int16_t)v;
+        (void)motion_capture(t, id, (int16_t)v);
         return 1;
     }
     return 0;

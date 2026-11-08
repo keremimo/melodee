@@ -60,6 +60,14 @@
 #if MELODEE_OTA && !MELODEE_FLASH
 #error "MELODEE_OTA needs MELODEE_FLASH"
 #endif
+#ifndef MELODEE_BLE_EDITOR
+#define MELODEE_BLE_EDITOR (MELODEE_BLE && MELODEE_OTA)   /* Melodee Studio over Bluetooth: editor frames on the
+                                 * computer's link (midi_ble.c mbe, EDITOR_PROTOCOL.md "Studio over Bluetooth"). On
+                                 * wherever the build has Bluetooth and the editor; MELODEE_BLE_EDITOR=0 leaves it out */
+#endif
+#if MELODEE_BLE_EDITOR && !(MELODEE_BLE && MELODEE_OTA)
+#error "MELODEE_BLE_EDITOR needs MELODEE_BLE and MELODEE_OTA"
+#endif
 
 /* the resource region (res.c): data read in place at 0xEA020 (app.ld .mres), installed after an update */
 #define MELODEE_RES __attribute__((section(".mres"), aligned(4)))
@@ -70,6 +78,11 @@
 #if MELODEE_FLASH
 #define SMKX_OK() (smkx_ok != 0u)
 #endif
+#elif MELODEE_FLASH
+/* the FM-1 has no app area tail: its 16 and 24 px icon cells sit in the resource region (icons.c draws none while the
+ * region is missing; the 12 px cells stay in the app) */
+#define MELODEE_ICON_BIG MELODEE_RES
+#define ICON_BIG_OK() RES_OK()
 #endif
 
 /* ------------------------------------------------------------- HAL --- */
