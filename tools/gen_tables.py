@@ -377,6 +377,13 @@ def sid_kit_tables():
     return L
 
 
+def shared_ram(name, ctype, line):
+    """a table the firmware fills at power-on (dsp_tables_init) that a native synth module reads in place: a pointer
+    the loader sets in the module's compile (dsp_tables_init's writes there compile, never run)"""
+    return ["#if defined(MOD_NATIVE_SIDE) && MOD_NATIVE_SIDE   /* (a native module: the firmware's) */",
+            f"static {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", line, "#endif"]
+
+
 def fm6_tables():
     """FM6 (eng_fm6.c): Dexed's lookup tables, computed as Dexed computes them at 44.1 kHz with its
     64-sample blocks (MSFA sin.cc, exp2.cc, freqlut.cc, lfo.cc, pitchenv.cc, porta.cpp, dx7note.cc,
@@ -395,7 +402,7 @@ def fm6_tables():
         sin_t[i + 512] = -((v + 32) >> 6)
         u, v = (u * c - v * s + (1 << 29)) >> 30, (u * s + v * c + (1 << 29)) >> 30
     assert all(abs(x) <= 1 << 24 and f32(x / 2**24) == x / 2**24 for x in sin_t)   # (float)x * 2^-24 is exact
-    L += [f"#define FM6_SIN_C {c}", f"#define FM6_SIN_S {s}", "static float FM6_SIN[1025];"]
+    L += [f"#define FM6_SIN_C {c}", f"#define FM6_SIN_S {s}"] + shared_ram("FM6_SIN", "float", "static float FM6_SIN[1025];")
     # Exact integer phase steps for Q24 log pitches (Freqlut). The continuous
     # signal path is float, but float cannot carry every bit of this pitch.
     y, inc, fl = float(1 << 44) / FS, math.pow(2, 1.0 / 1024), []

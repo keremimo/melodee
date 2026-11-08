@@ -13,7 +13,7 @@
  * nothing has used for MOD_IDLE_MS goes back to the flash. Unloading points its engine at ENG_MOD_IDLE first, so no
  * audio block can be inside the module when its block is released. */
 #include "module_abi.h"
-#include "module_native.h"   /* native modules: an engine's own source, its own engine_t (SID, DRUM) */
+#include "module_native.h"   /* native modules: an engine's own source, its own engine_t (SID, DRUM, CZ-1) */
 
 enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
        MS_STALE };                                 /* mod_slot_t.state; STALE: a native module of another firmware */
@@ -61,6 +61,7 @@ static const mod_imports_t MOD_IMPORTS = {
     trk, &song, &voice_was, &tuning_a4, dith, dith_f, midi_verb, drum_patch, &drum_patch_none,
     &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen, mod_part_mem, voice_scale_pitch,
     SINE, TANH_Q15, PITCH_OCT, A4_RATIO, P5_TANH,
+    cz_patch, &cz_patch_none, FM6_SIN, cz_preset_make,
 };
 #ifdef FM1_IRQ_TARGET
 _Static_assert(sizeof(mod_native_t) == 28u && MOD_NHEAD == sizeof(mod_file_t) + 4u, "tools/mod_build.py ABI_NATIVE");

@@ -15,7 +15,7 @@
  *
  * File: mod_file_t with abi MOD_ABI_NATIVE, then the key (u32: a 56-byte head), then the image as for ABI 1 (its
  * first bytes are mod_native_t, mod_file_t.desc 0), the address words, bss after the image in RAM.
- * Included after core.h, dsp.c, drum_map.c and drum_kit.h, on both sides. */
+ * Included after core.h, dsp.c, drum_map.c, drum_kit.h and cz_parts.h, on both sides. */
 #pragma once
 #include "module_abi.h"
 
@@ -30,7 +30,7 @@
                                                   * checks each native module against it) */
 
 /* the firmware's side, handed over before any call (mod_native_t.bind). Append only, MOD_NATIVE_IMPORTS + 1 */
-#define MOD_NATIVE_IMPORTS 1u
+#define MOD_NATIVE_IMPORTS 2u
 typedef struct {
     track_t *im_trk;                                 /* trk[NTRK] */
     song_t *im_song;
@@ -52,6 +52,11 @@ typedef struct {
     const int16_t *im_SINE, *im_TANH_Q15;
     const uint32_t *im_PITCH_OCT, *im_A4_RATIO;
     const float *im_P5_TANH;
+    /* 2: CZ-1. The parts' tones (cz_parts.h: cz_patch[NPART], cz_patch_none), FM6's sine (filled at power-on:
+     * dsp_tables_init), the presets made from Casio's tones (cz_tones.c: main loop) */
+    cz_patch_t *im_cz_patch, *im_cz_patch_none;
+    float *im_FM6_SIN;
+    void (*im_cz_preset_make)(uint32_t k, preset_t *p, char *name);
 } mod_imports_t;
 
 /* The layout key: what a native module and the firmware must agree on, hashed (any change: another key) */
@@ -73,7 +78,8 @@ typedef struct {
     MNK(51, CTL) + MNK(52, FS) + MNK(53, VOICE_FS) + MNK(54, DITH_N) + MNK(55, AP_COUNT) + MNK(56, AP_SID) +       \
     MNK(57, AP_808) + MNK(58, AP_909) + MNK(59, AP_FM6) + MNK(60, AP_CZ) + MNK(61, F_ONOFF) + MNK(62, F_ALIAS) +   \
     MNK(63, DK_NUSER) + MNK(64, DRK_KSEC) + MNK(65, BOARD_SMK37) + MNK(66, MELODEE_USER_KITS) +                    \
-    MNK(67, MELODEE_SID_FAST) + MNK(68, MELODEE_DRUM_FAST) + MNK(69, V_LEGATO) + MNK(70, Q_MPC) + MNK(71, NSTEP))
+    MNK(67, MELODEE_SID_FAST) + MNK(68, MELODEE_DRUM_FAST) + MNK(69, V_LEGATO) + MNK(70, Q_MPC) + MNK(71, NSTEP) + \
+    MNK(72, sizeof(cz_patch_t)) + MNK_T(73, engine_t, menv) + MNK(74, MELODEE_CZ_FAST) + MNK(75, NPOLY))
 
 typedef struct {                                  /* the image's first bytes (mod_file_t.desc 0) */
     uint32_t magic;                               /* MOD_NDESC_MAGIC */
@@ -91,6 +97,7 @@ typedef struct {                                  /* the image's first bytes (mo
  * becomes the pointer's), then its data and calls into the pointers core.h & co. declared, then its descriptor */
 static void *(*mod_imp_part_mem)(uint32_t part, uint32_t bytes);
 static void (*mod_imp_voice_scale_pitch)(const track_t *t, voice_t *v, uint32_t note);
+static void (*mod_imp_cz_preset_make)(uint32_t k, preset_t *p, char *name);   /* (modules/cz/cz.c calls it) */
 #define voice_scale_pitch (*mod_imp_voice_scale_pitch)
 #define mod_part_mem(part, bytes) mod_imp_part_mem(part, bytes)
 static void mod_native_bind(const mod_imports_t *im)
@@ -116,6 +123,10 @@ static void mod_native_bind(const mod_imports_t *im)
     mod_imp_PITCH_OCT = im->im_PITCH_OCT;
     mod_imp_A4_RATIO = im->im_A4_RATIO;
     mod_imp_P5_TANH = im->im_P5_TANH;
+    mod_imp_cz_patch = im->im_cz_patch;
+    mod_imp_cz_patch_none = im->im_cz_patch_none;
+    mod_imp_FM6_SIN = im->im_FM6_SIN;
+    mod_imp_cz_preset_make = im->im_cz_preset_make;
 }
 #ifdef FM1_IRQ_TARGET
 #define MOD_NATIVE_EXPORT(sym) __attribute__((used, section(".mod_desc"))) const mod_native_t sym

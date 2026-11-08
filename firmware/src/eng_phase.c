@@ -13,12 +13,8 @@
 static const char *const N_PD_WAVE[] = {"SAW", "SQR", "PLS", "DSIN", "SPLS", "RSAW", "RTRI", "RTRP"};
 static const char *const N_PD_WAVE2[] = {"-", "SAW", "SQR", "PLS", "DSIN", "SPLS", "RSAW", "RTRI", "RTRP"};
 static const char *const N_PD_LINE[] = {"MIX", "RING"};
-#include "cz_patch.h"
 static const char *const N_PD_ENV[] = {"LINK", "SPLIT"};
-static cz_patch_t cz_patch[NPART] __attribute__((section(".pool"))), cz_patch_none;
-/* track k's CZ-1 tone; a MIDI-only track's is none: read, written, never heard */
-static cz_patch_t *cz_patch_of(uint32_t k) { return k < NPART ? &cz_patch[k] : &cz_patch_none; }
-static void cz_init(void) { for (uint32_t k = 0; k <= NPART; k++) cz_patch_init(cz_patch_of(k)->raw); }
+/* (the parts' CZ-1 tones: the firmware's, cz_parts.h) */
 
 /* Eight rate/target points, with explicit sustain/end. Rates are Q24 per
  * control tick. No exponential asymptote and no extra release after END. */
@@ -109,14 +105,7 @@ static int phase_done(track_t *t, voice_t *v)
     return c->eg[0][2].stage > 2u && (!line2 || c->eg[1][2].stage > 2u);
 }
 
-/* Retired FM4 parameter storage is shared with PHASE's split envelopes. The
- * ids, ranges and defaults remain compatible with existing projects/presets. */
-static const param_desc_t CZ_ED[20] = {
-#define CZ_ROW(n) {"A" n, F_TIME, 0,127,0,0,0}, {"D" n, F_TIME,0,127,0,0,0}, \
-    {"S" n,F_PCT,0,127,127,0,0}, {"R" n,F_TIME,0,127,0,0,0}, {"LV" n,F_PCT,0,127,127,0,0}
-    CZ_ROW("W1"), CZ_ROW("W2"), CZ_ROW("A2"), CZ_ROW("P"),
-#undef CZ_ROW
-};
+/* (its split envelopes' parameters, the retired FM4 storage: params.c CZ_ED) */
 
 static inline int32_t pd_cos(uint32_t ph16)             /* -cos, Q15, from the 16-bit PD phase */
 {
@@ -359,4 +348,5 @@ static const engine_t ENG_PHASE = {
     .ownenv = 1, .done = phase_done, .keep = 0x0fu,
     .note_on = phase_note_on, .render = phase_render,
     .knob = {P_E2, P_E3, P_E4, P_REL},
+    .menv = phase_env_source,    /* (native DCA: the matrix's ENV source) */
 };

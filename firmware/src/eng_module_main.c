@@ -14,7 +14,7 @@ static uint32_t eng_npresets(uint32_t e)
     uint32_t k = ENGINES[e % NENGINES] == &ENG_MOD_IDLE ? mod_slot_of(e % NENGINES) : NMOD;
     return k < NMOD ? mods[k].npresets : ENGINES[e % NENGINES]->npresets;
 }
-/* every engine the image left to a synth module (SID, DRUM) has one on the device: a fresh install's setup wrote
+/* every engine the image left to a synth module (SID, DRUM, CZ-1) has one on the device: a fresh install's setup wrote
  * them (the web installer: web/fm1mods.js). Else the start asks for setup (main.c, ui_boot.c), as for the resources */
 static int mod_have(uint32_t e)
 {
@@ -25,7 +25,8 @@ static int mod_have(uint32_t e)
 }
 static int mod_shipped_ok(void)
 {
-    return (MELODEE_SID_BUILTIN || mod_have(3)) && (MELODEE_DRUM_BUILTIN || mod_have(ENGI_DRUM));
+    return (MELODEE_SID_BUILTIN || mod_have(3)) && (MELODEE_DRUM_BUILTIN || mod_have(ENGI_DRUM)) &&
+           (MELODEE_CZ_BUILTIN || mod_have(ENGI_CZ));
 }
 /* main loop: e is about to be used (picked, its presets listed, a sound or project on it loaded): into SRAM now */
 static void mod_want(uint32_t e)
@@ -61,9 +62,10 @@ static void mod_unguard(uint32_t f)
 static int mod_engine_ok(uint32_t e)               /* a number a module may play as */
 {
     return (e >= ENGI_MOD0 && e < NENGINES) || e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u ||
-           e == 3u || e == ENGI_DRUM;               /* (SID, DRUM: modules on the device; built in, a clash) */
+           e == 3u || e == ENGI_DRUM || e == ENGI_CZ;   /* (SID, DRUM, CZ-1: modules on the device; built in, a
+                                                         * clash) */
 }
-/* e into the engines shown, at its place (engines.c eng_order_rank: SID and DRUM where they were built in) */
+/* e into the engines shown, at its place (engines.c eng_order_rank: CZ-1, SID and DRUM where they were built in) */
 static void mod_order_add(uint32_t e)
 {
     uint32_t r = eng_order_rank(e), at = eng_nshown;

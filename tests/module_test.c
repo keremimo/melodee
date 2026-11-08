@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Synth modules (src/eng_module.c, src/module_store.c, src/module_abi.h, src/module_native.h): TRIO built as a module
- * renders bit for bit what the built-in TRIO rendered; SID and DRUM as native modules (firmware/modules/sid, drum:
- * their own sources, compiled here for the host and linked beside this test) render bit for bit what the built-in
- * engines render (this build, MELODEE_*_BUILTIN 1) and what they rendered before they left the firmware (MP_GOLDEN,
- * tests/module_phrases.h: every preset, POLY and LEGATO, the C64 models, ENV3, every kit, on CPU0 and CPU1), a native
+ * renders bit for bit what the built-in TRIO rendered; SID, DRUM and CZ-1 as native modules (firmware/modules/sid,
+ * drum, cz: their own sources, compiled here for the host and linked beside this test) render bit for bit what the
+ * built-in engines render (this build, MELODEE_*_BUILTIN 1) and what they rendered before they left the firmware
+ * (MP_GOLDEN, tests/module_phrases.h: every preset, POLY and LEGATO, the C64 models, ENV3, every kit, every CZ-1 tone
+ * edited as it plays with the matrix's ENV, on CPU0 and CPU1), a native
  * file longer than a record in two, its layout key checked; module files into the pool's slots (head, CRC, address words moved to the block),
  * loaded once at commit, listed at power-on without loading, loaded when picked or used and out of SRAM again when
  * idle, a part kept on its engine while its module is on its way, listed after the built-in engines, refused when
@@ -20,8 +21,12 @@
 #include "../firmware/modules/trio/trio.c"     /* the modules, built for the host */
 #include "../firmware/modules/wheel/wheel.c"
 #include "module_phrases.h"
-extern const mod_native_t mod_native_sid, mod_native_drum;   /* (firmware/modules/sid/sid.c, drum/drum.c: host-built) */
-static const mod_native_t *nmods(uint32_t e) { return e == 3u ? &mod_native_sid : e == ENGI_DRUM ? &mod_native_drum : 0; }
+extern const mod_native_t mod_native_sid, mod_native_drum, mod_native_cz;   /* (firmware/modules/sid/sid.c, drum/drum.c,
+                                                                             * cz/cz.c: host-built) */
+static const mod_native_t *nmods(uint32_t e)
+{
+    return e == 3u ? &mod_native_sid : e == ENGI_DRUM ? &mod_native_drum : e == ENGI_CZ ? &mod_native_cz : 0;
+}
 /* a native module file for the host loader (its image a pattern; the host plays nmods()); key: its layout key */
 static uint32_t make_nfile(uint8_t *b, uint32_t engine, const char *name, uint32_t image, uint32_t key, uint32_t npresets)
 {
@@ -264,19 +269,21 @@ int main(int argc, char **argv)
     for (uint32_t i = 0; i < CTL; i++) silent &= buf[i] == 0;
     bad += check("its track renders silence", silent);
 
-    /* native modules: SID and DRUM, the engines themselves (module_native.h) */
+    /* native modules: SID, DRUM and CZ-1, the engines themselves (module_native.h) */
     {
-        static uint8_t nf[2][MOD_FILE_MAX];
-        const engine_t *sid_in = ENGINES[3], *drum_in = ENGINES[ENGI_DRUM];   /* (built in on the host, or retired) */
+        static uint8_t nf[3][MOD_FILE_MAX];
+        const engine_t *sid_in = ENGINES[3], *drum_in = ENGINES[ENGI_DRUM], *cz_in = ENGINES[ENGI_CZ];   /* (built in
+                                                                             * on the host, or retired) */
         for (uint32_t k = 0; k < NMOD; k++) mod_delete(k);
         mod_host_nmod = nmods;
-        ENGINES[3] = ENGINES[ENGI_DRUM] = &ENG_RETIRED;  /* (the numbers free for the modules) */
+        ENGINES[3] = ENGINES[ENGI_DRUM] = ENGINES[ENGI_CZ] = &ENG_RETIRED;   /* (the numbers free for the modules) */
         uint32_t ns = make_nfile(nf[0], 3, "SID", 12000, MOD_NATIVE_KEY, MP_SID_PRESETS);
         mod_file_t sid_head;
         memcpy(&sid_head, nf[0], sizeof sid_head);
         uint32_t nd = make_nfile(nf[1], ENGI_DRUM, "DRUM", 48000, MOD_NATIVE_KEY, MP_DRUM_PRESETS);
-        int rs = put(4, nf[0], ns), rd = put(5, nf[1], nd);
-        if (rs != MS_LOADED || rd != MS_LOADED) printf("  put: SID %d DRUM %d\n", rs, rd);
+        uint32_t nc = make_nfile(nf[2], ENGI_CZ, "CZ-1", 9000, MOD_NATIVE_KEY, MP_CZ_PRESETS);
+        int rs = put(4, nf[0], ns), rd = put(5, nf[1], nd), rc7 = put(7, nf[2], nc);
+        if (rs != MS_LOADED || rd != MS_LOADED || rc7 != MS_LOADED) printf("  put: SID %d DRUM %d CZ-1 %d\n", rs, rd, rc7);
         bad += check("native SID and DRUM files: committed and loaded, DRUM in two records (longer than one)",
                      rs == MS_LOADED && rd == MS_LOADED && mods[4].abi == MOD_ABI_NATIVE && mods[5].len == nd &&
                      nd > ST_PROJECT_MAX && st_exists(ST_MFILE0 + 5) && st_exists(ST_MXFILE0 + 5) &&
@@ -289,22 +296,33 @@ int main(int argc, char **argv)
                      ENGINES[ENGI_DRUM]->oneshot && ENGINES[3]->npresets == MP_SID_PRESETS &&
                      ENGINES[ENGI_DRUM]->npresets == MP_DRUM_PRESETS && eng_state_size(3) == ENGINES[3]->state(0) &&
                      listed(3) && listed(ENGI_DRUM));
+        bad += check("CZ-1 as a native module: engine 15 with its own engine_t (DCA as the matrix's ENV, CPU1, presets "
+                     "made by the firmware from Casio's tones)",
+                     rc7 == MS_LOADED && ENGINES[ENGI_CZ] == mod_native_cz.eng && !strcmp(eng_name(ENGI_CZ), "CZ-1") &&
+                     eng_ok(ENGI_CZ) && ENGINES[ENGI_CZ]->wclass == 2 && ENGINES[ENGI_CZ]->menv &&
+                     ENGINES[ENGI_CZ]->batch && ENGINES[ENGI_CZ]->npresets == MP_CZ_PRESETS &&
+                     eng_state_size(ENGI_CZ) == ENGINES[ENGI_CZ]->state(0) && listed(ENGI_CZ) &&
+                     !strcmp(eng_preset(ENGINES[ENGI_CZ], 0)->name, "INIT TONE") &&
+                     !strcmp(eng_preset(ENGINES[ENGI_CZ], 30)->name, "FUNKY CLAV 1"));
         /* every phrase: the module against the golden render, and (built in here) against the engine sample by sample */
         uint32_t golden = 0, same = 1, heard = 1, first = MP_COUNT;
         for (uint32_t k = 0; k < MP_COUNT; k++) {
             const char *w; uint32_t a, b, h = mp_run(k, &w, &a, &b);
             int64_t e = 0;
             for (uint32_t i = 0; i < MP_NB * CTL; i++) e += mp_out[i] < 0 ? -mp_out[i] : mp_out[i];
-            heard &= e > 100000 || !strncmp(w, "DRUM KIT", 8) && a >= 9u;   /* (the user kits: none on the host) */
+            heard &= e > (k >= MP_CZ0 ? 10000 : 100000) || !strncmp(w, "DRUM KIT", 8) && a >= 9u;   /* (the user kits:
+                                                         * none on the host; CZ-1's slow tones: quiet in a phrase) */
             golden += h == MP_GOLDEN[k];
             if (h != MP_GOLDEN[k] && first == MP_COUNT) { first = k; printf("  phrase %u %s %u %u: %08x, golden %08x\n", k, w, a, b, h, MP_GOLDEN[k]); }
             if (sid_in != &ENG_RETIRED) {
-                const engine_t *ms = ENGINES[3], *md = ENGINES[ENGI_DRUM];
-                uint8_t as = mod_at[3], ad = mod_at[ENGI_DRUM];
+                const engine_t *ms = ENGINES[3], *md = ENGINES[ENGI_DRUM], *mc = ENGINES[ENGI_CZ];
+                uint8_t as = mod_at[3], ad = mod_at[ENGI_DRUM], ac = mod_at[ENGI_CZ];
                 memcpy(mp_mod, mp_out, sizeof mp_mod);
-                ENGINES[3] = sid_in; ENGINES[ENGI_DRUM] = drum_in; mod_at[3] = mod_at[ENGI_DRUM] = 0;
+                ENGINES[3] = sid_in; ENGINES[ENGI_DRUM] = drum_in; ENGINES[ENGI_CZ] = cz_in;
+                mod_at[3] = mod_at[ENGI_DRUM] = mod_at[ENGI_CZ] = 0;
                 (void)mp_run(k, &w, &a, &b);
-                ENGINES[3] = ms; ENGINES[ENGI_DRUM] = md; mod_at[3] = as; mod_at[ENGI_DRUM] = ad;
+                ENGINES[3] = ms; ENGINES[ENGI_DRUM] = md; ENGINES[ENGI_CZ] = mc;
+                mod_at[3] = as; mod_at[ENGI_DRUM] = ad; mod_at[ENGI_CZ] = ac;
                 for (uint32_t i = 0; i < MP_NB * CTL; i++)
                     if (mp_mod[i] != mp_out[i]) {
                         if (same) printf("  phrase %u %s %u %u: sample %u module %d built-in %d\n", k, w, a, b, i, mp_mod[i], mp_out[i]);
@@ -314,8 +332,9 @@ int main(int argc, char **argv)
             }
         }
         printf("persist: %u phrases, %u as golden%s\n", MP_COUNT, golden, sid_in != &ENG_RETIRED ? ", each against the built-in engine" : "");
-        bad += check("SID and DRUM modules render what the built-in engines rendered (every preset, POLY / LEGATO, C64, "
-                     "ENV3, every kit, CPU0 and CPU1)", golden == MP_COUNT && same && heard);
+        bad += check("SID, DRUM and CZ-1 modules render what the built-in engines rendered (every preset, POLY / LEGATO, "
+                     "C64, ENV3, every kit, every CZ-1 tone edited as it plays, CPU0 and CPU1)",
+                     golden == MP_COUNT && same && heard);
         /* the layout key: a module built for another firmware is refused before it is published */
         uint32_t nk = make_nfile(nf[0], 3, "SID", 12000, MOD_NATIVE_KEY + 1u, MP_SID_PRESETS);
         int rk = put(6, nf[0], nk);
@@ -333,7 +352,7 @@ int main(int argc, char **argv)
                      mods[4].crc == sid_head.crc && mods[4].len == sid_head.total &&
                      mods[5].key == MOD_NATIVE_KEY && mods[4].key == MOD_NATIVE_KEY && mods[5].abi == MOD_ABI_NATIVE);
         (void)mod_delete(6);
-        bad += check("SID and DRUM on the device: the start asks for no setup (main.c, ui_boot.c)", shipped);
+        bad += check("SID, DRUM and CZ-1 on the device: the start asks for no setup (main.c, ui_boot.c)", shipped);
         /* power-on: listed from their heads, nothing in SRAM; wanting DRUM reads its two records */
         for (uint32_t k = 0; k < NMOD; k++) mod_unregister(k, 0), memset(&mods[k], 0, sizeof mods[k]);
         mod_boot();
@@ -343,6 +362,10 @@ int main(int argc, char **argv)
         bad += check("native modules at power-on: listed unloaded; DRUM loaded from its two records when wanted",
                      idle && mods[5].state == MS_LOADED && ENGINES[ENGI_DRUM] == mod_native_drum.eng &&
                      mods[4].state == MS_STORED);
+        bad += check("CZ-1 at power-on: listed unloaded; without its module the start asks for setup, unless built in",
+                     mods[7].state == MS_STORED && ENGINES[ENGI_CZ] == &ENG_MOD_IDLE && eng_npresets(ENGI_CZ) == 65 &&
+                     SHIPPED_OK() && !mod_delete(7) && ENGINES[ENGI_CZ] == &ENG_RETIRED &&
+                     SHIPPED_OK() == MELODEE_CZ_BUILTIN);
         int rdel = mod_delete(5);
         bad += check("delete: both of a long file's records gone, DRUM retired, its tracks keep the number",
                      !rdel && !st_exists(ST_MFILE0 + 5) && !st_exists(ST_MXFILE0 + 5) &&
@@ -350,7 +373,7 @@ int main(int argc, char **argv)
         bad += check("without DRUM's module the start asks for setup (\"Synths missing\"), unless DRUM is built in",
                      SHIPPED_OK() == MELODEE_DRUM_BUILTIN);
         for (uint32_t k = 0; k < NMOD; k++) mod_delete(k);
-        ENGINES[3] = sid_in; ENGINES[ENGI_DRUM] = drum_in;
+        ENGINES[3] = sid_in; ENGINES[ENGI_DRUM] = drum_in; ENGINES[ENGI_CZ] = cz_in;
     }
 
     /* the real module file (pi32v2): relocated at the block, its descriptor read back through the moved words */

@@ -351,6 +351,14 @@ static const param_desc_t *global_desc(uint32_t id)
     return &GP[id];
 }
 static uint32_t scale_count(const track_t *t);          /* seq.c */
+/* PHASE's split envelopes (engine 2, eng_phase.c): the retired FM4 parameter storage. The
+ * ids, ranges and defaults remain compatible with existing projects/presets. */
+static const param_desc_t CZ_ED[20] = {
+#define CZ_ROW(n) {"A" n, F_TIME, 0,127,0,0,0}, {"D" n, F_TIME,0,127,0,0,0}, \
+    {"S" n,F_PCT,0,127,127,0,0}, {"R" n,F_TIME,0,127,0,0,0}, {"LV" n,F_PCT,0,127,127,0,0}
+    CZ_ROW("W1"), CZ_ROW("W2"), CZ_ROW("A2"), CZ_ROW("P"),
+#undef CZ_ROW
+};
 static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 {
     if (midi_track_audio_disabled(t->eng_req, id)) {

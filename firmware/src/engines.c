@@ -8,8 +8,14 @@
 #if MELODEE_PROPHET
 #include "eng_prophet_test.c"
 #endif
-#include "eng_phase.c"
-#include "eng_cz.c"
+#include "cz_parts.h"           /* the parts' CZ-1 tones (the firmware's: the engine reads them) */
+#if MELODEE_CZ_BUILTIN || MELODEE_LEGACY_EXTRAS
+#include "eng_phase.c"          /* PHASE (retired), the core CZ-1 keeps */
+#endif
+#include "cz_tones.c"           /* Casio's tones, the presets made from them, COMP, the SysEx bytes */
+#if MELODEE_CZ_BUILTIN
+#include "eng_cz.c"             /* CZ-1 (a synth module on the device: firmware/modules/cz) */
+#endif
 #if MELODEE_SID_BUILTIN || MELODEE_DRUM_BUILTIN
 #include "eng_sid.c"                /* SID (a synth module on the device: firmware/modules/sid); KIT SID's chip */
 #endif
@@ -80,9 +86,8 @@ static uint32_t eng_state_size(uint32_t e)
     case 7: return sizeof(drw_part_t);
 #endif
 #if MELODEE_LEGACY_EXTRAS
-    case 2:                                         /* (PHASE: CZ-1's core) */
+    case 2: return sizeof(cz_part_t);               /* (PHASE: CZ-1's core; CZ-1's own: engine_t.state) */
 #endif
-    case ENGI_CZ: return sizeof(cz_part_t);
     case ENGI_FM6: return sizeof(fm6_part_t);
 #if MELODEE_SLICE
     case ENGI_SLICE: return sizeof(slc_rb_t);
@@ -113,7 +118,9 @@ static drk_part_t *drk_part(uint32_t part) { return resource_get(RES_ENGINE0 + p
 #endif
 static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + (uint32_t)(t - trk), sizeof(drw_part_t)); }
 static fm6_part_t *fm6_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(fm6_part_t)); }
+#if MELODEE_CZ_BUILTIN || MELODEE_LEGACY_EXTRAS
 static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(cz_part_t)); }
+#endif
 #if MELODEE_SID_BUILTIN || MELODEE_DRUM_BUILTIN
 static sid_part_t *sid_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(sid_part_t)); }
 #endif
@@ -186,7 +193,11 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_RETIRED,             /* 13: reserved (MELODEE_SLICE=0 builds without SLICE) */
 #endif
     &ENG_RETIRED,                /* 14: retired OBXF; stored index reserved */
+#if MELODEE_CZ_BUILTIN
     &ENG_CZ,                     /* 15: native Casio CZ-1 */
+#else
+    &ENG_RETIRED,                /* 15: CZ-1, a synth module (firmware/modules/cz) */
+#endif
     &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, /* 16..18 reserved */
     &ENG_P5_TEST,                /* 19: Prophet (ANALOG's ID 0 stays reserved) */
     &ENG_RETIRED,                /* 20: Prophet user-preset namespace */
@@ -236,7 +247,9 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     6, 7, 9,
     11,                          /* NOISE */
 #else
-    ENGI_CZ,                     /* CZ-1 */
+#if MELODEE_CZ_BUILTIN
+    ENGI_CZ,                     /* CZ-1 (else a module: listed when there, at its place below) */
+#endif
 #if MELODEE_SID_BUILTIN
     3,                           /* SID (else a module: listed when there, at its place below) */
 #endif
@@ -249,8 +262,8 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
 #endif
     ENGI_MIDI,
 };
-/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): SID after CZ-1, DRUM
- * before the MIDI Track as built in; any other after them all */
+/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): CZ-1 after FM6, SID
+ * after CZ-1, DRUM before the MIDI Track as built in; any other after them all */
 static uint32_t eng_order_rank(uint32_t e)
 {
     static const uint8_t R[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, 3, ENGI_DRUM, ENGI_MIDI};
@@ -274,7 +287,8 @@ static int eng_extra_retired(uint32_t e)
     if (e == ENGI_ANALOG) return 1;
 #endif
     return e == ENGI_DIGITAL || (!MELODEE_LEGACY_EXTRAS && (e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u)) ||
-           (!MELODEE_SID_BUILTIN && e == 3u) || (!MELODEE_DRUM_BUILTIN && e == ENGI_DRUM);   /* (no module for them) */
+           (!MELODEE_SID_BUILTIN && e == 3u) || (!MELODEE_DRUM_BUILTIN && e == ENGI_DRUM) ||
+           (!MELODEE_CZ_BUILTIN && e == ENGI_CZ);   /* (no module for them) */
 }
 /* the engines one can pick, in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */

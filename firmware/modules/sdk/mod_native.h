@@ -23,6 +23,7 @@
 #ifdef FM1_IRQ_TARGET
 void *memset(void *d, int c, size_t n);          /* (modules/sdk/mod_rt.c: the module carries its own) */
 void *memcpy(void *d, const void *s, size_t n);
+int memcmp(const void *a, const void *b, size_t n);
 #define __builtin_memset memset
 #else
 #include <string.h>
@@ -33,4 +34,5 @@ void *memcpy(void *d, const void *s, size_t n);
 #include "dsp.c"
 #include "drum_map.c"
 #include "drum_kit.h"
+#include "cz_parts.h"
 #include "module_native.h"
