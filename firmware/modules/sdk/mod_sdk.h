@@ -56,6 +56,9 @@ typedef struct mod3_prow_t {
     uint8_t mono;
 } mod3_prow_t;
 #define MOD3_PRESETS MOD3_PRESETS_PLACE static const mod3_prow_t mod_presets_[]
+/* .. the same rows, each with the synth's own patch after it (the first n bytes of its schema's patch: n its patch's
+ * length, or less):  MOD3_PRESETS_PATCH(n) = {{{"FAT BASS", 1, {e1..e8}, {atk, ..}, 0, 0}, {patch bytes}}, ...} */
+#define MOD3_PRESETS_PATCH(n) MOD3_PRESETS_PLACE static const struct { mod3_prow_t row; uint8_t patch[n]; } mod_presets_[]
 #ifdef __ELF__
 #define MOD3_PRESETS_PLACE __attribute__((used, section(".mod_presets")))
 #else

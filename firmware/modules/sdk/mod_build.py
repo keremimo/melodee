@@ -6,7 +6,8 @@ an SDK module (mod_sdk.h), anywhere; in Melodee's tree it builds Melodee's engin
 
     mod_build.py SRC.c [-o OUT.mmod] [--version N] [-DNAME=V ...]
     mod_build.py --check FILE.mmod     (its head, CRC, address list, descriptor, presets, schema, who it is, signature)
-    mod_build.py --wasm FILE.mmod      (Melodee's tree: the file with its module built for WebAssembly, a WASM chunk)
+    mod_build.py --wasm FILE.mmod [--src SRC.c] [-o OUT.mmod]   (the file with its module built for WebAssembly, a WASM
+                                       chunk; SRC.c: its source, outside Melodee's tree)
 
 Needs: Python 3, a host C compiler (cc, or HOST_CC: a module's schema is written by its own source, built natively),
 and the JieLi pi32v2 toolchain (JIELI_TOOLCHAIN, else ~/.jieli/toolchain; off Linux x86-64 it runs in Docker,
@@ -414,18 +415,21 @@ def sdk_presets(elf, npre, cache):
     PRST payload, b"" none; the first one is the INIT"""
     d = elf.read_bytes()
     sec = elf_sections(d).get(".mod_presets")
-    rows = [PROW.unpack_from(d, sec["off"] + k * PROW.size) for k in range(sec["size"] // PROW.size)] if sec else []
-    if sec and sec["size"] % PROW.size:
-        raise SystemExit("mod_build: .mod_presets is not a list of MOD3_PRESET rows")
+    size = sec["size"] if sec else 0                  # (rows of PROW, each with its patch after it: MOD3_PRESETS_PATCH)
+    step = size // npre if npre else PROW.size
+    if size and (not npre or size % npre or step < PROW.size):
+        raise SystemExit(f"mod_build: .mod_presets ({size} B) is not npresets ({npre}) MOD3_PRESETS rows")
+    rows = [d[sec["off"] + k * step: sec["off"] + (k + 1) * step] for k in range(size // step)] if size else []
     if len(rows) != npre:
         raise SystemExit(f"mod_build: MOD3_PRESETS has {len(rows)} presets, the descriptor's npresets {npre}")
     if not rows:
         return b""
     presets = []
-    for name, cat, *v in rows:
+    for r in rows:
+        name, cat, *v = PROW.unpack_from(r)
         e, env, fenv, mono = v[0:8], v[8:12], v[12], v[13]
         common = struct.pack("<8b4BbB2x", *e, *env, fenv, mono)
-        presets.append((name.rstrip(b"\0"), cat, common, b""))
+        presets.append((name.rstrip(b"\0"), cat, common, bytes(r[PROW.size:])))
     key = hashlib.sha256(repr((mod_presets.VERSION, 0, presets)).encode() +
                          Path(mod_presets.__file__).read_bytes()).hexdigest()
     if cache.exists() and cache.with_suffix(".prst.key").exists() and cache.with_suffix(".prst.key").read_text() == key:
@@ -517,20 +521,21 @@ WASM_TAG = 0x4D534157                          # "WASM": the module as a WebAsse
 EMSDK_IMAGE = os.environ.get("EMSDK_IMAGE", "emscripten/emsdk:3.1.74")
 
 
-def emcc(args):
-    """emcc: a local one, else the emsdk Docker image (as web/core/build.sh)"""
+def emcc(args, root):
+    """emcc in root (its paths relative to it): a local one, else the emsdk Docker image (as web/core/build.sh)"""
     if shutil.which("emcc"):
         cmd = ["emcc", *args]
     else:
-        cmd = ["docker", "run", "--rm", "-v", f"{SRC}:/src", "-w", "/src", "-u", f"{os.getuid()}:{os.getgid()}",
+        cmd = ["docker", "run", "--rm", "-v", f"{root}:/src", "-w", "/src", "-u", f"{os.getuid()}:{os.getgid()}",
                EMSDK_IMAGE, "emcc", *args]
-    r = subprocess.run(cmd, cwd=SRC, capture_output=True, text=True)
+    r = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
     if r.returncode:
         raise SystemExit(f"mod_build: emcc failed\n{r.stdout}{r.stderr}")
 
 
-def wasm(path, out):
-    """path (a built .mmod) again with its source as a WebAssembly side module in a WASM chunk, last"""
+def wasm(path, out, src=None):
+    """path (a built .mmod) again with its source (src; Melodee's tree: firmware/modules/<name>/<name>.c) as a
+    WebAssembly side module in a WASM chunk, last"""
     b = bytearray(path.read_bytes())
     magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, r0, key, host, r1 = HEAD.unpack_from(b)
     if magic != FILE_MAGIC or abi != ABI or total != len(b) or zlib.crc32(b[HEAD.size:]) != crc:
@@ -539,15 +544,20 @@ def wasm(path, out):
     if flags and WASM_TAG in mod_presets.chunks(bytes(b), end):
         raise SystemExit(f"{path}: has a WASM chunk already")
     stem = path.stem
-    src = SRC / "firmware" / "modules" / stem / (stem + ".c")
-    if not src.exists():
-        raise SystemExit(f"mod_build: no source {src.relative_to(SRC)} for {path.name}")
-    rel = (out.parent / (stem + ".wasm")).resolve().relative_to(SRC)
-    flags_c = ["-O2", "-ffp-contract=off", "-fPIC", "-sSIDE_MODULE=1", "-w", "-Ifirmware/modules/sdk", "-DMOD_IN_CORE=1"]
-    flags_c += ["-Ifirmware/hal", "-Ibuild/gen", "-Ifirmware/src"] if is_engine(src) else ["-DMOD_HOSTED"]
+    src = src or (SRC / "firmware" / "modules" / stem / (stem + ".c") if SRC else None)
+    if not src or not src.exists():
+        raise SystemExit(f"mod_build: no source for {path.name} (--src)")
+    if is_engine(src) and not SRC:
+        raise SystemExit("mod_build: an engine-source module (mod_engine.h) builds in Melodee's tree only")
     out.parent.mkdir(parents=True, exist_ok=True)
-    emcc([*flags_c, str(src.relative_to(SRC)), "-o", str(rel)])
-    w = (SRC / rel).read_bytes()
+    inside = SRC and all(SRC in p.parents for p in (src, out, SDK))
+    root = SRC if inside else Path(os.path.commonpath([SDK, src, out.parent]))   # (the folder emcc sees)
+    w_out = out.parent / (stem + ".wasm")
+    rel = lambda p: str(p.resolve().relative_to(root))
+    flags_c = ["-O2", "-ffp-contract=off", "-fPIC", "-sSIDE_MODULE=1", "-w", "-I" + rel(SDK), "-DMOD_IN_CORE=1"]
+    flags_c += ["-Ifirmware/hal", "-Ibuild/gen", "-Ifirmware/src"] if is_engine(src) else ["-DMOD_HOSTED"]
+    emcc([*flags_c, rel(src), "-o", rel(w_out)], root)
+    w = w_out.read_bytes()
     body = bytes(b[HEAD.size:]) + mod_presets.chunk(WASM_TAG, w)
     head = HEAD.pack(magic, abi, engine, 1, HEAD.size + len(body), image, bss, nrel, desc, zlib.crc32(body), name, version,
                      npre, r0, key, host, r1)
@@ -562,13 +572,15 @@ def main():
     ap.add_argument("--version", type=int, default=1)
     ap.add_argument("--check", action="store_true", help="check a built .mmod file instead")
     ap.add_argument("--wasm", action="store_true", help="a built .mmod file with its module built for WebAssembly")
+    ap.add_argument("--src", dest="src_c", type=Path, help="--wasm: the module's source (outside Melodee's tree)")
     a, rest = ap.parse_known_args()
     if a.check:
         return check(a.src)
     if a.wasm:
-        if not SRC:
-            raise SystemExit("mod_build: --wasm builds in Melodee's tree only")
-        return wasm(a.src.resolve(), (a.out or SRC / "build" / "modules" / "wasm" / a.src.name).resolve())
+        if not SRC and not a.src_c:
+            raise SystemExit("mod_build: --wasm outside Melodee's tree needs the module's source (--src SRC.c)")
+        out = a.out or (SRC / "build" / "modules" / "wasm" if SRC else a.src.parent / "wasm") / a.src.name
+        return wasm(a.src.resolve(), out.resolve(), a.src_c.resolve() if a.src_c else None)
     src = a.src.resolve()
     out = (a.out or (SRC / "build" / "modules" if SRC else src.parent) / (src.stem + ".mmod")).resolve()
     if any(not d.startswith("-D") for d in rest):
