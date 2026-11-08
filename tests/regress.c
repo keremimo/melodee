@@ -89,9 +89,9 @@ static void blk(void)
     int32_t *o = last_out;
     uint32_t i, k;
     mix_block(o, CTL);
-    for (i = 0; i < 2u * CTL; i++) {
-        int32_t x = o[i], a = x < 0 ? -x : x;
-        uint32_t u = (uint32_t)x;
+    for (i = 0; i < 2u * CTL; i++) {                   /* the hash: the bus itself; the numbers: its Q15, rounded */
+        uint32_t u = (uint32_t)o[i];
+        int32_t x = (o[i] + (MIX_ONE >> 1)) >> MIX_FRAC, a = x < 0 ? -x : x;
         for (k = 0; k < 4u; k++) {
             R.hash ^= (u >> (8u * k)) & 0xFFu;
             R.hash *= 0x100000001B3ull;

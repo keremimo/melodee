@@ -288,22 +288,22 @@ static void volume_controls(void)
         for (uint32_t i = 0; i < UA_RING; i++) { ua.play[2*i] = 2000; ua.play[2*i+1] = -2000; }
         int32_t out[64], stems[128];
         for (uint32_t i = 0; i < 32; i++)
-            for (uint32_t ch = 0; ch < 4; ch++) stems[i*4+ch] = (int32_t)(500 * (ch + 1));
+            for (uint32_t ch = 0; ch < 4; ch++) stems[i*4+ch] = (int32_t)(500 * (ch + 1)) * 256;   /* (the bus: Q15 << 8) */
         int32_t previous = 2000;
         for (uint32_t phase = 0; phase < 3; phase++) {
             if (!phase) set_feature(2, -6 * 256);
             else set_feature(1, phase == 1);
             assert(ua.pw == 800 && ua.play_alt == alt && ua.cap_alt == alt);
             for (uint32_t b = 0; b < 4; b++) {
-                for (uint32_t i = 0; i < 32; i++) { out[2*i] = 1000; out[2*i+1] = -1000; }
+                for (uint32_t i = 0; i < 32; i++) { out[2*i] = 1000 * 256; out[2*i+1] = -1000 * 256; }
                 uint32_t at = ua.cw;
                 ua_audio(out, stems, 32, 4096);
                 for (uint32_t i = 0; i < 32; i++) {
-                    int32_t sample = out[2*i] - 1000;
+                    int32_t sample = (out[2*i] - 1000 * 256) >> 8;   /* (the playback heard, Q15) */
                     assert(sample >= 0 && sample <= 2000 && sample - previous <= 16 && previous - sample <= 16);
                     previous = sample;
                     for (uint32_t ch = 0; ch < channels; ch++)
-                        assert((ch<2u?ua.cap[(at+i)*2u+ch]:ua_track_extra[(at+i)*2u+ch-2u]) == (channels == 4 ? stems[i*4+ch] : stems[i*2+ch]));   /* (stereo: the unity pairs, #103) */
+                        assert((ch<2u?ua.cap[(at+i)*2u+ch]:ua_track_extra[(at+i)*2u+ch-2u]) == (channels == 4 ? stems[i*4+ch] : stems[i*2+ch]) / 256);   /* (stereo: the unity pairs, #103) */
                 }
             }
             assert(previous == (phase == 1 ? 0 : (2000 * 16423) >> 15));
@@ -338,8 +338,10 @@ static void capture_pipeline(void)
         ua_hw_stop();
         assert(ua_set_interface(3, alt) && ua_set_interface(UA_IF_CAP, alt));
         for (uint32_t i = 0; i < UA_RING; i++)
-            for (uint32_t ch = 0; ch < ua_cap_channels; ch++)
+            for (uint32_t ch = 0; ch < ua_cap_channels; ch++) {
                 (ch<2u?ua.cap:ua_track_extra)[i*2u+(ch%2u)] = (int16_t)(1000 * (ch + 1));
+                (ch<2u?ua.cap_lo:ua_track_extra_lo)[i*2u+(ch%2u)] = 0;
+            }
         ua.cw = 800;
         checked_sends = 0;
         for (uint32_t packet = 0; packet < 6; packet++) {
@@ -368,7 +370,7 @@ static void capture_pipeline(void)
             if (packet >= 3)
                 for (uint32_t ch = 0; ch < ua_cap_channels; ch++)
                     assert(ua_decode(active + ch * ua_sample_bytes(alt), ua_sample_bytes(alt))
-                           == (int16_t)(1000 * (ch + 1)));
+                           == 1000 * (int32_t)(ch + 1) * 256);
         }
         assert(checked_sends == 6);
         assert(ua_set_interface(UA_IF_CAP, 0) && !ua_tx_bytes);
@@ -667,7 +669,7 @@ int main(void)
     /* Failure must leave an already running stereo stream intact. */
     ua_test_memory_limit=0;ua_tracks_set(1,19000);
     assert(ua_off_apply(19600)==2&&usb.up&&usb.config&&ua.cap_alt==2&&ua.cw==700&&ua.cap[0]==12345&&!ua_tracks_want&&!ua_track_extra);
-    ua_test_memory_limit=4096;
+    ua_test_memory_limit=UA_TRACKS_BYTES;
     ua_tracks_set(1, 20000); ua_tracks_set(1, 20300);
     assert((device[12] | device[13] << 8) == stereo_revision);
     assert(!ua_off_apply(20599) && ua_cap_channels == 2);
@@ -675,7 +677,7 @@ int main(void)
     usb_retry(21600); usb.config = 1;
     assert(!ua.cap_alt && ua.cw == ua.cr);
     assert(ua_cap_channels == 4 && ua_set_interface(UA_IF_CAP, 2) && ep_cnt[2] == 528);
-    assert(ua_track_extra&&ua_test_memory_bytes==4096u);
+    assert(ua_track_extra&&ua_test_memory_bytes==UA_TRACKS_BYTES);
     assert(get_desc(0x100, &device, &device_len));
     assert((device[12] | device[13] << 8) != stereo_revision);
     for (uint32_t i = 0; i < ep_cnt[2]; i++) assert(!((uint8_t *)ep_tadr[2])[i]);

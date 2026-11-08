@@ -120,7 +120,7 @@ static void render_case(int parallel, uint32_t alg, uint32_t eng, uint32_t voice
         if (pos == CTL * 64u) for (uint32_t i = 0; i < voices; i++) trk_note_off(&trk[i % NPART], 48u + i);
         if (pos == CTL * 96u) for (uint32_t i = 0; i < voices; i++) trk_note_on(&trk[i % NPART], 60u + i, 110u);
         if (pos == CTL * 160u) { trk[0].eng_req = 0; trk[0].p[P_E0] = 1; }
-        mix_block(out, CTL);
+        mix_block_q15(out, CTL);
         assert(!fm6_pending);
         assert(AW_LOAD(&audio_worker.request) == AW_LOAD(&audio_worker.complete));
         if (!parallel) memcpy(reference + 2u * pos, out, sizeof out);
@@ -232,7 +232,7 @@ static void prophet_retire(void)
         int32_t out[2*CTL];
         audio_worker_check();
         if(pos==CTL*16u)injected_faults=1;
-        mix_block(out,CTL);
+        mix_block_q15(out,CTL);
         assert(!p5_pending && AW_LOAD(&audio_worker.request)==AW_LOAD(&audio_worker.complete));
         if(pos==CTL*17u){assert(!audio_worker_online);jobs=audio_worker.jobs;}
         if(pos>CTL*16u)for(uint32_t i=0;i<2u*CTL;i++)if(abs(out[i])>peak)peak=abs(out[i]);
@@ -289,7 +289,7 @@ static void prophet_case(int parallel,uint32_t preset,uint32_t mode,uint32_t voi
         if(pos==CTL*128u){patch->raw[P5_FILTER_REV]^=1;patch->raw[P5_CUTOFF]=110;}
         if(pos==CTL*160u)trk[0].eng_req=ENGI_FM6;
         if(pos==CTL*192u){panic_req=1;events_block(CTL);}
-        mix_block(out,CTL);
+        mix_block_q15(out,CTL);
         assert(!p5_pending && !fm6_pending);
         assert(AW_LOAD(&audio_worker.request)==AW_LOAD(&audio_worker.complete));
         if(!parallel)memcpy(reference+2u*pos,out,sizeof out);
@@ -333,7 +333,7 @@ static void shared_bus_case(int parallel,uint32_t type)
     song.g[G_MFXTYPE]=type;song.g[G_MFX2TYPE]=FX_TAPE;song.g[G_MFX3TYPE]=FX_ROOM;
     for(uint32_t k=0;k<NPART;k++)trk[k].p[P_FXSEND]=40+k*20;
     audio_worker_online=1;serial_render=!parallel;
-    for(uint32_t frame=0;frame<FRAMES;frame+=CTL){int32_t out[2*CTL];mix_block(out,CTL);assert(!fx_bus_pending && AW_LOAD(&audio_worker.complete)==AW_LOAD(&audio_worker.request));
+    for(uint32_t frame=0;frame<FRAMES;frame+=CTL){int32_t out[2*CTL];mix_block_q15(out,CTL);assert(!fx_bus_pending && AW_LOAD(&audio_worker.complete)==AW_LOAD(&audio_worker.request));
         if(parallel)assert(!memcmp(out,reference+frame*2,sizeof out));else memcpy(reference+frame*2,out,sizeof out);
     }
     for(uint32_t i=G_MFXTYPE;i<G_COUNT;i++)song.g[i]=GP[i].def;memset(fx_state,0,sizeof fx_state);serial_render=0;

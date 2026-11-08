@@ -151,14 +151,14 @@ static void separate_sends(void)
     host_preset(TSEL,ENGI_FM6,8);TSEL->p[P_SUS]=127;TSEL->p[P_LEVEL]=127;TSEL->p[P_PAN]=-64;
     TSEL->p[P_FXSEND2]=127;trk_note_on(TSEL,60,100);int32_t probe[CTL*2];uint64_t send_energy=0;
     for(uint32_t k=0;k<32;k++){
-        mix_block(probe,CTL);
+        mix_block_q15(probe,CTL);
         for(uint32_t i=0;i<CTL;i++){
             assert(!fx_send_l[i] && !fx_send_r[i] && !fx_send_extra_r[0][i] && !fx_send_extra_l[1][i] && !fx_send_extra_r[1][i]);
             send_energy+=abs(fx_send_extra_l[0][i]);assert(probe[2*i]>=-32767 && probe[2*i]<=32767);
         }
     }
     assert(send_energy>1000);TSEL->p[P_LEVEL]=0;
-    mix_block(probe,CTL);
+    mix_block_q15(probe,CTL);
     for(uint32_t i=0;i<CTL;i++)assert(!fx_send_extra_l[0][i]);
     TSEL->p[P_LEVEL]=127;
     TSEL->p[P_FXSEND]=20;TSEL->p[P_FXSEND2]=71;TSEL->p[P_FXSEND3]=99;
@@ -590,10 +590,10 @@ int main(int argc,char **argv)
         trk[k].p[P_FXTYPE]=(int16_t)(FX_PHASER+k);trk[k].p[P_FXMIX]=100;trk_note_on(&trk[k],48+k*7u,100);
     }
     for(uint32_t k=0;k<256u;k++){
-        mix_block(out,CTL);for(uint32_t i=0;i<CTL*2u;i++)assert(out[i]>=-32767 && out[i]<=32767);
+        mix_block_q15(out,CTL);for(uint32_t i=0;i<CTL*2u;i++)assert(out[i]>=-32767 && out[i]<=32767);
     }
     for(uint32_t k=0;k<NPART;k++)trk[k].p[P_MUTE]=1;
-    for(uint32_t k=0;k<2048u;k++)mix_block(out,CTL);
+    for(uint32_t k=0;k<2048u;k++)mix_block_q15(out,CTL);
     for(uint32_t i=0;i<CTL*2u;i++)assert(abs(out[i])<=1);
     puts("FX: tails, allocator exhaustion/recovery, FX button/knobs/Esc and project round trip: OK");return 0;
 }

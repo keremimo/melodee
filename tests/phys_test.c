@@ -176,7 +176,7 @@ static void torture(void)
             trk[0].p[P_E0] = (int16_t)((md + (ph > 5u)) % PM_COUNT);   /* the model switches after 5 / 7 */
             trk[0].p[P_ED_PIT] = (int16_t)(((f / 64u) % 128u) - 64);  /* pitch swept by the envelope */
             trk[0].p[P_ED_FLT] = 63;
-            mix_block(o, CTL);
+            mix_block_q15(o, CTL);
             for (k = 0; k < 2u * CTL; k++)
                 if (abs(o[k]) > peak)
                     peak = abs(o[k]);
@@ -233,7 +233,7 @@ static double cpu(uint32_t e, uint32_t pi, const int16_t *pe, uint32_t notes)
         for (k = 0; k < nb / 2u + nb; k++) {
             if (k == nb / 2u)
                 i0 = instr_now();
-            mix_block(o, CTL);
+            mix_block_q15(o, CTL);
         }
         r = i0 ? (double)(instr_now() - i0) / (nb * CTL) : 0;
         if (write(fd[1], &r, sizeof r) != sizeof r)
@@ -301,7 +301,7 @@ static void demo_write(const char *dir, const char *name, uint32_t secs, void (*
         int32_t o[2 * CTL];
         uint32_t k;
         play(f, arg);
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (k = 0; k < CTL; k++)
             wav_put(w, o[2 * k], o[2 * k + 1]);
     }

@@ -101,7 +101,7 @@ static void demo(const char *dir, const char *name, uint32_t preset, int metal)
             if (s >= 32u && q == 7) trk_note_on(&trk[0], 56, 90);
             if (s >= 32u && q == 15) trk_note_on(&trk[0], 75, 90);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (uint32_t i = 0; i < CTL; i++)
             wav_put(f, o[2 * i], o[2 * i + 1]);
     }
@@ -340,7 +340,7 @@ int main(int argc, char **argv)
                     trk_note_on(&trk[0], pads_note(&trk[0], s), 127);
                 for (i = 0; i < FS / CTL; i++) {
                     int32_t o[2 * CTL];
-                    mix_block(o, CTL);
+                    mix_block_q15(o, CTL);
                     for (k = 0; k < 2u * CTL; k++)
                         pk = abs(o[k]) > pk ? abs(o[k]) : pk;
                 }

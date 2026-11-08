@@ -148,7 +148,7 @@ static void silent_and_saved(void)
     t->p[P_M1SRC] = 1; t->p[P_M1DST] = MD_PITCH; t->p[P_M1AMT] = 63;
     trk_note_on(t, 60, 99); trk_note_off(t, 60); mo_r = mo_w;
     int32_t out[CTL * 2]; uint32_t lfo = t->lfo_ph;
-    for (uint32_t k = 0; k < 10; k++) mix_block(out, CTL);
+    for (uint32_t k = 0; k < 10; k++) mix_block_q15(out, CTL);
     for (uint32_t k = 0; k < NELEM(out); k++) assert(!out[k]);
     assert(!gates() && !midi_insert.pending && !midi_verb[0] && t->lfo_ph == lfo);
     assert(!resource[RES_ENGINE0].size);
@@ -334,7 +334,7 @@ static void midi_only_tracks(void)
     trk_note_on(&trk[5], 60, 90); pop_midi(0x95, 60, 90);
     trk_note_off(&trk[5], 60); pop_midi(0x85, 60, 0); empty_midi();
     for (uint32_t v = 0; v < NVOICE; v++) assert(!midi_voice[v].active);
-    int32_t out[CTL * 2]; mix_block(out, CTL);
+    int32_t out[CTL * 2]; mix_block_q15(out, CTL);
     /* the music: track 5 (index 4) two banks, track 7 (index 6) channel 11 on its third bank, a song column, a take */
     bank_fill(4, 0, 48, 16, 16); bank_fill(4, 3, 50, 64, 64);
     bank_fill(6, 2, 70, 5, 8); trk[6].p[P_E0] = 11;

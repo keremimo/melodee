@@ -89,7 +89,7 @@ static void demo(const char *dir, const char *name, int digi)
             if (b >= 28) trk_note_on(&trk[0], b == 28 ? 50 : b == 29 ? 47 : b == 30 ? 45 : 41, 115);
             if (b == 12) trk_note_on(&trk[0], 39, 100);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (uint32_t i = 0; i < CTL; i++)
             wav_put(f, o[2 * i], o[2 * i + 1]);
     }
@@ -332,7 +332,7 @@ int main(int argc, char **argv)
                 trk_note_on(&trk[0], pads_note(&trk[0], s), 127);
             for (i = 0; i < FS / CTL; i++) {           /* (the mix, as the 808's corners are checked) */
                 int32_t o[2 * CTL];
-                mix_block(o, CTL);
+                mix_block_q15(o, CTL);
                 for (k = 0; k < 2u * CTL; k++)
                     pk = abs(o[k]) > pk ? abs(o[k]) : pk;
             }

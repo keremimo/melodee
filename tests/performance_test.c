@@ -19,24 +19,29 @@ static void setup(void)
 }
 static void capture_transitions(void)
 {
-    setup();trk_note_on(&trk[0],60,100);poison_capture();mix_block(out,CTL);
+    setup();trk_note_on(&trk[0],60,100);poison_capture();mix_block_q15(out,CTL);
     assert(!track_capture_on);assert_capture_poison();
-    ua.cap_alt=1;usb.config=0;mix_block(out,CTL);assert(!track_capture_on);assert_capture_poison();
-    usb.config=1;mix_block(out,CTL);assert(track_capture_on);
+    ua.cap_alt=1;usb.config=0;mix_block_q15(out,CTL);assert(!track_capture_on);assert_capture_poison();
+    usb.config=1;mix_block_q15(out,CTL);assert(track_capture_on);
     int sounding=0;
     for(uint32_t i=0;i<CTL;i++){
         sounding|=track_capture[i*NPART];
         for(uint32_t k=1;k<NPART;k++)assert(!track_capture[i*NPART+k]);
     }
-    assert(sounding);ua_audio(out,track_capture,CTL,4096);assert(ua.cw==CTL);
-    for(uint32_t i=0;i<CTL*NPART;i++)assert((i%4u<2u?ua.cap[i/4u*2u+i%4u]:ua_track_extra[i/4u*2u+i%4u-2u])==ua_clip(track_capture[i]));
-    ua.cap_alt=0;poison_capture();mix_block(out,CTL);assert_capture_poison();
+    ua.cap_alt=2;assert(sounding);ua_audio(out,track_capture,CTL,4096);assert(ua.cw==CTL);   /* (PCM24: the stems as they are) */
+    for(uint32_t i=0;i<CTL*NPART;i++){
+        int32_t x=ua_clip24(track_capture[i]);
+        assert((i%4u<2u?ua.cap[i/4u*2u+i%4u]:ua_track_extra[i/4u*2u+i%4u-2u])==(int16_t)(x>>8));
+        assert((i%4u<2u?ua.cap_lo[i/4u*2u+i%4u]:ua_track_extra_lo[i/4u*2u+i%4u-2u])==(uint8_t)x);
+    }
+    ua.cap_alt=0;poison_capture();mix_block_q15(out,CTL);assert_capture_poison();
     for(uint32_t k=0;k<NPART;k++)for(uint32_t v=0;v<NVOICE;v++)trk[k].v[v].active=0;
-    ua.cap_alt=1;mix_block(out,CTL);
+    ua.cap_alt=1;mix_block_q15(out,CTL);
     for(uint32_t i=0;i<CTL*NPART;i++)assert(!track_capture[i]);
     ua_audio(out,track_capture,CTL,4096);assert(ua.cw==2u*CTL);
-    for(uint32_t i=CTL*NPART;i<2u*CTL*NPART;i++)assert(!(i%4u<2u?ua.cap[i/4u*2u+i%4u]:ua_track_extra[i/4u*2u+i%4u-2u]));
-    usb.suspended=1;poison_capture();mix_block(out,CTL);assert(!track_capture_on);assert_capture_poison();
+    for(uint32_t i=CTL*NPART;i<2u*CTL*NPART;i++)assert(!(i%4u<2u?ua.cap[i/4u*2u+i%4u]:ua_track_extra[i/4u*2u+i%4u-2u]) &&
+        !(i%4u<2u?ua.cap_lo[i/4u*2u+i%4u]:ua_track_extra_lo[i/4u*2u+i%4u-2u]));
+    usb.suspended=1;poison_capture();mix_block_q15(out,CTL);assert(!track_capture_on);assert_capture_poison();
     uint32_t written=ua.cw;ua_audio(out,0,CTL,4096);assert(ua.cw==written);
     puts("performance: capture off/configuration/suspend/resume produces no stale stems");
 }
@@ -46,15 +51,15 @@ static void cache_transitions(void)
     for(int32_t k=-64;k<=64;k+=16){
         t->p[P_LEVEL]=(int16_t)(k+64);t->p[P_PAN]=(int16_t)k;
         t->p[P_RESERVED34]=(int16_t)(k+64);t->p[P_RESERVED36]=(int16_t)(64-k);song.g[G_TUNE]=(int16_t)k;
-        mix_block(out,CTL);
+        mix_block_q15(out,CTL);
         assert(mix_cache[0].lvl==LEVEL_Q12[t->p[P_LEVEL]&127]);
         assert(mix_cache[0].gl==4096-(k>0?k*64:0) && mix_cache[0].gr==4096+(k<0?k*64:0));
         int32_t pitch=k>=0?k*16/100:-((-k*16+99)/100);
         assert(tune_cache.pitch==pitch && tune_cache.fine==(k*16-pitch*100)*2367/16000);
     }
     t->p[P_PAN]=0;t->p[P_M1SRC]=MS_MODW;t->p[P_M1DST]=MD_PAN;t->p[P_M1AMT]=63;t->mw=127;
-    mix_block(out,CTL);assert(mix_cache[0].pan>0 && t->p[P_PAN]==0);
-    t->mw=0;mix_block(out,CTL);assert(mix_cache[0].pan==0 && t->p[P_PAN]==0);
+    mix_block_q15(out,CTL);assert(mix_cache[0].pan>0 && t->p[P_PAN]==0);
+    t->mw=0;mix_block_q15(out,CTL);assert(mix_cache[0].pan==0 && t->p[P_PAN]==0);
     puts("performance: derived caches follow edits and effective matrix parameters");
 }
 static void silent_clocks(void)

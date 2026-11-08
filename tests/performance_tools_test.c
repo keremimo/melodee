@@ -50,7 +50,7 @@ static void test_click_volume(void)
             settings_click_level=PCT[l];song.master_q12=4096;
             memset(reference,0,sizeof reference);click_req=beat;click_render(reference,CTL);
             uint32_t peak=0;
-            for(uint32_t i=0;i<2*CTL;i++) { uint32_t a=(uint32_t)abs(reference[i]);if(a>peak)peak=a; }
+            for(uint32_t i=0;i<2*CTL;i++) { uint32_t a=(uint32_t)abs(reference[i])>>MIX_FRAC;if(a>peak)peak=a; }   /* (Q15) */
             assert(PCT[l]?peak>previous_peak:!peak);previous_peak=peak;
             /* the level is its own: MASTER (the mixer) leaves it as it is */
             for(uint32_t master=0;master<=4096;master+=1024) {
@@ -113,8 +113,8 @@ static void test_midi_and_levels(void)
     reset_tools();song.rec=1;seq_start();seq_advance(0);midi_event(0xb0,0,7,17);
     assert(motion.count==1 && motion.event[0].param==P_LEVEL && motion.event[0].value==17);seq_stop();
     reset_tools();track_select(3);TSEL->p[P_LN0]=0;trk_note_on(TSEL,36,127);
-    int32_t out[2*CTL];mix_block(out,CTL);for(uint32_t i=0;i<2*CTL;i++)assert(out[i]==0);
-    TSEL->p[P_LN0]=127;mix_block(out,CTL);int energy=0;for(uint32_t i=0;i<2*CTL;i++)energy|=out[i];assert(energy);
+    int32_t out[2*CTL];mix_block_q15(out,CTL);for(uint32_t i=0;i<2*CTL;i++)assert(out[i]==0);
+    TSEL->p[P_LN0]=127;mix_block_q15(out,CTL);int energy=0;for(uint32_t i=0;i<2*CTL;i++)energy|=out[i];assert(energy);
 }
 static void test_compatibility(void)
 {

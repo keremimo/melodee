@@ -14,7 +14,7 @@ static uint32_t active_count(void)
 static int32_t audio(uint32_t blocks)
 {
     int32_t out[2*CTL],peak=0;
-    for(uint32_t b=0;b<blocks;b++){mix_block(out,CTL);for(uint32_t i=0;i<2*CTL;i++){int32_t a=out[i]<0?-out[i]:out[i];if(a>peak)peak=a;}}
+    for(uint32_t b=0;b<blocks;b++){mix_block_q15(out,CTL);for(uint32_t i=0;i<2*CTL;i++){int32_t a=out[i]<0?-out[i]:out[i];if(a>peak)peak=a;}}
     return peak;
 }
 static int voices909(void)

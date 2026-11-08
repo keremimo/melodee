@@ -78,7 +78,7 @@ static void overload(void)
           lead && bass && extra && lead->gate && bass->gate && extra->stage == 4u && shed_count == 1u);
     check("part diagnostics attribute the cut to its actual track",
           shed_part[0] == 0u && shed_part[1] == 1u && voice_kills_part[0] == 0u && voice_kills_part[1] == 1u);
-    mix_block(out, CTL);
+    mix_block_q15(out, CTL);
     check("overload frees its victim within one control block", extra && !extra->active && sounding() == 2u);
     shed_voice();
     check("a lead alone on each part stays protected", lead->gate && bass->gate && shed_count == 1u);
@@ -87,21 +87,21 @@ static void overload(void)
     host_preset(&trk[0], ENGI_DRUM, 0);
     trk_note_on(&trk[0], 36, 100); trk_note_on(&trk[0], 38, 100);
     lead = held(&trk[0], 36); extra = held(&trk[0], 38);
-    shed_voice(); mix_block(out, CTL);
+    shed_voice(); mix_block_q15(out, CTL);
     check("overload frees a held one-shot drum without waiting for its decay",
           lead && extra && lead->active && !extra->active && sounding() == 1u);
 
     fresh();
     trk[0].p[P_VOICE] = V_UNISON;
     trk_note_on(&trk[0], 55, 100);
-    shed_voice(); mix_block(out, CTL);
+    shed_voice(); mix_block_q15(out, CTL);
     check("UNISON loses an extra voice and retains its lead", trk[0].v[0].active && trk[0].v[0].gate && sounding() == NPOLY - 1u);
 
     for (mode = V_MONO; mode <= V_LEGATO; mode++) {
         fresh(); trk[0].p[P_VOICE] = V_POLY;
         for (i = 0; i < NPOLY; i++) trk_note_on(&trk[0], 48u + 2u * i, 100);
         trk[0].p[P_VOICE] = (int16_t)mode;
-        shed_voice(); mix_block(out, CTL);
+        shed_voice(); mix_block_q15(out, CTL);
         check("overload can reclaim stale POLY voices after a MONO / LEGATO change",
               shed_count == 1u && trk[0].v[0].gate && sounding() == NPOLY - 1u);
     }

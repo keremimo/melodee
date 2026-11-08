@@ -18,17 +18,22 @@ static void pcm(uint8_t *p, uint32_t frames, int16_t l, int16_t r)
     }
 }
 
-static void block(int32_t l, int32_t r, uint32_t master, int32_t *out)
+/* a Q15 value on the bus ua_audio takes (mix.c: Q15 << 8, PCM24's scale) */
+#define S(x) ((int32_t)(x) * 256)
+
+static void block(int32_t l, int32_t r, uint32_t master, int32_t *out)   /* l, r, the stems: Q15 */
 {
     uint32_t i;
+    l = S(l);
+    r = S(r);
     int32_t tracks[32 * UA_CAP_CHANNELS];
     for (i = 0; i < 32; i++) {
         out[2 * i] = l;
         out[2 * i + 1] = r;
         tracks[4 * i] = l;
         tracks[4 * i + 1] = r;
-        tracks[4 * i + 2] = 300;
-        tracks[4 * i + 3] = -700;
+        tracks[4 * i + 2] = S(300);
+        tracks[4 * i + 3] = S(-700);
     }
     if (ua_cap_channels == 2u)                    /* stereo: the mixer's unity copy, L R a frame (#103) */
         for (i = 0; i < 32; i++) { tracks[2 * i] = l; tracks[2 * i + 1] = r; }
@@ -47,21 +52,21 @@ static void routing(void)
     for (i = 0; i < 16; i++)
         ua_receive(packet, 128);
     block(1000, -1000, 4096, out);
-    assert(out[0] == 3000 && out[1] == -3000);
+    assert(out[0] == S(3000) && out[1] == S(-3000));
     assert(ua.cap[0] == 1000 && ua.cap[1] == -1000); /* no playback loopback */
     assert(ua_track_extra[0] == 300 && ua_track_extra[1] == -700);
     uint32_t written=ua.cw;
-    for(i=0;i<32u;i++){out[2u*i]=1000;out[2u*i+1u]=-1000;}
+    for(i=0;i<32u;i++){out[2u*i]=S(1000);out[2u*i+1u]=S(-1000);}
     ua_audio(out,0,32,4096);
-    assert(ua.cw==written && out[0]==3000 && out[1]==-3000);
+    assert(ua.cw==written && out[0]==S(3000) && out[1]==S(-3000));
     block(1000, -1000, 0, out);
-    assert(out[0] == 1000 && out[1] == -1000);
+    assert(out[0] == S(1000) && out[1] == S(-1000));
     assert(ua.cap[64] == 1000 && ua_track_extra[65] == -700); /* MASTER does not scale stems */
     block(32000, -32000, 4096, out);
-    assert(out[0] == 32767 && out[1] == -32768);
+    assert(out[0] == 8388607 && out[1] == -8388608);     /* (PCM24's full scale) */
     ua.play_alt = 0;
     block(1000, -1000, 4096, out);
-    assert(out[0] == 1000 && out[1] == -1000);
+    assert(out[0] == S(1000) && out[1] == S(-1000));
     ua_reset();
     assert(!ua.play_alt && !ua.cap_alt && ua.pw == ua.pr && ua.cw == ua.cr);
 }
@@ -88,14 +93,14 @@ static void drift(int ppm, int play, int cap)
             for (i = 0; i < 8; i++) {
                 block(1000, -1000, 4096, out);
                 if (play && ms > 1000)
-                    assert(out[0] == 3000 && out[1] == -3000);
+                    assert(out[0] == S(3000) && out[1] == S(-3000));
             }
         }
         if (play) {
             host_phase += feedback;
             for (i = 0; i < host_phase >> 14; i++) {
-                ua_encode(packet + i * pw * 2u, pw, 2000);
-                ua_encode(packet + i * pw * 2u + pw, pw, -2000);
+                ua_encode(packet + i * pw * 2u, pw, 2000, 0);
+                ua_encode(packet + i * pw * 2u + pw, pw, -2000, 0);
             }
             ua_receive(packet, (host_phase >> 14) * pw * 2u);
             host_phase &= 16383;
@@ -108,11 +113,11 @@ static void drift(int ppm, int play, int cap)
             assert(bytes <= 45u * cw * ua_cap_channels && bytes >= 43u * cw * ua_cap_channels && bytes % (cw * ua_cap_channels) == 0);
             if (ms > 1000)
                 for (i = 0; i < bytes; i += cw * ua_cap_channels) {
-                    assert(ua_decode(captured + i, cw) == 1000);
-                    assert(ua_decode(captured + i + cw, cw) == -1000);
+                    assert(ua_decode(captured + i, cw) == S(1000));
+                    assert(ua_decode(captured + i + cw, cw) == S(-1000));
                     if (ua_cap_channels == 4u) {
-                        assert(ua_decode(captured + i + cw * 2u, cw) == 300);
-                        assert(ua_decode(captured + i + cw * 3u, cw) == -700);
+                        assert(ua_decode(captured + i + cw * 2u, cw) == S(300));
+                        assert(ua_decode(captured + i + cw * 3u, cw) == S(-700));
                     }
                 }
         }
@@ -143,11 +148,11 @@ static void recovery(void)
         ua_receive(packet, 128);
     for (i = 0; i < 18; i++)
         block(1000, -1000, 4096, out);
-    assert(ua.play_underruns == 1 && out[0] == 1000);
+    assert(ua.play_underruns == 1 && out[0] == S(1000));
     for (i = 0; i < 16; i++)
         ua_receive(packet, 128);
     block(1000, -1000, 4096, out);
-    assert(out[0] == 3000);                     /* playback re-primes */
+    assert(out[0] == S(3000));                  /* playback re-primes */
     for (i = 0; i < 33; i++)
         block(1000, -1000, 4096, out);
     assert(ua.cap_overruns > 0);                /* unpolled capture stays bounded */
@@ -162,7 +167,7 @@ static void recovery(void)
     for (i = 0; i < 16; i++)
         ua_receive(packet, 128);
     block(1000, -1000, 4096, out);
-    assert(out[0] == 3000 && ua.pw - ua.pr == 480);
+    assert(out[0] == S(3000) && ua.pw - ua.pr == 480);
 }
 
 static void pcm24(void)
@@ -171,7 +176,8 @@ static void pcm24(void)
         {0xFF, 0xFF, 0x7F}, {0, 0, 0x80}, {0xFF, 0xFF, 0xFF},
         {0xFF, 0, 0}, {0, 0x34, 0x12}, {0, 0xCC, 0xED}
     };
-    static const int16_t values[] = {32767, -32768, -1, 0, 0x1234, -0x1234};
+    static const int16_t values[] = {32767, -32768, -1, 0, 0x1234, -0x1234};   /* the top 16 bits */
+    static const uint8_t lows[] = {0xFF, 0, 0xFF, 0xFF, 0, 0};                    /* .. and the 8 below */
     uint8_t packet[UA_PACKET];
     int32_t out[64];
     ua_reset();
@@ -182,7 +188,8 @@ static void pcm24(void)
     }
     ua_receive(packet, 36);
     for (uint32_t i = 0; i < 6; i++)
-        assert(ua.play[2u * i] == values[i] && ua.play[2u * i + 1u] == values[i]);
+        assert(ua.play[2u * i] == values[i] && ua.play[2u * i + 1u] == values[i] &&
+               ua.play_lo[2u * i] == lows[i] && ua.play_lo[2u * i + 1u] == lows[i]);
     uint32_t bad = ua.bad_packets;
     ua_receive(packet, UA_PLAY_PACKET - 1);
     ua_receive(packet, UA_PLAY_PACKET + 6);
@@ -194,8 +201,30 @@ static void pcm24(void)
     for (uint32_t i = 0; i < n; i += 12u) {
         assert(packet[i] == 0 && packet[i + 1u] == 0 && packet[i + 2u] == 0x80);
         assert(packet[i + 3u] == 0 && packet[i + 4u] == 0xFF && packet[i + 5u] == 0x7F);
-        assert(packet[i + 6u] == 0 && ua_decode(packet + i + 6u, 3) == 300);
-        assert(packet[i + 9u] == 0 && ua_decode(packet + i + 9u, 3) == -700);
+        assert(packet[i + 6u] == 0 && ua_decode(packet + i + 6u, 3) == S(300));
+        assert(packet[i + 9u] == 0 && ua_decode(packet + i + 9u, 3) == S(-700));
+    }
+    /* PCM24 both ways keeps the 8 bits below PCM16: a computer's quiet sample to the output, the bus's to the take */
+    ua_reset();
+    ua.play_alt = ua.cap_alt = 2;
+    for (uint32_t i = 0; i < 32u; i++) {
+        static const uint8_t quiet[2][3] = {{0x2B, 0x01, 0x00}, {0xD5, 0xFE, 0xFF}};   /* +299, -299 */
+        memcpy(packet + i * 6u, quiet[0], 3);
+        memcpy(packet + i * 6u + 3u, quiet[1], 3);
+    }
+    for (uint32_t i = 0; i < 16; i++) ua_receive(packet, 192);
+    memset(out, 0, sizeof out);
+    {
+        int32_t tracks[32 * UA_CAP_CHANNELS];
+        for (uint32_t i = 0; i < 32u * UA_CAP_CHANNELS; i++) tracks[i] = (int32_t)(i & 3u) * 77 - 100;
+        ua_audio(out, tracks, 32, 4096);
+        assert(out[0] == 299 && out[1] == -299);
+        for (uint32_t i = 0; i < 32u; i++)
+            for (uint32_t ch = 0; ch < 4u; ch++) {
+                const int16_t *hi = ch < 2u ? ua.cap : ua_track_extra;
+                const uint8_t *lo = ch < 2u ? ua.cap_lo : ua_track_extra_lo;
+                assert(hi[i * 2u + (ch & 1u)] * 256 + lo[i * 2u + (ch & 1u)] == tracks[i * 4u + ch]);
+            }
     }
     /* Maximum PCM24 packet fits, including across unsigned ring-index wrap. */
     ua_play_reset();
@@ -205,7 +234,7 @@ static void pcm24(void)
     assert(ua.pw - ua.pr == 45 && ua.bad_packets == bad + 2u);
     ua_cap_reset();
     ua.cw = ua.cr = 0xFFFFFFF0u;
-    for (uint32_t i = 0; i < 16; i++) block(1234, -2345, 0, out);
+    for (uint32_t i = 0; i < 16; i++) block(1234, -2345, 0, out);   /* (Q15 values: block puts them on the bus) */
     ua.cap_fill_q8 = (UA_TARGET + 512u) * 256u;
     ua.cap_frac = 16383;
     uint8_t guarded[UA_PACKET + 2];
@@ -244,10 +273,10 @@ static void tone(int capture, double frequency, uint32_t channel, uint32_t alt)
         if (n > UA_RATE - input) n = UA_RATE - input;
         for (uint32_t i = 0; i < n; i++) {
             int16_t sample = (int16_t)lrint(10000 * sin(6.283185307179586 * frequency * input++ / UA_RATE));
-            if (capture) tracks[i * 4u + channel] = sample;
+            if (capture) tracks[i * 4u + channel] = S(sample);
             else {
-                ua_encode(packet + i * 2u * width, width, sample);
-                ua_encode(packet + (i * 2u + 1u) * width, width, sample);
+                ua_encode(packet + i * 2u * width, width, sample, 0);
+                ua_encode(packet + (i * 2u + 1u) * width, width, sample, 0);
             }
         }
         if (capture) {
@@ -256,7 +285,7 @@ static void tone(int capture, double frequency, uint32_t channel, uint32_t alt)
             while (ua.cw - ua.cr >= UA_TARGET + 64u) {
                 uint32_t bytes = ua_transmit(packet);
                 for (uint32_t i = 0; i < bytes; i += 4u * width) {
-                    measure(&m, ua_decode(packet + i + channel * width, width), frequency, UA_RATE);
+                    measure(&m, ua_decode(packet + i + channel * width, width) / 256, frequency, UA_RATE);
                     for (uint32_t ch = 0; ch < 4; ch++)
                         if (ch != channel) assert(ua_decode(packet + i + ch * width, width) == 0);
                 }
@@ -266,7 +295,7 @@ static void tone(int capture, double frequency, uint32_t channel, uint32_t alt)
             while (ua.pw - ua.pr >= UA_TARGET + 32u) {
                 block(0, 0, 4096, out);
                 for (uint32_t i = 0; i < 32u; i++)
-                    measure(&m, out[i * 2u], frequency, UA_RATE);
+                    measure(&m, out[i * 2u] / 256, frequency, UA_RATE);
             }
         }
     }
@@ -308,7 +337,7 @@ int main(void)
     assert(ua_tracks_memory_prepare(0));
     ua_reset(); ua.cap_alt = 1;
     int32_t master[64];
-    for (uint32_t i = 0; i < 32; i++) {master[2*i] = 32767; master[2*i+1] = -32768;}
+    for (uint32_t i = 0; i < 32; i++) {master[2*i] = S(32767); master[2*i+1] = S(-32768);}
     ua_audio(master, 0, 32, 4096);
     assert(ua.cw == 32 && ua.cap[0] == 32767 && ua.cap[1] == -32768);
     for (int alt = 1; alt <= 2; alt++) {

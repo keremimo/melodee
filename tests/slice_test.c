@@ -178,7 +178,7 @@ static void blocks(uint32_t n)
 {
     int32_t o[2 * CTL];
     while (n--)
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
 }
 
 /* 5: a pattern on track 1 (SLICE preset pi, then edits), the sequencer for `bars` bars, a tail */
@@ -217,7 +217,7 @@ static int demo(const char *dir, const demo_t *dm)
         int32_t o[2 * CTL];
         if (f >= dm->bars * bar && f < dm->bars * bar + CTL)
             transport_req = 2;
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (i = 0; i < CTL; i++) {
             uint32_t a = (uint32_t)abs(o[2 * i]);
             peak = a > peak ? a : peak;
@@ -579,7 +579,7 @@ int main(int argc, char **argv)
                         blocks(1);                             /* (to its next loop) */
                     blocks(50);
                     for (k = 0; k < 200u; k++) {
-                        mix_block(o, CTL);
+                        mix_block_q15(o, CTL);
                         for (i = 0; i < 2u * CTL; i++) {
                             mn = o[i] < mn ? o[i] : mn;
                             mx = o[i] > mx ? o[i] : mx;
