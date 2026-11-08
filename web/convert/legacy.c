@@ -542,6 +542,57 @@ static uint32_t lg_project(const uint8_t *in, uint32_t n, uint8_t *out)
     return lg_fbks(out) ? 0x81u : 0u;
 }
 
+/* ---- the converter's calls (web/convert/convert.mjs; the native tests' lg_convert_dir makes the same): a 1.x backup's
+ * objects go in one at a time at cv_in, in this order: the projects (2..5, 64..91, then 0), the preset banks (6..28:
+ * every one in with cv_bank_in, then cv_banks, then cv_bank for each id), the kits (92..99), the settings (1). A call's
+ * 2.0 object is left at cv_out, its length the call's result. (Not scratch: the backup client's replies land there.) */
+#define CV_MAX 0x20000u
+static uint8_t cv_inb[CV_MAX], cv_outb[CV_MAX];
+_Static_assert(BANK_STORE_SIZE <= CV_MAX && sizeof(persist_t) + sizeof(v2_tmpl_t) <= CV_MAX, "cv_out: a 2.0 object fits");
+EXPORT(cv_in) uint8_t *cv_in(void) { return cv_inb; }
+EXPORT(cv_in_size) uint32_t cv_in_size(void) { return CV_MAX; }
+EXPORT(cv_out) uint8_t *cv_out(void) { return cv_outb; }
+EXPORT(cv_report) const char *cv_report(void) { return lg_rep; }
+EXPORT(cv_report_len) uint32_t cv_report_len(void) { return lg_rep_n; }
+/* project id (n bytes) -> its FBKS record: its length; 0: 1.x refused it */
+EXPORT(cv_project) uint32_t cv_project(uint32_t id, uint32_t n)
+{
+    lg_note("project %u\n", (unsigned)id);
+    uint32_t rc = n <= CV_MAX ? lg_project(cv_inb, n, cv_outb) : 0x82u;
+    if (rc) lg_note("  1.x refused it (%#x): left out\n", (unsigned)rc);
+    return rc ? 0u : BANK_STORE_SIZE;
+}
+/* preset bank id (n bytes) into the 1.x runtime: rc 0 taken */
+EXPORT(cv_bank_in) uint32_t cv_bank_in(uint32_t id, uint32_t n)
+{
+    uint32_t rc = id >= 6u && id <= 28u && n <= CV_MAX ? lg_bk_put(id, cv_inb, n) : 0x82u;
+    if (rc) lg_note("bank %u: 1.x refused it (%#x): left out\n", (unsigned)id, (unsigned)rc);
+    return rc;
+}
+EXPORT(cv_banks) void cv_banks(void) { up_cache_reset(); up_boot(); core_poll(200); }   /* (as 1.x reads them, together) */
+/* preset bank id as 1.x read it -> UPB3: its length, 0 an empty bank (or no bank there) */
+EXPORT(cv_bank) uint32_t cv_bank(uint32_t id)
+{
+    uint32_t b = ed_bk_preset_bank(id);
+    if (b >= UP_BANKS) return 0;
+    lg_note("bank %u\n", (unsigned)id);
+    return lg_bank(b, cv_outb);
+}
+/* kit id (92..99, n bytes) -> its KIT2 box: its length; 0 a kit with no takes; -1 not a kit 1.x played */
+EXPORT(cv_kit) int32_t cv_kit(uint32_t id, uint32_t n)
+{
+    lg_note("kit %u\n", (unsigned)id - 91u);
+    int32_t m = id >= 92u && id <= 99u && n <= 65536u ? lg_kit(cv_inb, n, id - 92u, cv_outb) : -1;
+    if (m < 0) lg_note("  not a kit Melodee 1.x played: left out\n");
+    return m;
+}
+/* the settings (id 1, n bytes) -> PER6 (+ TPLM): their length; 0 refused */
+EXPORT(cv_settings) uint32_t cv_settings(uint32_t n)
+{
+    lg_note("settings\n");
+    return n <= CV_MAX ? lg_settings(cv_inb, n, cv_outb) : 0u;
+}
+
 #ifdef LEGACY_NATIVE_MAIN
 #define PP_ID(t) ((t)->eng_req == lg_drum() ? V2_KIT[lg_kit_family((t)->p[P_E0])].uid : (t)->eng_req == ENGI_MIDI ? V2_ID_MIDI : eng_map[(t)->eng_req].uid)
 #define PP_E0(t, v) ((t)->eng_req == lg_drum() ? lg_kit_value(v) : (v))
@@ -759,19 +810,17 @@ static uint32_t lg_kits_in(const char *dir)
 /* DIR/<id>.bin (92..99) -> OUT/v2-<id>.bin (KIT2); 1: one not a kit */
 static int lg_kits_convert(const char *dir, const char *out)
 {
-    static uint8_t box[16u * (1u << 16)];
     int bad = 0;
     for (uint32_t id = 92; id <= 99u; id++) {
         char path[600], nm[32];
         snprintf(path, sizeof path, "%s/%u.bin", dir, (unsigned)id);
-        uint32_t n = lg_read(path, lg_buf, sizeof lg_buf);
+        uint32_t n = lg_read(path, cv_inb, CV_MAX);
         if (!n) continue;
-        lg_note("kit %u\n", (unsigned)id - 91u);
-        int32_t m = n <= 65536u ? lg_kit(lg_buf, n, id - 92u, box) : -1;
+        int32_t m = cv_kit(id, n);
         printf("kit %u: %u B -> %d B\n", (unsigned)id, (unsigned)n, (int)m);
-        if (m < 0) { lg_note("  not a kit Melodee 1.x played: left out\n"); bad = 1; continue; }
+        if (m < 0) { bad = 1; continue; }
         snprintf(nm, sizeof nm, "v2-%u.bin", (unsigned)id);
-        lg_write(out, nm, box, (uint32_t)m);
+        lg_write(out, nm, cv_outb, (uint32_t)m);
     }
     return bad;
 }
@@ -851,61 +900,48 @@ static int lg_render(const char *rec, uint32_t secs, const char *out, const char
     fclose(f);
     return 0;
 }
-/* a 1.x backup (BACKUPDIR/<id>.bin, as tools/prophet_device.py backup writes it) -> OUT/v2-<id>.bin, the report */
+/* a 1.x backup (BACKUPDIR/<id>.bin, as tools/prophet_device.py backup writes it) -> OUT/v2-<id>.bin, OUT/report.txt:
+ * the calls convert.mjs makes, in its order */
 static int lg_convert_dir(const char *in, const char *out)
 {
-    static uint8_t rec[BANK_STORE_SIZE];
     static const uint8_t pids[] = {2, 3, 4, 5, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84,
                                    85, 86, 87, 88, 89, 90, 91, 0};
-    uint32_t bad = 0;
+    uint32_t bad = 0, any = 0;
+    char path[600], nm[32];
     for (uint32_t i = 0; i < sizeof pids; i++) {
-        char path[600], nm[32];
         snprintf(path, sizeof path, "%s/%u.bin", in, (unsigned)pids[i]);
-        uint32_t n = lg_read(path, lg_buf, sizeof lg_buf), rc;
+        uint32_t n = lg_read(path, cv_inb, CV_MAX), m;
         if (!n) continue;
-        lg_note("project %u\n", (unsigned)pids[i]);
-        rc = lg_project(lg_buf, n, rec);
-        printf("project %u: rc %#x\n", (unsigned)pids[i], (unsigned)rc);
-        bad += rc != 0;
+        m = cv_project(pids[i], n);
+        printf("project %u: %u B\n", (unsigned)pids[i], (unsigned)m);
+        bad += !m;
         snprintf(nm, sizeof nm, "v2-%u.bin", (unsigned)pids[i]);
-        if (!rc) lg_write(out, nm, rec, sizeof rec);
+        if (m) lg_write(out, nm, cv_outb, m);
     }
-    {                                                   /* the banks: all in first (1.x reads them together), then each */
-        static uint8_t bk[4096];
-        uint32_t any = 0;
-        for (uint32_t id = 6; id <= 28u; id++) {
-            char path[600];
-            snprintf(path, sizeof path, "%s/%u.bin", in, (unsigned)id);
-            uint32_t n = lg_read(path, lg_buf, sizeof lg_buf), rc;
-            if (!n) continue;
-            if ((rc = lg_bk_put(id, lg_buf, n)) != 0) { printf("bank %u: 1.x refused it (%#x)\n", (unsigned)id, (unsigned)rc); bad++; }
-            any = 1;
-        }
-        if (any) { up_cache_reset(); up_boot(); core_poll(200); }
-        for (uint32_t id = 6; any && id <= 28u; id++) {
-            uint32_t b = ed_bk_preset_bank(id), n;
-            char nm[32];
-            if (b >= UP_BANKS) continue;
-            lg_note("bank %u\n", (unsigned)id);
-            if ((n = lg_bank(b, bk)) != 0) {
-                snprintf(nm, sizeof nm, "v2-%u.bin", (unsigned)id); lg_write(out, nm, bk, n);
-                printf("bank %u: %u B\n", (unsigned)id, (unsigned)n);
-            }
-        }
+    for (uint32_t id = 6; id <= 28u; id++) {             /* the banks: all in first (1.x reads them together), then each */
+        snprintf(path, sizeof path, "%s/%u.bin", in, (unsigned)id);
+        uint32_t n = lg_read(path, cv_inb, CV_MAX);
+        if (!n) continue;
+        bad += cv_bank_in(id, n) != 0;
+        any = 1;
+    }
+    if (any) cv_banks();
+    for (uint32_t id = 6; any && id <= 28u; id++) {
+        uint32_t n = cv_bank(id);
+        if (!n) continue;
+        snprintf(nm, sizeof nm, "v2-%u.bin", (unsigned)id);
+        lg_write(out, nm, cv_outb, n);
+        printf("bank %u: %u B\n", (unsigned)id, (unsigned)n);
     }
     bad += lg_kits_convert(in, out);
-    {
-        static uint8_t set[sizeof(persist_t) + sizeof(v2_tmpl_t)];
-        char path[600];
-        snprintf(path, sizeof path, "%s/1.bin", in);
-        uint32_t n = lg_read(path, lg_buf, sizeof lg_buf);
-        if (n) {
-            lg_note("settings\n");
-            uint32_t m = lg_settings(lg_buf, n, set);
-            printf("settings: %u B -> %u B\n", (unsigned)n, (unsigned)m);
-            if (m) lg_write(out, "v2-1.bin", set, m); else bad++;
-        }
+    snprintf(path, sizeof path, "%s/1.bin", in);
+    uint32_t n = lg_read(path, cv_inb, CV_MAX);
+    if (n) {
+        uint32_t m = cv_settings(n);
+        printf("settings: %u B -> %u B\n", (unsigned)n, (unsigned)m);
+        if (m) lg_write(out, "v2-1.bin", cv_outb, m); else bad++;
     }
+    lg_write(out, "report.txt", lg_rep, lg_rep_n);
     printf("%s", lg_rep);
     return bad != 0;
 }
