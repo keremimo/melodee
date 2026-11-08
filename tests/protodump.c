@@ -53,7 +53,7 @@ static const struct { uint32_t id; const char *name, *group, *when; } CMDS[] = {
     {ED_PATTERN_CHANGED, "PATTERN_CHANGED", "studio patterns (push)", ""},
     {ED_SETTINGS, "SETTINGS", "studio device", ""}, {ED_MLEARN, "MLEARN", "studio device", ""},
     {52, "BLE", "studio device", "MELODEE_BLE"},                                       /* (editor_ble.c ED_BLE) */
-    {ED_DRUM, "DRUM", "studio device", ""}, {ED_DEVICE_CHANGED, "DEVICE_CHANGED", "studio device (push)", ""},
+    {ED_PADS, "PADS", "studio device", ""}, {ED_DEVICE_CHANGED, "DEVICE_CHANGED", "studio device (push)", ""},
     {ED_MOTION, "MOTION", "motion", ""}, {ED_BACKUP_LIST, "BACKUP_LIST", "backup", ""},
     {ED_BACKUP_GET, "BACKUP_GET", "backup", ""}, {ED_BACKUP_PUT, "BACKUP_PUT", "backup", ""},
     {ED_AUDIO_STATS, "AUDIO_STATS", "diagnostics", "MELODEE_USB_AUDIO"},
@@ -135,16 +135,16 @@ static void backup_objects(void)
 {
     uint32_t i, id;
     printf(",\n\"backup\":{\"chunk\":%u,\"kit_first\":%u,\"kits\":%u,\"objects\":[", (unsigned)sizeof main_scratch.transfer,
-           ED_BK_KIT0, (unsigned)ST_NKIT);
+           ED_BK_KIT0, (unsigned)ST_NREC);
     /* ED_BK_IDS, then the user kits (every device build has KIT_STORE; editor_test.c does not) */
-    for (i = 0; i < ED_BK_N + (ED_BK_IDS[ED_BK_N - 1u] < ED_BK_KIT0 ? ST_NKIT : 0u); i++) {
+    for (i = 0; i < ED_BK_N + (ED_BK_IDS[ED_BK_N - 1u] < ED_BK_KIT0 ? ST_NREC : 0u); i++) {
         id = i < ED_BK_N ? ED_BK_IDS[i] : ED_BK_KIT0 + (i - ED_BK_N);
         printf("%s\n {\"id\":%u,\"kind\":", i ? "," : "", (unsigned)id);
         if (id == 0u) printf("\"runtime\"");
         else if (id == 1u) printf("\"settings\"");
         else if (ed_bk_project(id)) printf("\"project\",\"slot\":%u", (unsigned)ed_bk_slot(id));
         else if (ed_bk_preset_bank(id) < UP_BANKS) printf("\"preset_bank\",\"bank\":%u", (unsigned)ed_bk_preset_bank(id));
-        else if (id >= ED_BK_KIT0 && id < ED_BK_KIT0 + ST_NKIT) printf("\"kit\",\"slot\":%u", (unsigned)(id - ED_BK_KIT0));
+        else if (id >= ED_BK_KIT0 && id < ED_BK_KIT0 + ST_NREC) printf("\"kit\",\"slot\":%u", (unsigned)(id - ED_BK_KIT0));
         else printf("\"retired\"");
         putchar('}');
     }

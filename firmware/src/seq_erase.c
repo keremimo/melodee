@@ -35,8 +35,8 @@ static void seq_erase_rebuild(track_t *t, uint64_t touched)
         found |= (uint64_t)1u << view;
         step_t *st = &t->step[view];
         if (r->vel > st->vel) st->vel = r->vel;
-        uint32_t lane = drum_lane(recorded_note(r));
-        if (drum_track(t) && recorded_note(r) == DRUM_LANE_NOTE[lane]) {
+        uint32_t lane = pads_lane(t, recorded_note(r));
+        if (pads_on(t) && recorded_note(r) == lane_note(t, lane)) {
             st->hit |= (uint8_t)(1u << lane);
             if (r->vel > 110u) st->acc |= (uint8_t)(1u << lane);
         } else {

@@ -32,7 +32,7 @@ static int up_favorite_set(uint32_t k,int on)
 static uint32_t native_limit(uint32_t e)
 {
     uint32_t v=up_native_ver(e);
-    return v!=UP_VER && v!=UP_VER_DRUM ? UP_SLOTS : 0u;
+    return v!=UP_VER && v!=UP_VER_KIT ? UP_SLOTS : 0u;
 }
 static void shared_native_record(up_rec_t *r,uint32_t e,const uint8_t *raw)
 {

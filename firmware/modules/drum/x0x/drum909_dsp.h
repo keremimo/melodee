@@ -18,7 +18,7 @@
  *    low-frequency filters (20 Hz DC blocker) as accurate as libm's cosf. */
 #pragma once
 #include <stdint.h>
-#include "fastmath.h"
+#include "x0x/fastmath.h"            /* (firmware/src/x0x: shared with other engines) */
 #include "x0x_drum_tables.h"
 
 #if defined(__GNUC__) || defined(__clang__)

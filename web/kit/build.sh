@@ -12,7 +12,7 @@ EMSDK_IMAGE="${EMSDK_IMAGE:-emscripten/emsdk:3.1.74}"
 KT_ON=$(sed -n 's/^#define KT_ON \([0-9][0-9]*\).*/\1/p' firmware/src/usb_audio_stream.c)   # (a take's trigger)
 [ -n "$KT_ON" ] || { echo "kit: no KT_ON in firmware/src/usb_audio_stream.c"; exit 1; }
 mkdir -p build/kit
-CFLAGS="-O2 -ffp-contract=off -std=gnu99 -Wall -Wno-unused-function -DKT_ON=$KT_ON -Ifirmware/src"
+CFLAGS="-O2 -ffp-contract=off -std=gnu99 -Wall -Wno-unused-function -DKT_ON=$KT_ON -Ifirmware/modules/drum -Ifirmware/src"
 EXPORTS=_kit_max,_kit_begin,_kit_name,_kit_pad,_kit_build,_kit_report,_kit_decode,_malloc,_free
 WFLAGS="--no-entry -sSTANDALONE_WASM -sINITIAL_MEMORY=4194304 -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=0"
 WFLAGS="$WFLAGS -sEXPORTED_FUNCTIONS=$EXPORTS"

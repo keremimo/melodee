@@ -206,8 +206,8 @@ static void smk_wheels(void)
     }
     t = TSEL;
     smk_wheel_trk = (uint8_t)song.sel;
-    smk_modw = drum_track(t) ? 0u : (uint8_t)mw;
-    if (drum_track(t))                             /* drums ignore bend and the wheel (as MIDI's) */
+    smk_modw = pads_flag(t, MOD3_PD_NOBEND) ? 0u : (uint8_t)mw;
+    if (pads_flag(t, MOD3_PD_NOBEND))           /* a kit ignores bend and the wheel (as MIDI's drums) */
         return;
     if (b != sent_b) {
         sent_b = b;

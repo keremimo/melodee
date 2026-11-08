@@ -183,7 +183,7 @@ static int bridge_guards(void)                      /* every current list record
         for (uint32_t j = ST_GUARD_OFF; j < ST_GUARD_OFF + ST_GUARD_LEN; j++) ok &= nor[st_lin_at(i) + j] == 0xFFu;
     return ok;
 }
-#define B_KIT (ST_KFILE0 + 0u)
+#define B_KIT (ST_RFILE0 + 0u)
 #define B_P6 (ST_PFILE0 + 6u)
 static void bridge_fixture(void)                   /* one of every old form */
 {

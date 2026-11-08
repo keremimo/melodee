@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Record kit's take (src/kit_take.c, src/drum_enc.c, usb_audio_stream.c kt_hear) on a simulated NOR flash: the
+/* Record kit's take (DRUM's: modules/drum/kit_take.c, drum_enc.c through the firmware's data records, rec_store.c;
+ * usb_audio_stream.c kt_hear) on a simulated NOR flash: the
  * capture keeps ~3 ms before the trigger and ends at silence or a full buffer; the device encoder decodes back
  * through the player within its SNR and writes what tools/drum_codec.c writes for the same samples; a kick goes in at
  * 22.05 kHz, a snare at 44.1 kHz, a cymbal still ringing when the buffer filled loops; a pad rewritten leaves the
  * others' slices as they were; a quiet take is refused; all eleven pads fill the kit within its cap; cleared pads go
  * and the last one takes the kit with it. Demos of the kit into argv[1]. */
 static unsigned char nor[0x100000];
-#define DRK_XIP(off) ((const uint8_t *)nor + (off))
+#define REC_BASE ((const uint8_t *)nor)        /* (the data records' flash: the player reads them in place) */
 #ifndef MELODEE_USB_AUDIO
 #define MELODEE_USB_AUDIO 1
 #endif
@@ -25,8 +26,7 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
     return 0;
 }
 #include "../firmware/src/storage.c"
-#include "../firmware/src/kit_store.c"
-#include "../firmware/src/kit_take.c"
+#include "../firmware/src/rec_store.c"            /* (DRUM's take, encoder and record check: built in) */
 
 static int fails;
 static void check(const char *s, int ok) { printf("KIT TAKE: %-86s %s\n", s, ok ? "ok" : "FAIL"); fails += !ok; }
@@ -133,6 +133,7 @@ int main(int argc, char **argv)
     static int16_t y[FS * 2u], z[FS * 2u];
     static uint32_t words[FS];
     memset(nor, 0xFF, sizeof nor);
+    rec_scan();                                  /* (the records' boot scan: the host's record calls DRUM writes through) */
     check("KIT 1..8 are 9..16, straight after FM", DK_USER0 == DK_FM + 1 && DK_KIT_MAX == 16 &&
           ENG_DRUM.edit[0].max == DK_KIT_MAX && !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && !strcmp(N_DRUM_KIT[DK_KIT_MAX], "KIT 8"));
 
@@ -259,8 +260,8 @@ int main(int argc, char **argv)
             ok &= r == KM_KEPT;
         }
         const drk_kit_t *H = head(1);
-        check("eleven pads of long takes all fit the kit's 28,392 bytes", ok && H && H->nsmp == DRK_NDRUM && kit_len[1] <= DRK_KIT_MAX);
-        printf("KIT TAKE:   eleven pads: %u bytes in %u sectors\n", kit_len[1], drk_user[1].n);
+        check("eleven pads of long takes all fit the kit's 28,392 bytes", ok && H && H->nsmp == DRK_NDRUM && rec_len[1] <= DRK_KIT_MAX);
+        printf("KIT TAKE:   eleven pads: %u bytes in %u sectors\n", rec_len[1], drk_user[1].n);
         if (argc > 1) {
             static int32_t out[FS * 6u];
             static const uint8_t pat[16] = {36, 42, 38, 42, 36, 46, 38, 42, 41, 45, 48, 37, 39, 49, 51, 42};
@@ -281,7 +282,7 @@ int main(int argc, char **argv)
         uint32_t kn = decode(0, D9_BD, z);
         check("a cleared pad goes, the others stay", !rc && H->nsmp == 2u && H->map[D9_SD].sample == 0xFFu && kn && kn == decode(0, D9_BD, y));
         rc = kt_write(0, D9_BD, 0, 0, 0, 0) | kt_write(0, D9_CR, 0, 0, 0, 0);
-        check("the last pad cleared takes the kit with it", !rc && !drk_user[0].n && !kit_len[0]);
+        check("the last pad cleared takes the kit with it", !rc && !drk_user[0].n && !rec_len[0]);
     }
     if (fails) { printf("KIT TAKE: %d FAILED\n", fails); return 1; }
     printf("KIT TAKE: all checks ok\n");

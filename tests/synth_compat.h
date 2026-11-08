@@ -111,12 +111,15 @@ static void p5_bank_defaults(p5_bank_t *b, uint32_t bank) { (void)bank; memset(b
 #define cz_bank_valid(b) tone_bank_valid((const tone_bank_t *)(const void *)(b))   /* (native_presets.c: after this file) */
 #define p5_bank_mask(bank) program_bank_mask(bank)
 #define p5_bank_valid(b, bank) program_bank_valid((const program_bank_t *)(const void *)(b), bank)
-#define DRUM_WIRE_BYTES KIT_WIRE_BYTES
+#define DRUM_WIRE_BYTES MOD_SCH_KIT_PACKED
 static int drum_patch_valid(const drum_patch_t *p) { return patch_check(ENGI_DRUM, (const uint8_t *)p, 0, sizeof *p); }
-static void drum_patch_pack(uint8_t *b, const drum_patch_t *p) { kit_wire_pack(b, (const uint8_t *)(const void *)p); }
+static void drum_patch_pack(uint8_t *b, const drum_patch_t *p)
+{
+    patch_pack(MOD_SCH_STORE_KIT, b, (const uint8_t *)(const void *)p, MOD_SCH_KIT_PACKED);   /* (its schema's packing) */
+}
 static int drum_patch_unpack(drum_patch_t *p, const uint8_t *b)
 {
-    kit_wire_unpack((uint8_t *)(void *)p, b);
+    patch_unpack(MOD_SCH_STORE_KIT, (uint8_t *)(void *)p, b, MOD_SCH_KIT_PACKED);
     return drum_patch_valid(p);
 }
 /* track k's synth parameter id (its schema's: FM6's VCED place, the Prophet's byte, the CZ-1's panel id) set to v,

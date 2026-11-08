@@ -9,6 +9,13 @@
  * x needs 64 zero samples after its n. out 0: count only. In place is safe: slice k's 8 bytes land at byte 8 k,
  * behind the 28 k bytes it has read. */
 #include "x0x/fastmath.h"
+#if MOD_SIDE
+#define DKE_WDT() mod_host->wdt()                    /* (a long encode: the host's watchdog) */
+#elif defined(DRK_CODEC_ONLY)
+#define DKE_WDT() fm1_wdt_feed()                     /* (web/kit's) */
+#else
+#define DKE_WDT() mod_h4_wdt()                       /* (a host build's built-in engine: the firmware's) */
+#endif
 static __attribute__((noinline)) float dke_exp2(float x) { return fm_exp2f(x); }   /* (drum_lanes.c dlk_exp2's) */
 typedef struct { int32_t h[4], w[4]; } dke_lms_t;
 typedef struct {
@@ -113,7 +120,7 @@ static uint32_t dke_encode(const int16_t *x, uint32_t n, int32_t snr, uint32_t l
         pm = m;
         o->bytes += 8u;
         at += ns;
-        if (!(k & 63u)) fm1_wdt_feed();
+        if (!(k & 63u)) DKE_WDT();
     }
     return o->bytes;
 }

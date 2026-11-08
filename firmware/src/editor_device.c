@@ -2,11 +2,11 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Melodee Studio's FM-1 page (EDITOR_PROTOCOL.md "Studio device"): SETTINGS (50) lists and sets the HOME menu's rows
  * (menu_rows.c: the menu's own values, steps and words; saved as UI_SET saves), MLEARN (51) lists MIDI LEARN's controls
- * and parameters, forgets one or all and learns one from the next message, DRUM (53) reads and writes a kit track's DRUM SOUND / MIX
- * values (BLE 52: editor_ble.c). WATCH bit 7 pushes DEVICE_CHANGED (60) when they or Bluetooth's state change on the
+ * and parameters, forgets one or all and learns one from the next message, PADS (53) reads and writes a kit track's pads'
+ * parameters, as its synth's pads block has them (pads.c; BLE 52: editor_ble.c). WATCH bit 7 pushes DEVICE_CHANGED (60) when they or Bluetooth's state change on the
  * device. Included by editor.c */
 #include "menu_rows.c"                                    /* (the firmware: ui_menu.c has it already) */
-enum { ED_SETTINGS = 50, ED_MLEARN, ED_DRUM = 53, ED_DEVICE_CHANGED = 60 };
+enum { ED_SETTINGS = 50, ED_MLEARN, ED_PADS = 53, ED_DEVICE_CHANGED = 60 };
 static uint8_t ed_learn;                                  /* MLEARN: the control + 1 waiting for a message, 0 none */
 static uint16_t ed_plearn __attribute__((section(".pool")));   /* MLEARN: (any << 10 | track << 7 | parameter) + 1 waiting, 0 none */
 
@@ -16,7 +16,7 @@ static void ed_set_values(void)                           /* the rows, then each
     for (uint32_t i = 0; i < MI_COUNT; i++)
         ed_u14(menu_get(i));
 }
-/* what DEVICE_CHANGED follows: 0 the rows' values, 1 MIDI LEARN's table, 2 Bluetooth's state, 3 the kits' DRUM values */
+/* what DEVICE_CHANGED follows: 0 the rows' values, 1 MIDI LEARN's table, 2 Bluetooth's state, 3 the kits' pads' values */
 static uint32_t ed_dev_sig(uint32_t k)
 {
     uint32_t h = 2166136261u, i;
@@ -30,8 +30,8 @@ static uint32_t ed_dev_sig(uint32_t k)
 #endif
     if (k == 3)
         for (i = 0; i < NPART; i++)
-            if (patch_eng_of(i) == ENGI_DRUM)
-                h = fnv(h, patch_of(i), patch_len(ENGI_DRUM));
+            if (sch_info[eng_idx(patch_eng_of(i))].pads)  /* (a synth with pads: its patch) */
+                h = fnv(h, patch_of(i), patch_len(patch_eng_of(i)));
     return h;
 }
 static void ed_dev_known(void)                            /* the editor's own change: no push */
@@ -106,10 +106,6 @@ static const char *ed_mlearn_name(uint32_t r)             /* a control as the MI
     uint32_t b = panel_btn_of(r - NE);                    /* (a row: the matrix button) */
     return b < NB ? B_NAME[b] : "";
 #endif
-}
-static const char *ed_drum_char(const track_t *t, uint32_t s)   /* the DRUM SOUND page's third value (ui_draw.c) */
-{
-    return drum_is909(t) ? drum_character(s) : drum_issid(t) ? "SNAP" : s == D9_SD ? "SNAPPY" : "TONE";
 }
 
 /* (a[1..3] are read before the length is known: frames sit in buffers of 64 bytes or more, and a value is used only
@@ -207,40 +203,62 @@ static int ed_device_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         ed_b(MPARAM_N); ed_b(ed_plearn ? k >> 7 & 7u : 127u); ed_b(ed_plearn ? k : 127u);
         for (i = 0, c = mparam_valid(); i < 4u * MPARAM_N; i++)
             ed_b(c ? ((const uint8_t *)mparam_row)[i] : 0u);
-    } else if (cmd == ED_DRUM) {
-        /* [track] (read); [track, first, m, m x (tune + 24, decay, character, level)] (write) -> track, rc, sounds, then per
-         * sound its four values, then per sound its name and its third value's name */
-        uint32_t tr = a[0];
+    } else if (cmd == ED_PADS) {
+        /* [track] (read); [track, first, m, m x npar values] (write) -> track, rc, pads, npar, per parameter its lowest as
+         * the page shows it + 64, its values' count - 1 and its starting value (the synth's starting patch: a kit's own),
+         * the pads in the order KNOB 1 steps through them, per pad its
+         * values, then per pad its name and its parameters' labels. A value from the parameter's lowest as the page shows
+         * it: v - min, an INVERT one max - v (pads.c) */
+        uint32_t tr = a[0], np = 0, k;
         const track_t *t = &trk[tr < NPART ? tr : 0];
-        uint32_t ns = drum_sound_count(t);
+        const pads_v_t *v = tr < NPART ? pads_view(t) : 0;
+        uint32_t ns = pads_count(t);
+        char lb[MOD_SCH_NAME + 1u];
+        np = v ? v->npar : 0u;
         m = a[2];
-        if (!n || tr >= NPART || !drum_track(t) || (n > 1u && (n != 3u + 4u * m || !m || x + m > ns)))
+        if (!n || tr >= NPART || !v || (n > 1u && (n != 3u + np * m || !m || x + m > ns)))
             rc = 1;
-        for (i = 0; !rc && n > 1u && i < m; i++) {
-            const uint8_t *p = a + 3u + 4u * i;
-            if (p[0] > 48u)
-                rc = 1;                                   /* (TUNE: -24..24 semitones) */
-        }
+        for (i = 0; !rc && n > 1u && i < m; i++)
+            for (k = 0; k < np; k++)
+                if (a[3u + np * i + k] > (uint32_t)(v->par[k].max - v->par[k].min) || !pads_par_at(tr, x + i, k))
+                    rc = 1;                               /* (a value past its range: TUNE -24..24 semitones) */
         if (!rc && n > 1u) {
-            fm1_irq_off();                                /* (as the page: DRUM SOUND's TUNE, DECAY, the third, MIX's LEVEL) */
-            for (i = 0; i < m; i++) {
-                const uint8_t *p = a + 3u + 4u * i;
-                int8_t *q = drum_offsets(tr)[x + i];
-                q[0] = (int8_t)(p[0] - 24); q[1] = (int8_t)(p[1] - 64); q[2] = (int8_t)(p[2] - 64); q[3] = (int8_t)(127 - p[3]);
-            }
+            fm1_irq_off();                                /* (as the pages: DRUM SOUND's TUNE, DECAY, the third, MIX's LEVEL) */
+            for (i = 0; i < m; i++)
+                for (k = 0; k < np; k++) {
+                    int32_t w = a[3u + np * i + k];
+                    *pads_par_at(tr, x + i, k) = (int8_t)(v->par[k].flags & MOD3_PP_INVERT ? v->par[k].max - w : v->par[k].min + w);
+                }
             fm1_irq_on();
+            patch_note(tr, MOD3_PATCH_EDIT, 0xFFFFu);
             ui.force = 1;
         }
         ed_echo(a, n, 1u); ed_b(rc);
         ns = rc ? 0u : ns;
         ed_b(ns);
-        for (i = 0; i < ns; i++) {
-            const int8_t *q = drum_offsets(tr)[i];
-            ed_b(q[0] + 24); ed_b(q[1] + 64); ed_b(q[2] + 64); ed_b(127 - q[3]);
+        ed_b(rc ? 0u : np);
+        if (!rc) {
+            static uint8_t def[MOD3_PATCH_MAX];
+            patch_default(eng_idx(t->eng_req), def);
+            for (k = 0; k < np; k++) {
+                int32_t w = (int8_t)def[v->par[k].off], s = v->par[k].flags & MOD3_PP_SIGNED ? w : (int32_t)(uint8_t)w;
+                ed_b((uint32_t)((v->par[k].flags & MOD3_PP_INVERT ? 0 : v->par[k].min + v->par[k].add) + 64));
+                ed_b((uint32_t)(v->par[k].max - v->par[k].min));
+                ed_b((uint32_t)(v->par[k].flags & MOD3_PP_INVERT ? v->par[k].max - s : s - v->par[k].min));
+            }
         }
+        for (i = 0; i < ns; i++)
+            ed_b(v->order[i]);
+        for (i = 0; i < ns; i++)
+            for (k = 0; k < np; k++) {
+                const int8_t *q = pads_par_at(tr, i, k);
+                int32_t w = q ? pads_par_shown(v, k, q) : 0;
+                ed_b((uint32_t)(v->par[k].flags & MOD3_PP_INVERT ? w : w - v->par[k].min - v->par[k].add));
+            }
         for (i = 0; i < ns; i++) {
-            ed_str(drum_sound_name(t, i), 8);
-            ed_str(ed_drum_char(t, i), 8);
+            ed_str(pads_name(t, i), 8);
+            for (k = 0; k < np; k++)
+                ed_str(pads_par_label(t, i, k, lb), 8);
         }
     } else
         return 0;

@@ -346,12 +346,13 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
         return bmax > NVOICE;
     {
         const step_t *s3 = &td->step[3], *s4 = &td->step[4], *l1 = &t3->step[1], *p14 = &t2->step[14];
-        int ok_clap = !(s3->hit & (1u << DV_CLAP)) && (s4->hit & (1u << DV_CLAP)) &&
+#define HS_CLAP_LANE 2u                                  /* (the clap's lane: STEP_LANE_NOTE[2], 39) */
+        int ok_clap = !(s3->hit & (1u << HS_CLAP_LANE)) && (s4->hit & (1u << HS_CLAP_LANE)) &&
                       s4->n == 3u && s4->note[0] == 36 && s4->note[1] == 38 && s4->note[2] == 42 && clap_hits == 3u;
         int ok_lead = l1->n == 1u && l1->note[0] == 84u && l1->time == ST_NOTE;
         int ok_keys = p14->n == 2u && p14->time == ST_NOTE && p14->note[0] == 60u && p14->note[1] == 64u;
         printf("tracks: recording: late clap rounds to step 4 = %u; step 4 keeps %u notes, triggers %u hits "
-               "(want 3: no repeated clap) %s\n", (s4->hit & (1u << DV_CLAP)) ? 39u : 0u, s4->n, clap_hits,
+               "(want 3: no repeated clap) %s\n", (s4->hit & (1u << HS_CLAP_LANE)) ? 39u : 0u, s4->n, clap_hits,
                ok_clap ? "ok" : "FAIL");
         printf("tracks: recording: MIDI ch 3 -> lead step 1 = %u (want 84) %s; keys -> pad step 14 = %u notes %u %u %s\n",
                l1->note[0], ok_lead ? "ok" : "FAIL", p14->n, p14->note[0], p14->note[1], ok_keys ? "ok" : "FAIL");

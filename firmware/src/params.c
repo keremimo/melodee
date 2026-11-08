@@ -473,9 +473,11 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
             /* The panel's compact card fits "13-16"; editor/picker names retain the CH prefix. */
             str_cpy(val, d->names[v] + (v == 1 ? 0 : 2), 6);
         }
-#if MELODEE_USER_KITS
-        else if (drum_kit_names(d) && v >= DK_USER0 && v <= DK_KIT_MAX)
-            drk_user_name((uint32_t)(v - DK_USER0), val);   /* a user kit: its own name */
+#if MELODEE_RECORDS
+        else if (pads_rec_value(d, v) >= 0) {        /* a kit's record: its own name (none: EMPTY) */
+            if (!rec_name((uint32_t)pads_rec_value(d, v), val, 6))
+                str_cpy(val, "EMPTY", 6);
+        }
 #endif
         else
             str_cpy(val, d->names==N_ENGNAME ? eng_abbr_of((uint32_t)clamp(v, d->min, d->max)) : d->names[v < d->min ? d->min : v > d->max ? d->max : v], 6);
@@ -535,10 +537,10 @@ enum { FAM_HOME, FAM_ENV, FAM_LFO, FAM_SCL, FAM_EDIT, FAM_GLO, FAM_SAVE, FAM_ARP
        FAM_FX, FAM_COUNT };
 enum { SC_TRACK, SC_GLOBAL, SC_ENGINE, SC_STEP, SC_TRK,   /* SC_TRK: the TRACKS page (ui_input.c tracks_edit) */
        SC_MOD,                                   /* a page of the selected track's synth's schema (sch_page_at) */
-       SC_CZ, SC_DRUM, SC_DRUMHIT };
+       SC_CZ, SC_PADS, SC_PADHIT };   /* SC_PADS / SC_PADHIT: a kit's pads and hits (pads.c, sch_pages.c page_at) */
 enum { GR_NONE, GR_ADSR, GR_LFO, GR_STEPS, GR_ARP, GR_SCALE, GR_ROLL, GR_BROWSE, GR_SLOTS, GR_USER, GR_TRK,
        GR_MOD, GR_PATS, GR_SONG, GR_MOTION, GR_CHORD, GR_SLICES,
-       GR_ENV8, GR_STORE, GR_TOOLS, GR_SCALE_PICKER, GR_DRUMHIT, GR_PATGRID,
+       GR_ENV8, GR_STORE, GR_TOOLS, GR_SCALE_PICKER, GR_PADHIT, GR_PATGRID,
        GR_FXRACK, GR_WDRAW }; /* NOTES shares GR_ROLL for steps and recorded events; GR_ENV8, GR_STORE, GR_TOOLS,
                                * GR_WDRAW: a synth's schema's widgets (MOD3_W_ENV8, STORE, TOOLS, DRAW) */
 
@@ -582,8 +584,9 @@ static const page_t PAGE_TAB[] = {
                                                                           * (QNT MPC only), not a page of its own */
     {"EDIT 1", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E0, P_E1, P_E2, P_E3}},
     {"EDIT 2", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E4, P_E5, P_E6, P_E7}},
-    {"DRUM SOUND",FAM_EDIT,SC_DRUM,GR_NONE,{0,1,2,3}},
-    {"DRUM MIX",FAM_EDIT,SC_DRUM,GR_NONE,{0,4,255,255}},
+    /* a kit's pads (pads.c: its synth's pads block names them, the first three pad parameters, the fourth) */
+    {"",FAM_EDIT,SC_PADS,GR_NONE,{0,1,2,3}},
+    {"",FAM_EDIT,SC_PADS,GR_NONE,{0,4,255,255}},
     /* the selected track's synth's own pages (its schema: sch_page_at) */
     SCH_PG8(0), SCH_PG8(8), SCH_PG8(16), SCH_PG8(24), SCH_PG8(32), SCH_PG8(40),
     /* PHASE: the retired FM4 storage fields hold split CZ envelopes. */
@@ -618,7 +621,7 @@ static const page_t PAGE_TAB[] = {
     {"PATTERNS", FAM_SEQ, SC_GLOBAL, GR_PATGRID, {0xFF, 0xFF, 0xFF, 0xFF}},   /* the 4 x 8 grid: KNOB k track k's (ui_stage.c) */
     {"SONG", FAM_SEQ, SC_GLOBAL, GR_SONG, {0xFF, 0xFF, 0xFF, 0xFF}},
     {"MOTION", FAM_SEQ, SC_TRACK, GR_MOTION, {0xFF, 0xFF, 0xFF, 0xFF}},
-    {"DRUM HIT",FAM_SEQ,SC_DRUMHIT,GR_DRUMHIT,{0,1,2,3}},
+    {"",FAM_SEQ,SC_PADHIT,GR_PADHIT,{0,1,2,3}},    /* a kit's hits (its pads block names it) */
 };
 #define NPAGES (sizeof(PAGE_TAB) / sizeof(PAGE_TAB[0]))
 static const page_t *page_at(uint32_t i);                /* (below: a synth's page where PAGE_TAB has its place) */
@@ -684,7 +687,7 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
     }
     if (pg->scope == SC_MOD)                             /* a synth's own page (a copy: sch_page_put writes it) */
         return sch_page_desc(pg, slot, valp);
-    if(pg->scope==SC_DRUM || pg->scope==SC_DRUMHIT){*valp=0;return 0;}
+    if(pg->scope==SC_PADS || pg->scope==SC_PADHIT){*valp=0;return 0;}
     if (pg->graph == GR_FXRACK)
         return fx_rack_desc(pg, slot, valp);
     if (id == 0xFFu) {

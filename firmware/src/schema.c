@@ -25,7 +25,7 @@ static uint8_t sch_mem_done[NENGINES];
 static const uint8_t *sch_builtin(uint32_t e, uint32_t *len)
 {
     static uint8_t pool[NENGINES][12288];
-    if (!sch_mem_done[e]) {
+    if (!sch_mem_done[e] || (!sch_mem[e] && ENGINES[e] != &ENG_RETIRED)) {   /* (a host test may put a built-in back) */
         const mod_sch_src *s = sch_builtin_src(e);
         uint32_t n = s ? mod_sch_write(s, pool[e], sizeof pool[e]) : 0;
         sch_mem_done[e] = 1;
@@ -465,8 +465,10 @@ static __attribute__((noinline)) uint32_t sch_role_track(const track_t *t, uint3
 /* ---- the patches */
 /* every engine's patch length, sound, store format and Motion tag in RAM (the audio's song sections read them: never
  * the flash), made again in the main loop when sch_gen moved */
-static struct { uint16_t plen, sound, mmap; uint8_t tag, mtag, mbytes; } sch_info[NENGINES];
+static struct { uint16_t plen, sound, mmap; uint8_t tag, mtag, mbytes, pads; } sch_info[NENGINES];   /* (pads: its
+                                                  * pads.c pads_c + 1, 0 none) */
 static void msx_routes_sync(void);
+static void pads_sync(void);                     /* (pads.c) */
 static uint8_t sch_info_gen;
 static void sch_info_sync(void)
 {
@@ -483,12 +485,13 @@ static void sch_info_sync(void)
         sch_info[e].mbytes = !none && (h.flags & MOD_SCH_F_MBYTES);
     }
     sch_info_gen = sch_gen;
+    pads_sync();
     msx_routes_sync();
 }
 #ifdef FM1_IRQ_TARGET
 #define SCH_INFO() ((void)0)                     /* (the main loop keeps it: mod_service, a listing, power-on) */
 #else
-#define SCH_INFO() sch_info_sync()               /* (host builds: when asked) */
+#define SCH_INFO() (sch_info_gen == sch_gen ? (void)0 : sch_info_sync())   /* (host builds: when asked) */
 #endif
 static uint32_t patch_len(uint32_t e) { SCH_INFO(); return sch_info[e % NENGINES].plen; }
 static uint32_t patch_store_tag(uint32_t e) { SCH_INFO(); return sch_info[e % NENGINES].tag; }
@@ -550,6 +553,63 @@ static int patch_check(uint32_t e, const uint8_t *b, uint32_t at, uint32_t n)
         }
     }
     return 1;
+}
+static uint32_t patch_store_engine(uint32_t tag);
+/* ---- a stored patch's packing (MOD3_R_PACK: how Melodee 1.x packed a KIT patch in projects and user presets) */
+#define PACK_MAX 64u                             /* (the packed bytes, at most) */
+typedef struct { uint8_t nf, count, stride; uint8_t w[8]; int8_t bias[8]; } pack_t;
+static int patch_pack_of(uint32_t e, pack_t *k)  /* e's packing: 0 ok */
+{
+    mod_sch_head h;
+    uint32_t id, nf, l, i, bits = 0;
+    uint8_t b[18];
+    if (sch_head(e, &h) || sch_role(e, MOD3_R_PACK, 0, &id, &nf, &l) || !nf || nf > 8u ||
+        sch_rd(e, h.wid + id, b, 2u * nf + 2u))
+        return 1;
+    k->nf = (uint8_t)nf;
+    k->count = b[2u * nf];
+    k->stride = b[2u * nf + 1u];
+    for (i = 0; i < nf; i++) {
+        k->w[i] = b[2u * i];
+        k->bias[i] = (int8_t)b[2u * i + 1u];
+        bits += k->w[i];
+    }
+    return !k->count || (bits * k->count + 7u) / 8u > PACK_MAX || (uint32_t)(k->count - 1u) * k->stride + nf > h.patch;
+}
+static uint32_t pack_len(const pack_t *k)
+{
+    uint32_t bits = 0;
+    for (uint32_t i = 0; i < k->nf; i++)
+        bits += k->w[i];
+    return (bits * k->count + 7u) / 8u;
+}
+/* the stored form of tag's patches (MOD_SCH_STORE_*): its packed bytes (n: the bytes a store keeps, the form's own
+ * when its synth packs it; without its synth's schema the stored bytes pass through as they are) */
+static uint32_t patch_pack(uint32_t tag, uint8_t *b, const uint8_t *patch, uint32_t n)
+{
+    uint32_t e = patch_store_engine(tag), pos = 0, g, i;
+    pack_t k;
+    memset(b, 0, n);
+    if (e >= NENGINES || patch_pack_of(e, &k) || pack_len(&k) != n) {
+        memcpy(b, patch, n);                     /* (no synth to ask: the bytes as they came, patch_unpack's) */
+        return n;
+    }
+    for (g = 0; g < k.count; g++)
+        for (i = 0; i < k.nf; i++)
+            wire_bits_put(b, &pos, (uint32_t)((int8_t)patch[g * k.stride + i] + k.bias[i]), k.w[i]);
+    return n;
+}
+static void patch_unpack(uint32_t tag, uint8_t *patch, const uint8_t *b, uint32_t n)
+{
+    uint32_t e = patch_store_engine(tag), pos = 0, g, i;
+    pack_t k;
+    if (e >= NENGINES || patch_pack_of(e, &k) || pack_len(&k) != n) {
+        memcpy(patch, b, n);
+        return;
+    }
+    for (g = 0; g < k.count; g++)
+        for (i = 0; i < k.nf; i++)
+            patch[g * k.stride + i] = (uint8_t)(int8_t)((int32_t)wire_bits_get(b, &pos, k.w[i]) - k.bias[i]);
 }
 /* the engine whose patch Melodee 1.x stored as tag (MOD_SCH_STORE_*), NENGINES none */
 static uint32_t patch_store_engine(uint32_t tag)

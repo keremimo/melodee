@@ -39,14 +39,14 @@ static void new_open(void)
     ui.force = 1;
 }
 
-/* the first sound of role r's category (its LIST order; DRUMS: the DRUM engine's first kit): its source, *k;
+/* the first sound of role r's category (its LIST order; DRUMS: the first kit synth's first kit): its source, *k;
  * USER_NONE: none */
 static uint32_t new_role_sound(uint32_t r, uint32_t *k)
 {
     uint32_t i, total, src;
     if (r == NR_DRUMS) {
         *k = 0;
-        return ENGI_DRUM;
+        return pads_first() < NENGINES ? pads_first() : USER_NONE;
     }
     for (i = 0; i < NELEM(CAT_ORDER) && CAT_ORDER[i] != NR_CAT[r]; i++)
         ;

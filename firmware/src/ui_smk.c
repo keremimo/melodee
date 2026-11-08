@@ -33,7 +33,7 @@ static page_t smk_bank_pg;
 /* the pads' modes (docs/SMK37_UX.md section 2): what the 16 pads are. AUTO follows the page and the track (ui_input.c
  * pad_mode_auto); a mode picked by hand (a BANK button held + a bottom-row pad, Stage's sheet) stays until AUTO is
  * picked again, and the header carries its name while it differs from AUTO's choice */
-enum { PM_AUTO, PM_KEYS, PM_DRUM, PM_STEPS, PM_PATTERNS, PM_N };
+enum { PM_AUTO, PM_KEYS, PM_PADS, PM_STEPS, PM_PATTERNS, PM_N };
 static const char *const PM_NAME[PM_N] = {"AUTO", "KEYS", "DRUM", "STEPS", "PATTERNS"};
 static uint8_t smk_pmode;                               /* the pick */
 static uint8_t smk_pad_now;                             /* the mode this frame (PM_KEYS ..; ui_input.c smk_pads_sync) */
@@ -57,6 +57,14 @@ static const page_t *bank_titled(const char *t)
     uint32_t i = page_titled(t);
     return i < NPAGES && page_visible(i) ? &PG(i) : 0;
 }
+/* a kit's first pads page (SC_PADS: its synth's pads block's DRUM SOUND), 0 none */
+static const page_t *bank_pads(void)
+{
+    for (uint32_t i = 0; i < NPAGES; i++)
+        if (PAGE_TAB[i].scope == SC_PADS && PAGE_TAB[i].id[1] != 4u)
+            return page_visible(i) ? &PG(i) : 0;
+    return 0;
+}
 /* bank's page for the selected track's engine (0: the engine has nothing for it; LEVELS: tracks 1..4, its callers'
  * own: level_knob, the GLO cards) */
 static const page_t *bank_page(uint32_t bank)
@@ -69,7 +77,7 @@ static const page_t *bank_page(uint32_t bank)
     if (midi_track_only(TSEL))
         return 0;
     switch (bank) {
-    case BK_SOUND: return drum_track(TSEL) ? bank_titled("DRUM SOUND") : stage_page();
+    case BK_SOUND: return pads_on(TSEL) ? bank_pads() : stage_page();
     case BK_FILTER: role = MOD3_R_BANK_FILTER; break;
     case BK_ENV: role = MOD3_R_BANK_ENV; title = "ENV"; break;
     case BK_LFO: role = MOD3_R_BANK_LFO; title = "LFO"; break;
@@ -182,7 +190,7 @@ static void smk_strip_poll(void)
 static int fader_page_ok(const page_t *pg)
 {
     uint32_t sc = pg->scope, g = pg->graph;
-    return sc != SC_STEP && sc != SC_DRUMHIT && sc != SC_TRK && sc != SC_DRUM &&
+    return sc != SC_STEP && sc != SC_PADHIT && sc != SC_TRK && sc != SC_PADS &&
            g != GR_FXRACK && g != GR_MOD && g != GR_STORE && g != GR_TOOLS && g != GR_SCALE;
 }
 /* fader i's parameter as 0..127 (-1: nothing there) */

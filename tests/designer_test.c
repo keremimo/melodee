@@ -125,7 +125,7 @@ static void feature_tests(void)
     int first=1,states=1,audible=1,steady=1,drums=1;
     for(uint32_t ei=0;ei<NENG_SHOWN;ei++){
         eng_state_reset();ui_power_on();sound_init_of(TSEL,eng_vis(ei));designer_open();press(B_OCTUP);
-        if(drum_track(TSEL) || midi_track_only(TSEL))drums&=ds.stage!=DT_BUILD;
+        if(pads_on(TSEL) || midi_track_only(TSEL))drums&=ds.stage!=DT_BUILD;
         else first&=ds.stage==DT_BUILD && designer_feat_on() && ds.at==0;
         designer_close(1);
     }
@@ -221,11 +221,11 @@ static void route_recipe_tests(void)
         clean &= !song.grid && !kb_mask ;
         if(TSEL->eng_req==ENGI_CZ)valid &= cz_patch_valid(cz_patch_of(0)->raw);
         TSEL->engine=TSEL->eng_req;memset(TSEL->v,0,sizeof TSEL->v);eng_state_clear(0);eng_state_prepare(TSEL);
-        trk_note_on(TSEL,drum_track(TSEL)?36:60,100);int64_t energy=0;int32_t out[CTL];
+        trk_note_on(TSEL,pads_on(TSEL)?36:60,100);int64_t energy=0;int32_t out[CTL];
         for(uint32_t k=0;k<1000;k++){track_render(TSEL,out,CTL);for(uint32_t n=0;n<CTL;n++)energy+=llabs(out[n]);}
         if(TSEL->eng_req==ENGI_MIDI)valid &= !energy && !gates();
         else if(!energy){printf("silent recipe: %s %s\n",ENGINES[TSEL->eng_req]->name,DS_GOAL[goal]);audible=0;}
-        trk_note_off(TSEL,drum_track(TSEL)?36:60);
+        trk_note_off(TSEL,pads_on(TSEL)?36:60);
         designer_close(1);
     }
     failures+=check("ALL pages: every eligible page, each FM operator switched on, nothing switched off",coverage);

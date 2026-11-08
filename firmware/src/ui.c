@@ -151,7 +151,7 @@ static struct {
     uint8_t designer_mode;       /* the sound designer: START, the stages (ui_designer.c) */
     uint8_t home;
     uint8_t home_pg;             /* HOME's page: 0 Stage, 1 the chord view (ui_view.c); HOME tapped on HOME turns it */
-    uint8_t drum_sound;
+    uint8_t pad;                 /* the pad DRUM SOUND / MIX and DRUM HIT show (a kit's: pads.c) */
     uint8_t page;                /* index into PAGES */
     uint8_t fam_last[FAM_COUNT]; /* last page used per family */
     uint8_t bank;                /* SEQ: 16-step bank (follows the cursor) */
@@ -251,7 +251,7 @@ enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER,
                                       * over a pattern in use; SEQ + a white key held: its pattern (ui_input.c) */
 
 static const page_t *page_over;   /* a quick layer's own four knobs (ui_layer.c), while it edits or draws them */
-static uint32_t drum_hit_selected(void);
+static uint32_t pads_hit_selected(void);
 static const page_t *cur_page(void) { return page_over ? page_over : &PG(ui.page); }
 
 /* the quick layers (ui_layer.c): a button held, the keys and KNOB 1..4 are its shortcuts, its map over the page */
@@ -303,9 +303,9 @@ static int page_visible(uint32_t i)
         return motion_has_lanes(TSEL) || (!ui.home && ui.page == i);
     if (PG(i).fam == FAM_ENV && native_has(FAM_ENV))      /* (the track's ADSR, ENV DEST: nothing there) */
         return 0;
-    if(PG(i).scope==SC_DRUM || PG(i).scope==SC_DRUMHIT)return drum_track(TSEL);
+    if(PG(i).scope==SC_PADS || PG(i).scope==SC_PADHIT)return pads_on(TSEL) && (PG(i).id[1]!=4 || pads_npar(TSEL)>3u);
     if (PG(i).scope == SC_TRACK && PG(i).id[0] >= P_LN0 && PG(i).id[0] <= P_LN7)
-        return drum_track(TSEL);
+        return pads_on(TSEL);
     if(PG(i).scope==SC_ENGINE && PG(i).fam==FAM_EDIT && (PG(i).id[0]==P_E0 || PG(i).id[0]==P_E4) && sch_noedit(TSEL->eng_req))return 0;
     if (PG(i).scope == SC_CZ)                       /* (PHASE's CZ mode; PHASE retired without MELODEE_LEGACY_EXTRAS) */
         return TSEL->eng_req == 2u && eng_ok(2u) && TSEL->p[P_E7] == 1;
@@ -428,10 +428,10 @@ static void step_clear(step_t *st)
  * steps of the page shown (a tap toggles the selected lane there), black keys 1..8 select the lane (and play
  * it), black key 9 held is ACC (white keys toggle accents, their LEDs show them), black keys 10 / 11 the page
  * down / up. KNOB 1 STEP, 2 LANE, 3 HIT, 4 ACC edit the cursor step. A sound load never converts the
- * steps: the grid shows a step's notes on their lanes (eng_drum.c step_lanes) and an edit makes the lane its
+ * steps: the grid shows a step's notes on their lanes (pads.c step_lanes) and an edit makes the lane its
  * own (grid_own). Live recording on a DRUM track writes hits (seq.c rec_note) */
 static int notes_have_recording(const track_t *t);
-static int grid_on(void) { return !ui.home && !ui.menu && !ui.confirm && (cur_page()->graph == GR_ROLL || cur_page()->graph == GR_DRUMHIT) && drum_track(TSEL) && (cur_page()->scope==SC_DRUMHIT || !notes_have_recording(TSEL) || (song.playing && (song.rec & (1u << song.sel)))); }   /* (NOTES, DRUM HIT) */
+static int grid_on(void) { return !ui.home && !ui.menu && !ui.confirm && (cur_page()->graph == GR_ROLL || cur_page()->graph == GR_PADHIT) && pads_on(TSEL) && (cur_page()->scope==SC_PADHIT || !notes_have_recording(TSEL) || (song.playing && (song.rec & (1u << song.sel)))); }   /* (NOTES, DRUM HIT) */
 
 /* black key place p (seq.c key_place) held, 0 = not */
 static int black_held(uint32_t p)
@@ -445,12 +445,12 @@ static int black_held(uint32_t p)
 
 /* lane l of step s from now on is its hit alone: the step's lane notes become hits (nothing sounds different),
  * a note of another pitch on the lane (a low tom 41) becomes the lane's own */
-static void grid_own(step_t *s, uint32_t l)
+static void grid_own(const track_t *t, step_t *s, uint32_t l)
 {
     uint32_t k, j = 0;
-    step_to_grid(s);
+    step_to_grid(t, s);
     for (k = 0; k < s->n; k++)
-        if (drum_lane(s->note[k]) == l)
+        if (pads_lane(t, s->note[k]) == l)
             s->hit |= (uint8_t)(1u << l);
         else
             s->note[j++] = s->note[k];
@@ -466,14 +466,14 @@ static void grid_hit(track_t *t, uint32_t i, uint32_t l, uint32_t on)
     uint32_t b = 1u << (l % NLANE);
     s->flags &= (uint8_t)~SF_RECORDED;
     if (on == 2u)
-        on = !(step_lanes(s) & b);
+        on = !(step_lanes(t, s) & b);
     if (s->time != ST_NOTE) {                    /* a REST or a TIE: an empty step (nothing to turn off) */
         if (!on)
             return;
         step_clear(s);
         s->time = ST_NOTE;
     }
-    grid_own(s, l % NLANE);
+    grid_own(t, s, l % NLANE);
     if (on) {
         s->hit |= (uint8_t)b;
     } else {
@@ -490,12 +490,12 @@ static void grid_acc(track_t *t, uint32_t i, uint32_t l, uint32_t on)
     step_t *s = &t->step[i % NSTEP];
     uint32_t b = 1u << (l % NLANE);
     if (on == 2u)
-        on = !(step_accents(s) & b);
+        on = !(step_accents(t, s) & b);
     if (on)
         grid_hit(t, i, l, 1);
-    if (!(step_lanes(s) & b))
+    if (!(step_lanes(t, s) & b))
         return;
-    grid_own(s, l % NLANE);
+    grid_own(t, s, l % NLANE);
     if (s->flags & SF_ACCENT) {                  /* a step accent: each hit's own from now on */
         s->acc |= s->hit;
         s->flags &= (uint8_t)~SF_ACCENT;
@@ -505,7 +505,7 @@ static void grid_acc(track_t *t, uint32_t i, uint32_t l, uint32_t on)
 
 /* SEQ cursor: wraps inside the pattern length, the bank follows, a step entry ends */
 static void notes_preview(void);
-static uint32_t drum_hit_selected(void);
+static uint32_t pads_hit_selected(void);
 static void cursor_set(int32_t c)
 {
     int32_t len = TSEL->p[P_SLEN] > 0 ? TSEL->p[P_SLEN] : 1;

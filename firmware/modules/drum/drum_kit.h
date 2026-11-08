@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The user drum kits' records (KIT 1..8, values 9..16): their layout, the codec's tables, the slots' sectors. The
- * firmware writes and checks them (kit_store.c, kit_take.c, drum_enc.c) and names them (drk_user_name); DRUM plays
- * them (drum_real.c, in the DRUM module on the device), reading drk_user, the firmware's. */
+/* The user drum kits' records (KIT 1..8, values 9..16): DRUM's data records (mod_abi3.h host 4: the firmware keeps
+ * them as blobs in the pool, rec_store.c): their layout, the codec's tables, the slots' sectors. DRUM writes them
+ * (kit_take.c, drum_enc.c through the host's rec_* calls), checks them (kit_store.c drk_kit_check: rec_check) and plays
+ * them (drum_real.c), reading the host's table of their sectors in place. */
 #pragma once
 typedef struct {
     uint16_t at, n;                              /* its first slice (8 bytes each), samples */
@@ -47,32 +48,22 @@ _Static_assert(sizeof(drk_map_t) == 10u && sizeof(drk_sample_t) == 12u && sizeof
 #define DRK_KIT_MAX (DRK_KSEC * DRK_SECBYTES)
 
 #ifndef DRK_CODEC_ONLY                           /* (web/kit builds the record's format and its decoder alone) */
-/* Each user slot's sectors (4 KB numbers; n 0: empty), set by kit_store.c in the main loop. drk_user_gen is odd
- * while it changes them: the audio side then plays nothing, and a part that took a slot under an older number
- * stops reading its sectors before a later save can erase them (kit_store.c waits two blocks). */
-typedef struct { uint8_t n, sec[DRK_KSEC]; } drk_user_t;
-#if MOD_SIDE                              /* (DRUM as a module: the firmware's, which kit_store.c keeps) */
-static drk_user_t *mod_imp_drk_user;
-static volatile uint32_t *mod_imp_drk_user_gen;
-#define drk_user mod_imp_drk_user
-#define drk_user_gen (*mod_imp_drk_user_gen)
+/* Each slot's sectors (4 KB numbers; n 0: empty): the host's data records (mod_rec_v3), which the firmware sets in the
+ * main loop. drk_user_gen is odd while it changes them: the audio side then plays nothing, and a part that took a
+ * slot under an older number stops reading its sectors before a later save can erase them (the host waits two
+ * blocks). A host build's built-in engine reads the firmware's own table (pads.h) */
+typedef mod_rec_v3 drk_user_t;
+_Static_assert(DRK_KSEC <= MOD3_REC_SEC && DK_NUSER <= MOD3_NREC, "a user kit is a data record");
+#if MOD_SIDE
+#define drk_user mod_imp_rec
+#define drk_user_gen (*mod_imp_rec_gen)
+#define DRK_XIP(off) (mod_imp_rec_base + (off))
 #else
-static drk_user_t drk_user[DK_NUSER];
-static volatile uint32_t drk_user_gen;
-#endif
-#ifndef DRK_XIP
-#ifdef FM1_IRQ_TARGET
-#include "fm1_xip.h"
-#define DRK_XIP(off) fm1_xip_ptr(off)            /* the data flash reads plain (fl_plain_window_init) */
-#elif defined(MOD_IN_CORE)                       /* a module built for the virtual FM-1 (web/core): its pool's NOR */
-uint8_t *core_nor_ptr(void);
-#define DRK_XIP(off) ((const uint8_t *)core_nor_ptr() + (off))
-#else
-#define DRK_XIP(off) ((const uint8_t *)0)        /* (host builds without a flash image: no user kits) */
+#define drk_user rec_tab
+#define drk_user_gen rec_gen
+#define DRK_XIP(off) (REC_BASE + (off))
 #endif
 #endif
-#endif
-
 
 /* the codec (drum_enc.c encodes, drum_real.c decodes): samples per slice of each depth, the 16 scales, the levels */
 static const uint8_t DRK_NS[4] = {58, 29, 19, 14};
@@ -85,38 +76,3 @@ static const int8_t DRK_LV[4][16] = {
 };
 
 
-#if !MOD_SIDE && !defined(DRK_CODEC_ONLY)
-/* a user slot's name for the KIT card (b: 6 bytes): EMPTY when there is none */
-static void drk_user_name(uint32_t u, char *b)
-{
-    uint32_t g = drk_user_gen;
-    str_cpy(b, "EMPTY", 6);
-    if (u >= DK_NUSER || (g & 1u) || !drk_user[u].n)
-        return;
-    const drk_kit_t *H = (const drk_kit_t *)DRK_XIP(drk_user[u].sec[0] * 4096u + DRK_SECOFF);
-    char t[DRK_NAMELEN + 1u];
-    for (uint32_t i = 0; i < DRK_NAMELEN; i++)
-        t[i] = H->name[i];
-    t[DRK_NAMELEN] = 0;
-    if (drk_user_gen == g)
-        str_cpy(b, t, 6);
-}
-#endif
-
-#ifndef DRK_CODEC_ONLY
-/* TEMPORARY (phase 5, the pads): the DRUM lanes' and recorded kits' firmware data, handed to the DRUM module through
- * the host table (mod_abi3.h mod_host_v3.legacy) as this firmware lays them out. A module that reads it names
- * MOD3_PADS_KEY in its descriptor and file head; a firmware with another key leaves it unplayed (module_store.c:
- * MS_STALE). The other synths name no key: they play on any firmware with their host table. */
-typedef struct mod_legacy_v3 {
-    int32_t *lg_drum_event_pitch;                   /* drum_map.c: the hit being started */
-    uint32_t *lg_drum_event_length;
-    volatile uint8_t *lg_drum_flash;                /* drum_flash[NTRK]: the pads' lights */
-    drk_user_t *lg_drk_user;                        /* drk_user[DK_NUSER] (kit_store.c keeps it) */
-    volatile uint32_t *lg_drk_user_gen;
-} mod_legacy_v3;
-#define MLK(i, v) ((uint32_t)(v) * (0x9E3779B1u * (uint32_t)(i) | 1u) + (uint32_t)(i) * 0x85EBCA77u)
-#define MOD3_PADS_KEY (MLK(1, sizeof(mod_legacy_v3)) + MLK(3, sizeof(drk_user_t)) + MLK(4, DK_NUSER) +             \
-    MLK(5, DRK_KSEC) + MLK(11, NTRK) + MLK(12, BOARD_SMK37) + MLK(13, MELODEE_USER_KITS) + MLK(14, sizeof(void *)) + \
-    MLK(15, 2u) + 1u)                            /* (+ 1: never 0, a module that reads no pads data names 0) */
-#endif

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The web kit maker's engine (melodee_kit.wasm, web/kit/build.sh): the firmware's own Record kit (kit_take_core.c
- * kt_keep), encoder (drum_enc.c), record checks (kit_store.c) and player's decoder (drum_real.c), with the kit in RAM
+/* The web kit maker's engine (melodee_kit.wasm, web/kit/build.sh): DRUM's own Record kit (firmware/modules/drum:
+ * kit_take_core.c kt_keep), encoder (drum_enc.c), record checks (kit_store.c) and player's decoder (drum_real.c), with the kit in RAM
  * laid out as the flash holds it. A kit made here is byte for byte the one the device makes from the same takes
  * (web/kit/check.mjs), ready for BACKUP PUT objects 92..99.
  *   kit_begin(rec, len)      start from a kit's record (BACKUP GET 92..99), or len 0: a new kit. 0, or -n not a kit

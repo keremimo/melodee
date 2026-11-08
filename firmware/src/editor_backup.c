@@ -10,22 +10,23 @@
 #ifndef ED_BK_FLASH_PTR
 #define ED_BK_FLASH_PTR(off) fm1_xip_ptr(off)
 #endif
-/* 2..5: projects 1..4; 64..91: projects 5..32 (project.c PROJ_SLOTS); 92..99: the user's drum kits (kit_store.c) */
+/* 2..5: projects 1..4; 64..91: projects 5..32 (project.c PROJ_SLOTS); 92..99: the data records (rec_store.c: a
+ * pads synth's recorded kits) */
 static const uint8_t ED_BK_IDS[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91
-#ifdef KIT_STORE
+#ifdef REC_STORE
     , 92, 93, 94, 95, 96, 97, 98, 99
 #endif
 };
 #define ED_BK_KIT0 92u
-#ifdef KIT_STORE
-static int ed_bk_kit(uint32_t id) { return id >= ED_BK_KIT0 && id < ED_BK_KIT0 + ST_NKIT; }
+#ifdef REC_STORE
+static int ed_bk_kit(uint32_t id) { return id >= ED_BK_KIT0 && id < ED_BK_KIT0 + ST_NREC; }
 #else
 static int ed_bk_kit(uint32_t id) { (void)id; return 0; }
 #endif
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
 #define ED_BK_MAX (BANK_STORE_SIZE + 32u)   /* a raw record, or a compact one (project_stream.c PJ_HEAD) */
-#ifdef KIT_STORE                            /* a user kit streams into its record (no staging): its own bound */
-#define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? DRK_KIT_MAX : ED_BK_MAX)
+#ifdef REC_STORE                            /* a data record streams into its record (no staging): its own bound */
+#define ED_BK_LEN_MAX(id) (ed_bk_kit(id) ? rec_max() : ED_BK_MAX)
 #else
 #define ED_BK_LEN_MAX(id) ED_BK_MAX
 #endif
@@ -104,9 +105,9 @@ static const uint8_t *ed_bk_object(uint32_t id,uint32_t *len)
         return ED_BK_RAW;
     }
     if (id == 1u) { *len = ed_bk_set_len; return (const uint8_t *)&ed_bk_set; }
-#ifdef KIT_STORE
-    if (ed_bk_kit(id)) {                    /* a user kit: GET reads its record range by range */
-        (void)ed_bk_stored(kit_obj(id - ED_BK_KIT0), len);
+#ifdef REC_STORE
+    if (ed_bk_kit(id)) {                    /* a data record: GET reads its record range by range */
+        (void)ed_bk_stored(rec_obj(id - ED_BK_KIT0), len);
         return ED_BK_RAW;
     }
 #endif
@@ -184,7 +185,7 @@ static int ed_bk_preset_valid(uint32_t bank,const uint8_t *raw,uint32_t len)
     if(len==sizeof(up_disk_bank_t) && h->magic==UP_DISK_MAGIC && h->rsize==sizeof(up_disk_rec_t) && h->nslot==UP_PER_BANK){
         const up_disk_bank_t *d=(const up_disk_bank_t *)raw;
         for(uint32_t j=0;j<UP_PER_BANK;j++){up_rec_t r;memset(&r,0,sizeof r);memcpy(&r,d->r[j].head,160u);memcpy(r.cz_extra,d->r[j].extra,46u);
-            if(r.used && (r.ver==UP_VER || r.ver==UP_VER_GRID || r.ver==UP_VER_CZ || r.ver==UP_VER_DRUM || r.ver==UP_VER_DRUM_GRID || r.ver==UP_VER_FM || r.ver==UP_VER_P5 || r.ver==UP_VER_NATIVE_CZ) && !up_valid(&r))return 0;
+            if(r.used && (r.ver==UP_VER || r.ver==UP_VER_GRID || r.ver==UP_VER_CZ || r.ver==UP_VER_KIT || r.ver==UP_VER_KIT_GRID || r.ver==UP_VER_FM || r.ver==UP_VER_P5 || r.ver==UP_VER_NATIVE_CZ) && !up_valid(&r))return 0;
         }
         return 1;
     }
@@ -211,12 +212,12 @@ static uint32_t ed_bk_commit_inner(void)
 {
     uint8_t *raw = ED_BK_RAW;
     uint32_t obj;
-#ifdef KIT_STORE
-    if(ed_bk_kit(ed_bk_id)){                         /* a user kit: none in the archive empties the slot */
+#ifdef REC_STORE
+    if(ed_bk_kit(ed_bk_id)){                         /* a data record: none in the archive empties the slot */
         uint32_t u=ed_bk_id-ED_BK_KIT0;
-        if(!ed_bk_len)return kit_delete(u)?4u:0u;
+        if(!ed_bk_len)return rec_delete(u)?4u:0u;
         if(ed_bk_pos!=ed_bk_len || ~ed_bk_stage.crc!=ed_bk_crc)return 2;
-        int rc=kit_put_commit(&ed_bk_stage,u);
+        int rc=rec_put_commit(&ed_bk_stage,u);
         return rc==-2?2u:rc?4u:0u;
     }
 #endif
@@ -346,16 +347,16 @@ static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
         uint32_t len = ed_bk_r32(a + 2);
         if (len > ED_BK_LEN_MAX(a[1]) || (a[1] == 0u && !len) ||
             (a[1] == 1u && len != sizeof(persist_t) && !tmpl_param_count(len - sizeof(persist_t))) ||
-            (!ed_bk_project(a[1]) && !ed_bk_kit(a[1]) && len > BANK_STORE_SIZE) ||   /* (a kit: DRK_KIT_MAX, above) */
+            (!ed_bk_project(a[1]) && !ed_bk_kit(a[1]) && len > BANK_STORE_SIZE) ||   /* (a record: rec_max, above) */
             (ed_bk_preset_bank(a[1])<UP_BANKS && len>3840u) ||
             (a[1]==8u && len)) return 1;
         ed_bk_valid=ed_bk_put=0;
         ed_bk_gen=++proj_wire_gen;
 #if MELODEE_FLASH
-#ifdef KIT_STORE
-        if(ed_bk_kit(a[1])){                         /* a user kit: streamed into its record, checked at commit */
+#ifdef REC_STORE
+        if(ed_bk_kit(a[1])){                         /* a data record: streamed into its record, checked at commit */
             if(ed_bk_ram_only())return 4;
-            if(len && (!flash_ok || kit_put_begin(&ed_bk_stage,a[1]-ED_BK_KIT0,len)))return len>DRK_KIT_MAX||len<DRK_KIT_BYTES?1:4;
+            if(len && (!flash_ok || rec_put_begin(&ed_bk_stage,a[1]-ED_BK_KIT0,len)))return rec_len_ok(len)?4:1;
         }else
 #endif
         if(ed_bk_project(a[1]) && len && !ed_bk_ram_only()){

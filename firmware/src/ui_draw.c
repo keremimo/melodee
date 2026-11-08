@@ -186,7 +186,7 @@ static void head_chip_text(char *b)
         pat_num(b + str_len(b), ui.ptc_dst);
     } else if (ui.home) {                               /* Stage: the engine (a kit: its name, "909 KIT") */
         if (browse_pending()) { uint32_t kk, s = browse_shown(&kk); e = src_engine(s, kk); }
-        if (eng_idx(e) == ENGI_DRUM && !browse_pending()) sound_name(TSEL, b);
+        if (pads_eng(eng_idx(e)) && !browse_pending()) sound_name(TSEL, b);   /* (a kit: its name) */
         else str_cpy(b, eng_name(eng_idx(e)), 16);
     } else if (sec_map_on()) {                          /* the map: the engine */
         str_cpy(b, eng_name(e), 16);
@@ -809,18 +809,22 @@ static void draw_cards(void)
     if (ui.home)                                        /* Stage: its knobs drop in when turned (ui_stage.c stage_knobs);
                                                          * the page left (DRUM SOUND ..) draws none under them */
         return;
-    if(cur_page()->scope==SC_DRUM){
-        char v[12];uint32_t sound=ui.drum_sound%drum_sound_count(TSEL);const int8_t *c=drum_offsets(song.sel)[sound];
-        draw_column(0,"DRUM",drum_sound_name(TSEL,sound),"",VAL(0u),-1,ICON_AUTO);
-        if(cur_page()->id[1]==4){fmt_int(v,127-c[3]);draw_column(1,"LEVEL",v,"",VAL(1u),-1,ICON_AUTO);draw_column(2,"","","",T_THEME,-1,ICON_NONE);draw_column(3,"","","",T_THEME,-1,ICON_NONE);return;}
-        fmt_int(v,c[0]);draw_column(1,"TUNE",v,"ST",VAL(1u),-1,ICON_PITCH);
-        fmt_int(v,c[1]+64);draw_column(2,"DECAY",v,"",VAL(2u),-1,ICON_GATE);
-        fmt_int(v,c[2]+64);draw_column(3,(drum_is909(TSEL)?drum_character(sound):drum_issid(TSEL)?"SNAP":sound==D9_SD?"SNAPPY":"TONE"),v,"",VAL(3u),-1,ICON_AUTO);return;
+    if(cur_page()->scope==SC_PADS){                     /* a kit's pads (pads.c): the pad, its parameters */
+        const pads_v_t *pd=pads_view(TSEL);
+        char v[12],lb[MOD_SCH_NAME+1u];uint32_t sound=ui.pad%pads_count(TSEL);
+        draw_column(0,pads_word(TSEL,MOD3_PW_PAD),pads_name(TSEL,sound),"",VAL(0u),-1,ICON_AUTO);
+        for(uint32_t c=1;c<4u;c++){
+            uint32_t id=cur_page()->id[c],k=id-1u;const int8_t *q=id!=255u?pads_par_at(song.sel,sound,k):0;
+            if(!pd || !q){draw_column(c,"","","",T_THEME,-1,ICON_NONE);continue;}
+            fmt_int(v,pads_par_shown(pd,k,q));
+            draw_column(c,pads_par_label(TSEL,sound,k,lb),v,pd->par[k].unit,VAL(c),-1,pd->par[k].icon[0]?icon_for_label(pd->par[k].icon):ICON_AUTO);
+        }
+        return;
     }
-    if(cur_page()->scope==SC_DRUMHIT){
-        char v[12];uint32_t i=drum_hit_selected();const recorded_note_t *r=i<RECORD_MAX?&recording[i]:0;
+    if(cur_page()->scope==SC_PADHIT){
+        char v[12];uint32_t i=pads_hit_selected();const recorded_note_t *r=i<RECORD_MAX?&recording[i]:0;
         fmt_int(v,ui.cursor+1);draw_column(0,"STEP",v,"",VAL(0u),-1,ICON_AUTO);
-        draw_column(1,"DRUM",drum_sound_name(TSEL,ui.drum_sound%drum_sound_count(TSEL)),"",VAL(1u),-1,ICON_AUTO);
+        draw_column(1,pads_word(TSEL,MOD3_PW_PAD),pads_name(TSEL,ui.pad%pads_count(TSEL)),"",VAL(1u),-1,ICON_AUTO);
         fmt_int(v,r?r->pitch:0);draw_column(2,"PITCH",v,"ST",VAL(2u),-1,ICON_PITCH);
         if(r && recorded_gate(r)){uint32_t x=((uint32_t)r->duration*(1u<<(recorded_exponent(r)))*100u+RECORD_UNIT/2)/RECORD_UNIT;fmt_int(v,x/100);str_cpy(v+str_len(v),".",2);if(x%100<10)str_cpy(v+str_len(v),"0",2);fmt_int(v+str_len(v),x%100);}
         else str_cpy(v,"FREE",sizeof v);
@@ -892,8 +896,8 @@ static void draw_cards(void)
         draw_column(0, ui.note_copy?"COPY":bulk.on||ui.note_move?"MOVE":"STEP", sn, bulk.on||ui.note_move?"":u, VAL(0u), -1, ICON_AUTO);
         uint32_t pitch = chosen < RECORD_MAX ? recorded_note(&recording[chosen]) : st && st->n ? st->note[notes_manual_slot(st)] : last_note;
         pl = note_card(sn, cents, pitch, "PITCH");
-        if(chosen<RECORD_MAX && drum_track(TSEL))fmt_int(sn,recording[chosen].pitch);
-        draw_column(1, pl, sn, chosen<RECORD_MAX && drum_track(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
+        if(chosen<RECORD_MAX && pads_on(TSEL))fmt_int(sn,recording[chosen].pitch);
+        draw_column(1, pl, sn, chosen<RECORD_MAX && pads_on(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
         if (chosen < RECORD_MAX) {
             uint32_t hundredths = ((uint32_t)recording[chosen].duration * (1u << (recorded_exponent(&recording[chosen]))) * 100u + RECORD_UNIT / 2u) / RECORD_UNIT;
             if (!hundredths) str_cpy(sn, "<.01", sizeof sn);
@@ -918,15 +922,15 @@ static void draw_cards(void)
         draw_column(3, "VEL", sn, chosen >= RECORD_MAX && st && st->n > 1u ? "ALL" : "", selected ? VAL(3u) : T_DIM, -1, ICON_ACCENT);
         return;
     }
-    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* the grid: STEP LANE HIT ACC */
+    if (cur_page()->scope == SC_STEP && pads_on(TSEL)) {   /* the grid: STEP LANE HIT ACC */
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        uint32_t b = 1u << ui.lane, on = (step_lanes(st) & b) != 0u, ac = (step_accents(st) & b) != 0u;
+        uint32_t b = 1u << ui.lane, on = (step_lanes(TSEL, st) & b) != 0u, ac = (step_accents(TSEL, st) & b) != 0u;
         char sn[8], sl[8];
         fmt_int(sn, (int32_t)ui.cursor + 1);
         str_cpy(sl, "/", 8);
         fmt_int(sl + 1, TSEL->p[P_SLEN]);
         draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-        draw_column(1, "", drum_lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);   /* (its chip: "Snare") */
+        draw_column(1, "", lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);   /* (its chip: "Snare") */
         draw_column(2, "HIT", on ? "ON" : "--", "", on ? VAL(2u) : T_DIM, -1, ICON_AUTO);
         draw_column(3, "ACC", ac ? "ON" : "--", "", ac ? VAL(3u) : T_DIM, -1, ICON_AUTO);
         return;
@@ -941,7 +945,7 @@ static void draw_cards(void)
             if ((st->hit >> l) & 1u) {
                 cnt++;
                 if (!st->n)
-                    first = DRUM_LANE_NOTE[l];
+                    first = lane_note(TSEL, l);
             }
         if (cnt) {
             nl = note_card(val, cents, first, nl);
@@ -1016,8 +1020,8 @@ static void draw_cards(void)
             param_format(d, *vp, val, &unit);
             /* Rows have room for enum names that the compact parameter formatter abbreviates. */
             if (d->fmt == F_ENUM && col_style == CS_CAPTURE
-#if MELODEE_USER_KITS
-                && !(drum_kit_names(d) && *vp >= DK_USER0)   /* (a user kit: its own name, as formatted) */
+#if MELODEE_RECORDS
+                && !(pads_rec_names(d) >= 0 && *vp >= pads_rec_names(d))   /* (a kit's record: its own name, as formatted) */
 #endif
                 )
                 str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);
@@ -1198,10 +1202,10 @@ static void confirm_text(char *a, char *b)
         str_cpy(b, "Again: delete \xB7 other: copy\n" PAT_DLG_WORD ": half \xB7 double", CF_DETAIL);
         break;
     }
-#if KIT_REC
-    case CF_DEL_KIT:                                    /* Record kit's sheet: a user kit, all its takes */
+#if REC_TAKES
+    case CF_DEL_KIT:                                    /* Record kit's sheet: a recorded kit, all its takes */
         str_cpy(a, "DELETE KIT 1?", 24);
-        a[11] = (char)('1' + k % DK_NUSER);
+        a[11] = (char)('1' + k % MOD3_NREC);
         str_cpy(b, "Every pad's recording", 32);
         break;
 #endif

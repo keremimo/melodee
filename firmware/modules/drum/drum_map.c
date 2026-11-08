@@ -1,11 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* What the firmware knows of DRUM (engine ENGI_DRUM) without its engine, and what the engine shares with it: the
- * lanes and the General MIDI map (the DRUM grid plays them on any engine), the kits' numbers on KIT (E1), the drums'
- * names and the MPC pads, the user kits' keys. The engine (eng_drum.c: the 808, the 909, KIT SID, CR78 and FM, the
- * user kits) is a synth module on the device (firmware/modules/drum): it compiles this file too, its own copy; the
- * data the two share (drum_flash, drum_event_*) is the firmware's. */
+/* DRUM's map (the engine's own: the firmware knows DRUM through its schema's pads, drum_schema.h): its lanes and the
+ * General MIDI map, the kits' numbers on KIT (E1), the MPC pads, the user kits' keys. */
 #include "x0x/drum909_ids.h"                    /* the 909's drums (D9_*): the sounds' numbers */
 /* Lane and GM roles shared by the grid and the synthesized 808. */
 enum { DV_KICK, DV_SNARE, DV_CLAP, DV_HATC, DV_HATO, DV_TOM, DV_RIM, DV_BELL, DV_NLANE };
@@ -14,12 +11,6 @@ enum { DVT_PUNCH, DVT_ROUND, DVT_SNARE, DVT_CLAP, DVT_HATC, DVT_HATO, DVT_TOM, D
 enum { DK_808 = 4, DK_909 = 5, DK_SID = 6, DK_CR78 = 7, DK_FM = 8, DK_USER0 = 9 }; /* Retain the stored value of existing 808 patches. */
 #ifndef MELODEE_USER_KITS
 #define MELODEE_USER_KITS 1                      /* the user's kits (kit_store.c): KIT 9..16, played by drum_real.c, both boards */
-#endif
-/* Record kit (kit_rec_ui.c): the device itself, with USB audio and flash; host builds of the UI never show it */
-#if defined(FM1_IRQ_TARGET) && MELODEE_USER_KITS && MELODEE_USB_AUDIO && MELODEE_FLASH
-#define KIT_REC 1
-#else
-#define KIT_REC 0
 #endif
 #define DK_NUSER 8u
 #define DK_KIT_MAX (DK_USER0 + (int)DK_NUSER - 1)
@@ -31,19 +22,14 @@ static const uint8_t DV_TYPE_LANE[DVT_COUNT] = {
 #define DRUM_PRESET_808 {"808 KIT", {DK_808, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0}
 static uint32_t drum_lane(uint32_t note);
 static uint32_t drum_gm(const int16_t *p,uint32_t note,int32_t *st);
-/* a hit's pitch and length as the sequencer plays it (seq.c), for the note_on it calls; lanes hit since the UI last
- * looked, a bit per lane (drum_lane) and track: Stage flashes their names (ui_stage.c) */
-#if MOD_SIDE                              /* (DRUM as a module: the firmware's) */
-static int32_t *mod_imp_drum_event_pitch;
-static uint32_t *mod_imp_drum_event_length;
-static volatile uint8_t *mod_imp_drum_flash;
-#define drum_event_pitch (*mod_imp_drum_event_pitch)
-#define drum_event_length (*mod_imp_drum_event_length)
-#define drum_flash mod_imp_drum_flash
+/* a hit's pitch and length as the sequencer plays it, for its note_on (the firmware's: mod_abi3.h host 4 note_pitch,
+ * note_len; a host build's built-in engine reads them by the firmware's names) */
+#if MOD_SIDE
+#define drum_event_pitch (*mod_imp_note_pitch)
+#define drum_event_length (*mod_imp_note_len)
 #else
-static int32_t drum_event_pitch;
-static uint32_t drum_event_length;
-static volatile uint8_t drum_flash[NTRK];
+#define drum_event_pitch note_hit_pitch
+#define drum_event_length note_hit_len
 #endif
 static int drum_is909(const track_t *t) { return t->p[P_E0] == DK_909; }
 static int drum_issid(const track_t *t) { return t->p[P_E0] == DK_SID; }
@@ -108,7 +94,6 @@ static uint32_t drum909_ins(uint32_t note)
     }
 }
 static const uint8_t DRUM_SOUND_NOTE[16]={36,38,41,45,50,37,39,42,46,49,51,64,61,60,75,70};
-static const char *const DRUM_SOUND_NAME[16]={"KICK","SNARE","TOM L","TOM M","TOM H","RIM","CLAP","HAT C","HAT O","CRASH","RIDE","CONGL","CONGM","CONGH","CLAVE","MARAC"};
 static uint32_t drum_sound_count(const track_t *t){return drum_map11(t)?D9_NUM:16u;}
 static uint32_t drum_sound_note(const track_t *t,uint32_t sound){return !drum_map11(t) && sound==D9_RD?56u:DRUM_SOUND_NOTE[sound];}
 /* MPC pads 01..16, left to right from the bottom row. Keep the main beat under the fingers;
@@ -126,114 +111,17 @@ static uint32_t drum_mpc_note(const track_t *t, uint32_t pad)
     };
     return drum_sound_note(t, (drum_map11(t) ? PAD_909 : PAD_808)[pad & 15u]);
 }
-/* CR78: its tambourine plays the clap, its conga and bongos the congas */
-static const char *const DRUM_CR78_NAME[16]={"KICK","SNARE","TOM L","TOM M","TOM H","RIM","TAMB","HAT C","HAT O","CYMB","BELL","CONGA","BONGL","BONGH","CLAVE","MARAC"};
-static const char *drum_sound_name(const track_t *t,uint32_t sound){return drum_iscr(t)?DRUM_CR78_NAME[sound&15u]:!drum_map11(t) && sound==D9_RD?"BELL":!drum_map11(t) && sound==D9_CR?"CYMB":DRUM_SOUND_NAME[sound];}
-/* .. in two letters, as on the 808's panel (DRUM HIT: the picked lane's name, which of its drums) */
-static const char *drum_sound_abbr(const track_t *t,uint32_t sound)
-{
-    static const char *const N[16]={"BD","SD","LT","MT","HT","RS","CP","CH","OH","CR","RD","LC","MC","HC","CL","MA"};
-    static const char *const CR[16]={"BD","SD","LT","MT","HT","RS","TB","CH","OH","CY","CB","CG","BL","BH","CL","MA"};
-    return drum_iscr(t)?CR[sound&15u]:!drum_map11(t) && sound==D9_RD?"CB":!drum_map11(t) && sound==D9_CR?"CY":N[sound&15u];
-}
 static uint32_t drum_sound_of(const track_t *t,uint32_t note)
 {
     if(drum_map11(t))return drum909_ins(note);
     static const uint8_t map[DR_N]={D9_BD,D9_SD,D9_LT,D9_MT,D9_HT,11,12,13,D9_RS,14,D9_CP,15,D9_RD,D9_CR,D9_OH,D9_CH};
     int32_t st;uint32_t role=drum_gm(t->p,note,&st);return map[dr8_ins(note,role)];
 }
-/* the drums in the black keys' order, lane by lane (KICK SNARE CLAP HATCL HATOP TOM RIM BELL), a lane's drums
- * together (the toms and congas low to high, the lane's own drum before the cymbal): KNOB 2 on DRUM HIT and
- * KNOB 1 on DRUM SOUND / MIX step through them so */
-static const uint8_t DRUM_ORDER_808[16]={D9_BD,D9_SD,D9_CP,D9_CH,15,D9_OH,D9_LT,D9_MT,D9_HT,11,12,13,D9_RS,14,D9_RD,D9_CR};
-static const uint8_t DRUM_ORDER_909[D9_NUM]={D9_BD,D9_SD,D9_CP,D9_CH,D9_OH,D9_LT,D9_MT,D9_HT,D9_RS,D9_RD,D9_CR};
-static uint32_t drum_sound_step(const track_t *t,uint32_t sound,int32_t delta)
-{
-    const uint8_t *o=drum_map11(t)?DRUM_ORDER_909:DRUM_ORDER_808;int32_t n=(int32_t)drum_sound_count(t),r=0;
-    while(r<n-1 && o[r]!=sound%(uint32_t)n)r++;
-    return o[clamp(r+delta,0,n-1)];
-}
-static const char *drum_character(uint32_t sound)
-{return sound==D9_SD?"SNAPPY":sound<=D9_HT?"ATTACK":"TONE";}
-/* ----------------------------------------------------- the grid's lanes --- */
-/* A step's lane hits (step_t.hit / acc, the DRUM grid: SEQ > STEP on a DRUM track) play these GM notes, on any
- * engine: DRUM strikes its lanes, a synth the pitches. Each is the designed pitch of
- * its lane (st 0 in DRUM_GM) */
-static const uint8_t DRUM_LANE_NOTE[NLANE] = {36, 38, 39, 42, 46, 45, 37, 56};
-
 /* the lane a GM note strikes */
 static uint32_t drum_lane(uint32_t note)
 {
     uint32_t n = note >= 35u && note <= 81u ? note : 36u + (note + 120u - 36u) % 12u;
     return DV_TYPE_LANE[DRUM_GM[n - 35u][0]];
-}
-
-/* the lane's name as the track's KIT plays it (5 characters at most) */
-static const char *drum_lane_name(const track_t *t, uint32_t l)
-{
-    static const char *const N[NLANE] = {"KICK", "SNARE", "CLAP", "HATCL", "HATOP", "TOM", "RIM", "BELL"};
-    if(drum_map11(t) && (l&(NLANE-1u))==DV_BELL)return "RIDE";
-    if(drum_iscr(t) && (l&(NLANE-1u))==DV_CLAP)return "TAMB";
-    return N[l & (NLANE - 1u)];
-}
-/* .. in two letters, the drum machine way (the grid's lane column) */
-static const char *drum_lane_abbr(const track_t *t, uint32_t l)
-{
-    static const char *const N[NLANE] = {"BD", "SD", "CP", "CH", "OH", "TM", "RS", "CB"};
-    if(drum_map11(t) && (l&(NLANE-1u))==DV_BELL)return "RD";
-    if(drum_iscr(t) && (l&(NLANE-1u))==DV_CLAP)return "TB";
-    return N[l & (NLANE - 1u)];
-}
-
-/* the lanes step s strikes: its hits, and its notes on their lanes (a NOTE step only) */
-static uint32_t step_lanes(const step_t *s)
-{
-    uint32_t m = 0, i;
-    if (s->time != ST_NOTE)
-        return 0;
-    for (i = 0; i < s->n && i < 4u; i++)
-        m |= 1u << drum_lane(s->note[i]);
-    return m | s->hit;
-}
-
-/* .. and which of them are accented */
-static uint32_t step_accents(const step_t *s) { return s->flags & SF_ACCENT ? step_lanes(s) : s->hit ? s->acc & step_lanes(s) : 0u; }
-
-/* the note step s strikes drum `sound` with (DRUM HIT): one of its notes, else its lane's hit when the lane's own
- * drum is that sound (the 909 ride's lane note is not its sound note); -1: none */
-static int32_t step_sound_note(const track_t *t, const step_t *s, uint32_t sound)
-{
-    uint32_t i, l = drum_lane(drum_sound_note(t, sound));
-    for (i = 0; i < s->n && i < 4u; i++)
-        if (drum_sound_of(t, s->note[i]) == sound)
-            return s->note[i];
-    return (s->hit >> l) & 1u && drum_sound_of(t, DRUM_LANE_NOTE[l]) == sound ? DRUM_LANE_NOTE[l] : -1;
-}
-
-/* a step's notes that are a lane's note become that lane's hits (the same note, the same velocity: nothing
- * sounds different). Other notes (a low tom 41, a crash 49) stay notes, shown on their lane. A step accent
- * of a step left with hits only becomes the hits' accents. Pattern loads into a DRUM track, projects of
- * before the grid, the grid's edits */
-static void step_to_grid(step_t *s)
-{
-    if (!s->hit) s->acc = 0;                       /* recorded synth gate is not a drum accent */
-    uint32_t i, k = 0;
-    if (s->time != ST_NOTE)
-        return;
-    for (i = 0; i < s->n && i < 4u; i++) {
-        uint32_t l = drum_lane(s->note[i]);
-        if (s->note[i] == DRUM_LANE_NOTE[l])
-            s->hit |= (uint8_t)(1u << l);
-        else
-            s->note[k++] = s->note[i];
-    }
-    for (i = k; i < 4u; i++)
-        s->note[i] = 0;
-    s->n = (uint8_t)k;
-    if (!k && (s->flags & SF_ACCENT)) {
-        s->acc |= s->hit;
-        s->flags &= (uint8_t)~SF_ACCENT;
-    }
 }
 
 /* A user kit (KIT 1..8) on the keys: white key n plays MPC pad n (drum_mpc_note: the eleven drums, five again), from
@@ -255,8 +143,3 @@ static uint32_t drum_user_key(const track_t *t, int32_t ks)
     w = 7 * (c / 12) + W[c % 12] - DRUM_WHITE0;
     return w >= 0 && w < 16 ? drum_mpc_note(t, (uint32_t)w) : DRUM_SILENT;
 }
-#if !MOD_SIDE
-/* TEMPORARY (phase 5, the pads): a DRUM part's patch as the firmware's DRUM SOUND / DRUM MIX pages and the editor's DRUM
- * read it (main loop): its 16 sounds' offsets, int8 each (TUNE, DECAY, the third control, 127 - LEVEL) */
-static int8_t (*drum_offsets(uint32_t k))[4] { return (int8_t (*)[4])(void *)patch_of(k); }
-#endif

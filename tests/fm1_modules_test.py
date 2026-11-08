@@ -117,9 +117,9 @@ def main():
     real = ROOT / "build/melodee-mods.bin"
     if real.exists():
         files = M.bundle(real.read_bytes())
-        check("build/melodee-mods.bin: the ABI 3 CZ-1, SID, DRUM, FM6 and PROPHET files (DRUM's pads key alone)",
+        check("build/melodee-mods.bin: the ABI 3 CZ-1, SID, DRUM, FM6 and PROPHET files (no layout key: DRUM's pads by schema)",
               sorted(f["name"] for f in files) == ["CZ-1", "DRUM", "FM6", "PROPHET", "SID"] and
-              all(f["abi"] == 3 for f in files) and [f["name"] for f in files if f["key"]] == ["DRUM"])
+              all(f["abi"] == 3 for f in files) and not any(f["key"] for f in files))
     print("fm1_modules tests", "FAILED" if bad else "passed")
     return 1 if bad else 0
 

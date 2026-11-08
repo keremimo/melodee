@@ -23,12 +23,12 @@ static int ed_library_handle(uint32_t cmd,const uint8_t *a,uint32_t n)
             if(kind){                             /* 1..3: the synth's own patch (its store layout); 4: a kit's offsets (KIT) */
                 uint32_t e=r.engine,wire=kind==4u;
                 uint8_t raw[MOD3_PATCH_MAX],p[MOD3_PATCH_MAX];uint32_t size=n>=end+3u?a[end+1u]|(uint32_t)a[end+2u]<<7:0;
-                if((kind>3u && !wire) || (wire ? patch_store_tag(e)!=MOD_SCH_STORE_KIT || size!=KIT_WIRE_BYTES : !native_limit(e) || size!=native_size(e)) ||
+                if((kind>3u && !wire) || (wire ? patch_store_tag(e)!=MOD_SCH_STORE_KIT || size!=MOD_SCH_KIT_PACKED : !native_limit(e) || size!=native_size(e)) ||
                    n<end+3u || ed_unpack7(a+end+3u,n-end-3u,raw,sizeof raw)!=size)rc=1;
                 else if(wire){
-                    memset(p,0,sizeof p);kit_wire_unpack(p,raw);
+                    memset(p,0,sizeof p);patch_unpack(MOD_SCH_STORE_KIT,p,raw,MOD_SCH_KIT_PACKED);
                     if(!patch_stored_ok(MOD_SCH_STORE_KIT,p))rc=1;
-                    else {r.ver=UP_VER_DRUM;r.np=P_COUNT;for(uint32_t j=0;j<P_COUNT;j++)up_set_value(&r,j,values[j]);memcpy(r.cz_extra,raw,46u);memcpy(r.packed+r.np,raw+46u,8u);}
+                    else {r.ver=UP_VER_KIT;r.np=P_COUNT;for(uint32_t j=0;j<P_COUNT;j++)up_set_value(&r,j,values[j]);memcpy(r.cz_extra,raw,46u);memcpy(r.packed+r.np,raw+46u,8u);}
                 }else {shared_native_record(&r,e,raw);r.np=defaults?0:sizeof UP_NATIVE_PARAMS;for(uint32_t j=0;j<r.np;j++)r.cz_extra[j]=(uint8_t)(values[UP_NATIVE_PARAMS[j]]+64);}
             }else if(n!=end+1u || len>12u || native_limit(r.engine))rc=1;
             else {for(uint32_t j=0;j<P_COUNT;j++)up_set_value(&r,j,values[j]);}
@@ -61,9 +61,9 @@ static int ed_library_handle(uint32_t cmd,const uint8_t *a,uint32_t n)
         /* Phrases no longer load; expose an empty legacy pattern. */
         for(uint32_t j=0;j<32u;j++)ed_b(0);
         uint32_t kind=used && (up_native(&r)||up_native_cz(&r))?1u:0u;
-        if(used && (r.ver==UP_VER_DRUM || r.ver==UP_VER_DRUM_GRID))kind=4u;
+        if(used && (r.ver==UP_VER_KIT || r.ver==UP_VER_KIT_GRID))kind=4u;
         ed_b(kind);
-        if(kind==4u){uint8_t p[MOD3_PATCH_MAX],raw[KIT_WIRE_BYTES],b[KIT_WIRE_BYTES];memset(p,0,sizeof p);if(up_kit_wire(&r,b))kit_wire_unpack(p,b);kit_wire_pack(raw,p);ed_b(KIT_WIRE_BYTES);ed_b(0);ed_bk_pack(raw,sizeof raw);}
+        if(kind==4u){uint8_t p[MOD3_PATCH_MAX],raw[MOD_SCH_KIT_PACKED],b[MOD_SCH_KIT_PACKED];memset(p,0,sizeof p);if(up_kit_wire(&r,b))patch_unpack(MOD_SCH_STORE_KIT,p,b,MOD_SCH_KIT_PACKED);patch_pack(MOD_SCH_STORE_KIT,raw,p,MOD_SCH_KIT_PACKED);ed_b(MOD_SCH_KIT_PACKED);ed_b(0);ed_bk_pack(raw,sizeof raw);}
         else if(kind){uint32_t size=native_size(r.engine);ed_u14(size);ed_bk_pack(r.packed,size);}
     }
     return 1;

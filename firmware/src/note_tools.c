@@ -125,13 +125,13 @@ static int note_convert(uint32_t start)
     step_t source;memcpy(&source,&TSEL->step[start],sizeof source);if(source.flags&SF_RECORDED)return 1;
     uint8_t nn[12],vv[12];uint32_t count=0,free=0,n=step_note_length(TSEL,start);
     for(uint32_t j=0;j<source.n;j++){nn[count]=source.note[j];vv[count++]=(source.flags&SF_ACCENT)?127:source.vel?source.vel:96;}
-    if(drum_track(TSEL))for(uint32_t j=0;j<NLANE;j++)if(step_lanes(&source)&(1u<<j)){nn[count]=DRUM_LANE_NOTE[j];vv[count++]=(step_accents(&source)&(1u<<j))?127:source.vel?source.vel:96;}
+    if(pads_on(TSEL))for(uint32_t j=0;j<NLANE;j++)if(step_lanes(TSEL, &source)&(1u<<j)){nn[count]=lane_note(TSEL, j);vv[count++]=(step_accents(TSEL, &source)&(1u<<j))?127:source.vel?source.vel:96;}
     for(uint32_t i=0;i<RECORD_MAX;i++)free+=!recording[i].vel;
     if(count>free){ui_message("RECORDING FULL");return 0;}
     step_delete(TSEL,start);memcpy(&TSEL->step[start],&source,sizeof source);TSEL->step[start].flags|=SF_RECORDED;
     for(uint32_t j=0,i=0;j<count;j++){
         while(recording[i].vel)i++;
-        recorded_note_t r={0};recorded_set_note(&r,nn[j]);r.vel=vv[j];recorded_set_owner(&r,recording_owner(TSEL));recorded_set_step(&r,start,0,0);recorded_set_gate(&r,drum_track(TSEL));
+        recorded_note_t r={0};recorded_set_note(&r,nn[j]);r.vel=vv[j];recorded_set_owner(&r,recording_owner(TSEL));recorded_set_step(&r,start,0,0);recorded_set_gate(&r,pads_on(TSEL));
         note_duration(&r,n*RECORD_UNIT);recording_restore_note(TSEL,i,r);i++;
     }
     cursor_set((int32_t)start);ui.note_pick=0;notes_selected(TSEL);return 1;
@@ -202,7 +202,7 @@ static void note_transform(int32_t delta,uint32_t quantum,int mode)
     for(uint32_t i=0;i<RECORD_MAX;i++){free+=!recording[i].vel;if(note_transform_has(i,chosen)){needed+=copy;changed|=recording[i].on&(quantum-1u);}}
     if(quantize&&!changed){fm1_irq_on();ui_message("ALREADY ON GRID");return;}
     if(!bulk.on&&chosen<RECORD_MAX)at=NSTEP;
-    for(uint32_t i=0;i<len;i++)if((!(TSEL->step[i].flags&SF_RECORDED)&&step_on(&TSEL->step[i])&&(bulk.on?bulk.on==1u&&bulk_has(i):i==at))){uint32_t count=TSEL->step[i].n+(drum_track(TSEL)?__builtin_popcount(step_lanes(&TSEL->step[i])):0u);needed+=count*(copy?2u:1u);}
+    for(uint32_t i=0;i<len;i++)if((!(TSEL->step[i].flags&SF_RECORDED)&&step_on(&TSEL->step[i])&&(bulk.on?bulk.on==1u&&bulk_has(i):i==at))){uint32_t count=TSEL->step[i].n+(pads_on(TSEL)?__builtin_popcount(step_lanes(TSEL, &TSEL->step[i])):0u);needed+=count*(copy?2u:1u);}
     if(needed>free){fm1_irq_on();ui_message("RECORDING FULL");return;}
     if(!note_transaction_begin()){fm1_irq_on();return;}
     for(uint32_t i=0;i<len;i++)if((!(TSEL->step[i].flags&SF_RECORDED)&&step_on(&TSEL->step[i])&&(bulk.on?bulk.on==1u&&bulk_has(i):i==at)))note_convert(i);
@@ -278,7 +278,7 @@ static void notes_range_pitch(int32_t delta)
         if(gen==recording_generation)return;
         ui.note_copy=0;note_transaction.pitch=1;
     }
-    uint32_t len=step_pattern_len(TSEL),drum=drum_track(TSEL),chosen=notes_selected(TSEL),found=0;
+    uint32_t len=step_pattern_len(TSEL),drum=pads_on(TSEL),chosen=notes_selected(TSEL),found=0;
     int32_t low=-128,high=128;
     fm1_irq_off();
     for(uint32_t i=recording_head[recording_owner(TSEL)];i<RECORD_MAX;i=recording_next[i])if(note_transform_has(i,chosen)){
@@ -337,7 +337,7 @@ static void notes_range_edit(uint32_t slot,int32_t delta,uint32_t quantum)
         const step_t *st=&TSEL->step[s];
         int32_t v=length?(int32_t)(step_note_length(TSEL,s)*RECORD_UNIT):st->flags&SF_ACCENT?127:st->vel?st->vel:96;
         if(least-v>low)low=least-v;if(most-v<high)high=most-v;found=1;
-        needed+=st->n+(drum_track(TSEL)?__builtin_popcount(step_lanes(st)):0u);
+        needed+=st->n+(pads_on(TSEL)?__builtin_popcount(step_lanes(TSEL, st)):0u);
     }
     int32_t shift=found?clamp(delta*(length?(int32_t)quantum:1),low,high):0;
     if(!shift){fm1_irq_on();return;}
@@ -357,7 +357,7 @@ static void notes_range_edit(uint32_t slot,int32_t delta,uint32_t quantum)
     uint64_t touched=0;
     for(uint32_t i=0;i<RECORD_MAX;i++)if(selected[i/8u]&(1u<<(i%8u))){
         recorded_note_t r=recording_snapshot(i);
-        if(length){note_duration(&r,(uint32_t)((int32_t)(r.duration*(1u<<recorded_exponent(&r)))+shift));if(drum_track(TSEL))recorded_set_gate(&r,1);}
+        if(length){note_duration(&r,(uint32_t)((int32_t)(r.duration*(1u<<recorded_exponent(&r)))+shift));if(pads_on(TSEL))recorded_set_gate(&r,1);}
         else r.vel=(uint8_t)(r.vel+shift);
         touched|=(uint64_t)1u<<recording_view(TSEL,&r);recording_remove(TSEL,i);recording_restore_note(TSEL,i,r);
     }

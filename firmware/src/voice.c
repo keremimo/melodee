@@ -400,6 +400,7 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
         v->side = t->sp_alt; t->sp_alt ^= 1u;
     }                                                   /* sounding: the attack starts from the current level */
     if (!eng_state_prepare(t)) { v->active = v->gate = 0; return; }
+    pads_flash_note(t, v->note);                        /* (a kit's: its lane lit on Stage) */
     e->note_on(t, v);
     AP_END(AP_ATTACK,attack_start);
     if (sounding && !e->sampled) {                     /* retrigger / steal: keep phases and filter */
@@ -781,7 +782,7 @@ static __attribute__((noinline)) void tune_cache_update(void)
 }
 typedef struct {
     track_t *track;voice_t *voice;const engine_t *engine;vmod_t modulation;uint32_t n;
-    int16_t engine_params[8],lane_params[DV_NLANE];
+    int16_t engine_params[8],lane_params[NLANE];
 } engine_batch_t;
 _Static_assert(sizeof(engine_batch_t)<=AUDIO_BATCH_BYTES,"Engine batch descriptor");
 /* (engine_t.batch, render_p) */
@@ -791,7 +792,7 @@ static void engine_batch_kernel(const void *data,int32_t *pcm)
     if(j->engine->render_p){
         int16_t params[P_COUNT];
         for(uint32_t k=0;k<8u;k++)params[P_E0+k]=j->engine_params[k];
-        for(uint32_t k=0;k<DV_NLANE;k++)params[P_LN0+k]=j->lane_params[k];
+        for(uint32_t k=0;k<NLANE;k++)params[P_LN0+k]=j->lane_params[k];
         j->engine->render_p(j->track,j->voice,pcm,j->n,&j->modulation,params);
     }else j->engine->render(j->track,j->voice,pcm,j->n,&j->modulation);
 }
@@ -803,7 +804,7 @@ static void engine_render(track_t *t,voice_t *v,const engine_t *e,int32_t *out,u
     if(audio_batch_active && e->batch && (cls=e->batch(t))>=0){
         engine_batch_t j;j.track=t;j.voice=v;j.engine=e;j.modulation=*m;j.n=n;
         for(uint32_t k=0;k<8u;k++)j.engine_params[k]=t->p[P_E0+k];
-        for(uint32_t k=0;k<DV_NLANE;k++)j.lane_params[k]=t->p[P_LN0+k];
+        for(uint32_t k=0;k<NLANE;k++)j.lane_params[k]=t->p[P_LN0+k];
         audio_batch_push(engine_batch_kernel,&j,sizeof j,out,n,(uint32_t)cls);return;
     }
     e->render(t,v,out,n,m);

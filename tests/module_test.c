@@ -20,6 +20,7 @@
  * read back.
  *   module_test [build/modules/trio.mmod] */
 #define PERSISTENCE_TEST_NO_MAIN
+#define MT_OLD_KEY 0x334a6f3cu                   /* a host 1..3 module's legacy data key (any nonzero: another firmware's) */
 #include "persistence_test.c"
 #include "../firmware/src/sysex_route.c"       /* (the synths' SysEx in: the FM6 bank phrases, through the module) */
 #include "../firmware/src/module_store.c"
@@ -397,7 +398,7 @@ int main(int argc, char **argv)
         uint32_t ns = make_file(nf[0], 3, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
         mod_file3_t sid_head;
         memcpy(&sid_head, nf[0], sizeof sid_head);
-        uint32_t nd = make_file(nf[1], ENGI_DRUM, "DRUM", 48000, 12, MOD3_PADS_KEY, MP_DRUM_PRESETS, "drum");
+        uint32_t nd = make_file(nf[1], ENGI_DRUM, "DRUM", 48000, 12, 0, MP_DRUM_PRESETS, "drum");
         uint32_t nc = make_file(nf[2], ENGI_CZ, "CZ-1", 9000, 12, 0, MP_CZ_PRESETS, "cz");
         uint32_t nm = make_file(nf[3], ENGI_FM6, "FM6", 20000, 12, 0, MP_FM6_PRESETS, "fm6");
         uint32_t np = make_file(nf[4], ENGI_PROPHET, "PROPHET", 16000, 12, 0, MP_P5_PRESETS, "prophet");
@@ -509,7 +510,9 @@ int main(int argc, char **argv)
                 ENGINES[3] = sid_in; ENGINES[ENGI_DRUM] = drum_in; ENGINES[ENGI_CZ] = cz_in; ENGINES[ENGI_FM6] = fm6_in;
                 ENGINES[ENGI_PROPHET] = p5_in;
                 mod_at[3] = mod_at[ENGI_DRUM] = mod_at[ENGI_CZ] = mod_at[ENGI_FM6] = mod_at[ENGI_PROPHET] = 0;
+                sch_gen++;                               /* (the engines' schemas as built in: a DRUM kit's category) */
                 be = mpr_diff(0, "built in"); bp = mpr_diff(1, "built in");
+                sch_gen++;
                 ENGINES[3] = ms; ENGINES[ENGI_DRUM] = md; ENGINES[ENGI_CZ] = mc; ENGINES[ENGI_FM6] = mf;
                 ENGINES[ENGI_PROPHET] = mp;
                 mod_at[3] = at[0]; mod_at[ENGI_DRUM] = at[1]; mod_at[ENGI_CZ] = at[2]; mod_at[ENGI_FM6] = at[3];
@@ -552,13 +555,13 @@ int main(int argc, char **argv)
         int rk = 0;
         for (uint32_t w = 0; w < 4u; w++) {
             uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, 0, MP_SID_PRESETS, "sid");
-            make_other(nf[0], w == 0 ? 1u : w == 1 ? 2u : MOD3_ABI, w == 2 ? MOD3_PADS_KEY + 1u : 0u,
+            make_other(nf[0], w == 0 ? 1u : w == 1 ? 2u : MOD3_ABI, w == 2 ? MT_OLD_KEY : 0u,
                        w == 3 ? MOD3_HOST + 1u : MOD3_HOST);
             rk += put(6, nf[0], nk) == -2 && !st_exists(ST_MFILE0 + 6);
         }
         bad += check("another firmware's module (ABI 1, ABI 2, another legacy key, a newer host table): refused, not published",
                      rk == 4);
-        uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, MOD3_PADS_KEY + 1u, MP_SID_PRESETS, "sid");
+        uint32_t nk = make_file(nf[0], 3, "SID", 12000, 12, MT_OLD_KEY, MP_SID_PRESETS, "sid");
         /* .. and one stored before the firmware changed (a record already there): known by engine and name, not
          * played, not counted as the engine's module; the installer (web/fm1mods.js) replaces it in its slot */
         int shipped = SHIPPED_OK();
@@ -573,14 +576,14 @@ int main(int argc, char **argv)
         bad += check("stored modules of another firmware: an older one (another legacy key, ABI 2) MS_STALE, a newer one "
                      "MS_NEWER; each keeps its engine and name, none listed or played",
                      saved && rs6 == MS_STALE && mods[6].engine == 3 && !strcmp(mods[6].name, "SID") &&
-                     mods[6].key == MOD3_PADS_KEY + 1u && saved2 && rs0 == MS_STALE && mods[0].abi == 2u &&
+                     mods[6].key == MT_OLD_KEY && saved2 && rs0 == MS_STALE && mods[0].abi == 2u &&
                      mods[0].key == 0x6b73df3fu && saved3 && rs1 == MS_NEWER && mods[1].host == MOD3_HOST + 1u &&
                      !strcmp(mods[1].name, "SID") && mod_slot_of(3) == 4 && plays(3, &mod_sid));
         (void)mod_delete(0);
         (void)mod_delete(1);
         bad += check("the slots report what the installer compares: each file's CRC and layout key (editor command 84 op 5)",
                      mods[4].crc == sid_head.crc && mods[4].len == sid_head.total &&
-                     mods[5].key == MOD3_PADS_KEY && mods[4].key == 0u && mods[5].abi == MOD3_ABI);
+                     mods[5].key == 0u && mods[4].key == 0u && mods[5].abi == MOD3_ABI);
         (void)mod_delete(6);
         bad += check("SID, DRUM, CZ-1, FM6 and the Prophet on the device: the start asks for no setup (main.c, ui_boot.c)",
                      shipped);

@@ -14,8 +14,8 @@
  * compile the same file natively (no section, the descriptor by its name).
  * The part's patch is the firmware's bytes, read through host patch() (core.h mod_patch); the engine's own headers
  * say what they mean (modules/<name>/: fm6_patch.h, p5_patch.h, cz_tone.h, drum_patch.h).
- * TEMPORARY (phase 5, the pads): DRUM reads the firmware's lane and recorded-kit data (drum_kit.h mod_legacy_v3);
- * it defines MOD_USES_PADS before this file and names their key (MOD3_PADS_HEAD). */
+ * Host 4's pads and data records: a note's own pitch and length (mod_imp_note_pitch / _len), the records' table
+ * (mod_imp_rec, mod_imp_rec_gen, mod_imp_rec_base); the record calls through mod_host. */
 #pragma once
 #define MOD_SIDE 1
 #include "fm1_cc.h"                              /* BOARD_SMK37 */
@@ -42,8 +42,6 @@ int memcmp(const void *a, const void *b, size_t n);
 #include "melodee_tables.h"
 #include "core.h"
 #include "dsp.c"
-#include "drum_map.c"
-#include "drum_kit.h"
 #include "audio_batch.h"                         /* (the firmware's queue for CPU1: the host's) */
 #include "audio_worker.h"                        /* (CPU1's pairing: the host's) */
 
@@ -54,6 +52,11 @@ static void *(*mod_imp_part_mem)(uint32_t part, uint32_t bytes);
 static void (*mod_imp_voice_scale_pitch)(const track_t *t, voice_t *v, uint32_t note);
 static uint32_t (*mod_imp_trk_nvoice)(const track_t *t);
 static int32_t (*mod_imp_input_octave)(const track_t *t);
+static const int32_t *mod_imp_note_pitch;      /* (host 4) */
+static const uint32_t *mod_imp_note_len;
+static const mod_rec_v3 *mod_imp_rec;
+static const volatile uint32_t *mod_imp_rec_gen;
+static const uint8_t *mod_imp_rec_base;
 #define voice_scale_pitch (*mod_imp_voice_scale_pitch)
 #define trk_nvoice (*mod_imp_trk_nvoice)
 #define input_octave (*mod_imp_input_octave)
@@ -98,16 +101,11 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
         !MOD3_TAB(mod_imp_FM6_OPL_LOG, MOD3_T_FM6_OPL_LOG, uint16_t *) ||
         !MOD3_TAB(mod_imp_FM6_OPL_EXP, MOD3_T_FM6_OPL_EXP, uint16_t *))
         return 2;
-#ifdef MOD_USES_PADS
-    const mod_legacy_v3 *L = h->legacy;          /* TEMPORARY (phase 5: drum_kit.h) */
-    if (!L)
-        return 3;
-    mod_imp_drum_event_pitch = L->lg_drum_event_pitch;
-    mod_imp_drum_event_length = L->lg_drum_event_length;
-    mod_imp_drum_flash = L->lg_drum_flash;
-    mod_imp_drk_user = L->lg_drk_user;
-    mod_imp_drk_user_gen = L->lg_drk_user_gen;
-#endif
+    mod_imp_note_pitch = h->note_pitch;
+    mod_imp_note_len = h->note_len;
+    mod_imp_rec = h->rec;
+    mod_imp_rec_gen = h->rec_gen;
+    mod_imp_rec_base = h->rec_base;
     return 0;
 }
 #ifdef FM1_IRQ_TARGET
@@ -117,5 +115,4 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 #endif
 #define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
     .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = mod_engine_bind
-#define MOD3_PADS_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST, \
-    .eng_size = sizeof(mod_engine_v3), .key = MOD3_PADS_KEY, .bind = mod_engine_bind
+

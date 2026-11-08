@@ -29,8 +29,9 @@
 #include <stdint.h>
 
 #define MOD3_ABI 3u
-#define MOD3_HOST 3u                             /* the host table version this contract describes (2: the patch, its
-                                                  * schema's callbacks, the host's drawing; 3: SysEx) */
+#define MOD3_HOST 4u                             /* the host table version this contract describes (2: the patch, its
+                                                  * schema's callbacks, the host's drawing; 3: SysEx; 4: pads, data
+                                                  * records) */
 #define MOD3_FILE_MAGIC 0x31444D4Du              /* "MMD1": every module file's (ABI 1 and 2: older firmware's) */
 #define MOD3_MAGIC 0x33444F4Du                   /* "MOD3": the descriptor, the image's first bytes */
 #define MOD3_FILE_CHUNKS 1u                      /* mod_file3_t.flags: chunks follow the address words */
@@ -61,7 +62,16 @@
 #define MOD3_PATCH_MAX 512u                      /* a part's patch (host 2): the module's own bytes, at most */
 #define MOD3_SX_MAX 4104u                        /* a SysEx frame the host collects for a module (host 3), at most: F0 to
                                                   * F7 (a DX7 32-voice bank); also its scratch's bytes (host sx_scratch) */
+#define MOD3_NREC 8u                             /* data records (host 4): the slots a module's records take */
+#define MOD3_REC_SEC 15u                         /* a record's 4 KB sectors, at most */
+#define MOD3_REC_OFF 32u                         /* where a sector's payload starts (its first MOD3_REC_RUN0 bytes, the
+                                                  * 8-byte guard, then the rest: MOD3_REC_PAYLOAD in all) */
+#define MOD3_REC_RUN0 3808u
+#define MOD3_REC_PAYLOAD 4056u
 
+/* the sequencer's lanes (a step's hits): the notes they play, General MIDI's kick, snare, clap, closed and open hat, tom,
+ * rim, bell (a synth with pads maps them to its pads: mod_schema.h MOD3_R_PADS) */
+static const uint8_t MOD3_LANE_NOTE[8] = {36, 38, 39, 42, 46, 45, 37, 56};
 /* the parameter formats of a parameter (the firmware's F_*) */
 enum {
     MOD3_F_INT, MOD3_F_PCT, MOD3_F_BIPCT, MOD3_F_TIME, MOD3_F_LFOHZ, MOD3_F_CUTOFF, MOD3_F_DB, MOD3_F_SEMI, MOD3_F_ENUM,
@@ -118,6 +128,17 @@ enum {
                                                   * editor): the synth's edit buffer */
     MOD3_DUMP_STORED                             /* a stored patch (a user slot: the user pages' send, the editor), ch 0 */
 };
+
+/* mod_engine_v3.rec_take: what became of a take (host 4). The host's take begins MOD3_TAKE_PRE samples before the
+ * first above MOD3_TAKE_ON (-40 dBFS) and ends at 150 ms below -60 dBFS, or a full buffer */
+#define MOD3_TAKE_ON 328
+#define MOD3_TAKE_PRE 128u
+enum { MOD3_TK_NONE, MOD3_TK_KEPT, MOD3_TK_QUIET, MOD3_TK_ROOM, MOD3_TK_FLASH };
+typedef struct mod_rec_v3 {                      /* a data record's place (host 4): n sectors (0: an empty slot), their
+                                                  * 4 KB numbers in the flash; the payload's bytes run on from sector to
+                                                  * sector (MOD3_REC_PAYLOAD each) */
+    uint8_t n, sec[MOD3_REC_SEC];
+} mod_rec_v3;
 
 /* ---- the views */
 typedef struct mod_voice_v3 {                    /* a voice: the firmware's voice_t begins with these, its own follow */
@@ -201,7 +222,8 @@ typedef struct mod_engine_v3 {
                                                   * k = MOD3_DESC_ID + id, its schema's parameter id's (else the
                                                   * schema's: mod_schema.h MOD3_SF_DESC) */
     void (*block)(mod_part_v3 *t);               /* once per block and part, before its voices */
-    int32_t (*keys)(const mod_part_v3 *t, uint32_t k);              /* key k's note, the engine's own map; -1 none */
+    int32_t (*keys)(const mod_part_v3 *t, uint32_t k);              /* key k's note, the engine's own map; -1 none (k
+                                                  * 0: the map's first note, the keys from it), 255 a silent key */
     uint8_t ownenv;                              /* 1: its own envelopes are the amplitude; done() ends a voice */
     int (*done)(mod_part_v3 *t, mod_voice_v3 *v);
     uint32_t (*alloc)(mod_part_v3 *t, uint32_t note);               /* the POLY voice for a new note */
@@ -241,10 +263,18 @@ typedef struct mod_engine_v3 {
     /* the patch as the synth's SysEx, F0..F7 into out (max bytes): its length, 0 none (what: MOD3_DUMP_*; ch: the
      * channel, 0..15) */
     uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
+    /* host 4: its data records (a pads synth's recorded kits; mod_schema.h MOD3_R_PADS nrec), main loop. rec_check: a
+     * record of len payload bytes in nsec sectors (secs: each one's payload, readable in place) is one it plays, 0;
+     * the host publishes only records it checked (a written one before it commits it, the stored ones once the module
+     * is in SRAM). rec_take: a take (MOD3_PD_RECORD: Record kit's, n samples at pcm, 16-bit mono, the buffer's cap
+     * samples, 64 zeros after them) made pad's in record slot, written through the host's rec_* calls: MOD3_TK_*.
+     * rec_pad: 1 when record slot holds a take for pad */
+    int (*rec_check)(const uint32_t *const *secs, uint32_t nsec, uint32_t len);
+    uint32_t (*rec_take)(uint32_t slot, uint32_t pad, int16_t *pcm, uint32_t n, uint32_t cap);
+    int (*rec_pad)(uint32_t slot, uint32_t pad);
 } mod_engine_v3;
 
 /* ---- the firmware's side, handed to bind() (append only) */
-struct mod_legacy_v3;
 typedef struct mod_host_v3 {
     uint16_t version;                            /* the members this firmware fills: MOD3_HOST or later */
     uint16_t size;                               /* sizeof(mod_host_v3) as it has it */
@@ -274,10 +304,8 @@ typedef struct mod_host_v3 {
     /* the main loop's */
     void (*lz_unpack)(uint8_t *dst, const uint8_t *src, uint32_t n);   /* dsp.c's format (module_presets.h) */
     int (*file_read)(uint32_t self, uint32_t off, void *dst, uint32_t n);   /* the module's own file (bind's self) */
-    /* TEMPORARY (phase 5, the pads): the DRUM kits' lanes and recorded kits as this firmware lays them out (the
-     * module's key: MOD3_PADS_KEY, firmware/src/drum_kit.h); 0 for a module that does not name the key. (Host 1 called
-     * it legacy and held the shipped synths' patches too: the patch below replaced them) */
-    const struct mod_legacy_v3 *legacy;
+    const void *legacy;                          /* (host 1..3: a firmware's own data for a module naming its key;
+                                                  * since host 4 always 0: pads and records below) */
     /* host 2 */
     uint8_t *(*patch)(const mod_part_v3 *t);     /* the patch the part plays (MOD3_PATCH_MAX bytes room); while its
                                                   * engine is switching, zeros (never another engine's bytes) */
@@ -308,6 +336,19 @@ typedef struct mod_host_v3 {
     uint32_t (*store_slot)(uint32_t engine);     /* the slot engine's STORE page points at */
     void (*message)(const char *s);              /* a line on the screen (0: only redraw it) */
     const volatile uint32_t *ms;                 /* milliseconds, counting */
+    /* host 4: in note_on, the note's own pitch and length as the sequencer plays it (a pads synth's recorded hit:
+     * semitones, samples; 0 / 0 a plain note), and the data records (the audio may read them in place: rec_gen is odd
+     * while the host changes the table, and a record it no longer lists stays readable for 10 ms) */
+    const int32_t *note_pitch;
+    const uint32_t *note_len;
+    const mod_rec_v3 *rec;                       /* MOD3_NREC slots */
+    const volatile uint32_t *rec_gen;
+    const uint8_t *rec_base;                     /* sector k's payload at rec_base + 4096 k + MOD3_REC_OFF */
+    int (*rec_begin)(uint32_t slot, uint32_t len);   /* (main loop) a record of len bytes: written in order, committed */
+    int (*rec_write)(const void *src, uint32_t n);
+    int (*rec_commit)(uint32_t slot);            /* checked (rec_check), published: 0; -2 not playable */
+    int (*rec_delete)(uint32_t slot);
+    void (*wdt)(void);                           /* (main loop) a long call keeps the device's watchdog fed */
 } mod_host_v3;
 #define MOD3_SX_SEL 0xFFu
 enum { MOD3_C_BG, MOD3_C_INK, MOD3_C_DIM, MOD3_C_ACCENT, MOD3_C_THEME, MOD3_C_SURF, MOD3_C_RAISE, MOD3_C_COUNT };
@@ -321,7 +362,7 @@ typedef struct mod_desc_v3 {
     uint16_t eng_size;                           /* sizeof(mod_engine_v3) it was built with */
     uint8_t engine, npresets;                    /* the engine number it plays as; its presets (the PRST chunk's) */
     uint8_t flags, rsv;                          /* 0 */
-    uint32_t key;                                /* the legacy data's key it was built against, 0: it reads none */
+    uint32_t key;                                /* (host 1..3: the legacy data's key it was built against) 0 */
     const char *name;                            /* its engine's */
     const mod_engine_v3 *eng;
     int (*bind)(const mod_host_v3 *h, uint32_t self);   /* the first call: 0 ready, else refused */

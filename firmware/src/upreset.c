@@ -43,8 +43,8 @@ _Static_assert(sizeof UP_NATIVE_PARAMS <= 46u,"native preset parameter storage")
 #define UP_USED 0xA5u
 #define UP_STAR 2u
 #define UP_VER 4u                                /* the values as biased bytes */
-#define UP_VER_DRUM 9u
-#define UP_VER_DRUM_GRID 10u
+#define UP_VER_KIT 9u
+#define UP_VER_KIT_GRID 10u
 #define UP_VER_GRID 5u                           /* 4 with a drum grid as the pattern (see the top) */
 #define UP_BANK_MAGIC 0x31425055u                /* "UPB1" */
 typedef struct {
@@ -53,7 +53,7 @@ typedef struct {
     uint8_t packed[UP_PMAX * 2u];                /* the values + 64 (UP_VER_CZ: the native tone) */
     uint8_t note[16], flags[16];                 /* note 0 = rest; flags 1 accent, 2 slide, 4 tie (UP_VER_GRID:
                                                   * lane hits, their accents) */
-    uint8_t cz_extra[46];                        /* UP_VER_DRUM*: the DRUM patch's first bytes (up_drum_raw) */
+    uint8_t cz_extra[46];                        /* UP_VER_KIT*: the packed KIT patch's first bytes (up_kit_wire) */
 } up_rec_t;
 typedef struct {
     uint32_t magic;
@@ -155,14 +155,14 @@ static up_rec_t *up_rec(uint32_t k) { return &up_cache_bank(k / UP_PER_BANK)->r[
 
 /* the layouts by the format a synth's patch is stored in (module_schema.h MOD_SCH_STORE_*): the native layout (the
  * patch's sound bytes in packed, the voice's values in cz_extra) by its version, a KIT patch bit packed after the
- * values (UP_VER_DRUM*), else the values only */
+ * values (UP_VER_KIT*), else the values only */
 static uint32_t up_native_ver(uint32_t e)
 {
     switch (patch_store_tag(e)) {
     case MOD_SCH_STORE_VOICE: return UP_VER_FM;
     case MOD_SCH_STORE_PROGRAM: return UP_VER_P5;
     case MOD_SCH_STORE_TONE: return UP_VER_NATIVE_CZ;
-    case MOD_SCH_STORE_KIT: return UP_VER_DRUM;
+    case MOD_SCH_STORE_KIT: return UP_VER_KIT;
     default: return patch_len(e) && patch_sound_len(e) <= UP_PMAX * 2u ? UP_VER_BLOB : UP_VER;
     }
 }
@@ -172,7 +172,7 @@ static int up_native(const up_rec_t *r)
     return r->ver==UP_VER_FM || r->ver==UP_VER_P5 || r->ver==UP_VER_NATIVE_CZ || r->ver==UP_VER_BLOB;
 }
 static int up_bank_shape(uint32_t len,uint32_t rsize){return len==sizeof(up_bank_t) && rsize==sizeof(up_rec_t);}
-static int up_kit_wire(const up_rec_t *r,uint8_t *b)  /* a KIT patch's bits (KIT_WIRE_BYTES) */
+static int up_kit_wire(const up_rec_t *r,uint8_t *b)  /* a KIT patch's bits (MOD_SCH_KIT_PACKED) */
 {
     if(r->np>sizeof r->packed-8u)return 0;
     memcpy(b,r->cz_extra,sizeof r->cz_extra);memcpy(b+sizeof r->cz_extra,r->packed+r->np,8u);return 1;
@@ -200,14 +200,14 @@ static int up_valid(const up_rec_t *r)
 #else
         cz_patch_valid(r->packed);
 #endif
-    if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || r->ver==UP_VER_DRUM || r->ver==UP_VER_DRUM_GRID) && r->engine < USER_GENERAL &&
+    if (!((r->used & ~UP_STAR) == UP_USED && (r->ver == UP_VER || r->ver == UP_VER_GRID || r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID) && r->engine < USER_GENERAL &&
           r->np >= 8u && r->np <= UP_PMAX * 2u && r->name[0])) return 0;
     for (uint32_t i = 0; i < r->np; i++) if (r->packed[i] > 191u) return 0;
-    if(r->ver==UP_VER_DRUM || r->ver==UP_VER_DRUM_GRID){   /* (a KIT patch's bits: its offsets in their ranges) */
-        uint8_t b[KIT_WIRE_BYTES],p[MOD3_PATCH_MAX];
+    if(r->ver==UP_VER_KIT || r->ver==UP_VER_KIT_GRID){   /* (a KIT patch's bits: its offsets in their ranges) */
+        uint8_t b[MOD_SCH_KIT_PACKED],p[MOD3_PATCH_MAX];
         if(!up_kit_wire(r,b))return 0;
-        kit_wire_unpack(p,b);
-        for(uint32_t i=0;i<16u;i++){const int8_t *c=(const int8_t *)p+4u*i;if(c[0]<-24||c[0]>24||c[1]<-64||c[2]<-64||c[3]<0)return 0;}
+        patch_unpack(MOD_SCH_STORE_KIT,p,b,MOD_SCH_KIT_PACKED);
+        if(!patch_stored_ok(MOD_SCH_STORE_KIT,p))return 0;   /* (its synth's checks: mod_schema.h MOD3_R_CHECK) */
     }
     return 1;
 }
@@ -243,7 +243,7 @@ static int up_old_bank(uint32_t k)
 #endif
 }
 
-static int up_grid(const up_rec_t *r) { return r->ver == UP_VER_GRID || r->ver==UP_VER_DRUM_GRID; }
+static int up_grid(const up_rec_t *r) { return r->ver == UP_VER_GRID || r->ver==UP_VER_KIT_GRID; }
 static int16_t up_value(const up_rec_t *r, uint32_t k) { return (int16_t)r->packed[k] - 64; }
 static void up_set_value(up_rec_t *r, uint32_t k, int16_t v)
 {
@@ -570,7 +570,7 @@ static int up_store_to(uint32_t k,uint32_t tr,const char *name)
     memset(&r,0,sizeof r);r.used=UP_USED;r.ver=UP_VER;r.engine=t->eng_req;r.np=P_COUNT;
     up_set_name(&r,k,name);
     uint32_t nv=up_native_ver(r.engine);
-    if(nv!=UP_VER && nv!=UP_VER_DRUM){                  /* the native layout: the patch's sound bytes */
+    if(nv!=UP_VER && nv!=UP_VER_KIT){                  /* the native layout: the patch's sound bytes */
         r.ver=(uint8_t)nv;
         memcpy(r.packed,patch_of(tr),patch_sound_len(r.engine));
         r.np=sizeof UP_NATIVE_PARAMS;
@@ -580,11 +580,11 @@ static int up_store_to(uint32_t k,uint32_t tr,const char *name)
     }
     for(uint32_t i=0;i<P_COUNT;i++)up_set_value(&r,i,(param_fx(i)||param_fx_send(i))?param_desc_of(r.engine,i)->def:motion_base_value(t,i));
     up_pat_from(&r,t->step);
-    if(drum_track(t)){
-        uint32_t any=0;for(uint32_t i=0;i<16u;i++)any|=step_lanes(&t->step[i]);
-        if(any){r.ver=UP_VER_GRID;for(uint32_t i=0;i<16u;i++){r.note[i]=(uint8_t)step_lanes(&t->step[i]);r.flags[i]=(uint8_t)step_accents(&t->step[i]);}}
+    if(pads_on(t)){
+        uint32_t any=0;for(uint32_t i=0;i<16u;i++)any|=step_lanes(t, &t->step[i]);
+        if(any){r.ver=UP_VER_GRID;for(uint32_t i=0;i<16u;i++){r.note[i]=(uint8_t)step_lanes(t, &t->step[i]);r.flags[i]=(uint8_t)step_accents(t, &t->step[i]);}}
     }
-    if(nv==UP_VER_DRUM){uint8_t b[KIT_WIRE_BYTES];kit_wire_pack(b,patch_of(tr));memcpy(r.cz_extra,b,sizeof r.cz_extra);memcpy(r.packed+r.np,b+sizeof r.cz_extra,8u);r.ver=r.ver==UP_VER_GRID?UP_VER_DRUM_GRID:UP_VER_DRUM;}
+    if(nv==UP_VER_KIT){uint8_t b[MOD_SCH_KIT_PACKED];patch_pack(MOD_SCH_STORE_KIT,b,patch_of(tr),MOD_SCH_KIT_PACKED);memcpy(r.cz_extra,b,sizeof r.cz_extra);memcpy(r.packed+r.np,b+sizeof r.cz_extra,8u);r.ver=r.ver==UP_VER_GRID?UP_VER_KIT_GRID:UP_VER_KIT;}
     return up_put(k,&r);
 }
 static int up_store(uint32_t k,const char *name){return up_store_to(k,song.sel,name);}
@@ -632,11 +632,11 @@ static int up_load_to(uint32_t k,uint32_t tr)
         t->preset = 0;
         if (up_native(r) || up_native_cz(r)) {          /* the patch's sound bytes (the rest kept, or its defaults) */
             patch_set(tr, e, r->packed, patch_sound_len(e), MOD3_PATCH_LOAD);
-        } else if (r->ver == UP_VER_DRUM || r->ver == UP_VER_DRUM_GRID) {   /* a KIT patch */
-            uint8_t b[KIT_WIRE_BYTES], d[MOD3_PATCH_MAX];
+        } else if (r->ver == UP_VER_KIT || r->ver == UP_VER_KIT_GRID) {   /* a KIT patch */
+            uint8_t b[MOD_SCH_KIT_PACKED], d[MOD3_PATCH_MAX];
             memset(d, 0, sizeof d);
             if (up_kit_wire(r, b))
-                kit_wire_unpack(d, b);
+                patch_unpack(MOD_SCH_STORE_KIT,d,b,MOD_SCH_KIT_PACKED);
             patch_set(tr, e, d, patch_len(e), MOD3_PATCH_LOAD);
         } else {
             patch_set(tr, e, 0, 0, MOD3_PATCH_LOAD);      /* (values only: the synth's starting patch) */

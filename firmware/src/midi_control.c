@@ -69,7 +69,7 @@ static void midi_expression(track_t *t, const midi_channel_t *c)
 {
     int32_t range = ((int32_t)c->semis * 100 + c->cents) * 256 / 100;
     {const engine_t *e=eng_of(t->eng_req);if(e->bend_range)range=e->bend_range(t);}   /* (the Prophet: its BEND) */
-    if (drum_track(t))
+    if (pads_flag(t, MOD3_PD_NOBEND))
         return;
     midi_bend_target[trk_index(t)] = (int32_t)c->bend * range / (c->bend < 0 ? 8192 : 8191);
     t->bend_raw = c->bend;                        /* (FM6 bends by its own range: its DX7 function settings) */
@@ -204,7 +204,7 @@ static void midi_note_event(uint32_t ch, uint32_t note, uint32_t vel)
             || midi_event_source == 3u || midi_note_source(ch, note) == 3u
 #endif
             ) && midi_note_source(ch, note) != midi_event_source) return;
-        if (c->pedal && !drum_track(&trk[id - 1u])) {
+        if (c->pedal && !pads_flag(&trk[id - 1u], MOD3_PD_NOSUS)) {
             step_midi_edge(id - 1u, 0, 0, ch, note);   /* physical release ends step entry, even under sustain */
             mn_set(ch, note, mn_get(ch, note) | MIDI_PEDAL_NOTE);
         } else

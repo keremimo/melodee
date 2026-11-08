@@ -8,9 +8,13 @@
  * KIT SID (drum_sid.c): one Commodore 6581 for the part, on one voice; its drums are C64 frame programs,
  * DIGI ON plays KICK and SNARE on the volume register, TONE and RES are its filter's.
  * KIT CR78 (drum_cr78.c) and KIT FM (drum_fm.c): eight lanes on one voice (drum_lanes.c); CR78's KICK is HATS.
- * KIT 1..8 (values 9..16): the user's recorded kits (kit_store.c, Record kit), played by drum_real.c on one voice. */
+ * KIT 1..8 (values 9..16): the user's recorded kits (its data records: kit_store.c checks them, kit_take.c makes a
+ * take a pad's for the firmware's Record kit), played by drum_real.c on one voice. Its pads (the firmware's lanes,
+ * pages and keys) are its schema's (drum_schema.h). */
 #include "x0x/fastmath.h"
-#include "../modules/drum/drum_patch.h"   /* the part's patch: the kit's offsets (where the firmware keeps it) */
+#include "drum_map.c"                    /* its lanes, the GM map, the kits' numbers, the MPC pads */
+#include "drum_kit.h"                    /* the user kits' records */
+#include "drum_patch.h"                  /* the part's patch: the kit's offsets (where the firmware keeps it) */
 #include "drum_808.c"
 #include "x0x/drum909.c"
 
@@ -108,6 +112,8 @@ static const char *const N_DRUM_KICK[] = {"PUNCH", "ROUND"};
 #include "drum_lanes.c"                        /* KIT CR78, KIT FM */
 #if MELODEE_USER_KITS
 #include "drum_real.c"                         /* KIT 1..8: the user's recorded kits */
+#include "kit_store.c"                         /* .. their records' check (rec_check) */
+#include "kit_take.c"                          /* .. a take made a pad's (rec_take) */
 #else
 static uint32_t drk_bytes(void) { return 0; }
 #endif
@@ -157,7 +163,6 @@ static voice_t *drum_reuse(track_t *t, uint32_t note)
 
 static void drum_note_on(track_t *t, voice_t *v)
 {
-    drum_flash[trk_ix(t) % NTRK] |= (uint8_t)(1u << drum_lane(v->note));
     v->s[3]=(int32_t)drum_event_length; v->s[4]=drum_event_pitch; v->s[5]=drum_event_length!=0;
     if(drum_issid(t)) {                                  /* the hit's own length: its SID voice's gate */
         v->s[2]=DK_SID; v->s[5]=0; v->env_out=32767; dsk_hit(t,v->note,v->vel); return;
@@ -368,6 +373,17 @@ static const param_desc_t *drum_desc(const track_t *t, uint32_t k)
     return !drum_issid(t) ? 0 : k == 6u ? &DRUM_SID_DIGI : k == 7u ? &DRUM_SID_RES : 0;
 }
 static uint32_t drum_cap(const track_t *t) { return drum_isone(t) ? 1u : DV_NLANE; }
+/* the part's working memory for its kit (the host's: a module's part_mem, a host build's resources) */
+#if !MOD_SIDE
+static void *mod_part_mem(uint32_t part, uint32_t bytes);   /* (eng_module.c) */
+#endif
+static drum909_part_t *drum909_part(uint32_t part) { return mod_part_mem(part, sizeof(drum909_part_t)); }
+static drum_lane_t *drum_kit_part(uint32_t part) { return mod_part_mem(part, sizeof(drum_lane_t) * DV_NLANE); }
+static dsk_part_t *dsk_part(uint32_t part) { return mod_part_mem(part, sizeof(dsk_part_t)); }
+static dlk_part_t *dlk_part(uint32_t part) { return mod_part_mem(part, sizeof(dlk_part_t)); }
+#if MELODEE_USER_KITS
+static drk_part_t *drk_part(uint32_t part) { return mod_part_mem(part, sizeof(drk_part_t)); }
+#endif
 
 static const engine_t ENG_DRUM = {
     .name = "DRUM",
@@ -400,4 +416,7 @@ static const engine_t ENG_DRUM = {
     .reuse = drum_reuse,
     .batch = drum_batch, .render_p = drum_render_p,
     .wclass = 5,
+#if MELODEE_USER_KITS
+    .rec_check = drum_rec_check, .rec_take = drum_rec_take, .rec_pad = drum_rec_pad,
+#endif
 };

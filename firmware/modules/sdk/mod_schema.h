@@ -34,6 +34,7 @@
  * A parameter's id never changes (Motion, MIDI learn, the editor and stored sounds name it). */
 #pragma once
 #include <stdint.h>
+#include "mod_abi3.h"                           /* (MOD3_LANE_NOTE) */
 
 #define MOD_SCH_TAG 0x4D484353u                  /* "SCHM" */
 #define MOD_SCH_VERSION 1u
@@ -134,8 +135,54 @@ enum {
                                                   * slot 1.. of bank 0.. (bank b's slot s: the bank Melodee 1.x saved,
                                                   * else, for b < flags, factory preset b * slots + s; slot 0: the
                                                   * synth's starting patch); a picked patch is the part's (MOD3_PATCH_SET) */
+    MOD3_R_PADS,                                 /* it plays pads (a kit): id the widget data's offset of its pads block
+                                                  * (below), flags its version (1), label 0 */
+    MOD3_R_PACK,                                 /* how Melodee 1.x packed its stored patch (store KIT): id the widget
+                                                  * data's offset of the packing (below), flags its fields, label 0 */
     MOD3_R_COUNT
 };
+/* ---- pads (MOD3_R_PADS): a synth whose notes strike pads, a drum kit's. The sequencer's eight lanes (a step's hits:
+ * NLANE bits) play its lanes' notes, its grid and DRUM-machine pages show its pads, the keys and the MPC pads play
+ * them, a part's own parameter (sel) picks one of its pad maps (a kit). A part of a synth without pads is never a
+ * kit's.
+ *   head (32 bytes)  version 1, flags (MOD3_PD_*), nmap, sel (a P_* number, 0xFF: map 0 always), nsel (seltab's
+ *                    values: sel's value v < nsel picks map seltab[v], else map 0), npar (the pads' parameters, <= 4:
+ *                    the first page shows 0..2, the second 3), pstride (patch bytes a pad), nlane (8), u16 seltab,
+ *                    u16 lanes (8 lane notes: mod_abi3.h MOD3_LANE_NOTE, the pattern format's, then 128 bytes: each
+ *                    note's lane), u16 maps (nmap records of 20
+ *                    bytes), u16 par (npar records of 12 bytes), u16 words (MOD3_PW_COUNT strings, one after another),
+ *                    u16 lane names (8 strings), u16 lane abbreviations (8), u8 rec0 (sel's value of the module's data
+ *                    record 0, 0xFF none), u8 nrec (its records: their slots), u16 rname, u8 rnlen (a record's name:
+ *                    rnlen ASCII bytes at rname of its payload, zeros after it), u8 rsec (a record's sectors, at most),
+ *                    u16 rmin (a record's bytes, at least), u16 0
+ *   map (20 bytes)   npads (<= 16), flags (MOD3_PM_*), u16 names, u16 abbrs (npads strings each), u16 notes (npads
+ *                    bytes: a pad's note), u16 mpc (16 bytes: the pad MPC pad k plays), u16 order (npads bytes: the
+ *                    pads as a knob steps through them), u16 note_pad (128 bytes: the pad a note strikes), u16 lane
+ *                    names, u16 lane abbreviations (8 strings; MOD_SCH_NONE: the block's), u16 labels (npads * npar
+ *                    string offsets: a pad's own label of a parameter, MOD_SCH_NONE the parameter's; MOD_SCH_NONE none)
+ *   par (12 bytes)   off (its byte in a pad's pstride), flags (MOD3_PP_*), i8 min, i8 max, i8 add (shown v + add),
+ *                    0, u16 label, u16 unit, u16 icon (a label whose picture it has; MOD_SCH_NONE: its label's)
+ * Strings are offsets into the strings, widget data offsets into the widget data. */
+#define MOD3_PD_NOBEND 1u                        /* the pitch wheel and the mod wheel do not reach its notes */
+#define MOD3_PD_NOSUS 2u                         /* the sustain pedal holds none of its notes, a key struck again sounds
+                                                  * again (its hits ring out on their own) */
+#define MOD3_PD_HITS 4u                          /* a recorded note is a hit: its own pitch (-24..24 semitones) and
+                                                  * length (DRUM HIT), the grid's lanes its notes */
+#define MOD3_PD_RECORD 8u                        /* its data records are recorded from USB audio (Record kit: rec_take) */
+#define MOD3_PM_KEYMAP 1u                        /* (a map's flags) its keys() places every key, the SMK-37's outer keys
+                                                  * too (k signed: -5..-1 below key 0, 27..31 above), not a scale */
+#define MOD3_PP_SIGNED 1u
+#define MOD3_PP_INVERT 2u                        /* shown max - v, a turn up sets it down (a level stored as a cut) */
+enum { MOD3_PW_PAGE1, MOD3_PW_PAGE2, MOD3_PW_HIT, MOD3_PW_PAD, MOD3_PW_SECTION, MOD3_PW_COUNT };   /* the words */
+#define MOD_SCH_PDHEAD 32u
+#define MOD_SCH_PDMAP 20u
+#define MOD_SCH_PDPAR 12u
+#define MOD3_NLANE 8u                            /* a step's lanes (the firmware's NLANE) */
+#define MOD3_NPAD 16u
+/* ---- the packing of a stored patch (MOD3_R_PACK): fields records of u8 width (1..8 bits), i8 bias (stored v + bias),
+ * then u8 count, u8 stride: count times, stride patch bytes apart, the fields from the group's first byte, each a
+ * signed byte of the patch, bits low first one after another (wire_bits). Its packed bytes: (count * the fields'
+ * widths + 7) / 8 */
 /* a MOD3_R_CHECK record (8 bytes): u16 off, u8 n, u8 stride, u8 mask, u8 flags, u8 lo, u8 hi. The n bytes from off,
  * stride apart (0: 1), each masked and shifted down by the mask's lowest bit, must be lo..hi (MOD3_CK_SIGNED: the
  * byte as int8 before the mask, 0xFF; MOD3_CK_PAIR: lo or hi, nothing between). Every record of the role must pass */
@@ -260,6 +307,32 @@ typedef struct {
 } mod_sch_page_src;
 typedef struct { uint8_t role, flags; uint16_t id; const char *label; } mod_sch_role_src;
 typedef struct { uint8_t q, a; uint16_t id; int16_t v; } mod_sch_rec_src;
+typedef struct {                                 /* a pads' parameter (a byte of each pad's) */
+    uint8_t off, flags;                          /* MOD3_PP_* */
+    int8_t min, max, add;
+    const char *label, *unit, *icon;
+} mod_sch_padpar_src;
+typedef struct {                                 /* a pad map (a kit's) */
+    uint8_t npads, flags;                        /* MOD3_PM_* */
+    const char *const *names, *const *abbrs;     /* npads each */
+    const uint8_t *notes, *mpc, *order, *note_pad;   /* npads, 16, npads, 128 */
+    const char *const *lane_names, *const *lane_abbrs;   /* 8 each (0: the block's) */
+    const char *const *labels;                   /* npads * npar (0: none; an entry 0: the parameter's) */
+} mod_sch_padmap_src;
+typedef struct {
+    uint8_t flags, sel, nsel, npar, pstride;
+    const uint8_t *seltab;
+    const uint8_t *lane_note, *note_lane;        /* 8, 128 */
+    const char *const *lane_names, *const *lane_abbrs;
+    const mod_sch_padmap_src *map;
+    uint8_t nmap;
+    const mod_sch_padpar_src *par;
+    const char *const *words;                    /* MOD3_PW_COUNT */
+    uint8_t rec0, nrec, rnlen, rsec;
+    uint16_t rname, rmin;
+} mod_sch_pads_src;
+typedef struct { uint8_t width; int8_t bias; } mod_sch_pack_field;
+typedef struct { const mod_sch_pack_field *field; uint8_t nfield, count, stride; } mod_sch_pack_src;
 typedef struct {
     uint16_t patch;
     const uint8_t *def;
@@ -296,6 +369,8 @@ typedef struct {
     uint8_t nsysex;
     const uint8_t *check;                        /* its stored patch's checks: ncheck MOD3_R_CHECK records (8 bytes) */
     uint8_t ncheck;
+    const mod_sch_pads_src *pads;                /* its pads (MOD3_R_PADS: the writer puts the block after the checks) */
+    const mod_sch_pack_src *pack;                /* its stored patch's packing (MOD3_R_PACK) */
 } mod_sch_src;
 
 /* ---- the chunk as it is read */
@@ -442,6 +517,160 @@ static uint32_t mod_sch_dsize(const mod_sch_src *s)  /* the designer block's byt
             bad |= !(k = mod_sch_dlen(s, d->need[i].cond)), n += k;
     return bad ? 0u : n;
 }
+/* the pads block: map m's array k (0 notes, 1 mpc, 2 order, 3 note_pad, 4 labels) and its bytes; an earlier map's same
+ * array is shared (its index into *first, else m) */
+static const void *mod_sch_parr(const mod_sch_pads_src *p, uint32_t m, uint32_t k, uint32_t *n)
+{
+    const mod_sch_padmap_src *g = &p->map[m];
+    *n = k == 0u || k == 2u ? g->npads : k == 1u ? MOD3_NPAD : k == 3u ? 128u : g->labels ? 2u * g->npads * p->npar : 0u;
+    return k == 0u ? (const void *)g->notes : k == 1u ? (const void *)g->mpc : k == 2u ? (const void *)g->order :
+           k == 3u ? (const void *)g->note_pad : (const void *)g->labels;
+}
+static uint32_t mod_sch_pshared(const mod_sch_pads_src *p, uint32_t m, uint32_t k)
+{
+    uint32_t n, j, nj;
+    const void *a = mod_sch_parr(p, m, k, &n);
+    for (j = 0; j < m; j++)
+        if (mod_sch_parr(p, j, k, &nj) == a && nj == n)
+            return j;
+    return m;
+}
+static uint32_t mod_sch_psize(const mod_sch_src *s)   /* the pads block's bytes, 0 none or malformed */
+{
+    const mod_sch_pads_src *p = s->pads;
+    uint32_t n, m, k, a;
+    if (!p)
+        return 0;
+    if (!p->nmap || p->nmap > 8u || !p->map || p->npar > 4u || (p->npar && !p->par) || !p->lane_note || !p->note_lane ||
+        !p->lane_names || !p->lane_abbrs || !p->words || (p->nsel && !p->seltab))
+        return 0;
+    for (k = 0; k < MOD3_NLANE; k++)
+        if (p->lane_note[k] != MOD3_LANE_NOTE[k])
+            return 0;                            /* (the lanes play the pattern format's notes) */
+    n = MOD_SCH_PDHEAD + p->nsel + MOD3_NLANE + 128u + p->nmap * MOD_SCH_PDMAP + p->npar * MOD_SCH_PDPAR;
+    for (m = 0; m < p->nmap; m++) {
+        const mod_sch_padmap_src *g = &p->map[m];
+        if (!g->npads || g->npads > MOD3_NPAD || !g->names || !g->abbrs || !g->notes || !g->mpc || !g->order ||
+            !g->note_pad)
+            return 0;
+        for (k = 0; k < 5u; k++)
+            if (mod_sch_pshared(p, m, k) == m)
+                (void)mod_sch_parr(p, m, k, &a), n += a;
+    }
+    for (k = 0; k < p->nsel; k++)
+        if (p->seltab[k] >= p->nmap)
+            return 0;
+    return n;
+}
+static uint32_t mod_sch_pksize(const mod_sch_src *s)   /* the packing's bytes, 0 none */
+{
+    return s->pack && s->pack->nfield && s->pack->nfield <= 8u ? 2u * s->pack->nfield + 2u : 0u;
+}
+/* the pads block at b (the widget data's offset o), its strings added: 0 ok */
+static int mod_sch_pput(const mod_sch_src *s, uint8_t *b, uint32_t o, uint8_t *str, uint32_t *nstr, uint32_t cap)
+{
+    const mod_sch_pads_src *p = s->pads;
+    uint32_t at, m, k, n, v;
+    uint32_t off[8][5];
+    b[0] = 1;
+    b[1] = p->flags;
+    b[2] = p->nmap;
+    b[3] = p->sel;
+    b[4] = p->nsel;
+    b[5] = p->npar;
+    b[6] = p->pstride;
+    b[7] = MOD3_NLANE;
+    at = MOD_SCH_PDHEAD;
+    mod_sch_w16(b + 8, o + at);
+    for (k = 0; k < p->nsel; k++)
+        b[at++] = p->seltab[k];
+    mod_sch_w16(b + 10, o + at);
+    for (k = 0; k < MOD3_NLANE; k++)
+        b[at++] = p->lane_note[k];
+    for (k = 0; k < 128u; k++)
+        b[at++] = p->note_lane[k] < MOD3_NLANE ? p->note_lane[k] : 0u;
+    mod_sch_w16(b + 12, o + at);
+    uint32_t maps = at;
+    at += p->nmap * MOD_SCH_PDMAP;
+    mod_sch_w16(b + 14, o + at);
+    for (k = 0; k < p->npar; k++, at += MOD_SCH_PDPAR) {
+        const mod_sch_padpar_src *q = &p->par[k];
+        uint32_t l = mod_sch_str(str, nstr, cap, q->label), u = mod_sch_str(str, nstr, cap, q->unit);
+        uint32_t ic = mod_sch_str(str, nstr, cap, q->icon);
+        if ((l | u | ic) > 0xFFFFu || q->off >= p->pstride)
+            return 1;
+        b[at] = q->off;
+        b[at + 1] = q->flags;
+        b[at + 2] = (uint8_t)q->min;
+        b[at + 3] = (uint8_t)q->max;
+        b[at + 4] = (uint8_t)q->add;
+        b[at + 5] = 0;
+        mod_sch_w16(b + at + 6, l);
+        mod_sch_w16(b + at + 8, u);
+        mod_sch_w16(b + at + 10, ic);
+    }
+    v = mod_sch_strs(str, nstr, cap, p->words, MOD3_PW_COUNT);
+    n = mod_sch_strs(str, nstr, cap, p->lane_names, MOD3_NLANE);
+    k = mod_sch_strs(str, nstr, cap, p->lane_abbrs, MOD3_NLANE);
+    if ((v | n | k) > 0xFFFFu)
+        return 1;
+    mod_sch_w16(b + 16, v);
+    mod_sch_w16(b + 18, n);
+    mod_sch_w16(b + 20, k);
+    b[22] = p->rec0;
+    b[23] = p->nrec;
+    mod_sch_w16(b + 24, p->rname);
+    b[26] = p->rnlen;
+    b[27] = p->rsec;
+    mod_sch_w16(b + 28, p->rmin);
+    for (m = 0; m < p->nmap; m++) {
+        const mod_sch_padmap_src *g = &p->map[m];
+        uint8_t *r = b + maps + m * MOD_SCH_PDMAP;
+        uint32_t nm = mod_sch_strs(str, nstr, cap, g->names, g->npads), ab = mod_sch_strs(str, nstr, cap, g->abbrs, g->npads);
+        uint32_t ln = g->lane_names ? mod_sch_strs(str, nstr, cap, g->lane_names, MOD3_NLANE) : MOD_SCH_NONE;
+        uint32_t la = g->lane_abbrs ? mod_sch_strs(str, nstr, cap, g->lane_abbrs, MOD3_NLANE) : MOD_SCH_NONE;
+        if ((nm | ab | ln | la) > 0xFFFFu)
+            return 1;
+        for (k = 0; k < 5u; k++) {
+            uint32_t j = mod_sch_pshared(p, m, k), cnt;
+            const void *a = mod_sch_parr(p, m, k, &cnt);
+            if (j < m) {
+                off[m][k] = off[j][k];
+                continue;
+            }
+            off[m][k] = cnt ? o + at : MOD_SCH_NONE;
+            if (k == 4u) {                       /* (labels: string offsets) */
+                for (uint32_t i = 0; i < cnt / 2u; i++) {
+                    const char *t = ((const char *const *)a)[i];
+                    uint32_t x = t ? mod_sch_str(str, nstr, cap, t) : MOD_SCH_NONE;
+                    if (x > 0xFFFFu)
+                        return 1;
+                    mod_sch_w16(b + at + 2u * i, x);
+                }
+            } else {
+                for (uint32_t i = 0; i < cnt; i++)
+                    b[at + i] = ((const uint8_t *)a)[i];
+            }
+            if (k == 1u || k == 2u || k == 3u)
+                for (uint32_t i = 0; i < cnt; i++)
+                    if (b[at + i] >= g->npads)
+                        return 1;                /* (a pad it does not have) */
+            at += cnt;
+        }
+        r[0] = g->npads;
+        r[1] = g->flags;
+        mod_sch_w16(r + 2, nm);
+        mod_sch_w16(r + 4, ab);
+        mod_sch_w16(r + 6, off[m][0]);
+        mod_sch_w16(r + 8, off[m][1]);
+        mod_sch_w16(r + 10, off[m][2]);
+        mod_sch_w16(r + 12, off[m][3]);
+        mod_sch_w16(r + 14, ln);
+        mod_sch_w16(r + 16, la);
+        mod_sch_w16(r + 18, off[m][4]);
+    }
+    return at != mod_sch_psize(s);
+}
 static uint32_t mod_sch_dput(const mod_sch_src *s, uint8_t *b, uint32_t *at, const uint8_t *p)   /* its offset */
 {
     uint32_t n = p ? mod_sch_dlen(s, p) : 0, o = *at;
@@ -459,12 +688,15 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
     static uint8_t str[16384];
     uint32_t nstr = 0, i, k, o, v;
     uint32_t param = MOD_SCH_HEAD, page = param + s->nparam * MOD_SCH_PREC, role = page + s->npage * MOD_SCH_GREC;
-    uint32_t nrole = s->nrole + (s->nsysex ? 1u : 0u) + (s->ncheck ? 1u : 0u);   /* (+ the SysEx and checks' roles) */
+    uint32_t psize = mod_sch_psize(s), pksize = mod_sch_pksize(s);
+    uint32_t nrole = s->nrole + (s->nsysex ? 1u : 0u) + (s->ncheck ? 1u : 0u) + (psize ? 1u : 0u) + (pksize ? 1u : 0u);
     uint32_t rec = role + nrole * MOD_SCH_RREC, def = rec + s->nrec * MOD_SCH_XREC, wid = def + s->patch;
     uint32_t dsize = mod_sch_dsize(s), xat = s->nwid + dsize, cat = xat + 4u * s->nsysex;
-    uint32_t at = wid + cat + MOD_SCH_CREC * s->ncheck;
+    uint32_t pat = cat + MOD_SCH_CREC * s->ncheck, kat = pat + psize;   /* (the pads block, the packing) */
+    uint32_t at = wid + kat + pksize;
     if (s->patch > 512u || at > cap || (s->wdef != MOD_SCH_NONE && s->wdef >= s->nwid) ||
-        (s->mmap != MOD_SCH_NONE && (uint32_t)s->mmap + 2u * s->patch > s->nwid))
+        (s->mmap != MOD_SCH_NONE && (uint32_t)s->mmap + 2u * s->patch > s->nwid) || (s->pads && !psize) ||
+        (s->pack && !pksize))
         return 0;
     for (i = 0; i < at; i++)
         out[i] = 0;
@@ -594,6 +826,35 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
         mod_sch_w16(b + 4, MOD_SCH_NONE);
         for (i = 0; i < MOD_SCH_CREC * s->ncheck; i++)
             out[wid + cat + i] = s->check[i];
+    }
+    if (psize) {                                 /* (its role after the checks') */
+        uint8_t *b = out + role + (s->nrole + (s->nsysex ? 1u : 0u) + (s->ncheck ? 1u : 0u)) * MOD_SCH_RREC;
+        b[0] = MOD3_R_PADS;
+        b[1] = 1;
+        mod_sch_w16(b + 2, pat);
+        mod_sch_w16(b + 4, MOD_SCH_NONE);
+        if (mod_sch_pput(s, out + wid + pat, pat, str, &nstr, sizeof str))
+            return 0;
+    }
+    if (pksize) {
+        const mod_sch_pack_src *q = s->pack;
+        uint8_t *b = out + role + (nrole - 1u) * MOD_SCH_RREC, *d = out + wid + kat;
+        uint32_t bits = 0;
+        b[0] = MOD3_R_PACK;
+        b[1] = q->nfield;
+        mod_sch_w16(b + 2, kat);
+        mod_sch_w16(b + 4, MOD_SCH_NONE);
+        for (i = 0; i < q->nfield; i++) {
+            if (!q->field[i].width || q->field[i].width > 8u || i >= q->stride)
+                return 0;
+            d[2u * i] = q->field[i].width;
+            d[2u * i + 1u] = (uint8_t)q->field[i].bias;
+            bits += q->field[i].width;
+        }
+        d[2u * q->nfield] = q->count;
+        d[2u * q->nfield + 1u] = q->stride;
+        if (!q->count || (uint32_t)(q->count - 1u) * q->stride + q->nfield > s->patch || bits * q->count > 8u * 512u)
+            return 0;
     }
     v = mod_sch_str(str, &nstr, sizeof str, s->abbr);
     if (v > 0xFFFFu)

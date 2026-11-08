@@ -243,7 +243,7 @@ static void drum_pads(void)
                     assert(song.sel == k && !ui.msg_t && mn_get(0, src) == k + 1u && midi_owners[k] == 1u);
                     assert(song.playing && midi_note_held(t, want));
                     uint32_t lane = drum_lane(want);
-                    if (want == DRUM_LANE_NOTE[lane]) assert(t->step[0].hit & (1u << lane));
+                    if (want == STEP_LANE_NOTE[lane]) assert(t->step[0].hit & (1u << lane));
                     else assert(t->step[0].n == 1u && t->step[0].note[0] == want);
                     if (source == 1u) midi_in_event(0x08u | 0x80u << 8 | src << 16);
                     else { um_byte(0x80); um_byte((uint8_t)src); um_byte(0); }

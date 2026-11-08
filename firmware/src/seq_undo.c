@@ -62,7 +62,7 @@ static void step_history_sync_locked(void)
     if(!step_history_memory()){
         step_history.valid=step_history.head=step_history.pos=step_history.pending=0;
         step_history.has_removed=0;
-        if(ui.home || (cur_page()->scope!=SC_STEP && cur_page()->scope!=SC_DRUMHIT) ||
+        if(ui.home || (cur_page()->scope!=SC_STEP && cur_page()->scope!=SC_PADHIT) ||
            (song.playing && (song.rec&(1u<<song.sel))))return;
         step_snapshot_t *data=resource_get(RES_STEP_UNDO,STEP_HISTORY_BYTES);
         if(!data)return; /* editing still works when audio needs all the RAM */
@@ -141,7 +141,7 @@ static void step_history_end(void)
         return;
     }
     if (step_history.has_removed || !step_snapshot_equal(step_history.live,TSEL->step)) {
-        if (ui.home || (cur_page()->scope != SC_STEP && cur_page()->scope != SC_DRUMHIT)) {  /* a pattern load, a clear, the editor: not a STEP edit */
+        if (ui.home || (cur_page()->scope != SC_STEP && cur_page()->scope != SC_PADHIT)) {  /* a pattern load, a clear, the editor: not a STEP edit */
             step_history_clear();
             fm1_irq_on();
             return;

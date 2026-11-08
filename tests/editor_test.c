@@ -1378,8 +1378,8 @@ static int studio_device(void)
     n = request(ED_CAPS, a, 0);
     for (i = 6; i + 1u < n && host_wire[i] != 'C'; i += 2u + host_wire[i + 1]) ;
     for (j = 6; j + 1u < n && host_wire[j] != 'W'; j += 2u + host_wire[j + 1]) ;
-    bad += check("CAPS: tag C (SETTINGS v1, MLEARN v2, BLE v1 with Bluetooth, else 0, DRUM v1), W 2 bytes (bit 7 known)",
-                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 2 && host_wire[i + 4] == ED_BT && host_wire[i + 5] == 1 &&
+    bad += check("CAPS: tag C (SETTINGS v1, MLEARN v2, BLE v1 with Bluetooth, else 0, PADS v2), W 2 bytes (bit 7 known)",
+                 host_wire[i + 1] == 4 && host_wire[i + 2] == 1 && host_wire[i + 3] == 2 && host_wire[i + 4] == ED_BT && host_wire[i + 5] == 2 &&
                  host_wire[j + 1] == 2 && host_wire[j + 2] == 127 && host_wire[j + 3] == 1);
 
     /* SETTINGS */
@@ -1466,26 +1466,34 @@ static int studio_device(void)
                  (a[0] = 2, request(ED_MLEARN, a, 2), host_wire[6] == 1));
     bad += studio_mlearn_params(a);
 
-    /* DRUM */
-    a[0] = 0; request(ED_DRUM, a, 1);
-    bad += check("DRUM on a track that is not a kit: rc 1, no sounds", host_wire[6] == 1 && !host_wire[7]);
+    /* PADS (53): a kit's pads as its synth's pads block has them (DRUM: TUNE, DECAY, the third, LEVEL) */
+    a[0] = 0; request(ED_PADS, a, 1);
+    bad += check("PADS on a track that is not a kit: rc 1, no pads", host_wire[6] == 1 && !host_wire[7] && !host_wire[8]);
     set_engine_of(&trk[1], ENGI_DRUM); apply_preset_to(&trk[1], 0); trk[1].p[P_E0] = DK_808;
-    a[0] = 1; n = request(ED_DRUM, a, 1);
-    bad += check("DRUM 808 kit: 16 sounds at their own values (TUNE 0, DECAY 64, TONE 64, LEVEL 127), names", !host_wire[6] &&
-                 host_wire[7] == 16 && host_wire[8] == 24 && host_wire[9] == 64 && host_wire[10] == 64 && host_wire[11] == 127 &&
-                 !strcmp((const char *)host_wire + 8 + 64, "KICK") && !strcmp((const char *)host_wire + 8 + 64 + 5, "TONE") &&
-                 !strcmp((const char *)host_wire + 8 + 64 + 10, "SNARE") && !strcmp((const char *)host_wire + 8 + 64 + 16, "SNAPPY"));
+    a[0] = 1; n = request(ED_PADS, a, 1);
+    {
+        const uint8_t *q = host_wire + 9, *o = q + 12, *v = o + 16;  /* (the parameters, the order, the values) */
+        const char *w = (const char *)v + 64;
+        int names = !strcmp(w, "KICK") && !strcmp(w + 5, "TUNE") && !strcmp(w + 10, "DECAY") && !strcmp(w + 16, "TONE") &&
+                    !strcmp(w + 21, "LEVEL") && !strcmp(w + 27, "SNARE") && !strcmp(w + 27 + 6 + 5 + 6, "SNAPPY");
+        bad += check("PADS 808 kit: 16 pads x 4 parameters (TUNE from -24, 48 steps; DECAY, the third, LEVEL from 0, 127; the kit's own: TUNE 0, 64, 64, LEVEL 127) "
+                     "in the knob's order (KICK SNARE CLAP HAT C ..), at their own values (TUNE 24 = 0, DECAY 64, TONE 64, "
+                     "LEVEL 127), names and each pad's labels", !host_wire[6] && host_wire[7] == 16 && host_wire[8] == 4 &&
+                     q[0] == 40 && q[1] == 48 && q[2] == 24 && q[3] == 64 && q[4] == 127 && q[5] == 64 && q[9] == 64 &&
+                     q[10] == 127 && q[11] == 127 &&
+                     o[0] == 0 && o[1] == 1 && o[2] == 6 && o[3] == 7 && v[0] == 24 && v[1] == 64 && v[2] == 64 && v[3] == 127 && names);
+    }
     a[1] = 1; a[2] = 2; a[3] = 36; a[4] = 10; a[5] = 100; a[6] = 90; a[7] = 0; a[8] = 127; a[9] = 0; a[10] = 0;
-    request(ED_DRUM, a, 11);
-    bad += check("DRUM writes SNARE and TOM L as the page would", !host_wire[6] && (*(drum_patch_t *)(void *)patch_of(1)).c[1][0] == 12 && (*(drum_patch_t *)(void *)patch_of(1)).c[1][1] == -54 &&
+    request(ED_PADS, a, 11);
+    bad += check("PADS writes SNARE and TOM L as the page would", !host_wire[6] && (*(drum_patch_t *)(void *)patch_of(1)).c[1][0] == 12 && (*(drum_patch_t *)(void *)patch_of(1)).c[1][1] == -54 &&
                  (*(drum_patch_t *)(void *)patch_of(1)).c[1][2] == 36 && (*(drum_patch_t *)(void *)patch_of(1)).c[1][3] == 37 && (*(drum_patch_t *)(void *)patch_of(1)).c[2][0] == -24 && (*(drum_patch_t *)(void *)patch_of(1)).c[2][1] == 63 &&
-                 (*(drum_patch_t *)(void *)patch_of(1)).c[2][2] == -64 && (*(drum_patch_t *)(void *)patch_of(1)).c[2][3] == 127 && host_wire[12] == 36 && host_wire[15] == 90);
-    a[3] = 49; request(ED_DRUM, a, 11);
-    bad += check("DRUM TUNE past +24, past the sounds, the wrong length: rc 1, unchanged", host_wire[6] == 1 && (*(drum_patch_t *)(void *)patch_of(1)).c[1][0] == 12 &&
-                 (a[3] = 36, a[1] = 15, request(ED_DRUM, a, 11), host_wire[6] == 1) && (a[1] = 1, request(ED_DRUM, a, 10), host_wire[6] == 1));
-    trk[1].p[P_E0] = DK_909; request(ED_DRUM, a, 1);
-    bad += check("DRUM 909 kit: eleven sounds, the 909's own third values", !host_wire[6] && host_wire[7] == D9_NUM &&
-                 !strcmp((const char *)host_wire + 8 + 4 * D9_NUM + 5, drum_character(0)));
+                 (*(drum_patch_t *)(void *)patch_of(1)).c[2][2] == -64 && (*(drum_patch_t *)(void *)patch_of(1)).c[2][3] == 127 && host_wire[9 + 12 + 16 + 4] == 36 && host_wire[9 + 12 + 16 + 7] == 90);
+    a[3] = 49; request(ED_PADS, a, 11);
+    bad += check("PADS TUNE past +24, past the pads, the wrong length: rc 1, unchanged", host_wire[6] == 1 && (*(drum_patch_t *)(void *)patch_of(1)).c[1][0] == 12 &&
+                 (a[3] = 36, a[1] = 15, request(ED_PADS, a, 11), host_wire[6] == 1) && (a[1] = 1, request(ED_PADS, a, 10), host_wire[6] == 1));
+    trk[1].p[P_E0] = DK_909; request(ED_PADS, a, 1);
+    bad += check("PADS 909 kit: eleven pads, the 909's own third labels (ATTACK on its kick)", !host_wire[6] && host_wire[7] == D9_NUM &&
+                 !strcmp((const char *)host_wire + 9 + 12 + D9_NUM + 4 * D9_NUM + 5 + 5 + 6, "ATTACK"));
 
     /* WATCH bit 7: DEVICE_CHANGED */
     a[0] = 1; a[1] = 1; request(ED_WATCH, a, 2);

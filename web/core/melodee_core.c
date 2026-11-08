@@ -39,7 +39,7 @@
 #define MELODEE_P5_BUILTIN 0
 #endif
 static unsigned char nor[0x100000];                     /* the FM-1's 1 MiB NOR flash, erased at a first boot */
-#define DRK_XIP(off) ((const uint8_t *)nor + (off))      /* user kits play from the pool (drum_real.c) */
+#define REC_BASE ((const uint8_t *)nor)                  /* the data records (user kits) play from the pool in place */
 #define MELODEE_OTA 1
 #define MELODEE_FLASH 1
 #ifndef MELODEE_VERSION
@@ -126,7 +126,7 @@ static void fl_plain_window_init(void) {}
 #define FL_FAR(fn) (fn)
 static void audio_silence(void) {}
 #include "../firmware/src/storage.c"
-#include "../firmware/src/kit_store.c"
+#include "../firmware/src/rec_store.c"
 #ifdef CORE_MODULES
 #include "../firmware/src/module_store.c"
 #endif
@@ -536,18 +536,18 @@ EXPORT(core_load_record) uint32_t core_load_record(const uint8_t *p, uint32_t n,
     song.g[G_SLOT] = (int16_t)(slot + 1u);
     return 0;
 }
-/* a kit record (KIT1, as drum_enc.c / melodee_kit.wasm write it) into user kit slot u (0..7: KIT 9..16), as the
- * editor's BACKUP PUT of ids 92..99 commits it; n 0 empties the slot. 0 = done, 1 = not a kit the player could
- * play (or no such slot), 2 = the flash refused it */
+/* a data record (a user kit: KIT1, as DRUM's drum_enc.c / melodee_kit.wasm write it) into record slot u (0..7: KIT
+ * 9..16), as the editor's BACKUP PUT of ids 92..99 commits it; n 0 empties the slot. 0 = done, 1 = not a record its
+ * synth could play (or no such slot), 2 = the flash refused it */
 EXPORT(core_load_kit) uint32_t core_load_kit(const uint8_t *p, uint32_t n, uint32_t u)
 {
     st_stream_t w;
     int rc;
-    if (u >= ST_NKIT) return 1;
-    if (!n) return kit_delete(u) ? 2u : 0u;
-    if (n < DRK_KIT_BYTES || n > DRK_KIT_MAX) return 1;
-    if (kit_put_begin(&w, u, n) || kit_put_write(&w, p, n)) return 2;
-    rc = kit_put_commit(&w, u);
+    if (u >= ST_NREC) return 1;
+    if (!n) return rec_delete(u) ? 2u : 0u;
+    if (!rec_len_ok(n)) return 1;
+    if (rec_put_begin(&w, u, n) || rec_put_write(&w, p, n)) return 2;
+    rc = rec_put_commit(&w, u);
     return rc == -2 ? 1u : rc ? 2u : 0u;
 }
 
@@ -753,15 +753,9 @@ static int boot_modules(void)
         snprintf(path, sizeof path, "%s/%s.mmod", dir ? dir : "build/modules", stem[i]);
         FILE *f = fopen(path, "rb");
         if (!f) { printf("core: no %s\n", path); return 1; }
-        uint32_t n = (uint32_t)fread(scratch, 1, sizeof scratch, f), key = MOD3_PADS_KEY;
+        uint32_t n = (uint32_t)fread(scratch, 1, sizeof scratch, f);
         fclose(f);
         int32_t rc = 0;
-        if (n >= MOD3_HEAD && (scratch[52] | scratch[53] << 8 | scratch[54] << 16 | (uint32_t)scratch[55] << 24)) {
-            /* (a module reading the pads data: natively the key is the 64-bit host's layout; the device's file else) */
-            memcpy(scratch + 52, &key, 4);
-            uint32_t crc = ~st_crc32_update(0xFFFFFFFFu, scratch + MOD3_HEAD, n - MOD3_HEAD);
-            memcpy(scratch + 28, &crc, 4);
-        }
         if (core_mod_link(desc[i]) || (rc = core_mod_install(scratch, n)) < 0) { printf("core: %s not installed (%d)\n", path, (int)rc); return 1; }
     }
     core_poll(100);

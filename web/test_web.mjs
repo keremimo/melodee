@@ -960,6 +960,17 @@ async function synthTests() {
     }
   }
   ok(parsed.size === 5 && !bad.length, `synths: schemas ${[...parsed.keys()].join(" ")} parse, every field reads and writes back${bad.length ? " (" + bad.slice(0, 3) + ")" : ""}`);
+  {   /* a kit synth's pads and stored packing, from its schema alone (DRUM: 1.x's KIT wire, 54 bytes) */
+    const kit = [...parsed].filter(([, s]) => s.pads).map(([e]) => e), d = parsed.get(10);
+    const zero = (() => { const r = new Array(E.SYNTH.packedLen(d)).fill(0); let pos = 0;   /* (every offset 0: TUNE 24, the others 64) */
+      const put = (v, w) => { for (let i = 0; i < w; i++, pos++) if ((v >> i) & 1) r[pos >> 3] |= 1 << (pos & 7); };
+      for (let g = 0; g < 16; g++) { put(24, 6); put(64, 7); put(64, 7); put(0, 7); } return r; })();
+    const far = zero.slice(); far[0] = (far[0] & ~63) | 49;  /* (TUNE +25: past its range) */
+    ok(kit.length === 1 && kit[0] === 10 && d.pads.lanes.join() === "KICK,SNARE,CLAP,HATCL,HATOP,TOM,RIM,BELL" &&
+       E.SYNTH.packedLen(d) === 54 && E.SYNTH.packedOk(d, zero) && E.SYNTH.unpack(d, zero).every((v) => v === 0) &&
+       !E.SYNTH.packedOk(d, far) && !E.SYNTH.packedOk(parsed.get(3), zero),
+       "synths: a kit's pads and its stored packing read from its schema (DRUM's: 54 bytes, its checks; SID: none)");
+  }
   const shown = [12, 15, 19].map((e) => [...E.SYNTH.sections(parsed.get(e))].length);
   ok(shown.every((n) => n > 1), `synths: FM6, CZ-1 and PROPHET pages from their schemas (${shown} sections)`);
 
@@ -1075,13 +1086,18 @@ async function editorModules() {
   const built = join(HERE, "..", "build", "modules", "trio.mmod");   /* (tools/mod_build.py: the C head's layout) */
   if (existsSync(built)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(built)));
-    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5 && t.key === 0 && t.host === 3,
-       "modules: the built TRIO file's head reads as the firmware's (an SDK module: no key, host table 3)");
+    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5 && t.key === 0 && t.host === 4,
+       "modules: the built TRIO file's head reads as the firmware's (an SDK module: no key, host table 4)");
   }
   const sid = join(HERE, "..", "build", "modules", "sid.mmod");     /* an engine-source module (modules/sdk/mod_engine.h) */
   if (existsSync(sid)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(sid)));
-    ok(t.name === "SID" && t.engine === 3 && t.key === 0 && t.host === 3 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (no key: only DRUM reads the firmware's pads data)");
+    ok(t.name === "SID" && t.engine === 3 && t.key === 0 && t.host === 4 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (no key, host table 4)");
+  }
+  const drum = join(HERE, "..", "build", "modules", "drum.mmod");   /* (its pads and kits: the host table's since host 4) */
+  if (existsSync(drum)) {
+    const t = E.MODS.head(new Uint8Array(readFileSync(drum)));
+    ok(t.name === "DRUM" && t.engine === 10 && t.key === 0 && t.host === 4 && t.npresets === 6, "modules: the built DRUM file's head reads as the firmware's (no key: its pads in its schema, its kits the host's data records)");
   }
   let list = await E.MODS.list(rq);
   ok(!list.rc && !list.skipped && list.slots.length === 8 && list.slots.every((x) => !x.len), "modules: eight empty slots listed");

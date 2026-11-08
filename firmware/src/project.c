@@ -94,7 +94,7 @@ static uint8_t proj_p5_origin_value(const project_t *p,uint32_t track)
 #define PROJ_STORE_V14 (PROJ_STORE_V13 + PROJ_P5_BYTES)
 #define PROJ_PARAM_EXTRA 48u
 #define PROJ_STORE_V16 (PROJ_STORE_V14 + PROJ_PARAM_EXTRA)
-#define PROJ_DRUM_BYTES (PROJ_TRK*KIT_WIRE_BYTES)
+#define PROJ_DRUM_BYTES (PROJ_TRK*MOD_SCH_KIT_PACKED)
 #define PROJ_REC_DIR_BYTES 44u /* 32 eleven-bit counts (0..1024) */
 #define PROJ_DRUM_OFF (PROJ_P5_OFF + PROJ_P5_BYTES)
 #define PROJ_REC_DIR (PROJ_DRUM_OFF + PROJ_DRUM_BYTES)
@@ -362,7 +362,7 @@ static int proj_pack(project_store_t *out, const project_t *q)
     for (i = 0; i < RECORD_MAX; i++) if (!recording_valid(&q->recording[i])) return 0;
     if(!proj_record_pack(b,q))return 0;
     for(t=0;t<PROJ_TRK;t++){if(!patch_stored_ok(MOD_SCH_STORE_KIT,q->drum[t]))return 0;}
-    for(t=0;t<PROJ_TRK;t++)kit_wire_pack(b+PROJ_DRUM_OFF+t*KIT_WIRE_BYTES,q->drum[t]);
+    for(t=0;t<PROJ_TRK;t++)patch_pack(MOD_SCH_STORE_KIT,b+PROJ_DRUM_OFF+t*MOD_SCH_KIT_PACKED,q->drum[t],MOD_SCH_KIT_PACKED);
     for(t=0;t<PROJ_TRK;t++){if(!patch_stored_ok(MOD_SCH_STORE_PROGRAM,q->p5[t]))return 0;memcpy(b+PROJ_P5_OFF+t*PROJ_PROGRAM_BYTES,q->p5[t],PROJ_PROGRAM_BYTES);}
     {   /* the name (0-padded; stops at the first 0) */
         char n[PROJ_NAME_LEN + 1u];
@@ -473,7 +473,7 @@ static int proj_unpack(project_t *q, const uint8_t *b)
         if (!patch_stored_ok(MOD_SCH_STORE_TONE, q->cz[t])) return 0;
         memcpy(q->p5[t], b + PROJ_P5_OFF + t * PROJ_PROGRAM_BYTES, PROJ_PROGRAM_BYTES);
         if (!patch_stored_ok(MOD_SCH_STORE_PROGRAM, q->p5[t])) return 0;
-        kit_wire_unpack(q->drum[t], b + PROJ_DRUM_OFF + t * KIT_WIRE_BYTES);
+        patch_unpack(MOD_SCH_STORE_KIT,q->drum[t],b + PROJ_DRUM_OFF + t * MOD_SCH_KIT_PACKED,MOD_SCH_KIT_PACKED);
         if (!patch_stored_ok(MOD_SCH_STORE_KIT, q->drum[t])) return 0;
     }
     if (!proj_record_unpack(q, b)) return 0;
@@ -487,13 +487,11 @@ static int proj_unpack(project_t *q, const uint8_t *b)
 }
 
 #ifndef PROJ_HOST
-/* Old GM projects used this kit before DRUM existed. Its saved initializer is private now;
- * restore the same sound without passing its index through factory preset browsing. */
-static void proj_legacy_perc(track_t *t)
+/* Old GM projects used this kit before DRUM existed: the kit synth's first preset (its 808 KIT, from its file), applied
+ * without passing its index through factory preset browsing. pr: fetched before the audio is held (proj_perc_fetch) */
+static void proj_perc_fetch(preset_entry_t *x) { preset_fetch_into(ENGI_DRUM, 0, x, 0); }
+static void proj_legacy_perc(track_t *t, const preset_t *pr)
 {
-
-    static const preset_t PERC = DRUM_PRESET_808;   /* (DRUM's first preset, without the engine) */
-    const preset_t *pr = &PERC;
     t->eng_req = ENGI_DRUM;
     uint32_t i;
     t->preset = 0;                              /* display metadata; SET remains the legacy kit */
@@ -1078,8 +1076,9 @@ static int project_restore_runtime(const project_t *input)
             track_defaults_steps(t);
         } else if (p->t[k].preset == PROJ_DEF_KEEP) {   /* the steps, LEVEL PAN MUTE, LEN DIV SWING GATE kept */
             memcpy(keep, t->p, sizeof keep);
+            proj_perc_fetch(&pe_tmp);                  /* (the kit synth's file: before the audio is held) */
             fm1_irq_off();                           /* publish the legacy sound as one bounded parameter batch */
-            proj_legacy_perc(t);                      /* track-owned parameters stay */
+            proj_legacy_perc(t, &pe_tmp.pr);          /* track-owned parameters stay */
             for (i = P_AMODE; i <= P_TRANS; i++)        /* the drum part had no arp or scale */
                 t->p[i] = TP[i].def;
             fm1_irq_on();
@@ -1557,8 +1556,8 @@ static void persist_boot(void)                    /* before settings_init / pane
 #ifdef RES_BASE
     res_boot(st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR) == 0);   /* the resource region (res.c) installed? */
 #endif
-#ifdef KIT_STORE
-    kit_scan();                                    /* the user's drum kits, for the player (kit_store.c) */
+#ifdef REC_STORE
+    rec_scan();                                    /* the synths' data records, for the audio (rec_store.c) */
 #endif
 #ifdef MODULE_STORE
     mod_boot();                                    /* the synth modules, before the boot project names one */

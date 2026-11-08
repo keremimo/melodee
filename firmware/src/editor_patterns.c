@@ -107,7 +107,7 @@ static int ed_patterns_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
      * x note; 1: the m notes' ids (14 bits each). A note (17 bytes): id (14 bits: its slot), step, onset in the step
      * (32 bits: of 65,536), length (32 bits: 65,536 a step), note, velocity, pitch + 64 (a drum hit's tune, -24..24),
      * flags (1 a gated drum hit; read only: 2 rounded to the next step, 4 shown on step 1) */
-    uint32_t own = k * NPAT + b, room = 0, keep, drum = drum_track(t);
+    uint32_t own = k * NPAT + b, room = 0, keep, drum = pads_on(t);
     recorded_note_t r;
     const uint8_t *q;
     if (!ok || (op ? op > 1u || !m || n != 4u + m * ED_NOTE_N : n != 6u))
@@ -160,13 +160,13 @@ static int ed_patterns_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
             if (p.step[i].flags & SF_RECORDED)
                 p.step[i].n = p.step[i].hit = p.step[i].acc = p.step[i].vel = 0;
         for (i = recording_head[own]; i < RECORD_MAX; i = recording_next[i]) {
-            uint32_t note = recorded_note(&recording[i]), lane = drum_lane(note), vel = recording[i].vel;
+            uint32_t note = recorded_note(&recording[i]), lane = pads_lane(t, note), vel = recording[i].vel;
             step_t *st = &p.step[recording_view(t, &recording[i])];
             st->time = ST_NOTE;
             st->flags |= SF_RECORDED;
             if (vel > st->vel)
                 st->vel = (uint8_t)vel;
-            if (drum && note == DRUM_LANE_NOTE[lane]) {
+            if (drum && note == lane_note(t, lane)) {
                 st->hit |= (uint8_t)(1u << lane);
                 if (vel > 110u)
                     st->acc |= (uint8_t)(1u << lane);

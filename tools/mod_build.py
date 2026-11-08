@@ -233,6 +233,9 @@ def describe(img, words, bss=0):
             raise SystemExit("mod_build: the engine's note_on and render must be the module's own")
     if engine not in ENGINE_OK:
         raise SystemExit(f"mod_build: engine {engine}: a module plays as {sorted(ENGINE_OK)}")
+    if key:
+        raise SystemExit("mod_build: a module names no firmware data key (host 4: its pads and records are the host "
+                         "table's)")
     return engine, cstr(img, name), npre, key, host
 
 
@@ -284,7 +287,7 @@ def build(src, out, version, defs):
                      key, host, 0)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(head + body + chunks)
-    print(f"module {name}: ABI {ABI} host {host}, engine {engine}, " + (f"pads key {key:08x}, " if key else "") +
+    print(f"module {name}: ABI {ABI} host {host}, engine {engine}, " + (f"key {key:08x}, " if key else "") +
           f"image {len(img)} B, bss {nbss} B, {len(words)} address words, stack {need} B, {npre} presets {len(prst)} B, "
           f"schema {len(schm)} B, "
           f"file {len(head) + len(body) + len(chunks)} B -> {out}")
@@ -356,7 +359,7 @@ def check(path):
     schm = chunks.get(SCHM_TAG, b"")
     if schm and (len(schm) < 52 or zlib.crc32(schm[52:]) != struct.unpack_from("<I", schm, 48)[0]):
         raise SystemExit(f"{path}: its SCHM chunk does not check")
-    print(f"{path}: {n} engine {engine}, ABI {abi} host {host}" + (f", pads key {key:08x}" if key else "") +
+    print(f"{path}: {n} engine {engine}, ABI {abi} host {host}" + (f", key {key:08x} (another firmware's)" if key else "") +
           f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
 
 

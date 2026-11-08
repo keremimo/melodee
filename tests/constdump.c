@@ -7,11 +7,11 @@
  * the ones it still reads.
  *   build/host/constdump > constants.json */
 static unsigned char nor[0x100000];
-#define DRK_XIP(off) ((const uint8_t *)nor + (off))
+#define REC_BASE ((const uint8_t *)nor)        /* (the data records' flash: the player reads them in place) */
 #define BACKUP_TEST_NO_MAIN 1
 #define BACKUP_TEST_KITS 1
 #include "backup_test.c"
-#include "../firmware/src/kit_take.c"
+/* (DRUM's Record kit take, encoder and record check: built in, modules/drum/kit_take.c) */
 
 static void magic(uint32_t m, int first)
 {
@@ -62,7 +62,7 @@ int main(void)
            NPART, NMIDI, NTRK, NPAT, NPAT_MIDI, NSTEP, CHAIN_ROWS, PROJ_SLOTS, MOTION_MAX, P_COUNT, G_COUNT, P_E0);
     printf("\"kits\":{\"user_first\":%u,\"user_count\":%u,\"store_slots\":%u,\"drums\":%u,\"name_len\":%u,"
            "\"kit_max\":%u,\"sectors\":%u,\"sector_bytes\":%u,\"head_bytes\":%u,\"pad_reserve\":%u,\"snr\":[",
-           DK_USER0, DK_NUSER, ST_NKIT, DRK_NDRUM, DRK_NAMELEN, (unsigned)DRK_KIT_MAX, DRK_KSEC, DRK_SECBYTES,
+           DK_USER0, DK_NUSER, ST_NREC, DRK_NDRUM, DRK_NAMELEN, (unsigned)DRK_KIT_MAX, DRK_KSEC, DRK_SECBYTES,
            (unsigned)DRK_KIT_BYTES, KT_PAD_RESERVE);
     for (i = 0; i < sizeof KT_SNR; i++) printf("%s%d", i ? "," : "", KT_SNR[i]);
     printf("]},\n");

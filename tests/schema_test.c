@@ -131,6 +131,8 @@ static uint32_t role_faults(uint32_t e)
         id = sch_u16(r + 2);
         if (r[0] == MOD3_R_SYSEX || r[0] == MOD3_R_CHECK)   /* (the widget data's records: their offset, a count) */
             faults += (uint32_t)id + r[1] * (r[0] == MOD3_R_SYSEX ? 4u : MOD_SCH_CREC) > (uint32_t)h.str - h.wid;
+        else if (r[0] == MOD3_R_PADS || r[0] == MOD3_R_PACK) /* (the widget data's blocks: the pads head, the packing) */
+            faults += (uint32_t)id + (r[0] == MOD3_R_PADS ? MOD_SCH_PDHEAD : 2u * r[1] + 2u) > (uint32_t)h.str - h.wid;
         else if (r[0] >= MOD3_R_BANK_FILTER && r[0] <= MOD3_R_BANK_LFO)
             faults += id >= h.npage;
         else if (r[1] & MOD3_RF_TRACK)

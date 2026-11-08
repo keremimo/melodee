@@ -13,7 +13,7 @@
 static const struct { const char *prefix, *name; } SEC_RULE[] = {   /* a firmware page's section by its title (first
                                                                      * match; a synth's page: its schema's) */
     {"CZ ", "Line"}, {"DCW", "Env"}, {"DCA", "Env"}, {"DCO", "Env"}, {"CZ LEVEL", "Env"}, {"OP", "Env"},
-    {"DRUM", "Drum"}, {"LANES", "Lanes"}, {"VOICE", "Voice"}, {"EDIT", "Sound"}};
+    {"LANES", "Lanes"}, {"VOICE", "Voice"}, {"EDIT", "Sound"}};   /* (a kit's pages: its pads block's section) */
 static struct {
     uint8_t n, eng, e7, ok, gen;
     const char *name[SEC_MAX];
@@ -32,6 +32,10 @@ static const char *sec_rule(uint32_t i, uint32_t *plen)   /* page i's section na
     if (PG(i).scope == SC_MOD) {                     /* (a synth's page: its schema's section, else "Sound") */
         if (plen) *plen = 0;
         return sch_pg_section(page_at(i), b, sizeof b) ? b : "Sound";
+    }
+    if (PG(i).scope == SC_PADS) {                    /* (a kit's pages: its pads block's section) */
+        if (plen) *plen = 0;
+        return pads_word(TSEL, MOD3_PW_SECTION);
     }
     for (r = 0; r < NELEM(SEC_RULE); r++) {
         uint32_t n = str_len(SEC_RULE[r].prefix);

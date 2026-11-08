@@ -30,10 +30,11 @@ static int mod_head_ok(const mod_file3_t *f, uint32_t len)
            (f->flags & MOD3_FILE_CHUNKS ? f->total >= body + 8u && !((f->total - body) % 4u) : f->total == body) &&
            !f->desc && f->image >= sizeof(mod_desc_v3) && f->image <= MOD3_IMAGE_MAX && f->bss <= MOD3_BSS_MAX;
 }
-/* a file this firmware plays: ABI 3, a host table it has, the legacy data as it lays it out (or none) */
+/* a file this firmware plays: ABI 3, a host table it has, no legacy data (a nonzero key: host 1..3's firmware data,
+ * gone since host 4) */
 static int mod_head_mine(const mod_file3_t *f)
 {
-    return f->abi == MOD3_ABI && f->host <= MOD3_HOST && (!f->key || f->key == MOD3_PADS_KEY);
+    return f->abi == MOD3_ABI && f->host <= MOD3_HOST && !f->key;
 }
 /* the relocated descriptor: this ABI, its file's head, every address it holds inside the block (target), the calls
  * the firmware needs set */
@@ -258,7 +259,7 @@ static int mod_catalog(uint32_t k)
     s->crc = f.crc;
     s->key = f.abi == 1u ? 0u : f.key;              /* (a native ABI 2 file's layout key sits where ABI 3's key is) */
     memcpy(s->name, f.name, MOD3_NAME_MAX);
-    if (f.abi != MOD3_ABI || (f.key && f.key != MOD3_PADS_KEY))
+    if (f.abi != MOD3_ABI || f.key)
         return s->state = MS_STALE;                 /* (an older firmware's: the installer replaces it, editor_module.c) */
     if (f.host > MOD3_HOST)
         return s->state = MS_NEWER;                 /* (a later firmware's: it needs Melodee's newer host table) */

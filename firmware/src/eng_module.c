@@ -89,7 +89,8 @@ _Static_assert(MOD3_SAME_E(name) && MOD3_SAME_E(page_title) && MOD3_SAME_E(edit)
                MOD3_SAME_E(menv) && MOD3_SAME_E(join) && MOD3_SAME_E(reserve) && MOD3_SAME_E(caps) &&
                MOD3_SAME_E(bend_range) && MOD3_SAME_E(patch_changed) && MOD3_SAME_E(pget) && MOD3_SAME_E(pput) &&
                MOD3_SAME_E(pformat) && MOD3_SAME_E(pactive) && MOD3_SAME_E(draw) && MOD3_SAME_E(sysex) &&
-               MOD3_SAME_E(sysex_dump) && sizeof(engine_t) == sizeof(mod_engine_v3),
+               MOD3_SAME_E(sysex_dump) && MOD3_SAME_E(rec_check) && MOD3_SAME_E(rec_take) && MOD3_SAME_E(rec_pad) &&
+               sizeof(engine_t) == sizeof(mod_engine_v3),
                "engine_t is mod_engine_v3 (mod_abi3.h)");
 _Static_assert(P_COUNT == MOD3_P_COUNT && P_E0 == MOD3_P_E0 && NVOICE == MOD3_NVOICE && NPART == MOD3_NPART &&
                FS == MOD3_RATE && CTL == MOD3_CTL && VOICE_FS == MOD3_VOICE_FS && DITH_N == MOD3_DITH_N &&
@@ -139,9 +140,6 @@ static const void *mod_h_table(uint32_t id)
     }
 }
 static int mod_h_file_read(uint32_t self, uint32_t off, void *dst, uint32_t n);   /* eng_module_main.c */
-static const mod_legacy_v3 MOD_PADS = {            /* TEMPORARY (phase 5: drum_kit.h) */
-    &drum_event_pitch, &drum_event_length, drum_flash, drk_user, &drk_user_gen,
-};
 /* the host's drawing for a module's own widget (schema.c sch_draw sets the canvas it draws into) */
 static uint16_t mod_h_color(uint32_t role);
 static void mod_h_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c);
@@ -200,12 +198,14 @@ static const mod_host_v3 MOD_HOST3 = {
 #endif
     .lz_unpack = lz_unpack,
     .file_read = mod_h_file_read,
-    .legacy = &MOD_PADS,
     .patch = MOD3_CALL(uint8_t *(*)(const mod_part_v3 *), patch_play),
     .color = mod_h_color, .fill = mod_h_fill, .rrect = mod_h_rrect, .text = mod_h_text, .paired = &eng_paired,
     .part = mod_h3_part, .part_patch = mod_h3_part_patch, .patch_put = mod_h3_patch_put, .sx_part = mod_h3_sx_part,
     .sx_send = mod_h3_sx_send, .sx_scratch = mod_h3_sx_scratch, .sx_stage = mod_h3_sx_stage, .slot_get = mod_h3_slot_get,
     .store_slot = mod_h3_store_slot, .message = mod_h3_message, .ms = &fm1_ms,
+    .note_pitch = &note_hit_pitch, .note_len = &note_hit_len, .rec = rec_tab, .rec_gen = &rec_gen, .rec_base = REC_BASE,
+    .rec_begin = mod_h4_rec_begin, .rec_write = mod_h4_rec_write, .rec_commit = mod_h4_rec_commit,
+    .rec_delete = mod_h4_rec_delete, .wdt = mod_h4_wdt,
 };
 
 /* a stored module's engine while it is not in SRAM: its lists' names come from its file (eng_name), its sounds keep

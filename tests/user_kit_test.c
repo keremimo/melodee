@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The user's drum kits (src/kit_store.c, src/drum_real.c) on a simulated NOR flash: a kit of eleven synthetic takes
+/* The user's drum kits (DRUM's data records: src/rec_store.c keeps them, modules/drum/kit_store.c checks them,
+ * modules/drum/drum_real.c plays them) on a simulated NOR flash: a kit of eleven synthetic takes
  * (src/drum_enc.c, a looped crash among them) written as a pool record spanning seven sectors decodes, take by take,
  * sample for sample as the same slices read from one block of RAM (the sector edges cost nothing), and the track
  * plays it the same twice and without the resource region; an empty slot, a deleted kit and a rewritten slot are
  * silent until the next hit; a record the player could not trust is refused and the old kit stays; the boot scan finds
  * the kits again; the KIT card shows a kit's name; a torn write leaves the slot as it was. */
 static unsigned char nor[0x100000];
-#define DRK_XIP(off) ((const uint8_t *)nor + (off))
+#define REC_BASE ((const uint8_t *)nor)        /* (the data records' flash: the player reads them in place) */
 static int res_absent_for_test;
 #define RES_OK() (!res_absent_for_test)
 #define main hostsim_main
@@ -26,8 +27,7 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
     return 0;
 }
 #include "../firmware/src/storage.c"
-#include "../firmware/src/kit_store.c"
-#include "../firmware/src/drum_enc.c"
+#include "../firmware/src/rec_store.c"            /* (DRUM's own record helpers and encoder: built in) */
 
 static int fails;
 static void check(const char *s, int ok) { printf("USER KIT: %-86s %s\n", s, ok ? "ok" : "FAIL"); fails += !ok; }
@@ -81,10 +81,10 @@ static uint32_t make_record(uint32_t seed, const char *name, uint32_t target)
 static int put(uint32_t slot, const uint8_t *src, uint32_t len)
 {
     st_stream_t w;
-    int rc = kit_put_begin(&w, slot, len);
+    int rc = rec_put_begin(&w, slot, len);
     for (uint32_t off = 0; !rc && off < len; off += 256u)
-        rc = kit_put_write(&w, src + off, len - off < 256u ? len - off : 256u);
-    return rc ? rc : kit_put_commit(&w, slot);
+        rc = rec_put_write(&w, src + off, len - off < 256u ? len - off : 256u);
+    return rc ? rc : rec_put_commit(&w, slot);
 }
 static void kit(int user_slot)
 {
@@ -130,7 +130,7 @@ static uint32_t decode(uint32_t u, uint32_t d, const uint8_t *ram, int16_t *y)
     static uint32_t phys[DRK_KSEC][DRK_SLOTS * 2u];      /* (the RAM block laid out as in flash: the guard's place skipped) */
     if (ram) {
         memset(phys, 0xFF, sizeof phys);
-        for (uint32_t k = 0; k < kit_len[u] / 8u; k++) memcpy(&phys[k / DRK_SECSLICES][DRK_SLOT(k % DRK_SECSLICES)], ram + 8u * k, 8u);
+        for (uint32_t k = 0; k < rec_len[u] / 8u; k++) memcpy(&phys[k / DRK_SECSLICES][DRK_SLOT(k % DRK_SECSLICES)], ram + 8u * k, 8u);
     }
     for (uint32_t k = 0; k < n; k++)
         secs[k] = ram ? phys[k] : (const uint32_t *)(const void *)DRK_XIP(drk_user[u].sec[k] * 4096u + DRK_SECOFF);
@@ -168,7 +168,7 @@ int main(void)
     uint32_t len = make_record(0, "ROCK", 27500);       /* (past six 4,056-byte sectors) */
     check("eleven takes as a record fit seven sectors and cross sector edges", len <= DRK_KIT_MAX && len > 6u * DRK_SECBYTES);
     check("the record is written, checked and published into slot 3", put(2, rec, len) == 0 && drk_user[2].n == 7u &&
-          kit_len[2] == len);
+          rec_len[2] == len);
     {
         uint32_t differ = 0, total = 0;
         for (uint32_t d = 0; d < DRK_NDRUM; d++) {
@@ -213,7 +213,7 @@ int main(void)
         kit(4); trk_note_on(&trk[0], 36, 120); run(b, 200u);
         check("a slot rewritten while it rings: silent at once, then the new kit plays",
               !rc && pk == 0 && !memcmp(a, b, 200u * CTL * sizeof a[0]));
-        kit_delete(4);
+        rec_delete(4);
         check("the storage counts the kit and nothing else of it",
               st_project_free() == T_FREE0 - (int)((blen + DRK_SECBYTES - 1u) / DRK_SECBYTES));
     }
@@ -241,18 +241,18 @@ int main(void)
     }
 
     {   /* boot */
-        memset(drk_user, 0, sizeof drk_user); memset(kit_len, 0, sizeof kit_len);
-        kit_scan();
-        check("the boot scan finds the kits again", drk_user[2].n && kit_len[2] && !drk_user[3].n);
+        memset(drk_user, 0, sizeof drk_user); memset(rec_len, 0, sizeof rec_len);
+        rec_scan();
+        check("the boot scan finds the kits again", drk_user[2].n && rec_len[2] && !drk_user[3].n);
     }
 
     {   /* delete while it rings */
         kit(2); trk_note_on(&trk[0], 49, 127); run(0, 20u);
-        int rc = kit_delete(2);
+        int rc = rec_delete(2);
         int32_t pk = run(0, 4u);
         trk_note_on(&trk[0], 38, 120);
         check("a kit deleted while it rings: silent at once and after, the slot empty, its sectors free",
-              !rc && pk == 0 && run(0, 40u) == 0 && !drk_user[2].n && !kit_len[2] && st_project_free() == T_FREE0);
+              !rc && pk == 0 && run(0, 40u) == 0 && !drk_user[2].n && !rec_len[2] && st_project_free() == T_FREE0);
     }
     if (fails) { printf("USER KIT: %d FAILED\n", fails); return 1; }
     printf("USER KIT: all checks ok\n");

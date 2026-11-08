@@ -2,8 +2,8 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* DRUM (engine 10) as a synth module (ABI 3): firmware/src/eng_drum.c as it was built in, with the 808 (drum_808.c),
  * the 909 (x0x/), KIT SID (drum_sid.c on its own copy of eng_sid.c's chip), CR78 and FM (drum_lanes.c) and the user
- * kits (drum_real.c, reading the firmware's drk_user). tools/mod_build.py */
-#define MOD_USES_PADS 1                           /* (TEMPORARY, phase 5: the lanes' and recorded kits' data) */
+ * kits (drum_real.c, its data records; kit_take.c: Record kit's takes), its pads in its schema (drum_schema.h).
+ * tools/mod_build.py */
 #include "mod_engine.h"
 #ifndef FM1_IRQ_TARGET
 /* (x0x/drum909.h's functions are external: on the host the module's own under names of their own, so a test links it
@@ -22,16 +22,9 @@
 #include "eng_sid.c"                             /* (KIT SID's chip: the module's own copy) */
 #include "eng_drum.c"
 
-/* the part's working memory as engines.c hands it to the built-in engine */
+/* the part's working memory for SID's chip (eng_drum.c has its kits') */
 static sid_part_t *sid_part(uint32_t part) { return mod_part_mem(part, sizeof(sid_part_t)); }
-static drum909_part_t *drum909_part(uint32_t part) { return mod_part_mem(part, sizeof(drum909_part_t)); }
-static drum_lane_t *drum_kit_part(uint32_t part) { return mod_part_mem(part, sizeof(drum_lane_t) * DV_NLANE); }
-static dsk_part_t *dsk_part(uint32_t part) { return mod_part_mem(part, sizeof(dsk_part_t)); }
-static dlk_part_t *dlk_part(uint32_t part) { return mod_part_mem(part, sizeof(dlk_part_t)); }
-#if MELODEE_USER_KITS
-static drk_part_t *drk_part(uint32_t part) { return mod_part_mem(part, sizeof(drk_part_t)); }
-#endif
 
 MOD3_ENGINE_EXPORT(mod_drum) = {
-    MOD3_PADS_HEAD, .engine = ENGI_DRUM, .name = "DRUM", .npresets = DRUM_NPRESETS, .eng = &ENG_DRUM,
+    MOD3_ENGINE_HEAD, .engine = ENGI_DRUM, .name = "DRUM", .npresets = DRUM_NPRESETS, .eng = &ENG_DRUM,
 };

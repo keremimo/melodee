@@ -36,9 +36,9 @@ static void mp_start(void)
     dith_r = DITH_SEED;
     memset(midi_bend_q8, 0, sizeof midi_bend_q8);
     memset(midi_bend_target, 0, sizeof midi_bend_target);
-    memset((void *)drum_flash, 0, sizeof drum_flash);
-    drum_event_pitch = 0;
-    drum_event_length = 0;
+    memset((void *)pads_flash, 0, sizeof pads_flash);
+    note_hit_pitch = 0;
+    note_hit_len = 0;
     tune_cache.valid = 0;
 }
 static void mp_block(uint32_t b, uint32_t batch)
@@ -98,10 +98,10 @@ static uint32_t mp_drum(uint32_t pi, int32_t kit, uint32_t batch)
     for (uint32_t b = 0; b < MP_NB; b++) {
         if (b % 3u == 0 && b < 150u) {
             uint32_t note = 35u + (b / 3u) % 47u;
-            if (b % 15u == 0) { drum_event_pitch = (int32_t)(b % 7u) - 3; drum_event_length = 900u + b * 3u; }
+            if (b % 15u == 0) { note_hit_pitch = (int32_t)(b % 7u) - 3; note_hit_len = 900u + b * 3u; }
             trk_note_on(&inst, note, 40u + (b * 13u) % 88u);
-            drum_event_pitch = 0;
-            drum_event_length = 0;
+            note_hit_pitch = 0;
+            note_hit_len = 0;
         }
         if (b == 61 || b == 64) trk_note_on(&inst, 46, 120);   /* an open hat, then closed ones choke it */
         if (b == 62 || b == 66) trk_note_on(&inst, 42, 90);

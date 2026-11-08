@@ -178,15 +178,14 @@ static void midi_thru(uint32_t pkt, uint32_t source);   /* midi_thru.c, after th
 #if BOARD_SMK37
 #include "smkx.c"                /* the SMK-37's app area tail (st_crc32) */
 #endif
-#if MELODEE_USER_KITS
-#include "kit_store.c"           /* the user's drum kits in the pool (drum_real.c plays them) */
+#if MELODEE_RECORDS
+#include "rec_store.c"           /* the synths' data records in the pool (a pads synth's recorded kits) */
 #endif
 #if MELODEE_MODULES
 #include "module_store.c"        /* synth modules in the pool (eng_module.c plays them) */
 #endif
-#if KIT_REC
-#include "kit_take.c"            /* a drum take from USB audio, encoded and kept */
-#include "kit_rec_ui.c"          /* Record kit: the drum track's sheet */
+#if REC_TAKES
+#include "rec_ui.c"              /* Record kit: a pads track's sheet, a take from USB audio for its synth */
 #endif
 #endif
 #include "upreset.c"             /* user presets (RAM mirror; flash with MELODEE_FLASH) */

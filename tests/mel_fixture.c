@@ -13,11 +13,11 @@
  *                           protocol's PUT as the device takes it: the kit plays, the project loads, every kit it
  *                           names is the new one, everything else as it was */
 static unsigned char nor[0x100000];
-#define DRK_XIP(off) ((const uint8_t *)nor + (off))
+#define REC_BASE ((const uint8_t *)nor)        /* (the data records' flash: the player reads them in place) */
 #define BACKUP_TEST_NO_MAIN 1
 #define BACKUP_TEST_KITS 1
 #include "backup_test.c"
-#include "../firmware/src/kit_take.c"
+/* (DRUM's Record kit take, encoder and record check: built in, modules/drum/kit_take.c) */
 #include <assert.h>
 #include <sys/stat.h>
 
@@ -136,8 +136,8 @@ static void kit_record(uint32_t u, int32_t k, const char *name)
         assert(r == KM_KEPT);
     }
     st_hdr_t h;
-    int copy = st_current(kit_obj(u), &h);
-    assert(copy >= 0 && h.len <= DRK_KIT_MAX && !st_read_range(kit_obj(u), (uint32_t)copy, 0, kit[u], h.len));
+    int copy = st_current(rec_obj(u), &h);
+    assert(copy >= 0 && h.len <= DRK_KIT_MAX && !st_read_range(rec_obj(u), (uint32_t)copy, 0, kit[u], h.len));
     kit_n[u] = h.len;
     char path[64];
     snprintf(path, sizeof path, "kit-%s.bin", name); save(path, kit[u], kit_n[u]);
@@ -321,14 +321,14 @@ static int do_verify(void)
 {
     int bad = 0;
     uint32_t n;
-    reset(); kit_scan();
+    reset(); rec_scan();
     /* the device test_mel.mjs imported into: KIT 1 held the 808 kit already; the page sent KIT 4 and the project */
     n = load("kit-808.bin", big, sizeof big);
-    bad += check("mel: a kit record goes in through the backup's PUT", put_object(92, big, n) == 0 && kit_len[0] == n);
+    bad += check("mel: a kit record goes in through the backup's PUT", put_object(92, big, n) == 0 && rec_len[0] == n);
     n = load("out-kit-12.bin", big, sizeof big);
     uint32_t n909 = load("kit-909.bin", kit[0], sizeof kit[0]);
     bad += check("mel: the kit the page sent is the file's, byte for byte, and plays", n == n909 && !memcmp(big, kit[0], n) &&
-                 put_object(92 + 3, big, n) == 0 && kit_len[3] == n && drk_user[3].n);
+                 put_object(92 + 3, big, n) == 0 && rec_len[3] == n && drk_user[3].n);
     n = load("out-project.bin", big, sizeof big);
     /* (project 3: the host build mirrors the first four slots only; the slot is nothing to the record) */
     bad += check("mel: the project the page sent, packed by the page, is accepted into a free slot",
@@ -351,7 +351,7 @@ static int do_verify(void)
     bad += check("mel: .. and loads as the same music", kit_project_is(12, 9, 15));
     n = load("kit-909.bin", big, sizeof big);
     big[4] ^= 8u;
-    bad += check("mel: a damaged kit is refused by the device", put_object(92 + 5, big, n) != 0 && !kit_len[5]);
+    bad += check("mel: a damaged kit is refused by the device", put_object(92 + 5, big, n) != 0 && !rec_len[5]);
     puts(bad ? "mel: FAILED" : "mel: the web page's import as the device takes it: passed");
     return bad != 0;
 }

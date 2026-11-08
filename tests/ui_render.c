@@ -721,7 +721,7 @@ static void ref_scene(int s)
         if (s == S_REF_STAGE_CUTOFF) { ui.hot_col = 0; ui.hot_t = 30; stage_out(); }
         break;
     case S_REF_STAGE_DRUM:
-        song.sel = 0; go_home(); drum_flash[0] = 2u | 8u; break;
+        song.sel = 0; go_home(); pads_flash[0] = 2u | 8u; break;
     case S_REF_BROWSER: {
         uint32_t i;
         for (i = 0; i < NELEM(CAT_ORDER) && CAT_ORDER[i] != CAT_BASS; i++) {}
@@ -1199,7 +1199,7 @@ static void setup(int s)
     case S_GLO_T2: song.ntrk = 2; go_home(); ui.layer = LAYER_GLO; trk[1].p[P_MUTE] = 1; break;
     case S_NEW_ROLES_T1: song.playing = 0; new_open(); nw.on = 2; break;
     case S_STAGE_DRUM:
-        drum(0); go_home(); trk[3].seq_idx = 9; drum_flash[3] = 1u | 8u | 32u; break;
+        drum(0); go_home(); trk[3].seq_idx = 9; pads_flash[3] = 1u | 8u | 32u; break;
     case S_STAGE_CZ:
         eng(ENGI_CZ); apply_preset(3); go_home(); ui.hot_col = 2; ui.hot_t = 30; stage_out();
         input_on(TSEL, 48, 100); input_on(TSEL, 55, 100); input_on(TSEL, 64, 100); break;
@@ -1537,15 +1537,15 @@ static void setup(int s)
     case S_MENU_PREVIEW: ui.menu=1;ui.menu_sel=MI_PREVIEW;settings_preview=1;break;
     case S_DRUM_SOUND_808: case S_DRUM_SOUND_909: case S_DRUM_MIX_909: case S_DRUM_HIT_909: case S_DRUM_HIT_FREE: case S_DRUM_HIT_LONG:
         drum(s==S_DRUM_SOUND_808?DK_808:DK_909);eng(ENGI_DRUM);TSEL->p[P_E0]=s==S_DRUM_SOUND_808?DK_808:DK_909;TSEL->engine=TSEL->eng_req;TSEL->preset=s==S_DRUM_SOUND_808?0:1;song.playing=0;
-        ui.drum_sound=s==S_DRUM_SOUND_808?12:D9_SD;ui.lane=(uint8_t)drum_lane(drum_sound_note(TSEL,ui.drum_sound));ui.cursor=4;
-        drum_patch_of(song.sel)->c[ui.drum_sound][0]=-12;drum_patch_of(song.sel)->c[ui.drum_sound][1]=31;drum_patch_of(song.sel)->c[ui.drum_sound][2]=16;drum_patch_of(song.sel)->c[ui.drum_sound][3]=40;
+        ui.pad=s==S_DRUM_SOUND_808?12:D9_SD;ui.lane=(uint8_t)drum_lane(pads_note(TSEL,ui.pad));ui.cursor=4;
+        drum_patch_of(song.sel)->c[ui.pad][0]=-12;drum_patch_of(song.sel)->c[ui.pad][1]=31;drum_patch_of(song.sel)->c[ui.pad][2]=16;drum_patch_of(song.sel)->c[ui.pad][3]=40;
         if(s==S_DRUM_HIT_909 || s==S_DRUM_HIT_FREE || s==S_DRUM_HIT_LONG){recording_restore_note(TSEL,0,(recorded_note_t){.on=27000, .duration=16384, .note7=38, .vel=100, .owner=(uint8_t)recording_owner(TSEL), .step=4, .pitch=7, .length=s==S_DRUM_HIT_909});if(s==S_DRUM_HIT_LONG){recording[0].duration=65535;recording[0].owner|=224;recording[0].length=1;}ui.note_pick=1;ui.note_identity=recording[0];ui.note_generation=recording_generation;TSEL->step[4].flags|=SF_RECORDED;go_title("DRUM HIT");}
         else go_title(s==S_DRUM_MIX_909?"DRUM MIX":"DRUM SOUND");
         ui.hot_col=2;ui.hot_t=30;break;
     case S_DRUM_HIT_TOMS:                               /* KNOB 2 on TOM M: its hits filled, TOM L's and H's hollow, the lane MT */
         drum(DK_909);eng(ENGI_DRUM);TSEL->p[P_E0]=DK_909;TSEL->engine=TSEL->eng_req;TSEL->preset=1;song.playing=0;
         TSEL->step[2].note[TSEL->step[2].n++]=41;TSEL->step[11].note[TSEL->step[11].n++]=50;
-        ui.drum_sound=D9_MT;ui.lane=DV_TOM;ui.cursor=7;go_title("DRUM HIT");ui.hot_col=1;ui.hot_t=30;break;
+        ui.pad=D9_MT;ui.lane=DV_TOM;ui.cursor=7;go_title("DRUM HIT");ui.hot_col=1;ui.hot_t=30;break;
     case S_MENU_ADD: ui.menu=1;ui.menu_sel=MI_ADD;settings_chord_add=1;break;
     case S_MENU_AUTOSAVE_ON: ui.menu=1;ui.menu_sel=MI_AUTOSAVE;settings_autosave=1;break;
     /* HOME SELECT: the menu's row on MOD WHEEL; SELECT just turned on Stage (MOD WHEEL), on the chord view (LEVEL) */

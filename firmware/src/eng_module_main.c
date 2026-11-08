@@ -253,6 +253,8 @@ static void mod_register(uint32_t k, const mod_desc_v3 *d, engine_t *e)
     mods[k].state = MS_LOADED;
     mod_order_add(n);
     mod_unguard(g);
+    if (rec_hook.recheck)                           /* (its data records, found at boot, checked now: rec_store.c) */
+        rec_hook.recheck();
 }
 /* slot k's module out of SRAM; its engine stays listed (ENG_MOD_IDLE) when idle, else retired (the slot is going) */
 static void mod_unregister(uint32_t k, int idle)

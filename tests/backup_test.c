@@ -35,8 +35,8 @@ static uint32_t fl_jedec_ram(void) { return 0; }
 static void fl_plain_window_init(void) {}
 #define FL_FAR(fn) (fn)
 #include "../firmware/src/storage.c"
-#ifdef BACKUP_TEST_KITS                          /* (mel_fixture.c: the user kits, objects 92..99) */
-#include "../firmware/src/kit_store.c"
+#ifdef BACKUP_TEST_KITS                          /* (mel_fixture.c: the data records (user kits), objects 92..99) */
+#include "../firmware/src/rec_store.c"
 #endif
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
@@ -95,6 +95,9 @@ static void reset(void)
     erases = 0;
     ed_bk_valid = ed_bk_put = 0;
     persist_old = tmpl_old = preset_old_write = 0;
+#ifdef BACKUP_TEST_KITS
+    rec_hooks();                                 /* (the host's record calls a synth's take writes through) */
+#endif
 }
 
 static uint32_t call(uint32_t cmd, const uint8_t *a, uint32_t n)

@@ -576,6 +576,12 @@ if core && [ $TABLES = 1 ]; then
     t "GLO double-tap lock, SCL tap navigation, SCREEN OFF, LFO 2 SYNC / TRIG / POL" layer_screen_test \
         -O1 -DMELODEE_USB_AUDIO=1 $FW
     t "DRUM EDITOR: synthesized 909, sound controls, individual pitch/length, undo and storage" drum_editor_test -O2 $FW
+    t "pads: DRUM's pads block read as any synth's == 70111e91's drum_map.c (every KIT), flags, records, the KIT packing, mutations caught" \
+        pads_test $FW
+    run "no synth code in firmware/src: every hit of a synth's name, number or symbol under a rule with its reason (tests/no_synth_code.py)" \
+        "$PY" tests/no_synth_code.py
+    t "pads: 70111e91's kit tracks, lanes, recorded hits, KIT user preset and user kit record load, play and save the same" \
+        pads_load_test -DMELODEE_USB_AUDIO=1 $FW -- "$OUT/pads_load_test" tests/fixtures/pads-70111e91.bin
 fi
 
 if sound && [ $TABLES = 1 ]; then

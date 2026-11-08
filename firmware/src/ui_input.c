@@ -106,7 +106,7 @@ static uint32_t grid_leds(void)
         uint32_t p = key_place(k), on;
         if (!key_black(k)) {
             uint32_t i = ui.bank * 16u + p;
-            on = i < len && ((acc ? step_accents(&seq_steps(t)[i]) : step_lanes(&seq_steps(t)[i])) & b) != 0u;
+            on = i < len && ((acc ? step_accents(t, &seq_steps(t)[i]) : step_lanes(t, &seq_steps(t)[i])) & b) != 0u;
             on ^= (uint32_t)(p == ph);
         } else {
             on = p < NLANE ? p == ui.lane : p == GK_ACC ? acc : len > 16u;
@@ -394,19 +394,19 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
                 st = ui.confirm == CF_PAT_KEY && c < 2u ? PS_WAIT : (smk_pat_held & m) ? PS_ACTIVE :
                      (pl & m) ? (c < 8u ? PS_FILLED : PS_ACTIVE) : (pw & m) ? PS_WAIT : (pd & m) ? PS_ON : PS_OFF;
             }
-        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_DRUM) {   /* the kit's drums (drum_mpc_note's
+        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PADS) {   /* the kit's pads (pads_mpc_note's
                                                                              * layout), the one edited brighter,
                                                                              * white while it hits */
-            uint32_t n = drum_mpc_note(t, mpc), lane = drum_lane(n);
+            uint32_t n = pads_mpc_note(t, mpc), lane = pads_lane(t, n);
             st = (fm1_in.pad_st[c] & 0x80u) || (ui.home && lane < NLANE && stage.hit_t[lane]) ? PS_ACTIVE :
-                 n == drum_sound_note(t, ui.drum_sound % drum_sound_count(t)) ? PS_FILLED : PS_ON;
+                 n == pads_note(t, ui.pad % pads_count(t)) ? PS_FILLED : PS_ON;
         } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_STEPS) {   /* the page's 16 steps */
             uint32_t i = base + c;
             if (i < len) {
                 const step_t *s = &seq_steps(t)[i];
                 if (c == ph) st = PS_ACTIVE;
-                else if (drum_track(t)) {               /* the lane's hits (ACC held: its accents), the others' dim */
-                    uint32_t m = black_held(GK_ACC) ? step_accents(s) : step_lanes(s);
+                else if (pads_on(t)) {               /* the lane's hits (ACC held: its accents), the others' dim */
+                    uint32_t m = black_held(GK_ACC) ? step_accents(t, s) : step_lanes(t, s);
                     st = (m >> ui.lane) & 1u ? PS_FILLED : m ? PS_ON : PS_OFF;
                 } else st = step_on(s) ? PS_FILLED : PS_OFF;
             }
@@ -791,7 +791,7 @@ static void capture_take(void)
         r.duration = (uint16_t)dur;
         recorded_set_owner(&r, recording_owner(t)); recorded_set_exponent(&r, exp);
         recorded_set_step(&r, actual, view != actual, !view && actual);
-        recorded_set_gate(&r, drum_track(t));
+        recorded_set_gate(&r, pads_on(t));
         fm1_irq_off();
         recording_prune(t);
         /* Capturing an overlapping window again must not stack another voice
@@ -911,17 +911,17 @@ static void page_go(int32_t d)
     cursor_set((int32_t)(b * 16u + ui.cursor % 16u < len ? b * 16u + ui.cursor % 16u : len - 1u));
 }
 
-/* the drum DRUM HIT's KNOB 2 (DRUM SOUND / MIX: KNOB 1) picks and the grid's lane, together: the lane key lit, the
- * band and the DRUM shown agree. A lane key, the grid's LANE: the lane's own drum */
-static void drum_pick(uint32_t sound)
+/* the pad DRUM HIT's KNOB 2 (DRUM SOUND / MIX: KNOB 1) picks and the grid's lane, together: the lane key lit, the
+ * band and the pad shown agree. A lane key, the grid's LANE: the lane's own pad */
+static void pads_pick(uint32_t sound)
 {
-    ui.drum_sound = (uint8_t)sound;
-    ui.lane = (uint8_t)drum_lane(drum_sound_note(TSEL, sound));
+    ui.pad = (uint8_t)sound;
+    ui.lane = (uint8_t)pads_lane(TSEL, pads_note(TSEL, sound));
     ui.force = 1;
 }
-static void drum_pick_lane(uint32_t lane)
+static void pads_pick_lane(uint32_t lane)
 {
-    drum_pick(drum_sound_of(TSEL, DRUM_LANE_NOTE[lane]));
+    pads_pick(pads_pad_of(TSEL, lane_note(TSEL, lane)));
     ui.lane = (uint8_t)lane;
 }
 
@@ -931,7 +931,7 @@ static void grid_edit(uint32_t slot, int32_t steps)
     if (slot == 0u)
         cursor_set(ui.cursor + steps);
     else if (slot == 1u)
-        drum_pick_lane((uint32_t)clamp((int32_t)ui.lane + (steps > 0 ? 1 : -1), 0, NLANE - 1));
+        pads_pick_lane((uint32_t)clamp((int32_t)ui.lane + (steps > 0 ? 1 : -1), 0, NLANE - 1));
     else if (slot == 2u)
         grid_hit(TSEL, ui.cursor, ui.lane, steps > 0);
     else
@@ -940,7 +940,7 @@ static void grid_edit(uint32_t slot, int32_t steps)
 
 /* the keys on the grid (presses): a white key toggles the selected lane at its step of the page (its accent
  * while ACC is held) and puts the cursor there; a lane key selects the lane (seq.c plays it); the page keys */
-static void drum_hit_key(uint32_t accent);
+static void pads_hit_key(uint32_t accent);
 #if BOARD_SMK37
 /* ------------------------------------------------------------ the pads --- */
 /* the mode AUTO picks (docs/SMK37_UX.md 2.4): where you play the pads play (KEYS, a DRUM track's drums), NOTES and
@@ -951,11 +951,11 @@ static uint32_t pad_mode_auto(void)
     uint32_t g = ui.home ? GR_NONE : cur_page()->graph;
     if (fm1_in.buttons & (1u << panel.btn[B_SEQ]))
         return PM_PATTERNS;
-    if (!ui.home && (g == GR_ROLL || g == GR_DRUMHIT))
+    if (!ui.home && (g == GR_ROLL || g == GR_PADHIT))
         return PM_STEPS;
     if (!ui.home && g == GR_PATGRID)
         return PM_PATTERNS;
-    return drum_track(TSEL) ? PM_DRUM : PM_KEYS;
+    return pads_on(TSEL) ? PM_PADS : PM_KEYS;
 }
 /* GLO held (ui_layer.c): the mutes of tracks 1..4 (the black keys F#3 G#3 A#3 C#4) on the top row, the solos (F3 G3
  * A3 B3), All (C4) and Tap (F4) on the bottom */
@@ -963,7 +963,7 @@ static const int8_t SMK_PK_GLO[SMK_NPAD] = {1, 3, 5, 8, -1, -1, -1, -1, 0, 2, 4,
 static uint32_t pad_mode_now(void)
 {
     uint32_t m = (fm1_in.buttons & (1u << panel.btn[B_SEQ])) ? PM_PATTERNS : smk_pmode ? smk_pmode : pad_mode_auto();
-    if (m == PM_DRUM && !drum_track(TSEL))
+    if (m == PM_PADS && !pads_on(TSEL))
         m = PM_KEYS;
     return m;
 }
@@ -1017,7 +1017,7 @@ static void smk_pads_sync(void)
     smk_pad_key = map;
     smk_pad_now = (uint8_t)m;
     smk_pad_ctx = (uint8_t)ctx;
-    if (ctx == SPC_MODE && (m == PM_KEYS || m == PM_DRUM)) {
+    if (ctx == SPC_MODE && (m == PM_KEYS || m == PM_PADS)) {
         for (c = 0; c < SMK_NPAD; c++)
             if ((fm1_in.pad_st[c] & 0x80u) && fm1_in.pad_press[c] + 1u > at)
                 at = fm1_in.pad_press[c] + 1u;
@@ -1052,9 +1052,9 @@ static void smk_pad_step(uint32_t c, uint32_t v)
     smk_pad_hold = (uint8_t)(c + 1u);
     smk_pad_hold_at = (uint8_t)i;
     smk_pad_hold_ms = fm1_ms;
-    if (drum_track(TSEL)) {
-        uint32_t acc = black_held(GK_ACC) || (hard && !((step_lanes(st) >> ui.lane) & 1u));
-        if (!ui.home && cur_page()->scope == SC_DRUMHIT) { cursor_set((int32_t)i); drum_hit_key(acc); return; }
+    if (pads_on(TSEL)) {
+        uint32_t acc = black_held(GK_ACC) || (hard && !((step_lanes(TSEL, st) >> ui.lane) & 1u));
+        if (!ui.home && cur_page()->scope == SC_PADHIT) { cursor_set((int32_t)i); pads_hit_key(acc); return; }
         if (acc) grid_acc(TSEL, i, ui.lane, 2);
         else grid_hit(TSEL, i, ui.lane, 2);
         cursor_set((int32_t)i);
@@ -1073,7 +1073,7 @@ static void smk_pad_step(uint32_t c, uint32_t v)
 }
 /* the drum a pad started ends (the note, its MIDI note off), whatever the pads are now. The sequencer's note paths
  * and MIDI OUT's queue are the audio ISR's: the IRQs are off meanwhile, as for every note the main loop plays */
-static void smk_drum_pad_off(uint32_t c)
+static void smk_pads_pad_off(uint32_t c)
 {
     uint32_t t = smk_pad_trk[c] % NTRK, n = smk_pad_playing[c] - 1u;
     fm1_irq_off();
@@ -1103,7 +1103,7 @@ static void smk_pads_input(void)
             continue;
         if (smk_pad_playing[c]) {
             if (v) continue;
-            smk_drum_pad_off(c);
+            smk_pads_pad_off(c);
             continue;
         }
         if (smk_pat_pad[c]) {
@@ -1126,13 +1126,13 @@ static void smk_pads_input(void)
             } else if (c - 8u < PM_N) {
                 pads_set(c - 8u);
             }
-        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_DRUM) {
-            uint32_t n = drum_mpc_note(TSEL, mpc), mc = trk_midi_ch(song.sel);
+        } else if (smk_pad_ctx == SPC_MODE && smk_pad_now == PM_PADS) {
+            uint32_t n = pads_mpc_note(TSEL, mpc), mc = trk_midi_ch(song.sel);
             if (!v || kb_asleep || ui.confirm || name_on())
                 continue;
             smk_pad_trk[c] = (uint8_t)song.sel;
             smk_pad_playing[c] = (uint8_t)(n + 1u);
-            fm1_irq_off();                              /* (as smk_drum_pad_off: the ISR's paths) */
+            fm1_irq_off();                              /* (as smk_pads_pad_off: the ISR's paths) */
             input_on(TSEL, n, v);
             midi_out_event(0x09u | (0x90u | mc) << 8 | n << 16 | v << 24);
             fm1_irq_on();
@@ -1142,14 +1142,14 @@ static void smk_pads_input(void)
     }
     for (c = 0; c < SMK_NPAD; c++)
         if (!(fm1_in.pad_st[c] & 0x80u)) {              /* (up in the HAL, its release lost: let go) */
-            if (smk_pad_playing[c]) smk_drum_pad_off(c);
+            if (smk_pad_playing[c]) smk_pads_pad_off(c);
             if (smk_pat_pad[c]) smk_pat_pad_off(c);
         }
     if (smk_pad_hold && (!(fm1_in.pad_st[smk_pad_hold - 1u] & 0x80u) || smk_pad_now != PM_STEPS || smk_pad_ctx != SPC_MODE)) {
         smk_pad_hold = 0;
     } else if (smk_pad_hold && fm1_ms - smk_pad_hold_ms >= PAT_HOLD_MS) {   /* held: the step cleared (EDIT undoes) */
         smk_pad_hold = 0;
-        if (!drum_track(TSEL) && !chain_busy() && !live_rec_sel()) {
+        if (!pads_on(TSEL) && !chain_busy() && !live_rec_sel()) {
             cursor_set((int32_t)smk_pad_hold_at);
             step_delete_edit();
             ui_message("STEP CLEARED");
@@ -1169,15 +1169,15 @@ static void grid_keys(uint32_t pressed)
             if (chain_busy()) { ui_message("STOP TO EDIT"); continue; }
             if (i >= len)
                 continue;                               /* past LEN: no step there */
-            if(cur_page()->scope==SC_DRUMHIT){cursor_set((int32_t)i);drum_hit_key(black_held(GK_ACC));continue;}
+            if(cur_page()->scope==SC_PADHIT){cursor_set((int32_t)i);pads_hit_key(black_held(GK_ACC));continue;}
             if (black_held(GK_ACC))
                 grid_acc(TSEL, i, ui.lane, 2);
             else
                 grid_hit(TSEL, i, ui.lane, 2);
             cursor_set((int32_t)i);
         } else if (p < NLANE) {
-            drum_pick_lane(p);
-            if(cur_page()->scope==SC_DRUMHIT)ui.note_pick=0;
+            pads_pick_lane(p);
+            if(cur_page()->scope==SC_PADHIT)ui.note_pick=0;
         } else if (p != GK_ACC) {
             page_go(p == GK_PGUP ? 1 : -1);
         }
@@ -1187,27 +1187,28 @@ static void grid_keys(uint32_t pressed)
 static int live_rec_sel(void);
 static void notes_event_edit(uint32_t slot, int32_t delta);
 static void step_move_edit(int32_t delta);
-/* The sound page edits a kit voice; HIT edits only one event, retaining its instrument. */
-static void drum_sound_edit(uint32_t slot,int32_t delta)
+/* The pads page edits a pad's parameters (pads.c: its byte in the patch); HIT edits only one event, retaining its pad. */
+static void pads_sound_edit(uint32_t slot,int32_t delta)
 {
-    ui.drum_sound%=drum_sound_count(TSEL);
+    ui.pad%=pads_count(TSEL);
     uint32_t field=cur_page()->id[slot];
-    if(!field){drum_pick(drum_sound_step(TSEL,ui.drum_sound,delta));return;}
+    if(!field){pads_pick(pads_step(TSEL,ui.pad,delta));return;}
     if(field==255)return;
+    const pads_v_t *v=pads_view(TSEL);int8_t *p=pads_par_at(song.sel,ui.pad,field-1u);   /* (its byte in the patch) */
+    if(!v || !p)return;
     fm1_irq_off();
-    if(field==4){int8_t *p=&drum_offsets(song.sel)[ui.drum_sound][3];*p=(int8_t)clamp(*p-delta,0,127);}
-    else {int8_t *p=&drum_offsets(song.sel)[ui.drum_sound][field-1];*p=(int8_t)clamp(*p+delta,field==1?-24:-64,field==1?24:63);}
-    fm1_irq_on();ui.force=1;
+    pads_par_turn(v,field-1u,p,delta);
+    fm1_irq_on();patch_note(song.sel,MOD3_PATCH_EDIT,0xFFFFu);ui.force=1;
 }
-static void drum_hit_jog(int32_t delta);
-static void drum_hit_edit(uint32_t slot,int32_t delta)
+static void pads_hit_jog(int32_t delta);
+static void pads_hit_edit(uint32_t slot,int32_t delta)
 {
-    ui.drum_sound%=drum_sound_count(TSEL);
-    if(!slot){drum_hit_jog(delta);return;}         /* KNOB 1: the hits one by one, the steps */
-    if(slot==1){drum_pick(drum_sound_step(TSEL,ui.drum_sound,delta));ui.note_pick=0;notes_preview();return;}
+    ui.pad%=pads_count(TSEL);
+    if(!slot){pads_hit_jog(delta);return;}         /* KNOB 1: the hits one by one, the steps */
+    if(slot==1){pads_pick(pads_step(TSEL,ui.pad,delta));ui.note_pick=0;notes_preview();return;}
     if(chain_busy() || live_rec_sel()){ui_message("STOP TO EDIT");return;}
     step_history_end();step_history_finish();fm1_irq_off();step_history_sync_locked();
-    uint32_t i=drum_hit_selected(), created=i>=RECORD_MAX;
+    uint32_t i=pads_hit_selected(), created=i>=RECORD_MAX;
     recorded_note_t before={0},after;
     if(!created)before=recording_snapshot(i);
     else {
@@ -1217,8 +1218,8 @@ static void drum_hit_edit(uint32_t slot,int32_t delta)
         if(i==RECORD_MAX){fm1_irq_on();ui_message("RECORDING FULL");return;}
     }
     note_assign(&after,&before);
-    if(created){recorded_set_note(&after,(uint8_t)drum_sound_note(TSEL,ui.drum_sound));after.vel=96;recorded_set_owner(&after,recording_owner(TSEL));recorded_set_exponent(&after,1);after.duration=32768;recorded_set_step(&after,ui.cursor,0,0);
-        const step_t *st=&TSEL->step[ui.cursor];int32_t had=step_sound_note(TSEL,st,ui.drum_sound);if(had>=0)recorded_set_note(&after,(uint8_t)had);after.vel=(uint8_t)(step_accents(st)&(1u<<drum_lane(recorded_note(&after)))?127:st->vel?st->vel:96);}
+    if(created){recorded_set_note(&after,(uint8_t)pads_note(TSEL,ui.pad));after.vel=96;recorded_set_owner(&after,recording_owner(TSEL));recorded_set_exponent(&after,1);after.duration=32768;recorded_set_step(&after,ui.cursor,0,0);
+        const step_t *st=&TSEL->step[ui.cursor];int32_t had=step_pad_note(TSEL,st,ui.pad);if(had>=0)recorded_set_note(&after,(uint8_t)had);after.vel=(uint8_t)(step_accents(TSEL, st)&(1u<<pads_lane(TSEL, recorded_note(&after)))?127:st->vel?st->vel:96);}
     if(slot==2)after.pitch=(int8_t)clamp(after.pitch+delta,-24,24);
     else {
         int32_t duration=(int32_t)after.duration*(1u<<(recorded_exponent(&after)));
@@ -1232,43 +1233,43 @@ static void drum_hit_edit(uint32_t slot,int32_t delta)
     if(!created)recording_remove(TSEL,i);
     recording_restore_note(TSEL,i,after);
     step_t *st=&TSEL->step[ui.cursor];st->time=ST_NOTE;st->flags|=SF_RECORDED;
-    uint32_t lane=drum_lane(recorded_note(&after));
-    if(recorded_note(&after)==DRUM_LANE_NOTE[lane])st->hit|=(uint8_t)(1u<<lane);
+    uint32_t lane=pads_lane(TSEL, recorded_note(&after));
+    if(recorded_note(&after)==lane_note(TSEL, lane))st->hit|=(uint8_t)(1u<<lane);
     else {uint32_t j;for(j=0;j<st->n && st->note[j]!=recorded_note(&after);j++){}if(j==st->n && st->n<4u)st->note[st->n++]=recorded_note(&after);}
     step_history.recording_gen=recording_generation;
     ui.note_pick=(uint16_t)(i+1);note_assign(&ui.note_identity,&after);ui.note_generation=recording_generation;
     fm1_irq_on();ui.force=1;notes_preview();
 }
 
-static void drum_hit_jog(int32_t delta)
+static void pads_hit_jog(int32_t delta)
 {
     notes_step_jog(delta);uint32_t i=notes_selected(TSEL);
-    if(i<RECORD_MAX){ui.drum_sound=(uint8_t)drum_sound_of(TSEL,recorded_note(&recording[i]));ui.lane=(uint8_t)drum_lane(recorded_note(&recording[i]));}
+    if(i<RECORD_MAX){ui.pad=(uint8_t)pads_pad_of(TSEL,recorded_note(&recording[i]));ui.lane=(uint8_t)pads_lane(TSEL, recorded_note(&recording[i]));}
     notes_preview();ui.force=1;
 }
-static void drum_hit_delete(void)
+static void pads_hit_delete(void)
 {
     if(chain_busy() || live_rec_sel()){ui_message("STOP TO EDIT");return;}
     step_history_end();step_history_finish();fm1_irq_off();step_history_sync_locked();
-    uint32_t i=drum_hit_selected(),sound=ui.drum_sound%drum_sound_count(TSEL);int32_t had=step_sound_note(TSEL,&TSEL->step[ui.cursor],sound);
-    uint32_t note=had>=0?(uint32_t)had:drum_sound_note(TSEL,sound);
+    uint32_t i=pads_hit_selected(),sound=ui.pad%pads_count(TSEL);int32_t had=step_pad_note(TSEL,&TSEL->step[ui.cursor],sound);
+    uint32_t note=had>=0?(uint32_t)had:pads_note(TSEL,sound);
     if(i<RECORD_MAX){note=recorded_note(&recording[i]);step_history.removed=recording_snapshot(i);memset(&step_history.replacement,0,sizeof step_history.replacement);step_history.removed_index=(uint16_t)i;step_history.has_removed=1;recording_remove(TSEL,i);}
     uint32_t remain=0,same=0;
     for(uint32_t j=recording_head[recording_owner(TSEL)];j<RECORD_MAX;j=recording_next[j])if(recording_active(TSEL,j) && recording_view(TSEL,&recording[j])==ui.cursor){remain++;same|=recorded_note(&recording[j])==note;}
     step_t *st=&TSEL->step[ui.cursor];
-    if(!same){uint32_t lane=drum_lane(note);if(note==DRUM_LANE_NOTE[lane]){st->hit&=(uint8_t)~(1u<<lane);st->acc&=(uint8_t)~(1u<<lane);}
+    if(!same){uint32_t lane=pads_lane(TSEL, note);if(note==lane_note(TSEL, lane)){st->hit&=(uint8_t)~(1u<<lane);st->acc&=(uint8_t)~(1u<<lane);}
         for(uint32_t j=0;j<st->n;j++)if(st->note[j]==note){for(uint32_t k=j;k+1<st->n;k++)st->note[k]=st->note[k+1];st->n--;break;}}
     if(!remain)st->flags&=(uint8_t)~SF_RECORDED;
     if(!st->n && !st->hit && !remain)step_clear(st);
     step_history.recording_gen=recording_generation;ui.note_pick=0;ui.note_generation=recording_generation;fm1_irq_on();ui.force=1;ui_message("HIT CLEARED");
 }
-static void drum_hit_key(uint32_t accent)
+static void pads_hit_key(uint32_t accent)
 {
     if(chain_busy() || live_rec_sel()){ui_message("STOP TO EDIT");return;}
-    uint32_t sound=ui.drum_sound%drum_sound_count(TSEL),lane=drum_lane(drum_sound_note(TSEL,sound));
-    if((drum_hit_selected()<RECORD_MAX || step_sound_note(TSEL,&TSEL->step[ui.cursor],sound)>=0) && !accent){drum_hit_delete();return;}
-    drum_hit_edit(2,0);
-    if(accent){uint32_t i=drum_hit_selected();if(i<RECORD_MAX){fm1_irq_off();recording[i].vel=127;note_assign(&step_history.replacement,&recording[i]);TSEL->step[ui.cursor].acc|=(uint8_t)(1u<<lane);fm1_irq_on();}}
+    uint32_t sound=ui.pad%pads_count(TSEL),lane=pads_lane(TSEL, pads_note(TSEL,sound));
+    if((pads_hit_selected()<RECORD_MAX || step_pad_note(TSEL,&TSEL->step[ui.cursor],sound)>=0) && !accent){pads_hit_delete();return;}
+    pads_hit_edit(2,0);
+    if(accent){uint32_t i=pads_hit_selected();if(i<RECORD_MAX){fm1_irq_off();recording[i].vel=127;note_assign(&step_history.replacement,&recording[i]);TSEL->step[ui.cursor].acc|=(uint8_t)(1u<<lane);fm1_irq_on();}}
     notes_preview();
 }
 
@@ -1385,8 +1386,8 @@ static void edit_param(uint32_t slot, int32_t steps)
         0)) {
         ui_message("STOP TO EDIT"); return;
     }
-    if(pg->scope==SC_DRUM){drum_sound_edit(slot,steps);return;}
-    if(pg->scope==SC_DRUMHIT){drum_hit_edit(slot,steps);return;}
+    if(pg->scope==SC_PADS){pads_sound_edit(slot,steps);return;}
+    if(pg->scope==SC_PADHIT){pads_hit_edit(slot,steps);return;}
     if (pg->scope == SC_STEP) {
         step_edit(slot, steps);
         return;
@@ -1664,12 +1665,12 @@ static uint32_t oct_taps(uint32_t pressed, int here)
 /* SEQ step entry, acid style: the keys pressed together (POLY: up to 4 notes, MONO:
  * the last one) become the cursor step; releasing all keys moves on. With CHRD on a key
  * writes what it sounds, as live recording does: POLY its chord, MONO the chord's root */
-static int step_page(void) { return !ui.home && (cur_page()->scope == SC_STEP || cur_page()->scope==SC_DRUMHIT); }   /* SEQ > NOTES, DRUM HIT */
+static int step_page(void) { return !ui.home && (cur_page()->scope == SC_STEP || cur_page()->scope==SC_PADHIT); }   /* SEQ > NOTES, DRUM HIT */
 /* ENV / SCL / EDIT held on STEP: their note gestures (SELECT resizes, moves; EDIT + OCT-/+ undoes, redoes; EDIT tapped
  * deletes), armed and playing too. EDIT held alone undoes instead of deleting. */
 static int step_modifier_context(void)
 {
-    return step_page() && (!drum_track(TSEL) || !grid_on() || (cur_page()->graph == GR_ROLL && live_rec_sel())) &&
+    return step_page() && (!pads_on(TSEL) || !grid_on() || (cur_page()->graph == GR_ROLL && live_rec_sel())) &&
            !ui.menu && !ui.confirm && !ui.ly && !name_on();
 }
 static uint32_t step_modifier_mask(void)                /* (EDIT: NOTES only) */
@@ -1742,7 +1743,7 @@ static void notes_event_edit(uint32_t slot, int32_t delta)
             fm1_irq_on(); ui_message("STEP OCCUPIED"); return;
         }
     } else if (slot == 1u) {
-        if(drum_track(TSEL))after.pitch=(int8_t)clamp(before.pitch+delta,-24,24);
+        if(pads_on(TSEL))after.pitch=(int8_t)clamp(before.pitch+delta,-24,24);
         else recorded_set_note(&after,(uint8_t)clamp((int32_t)recorded_note(&before)+delta,1,127));
     }
     else if (slot == 2u || slot == 4u) {
@@ -1751,7 +1752,7 @@ static void notes_event_edit(uint32_t slot, int32_t delta)
         duration=clamp(note_snap(duration,delta,quantum),(int32_t)quantum,128*RECORD_UNIT);
         uint32_t exp=0;while(duration>65535&&exp<7u){duration>>=1;exp++;}
         after.duration=(uint16_t)duration;recorded_set_exponent(&after,exp);
-        if(drum_track(TSEL))recorded_set_gate(&after,1);
+        if(pads_on(TSEL))recorded_set_gate(&after,1);
     } else after.vel = (uint8_t)clamp((int32_t)before.vel + delta, 1, 127);
     if (!memcmp(&before, &after, sizeof before)) { fm1_irq_on(); return; }
     step_history.state[step_history_index()].selection = ui.note_pick;
@@ -1995,7 +1996,7 @@ static void page_tap(uint32_t b)
         smap_open();
         return;
     }
-    if(b==B_EDIT && !ui.home && cur_page()->scope==SC_DRUMHIT){drum_hit_delete();return;}
+    if(b==B_EDIT && !ui.home && cur_page()->scope==SC_PADHIT){pads_hit_delete();return;}
     if (b == B_GLO) {
         open_global();                                  /* MIXER -> GLOBAL -> SYSTEM -> MIXER */
         return;
@@ -2005,7 +2006,7 @@ static void page_tap(uint32_t b)
         if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
         if (live_rec_sel() && notes_have_recording(TSEL)) { ui_message("STOP RECORDING"); return; }
         fm1_irq_off();
-        if (drum_track(TSEL))
+        if (pads_on(TSEL))
             step_clear(&TSEL->step[ui.cursor]);
         else
             step_delete(TSEL, ui.cursor);
@@ -2175,7 +2176,7 @@ static void page_knob_edit(uint32_t k, int32_t s)
 {
     const page_t *pg = cur_page();
     int16_t *hv;
-    if (ui.home || pg->scope == SC_STEP || pg->scope == SC_TRK || ((pg->scope==SC_DRUM || pg->scope==SC_DRUMHIT) && pg->id[k]!=255) || page_desc(pg, k, &hv) ||
+    if (ui.home || pg->scope == SC_STEP || pg->scope == SC_TRK || ((pg->scope==SC_PADS || pg->scope==SC_PADHIT) && pg->id[k]!=255) || page_desc(pg, k, &hv) ||
         (pg->graph == GR_USER && k == 0u) || ((pg->graph == GR_MOD || pg->graph == GR_FXRACK) && k == 1u)
         || pg->graph == GR_SONG || pg->graph == GR_PATGRID || pg->graph == GR_SCALE_PICKER || (scale_settings_page(pg) && k == 1u)
         || (pg->graph == GR_SLICES && k < 2u)) {       /* (not an empty column) */
@@ -2392,9 +2393,9 @@ static void ui_confirm_accept(void)
         }
     } else if (kind == CF_DEL_TRACK) {
         track_remove(ui.confirm_trk % NTRK);
-#if KIT_REC
+#if REC_TAKES
     } else if (kind == CF_DEL_KIT) {
-        kit_rec_delete(ui.confirm_trk % DK_NUSER);
+        kit_rec_delete(ui.confirm_trk % MOD3_NREC);
 #endif
     } else if (kind == CF_TAKE_JAM) {
         jam_take();
@@ -2444,8 +2445,8 @@ static void ui_input(void)
 #endif
     if (designer_on() && !name_on() && !ui.confirm && designer_input(pressed, notes)) return;
     preset_pick_poll();                              /* restore key selection before handling new edges */
-#if KIT_REC
-    kit_rec_poll();                                  /* Record kit: a take's progress, its keeping (kit_rec_ui.c) */
+#if REC_TAKES
+    kit_rec_poll();                                  /* Record kit: a take's progress, its keeping (rec_ui.c) */
 #endif
     if (notes)
         browse_commit();                              /* a key played while browsing: hear the sound shown */
@@ -2574,7 +2575,7 @@ static void ui_input(void)
     if (glo_sel)
         select_turn(glo_select(), glo_sel);
     song.grid = (uint8_t)keys_mode();                 /* (the menu, a dialog: the keys play again; NAME: silent) */
-    if (!step_page() || drum_track(TSEL) || ui.menu || ui.confirm || name_on() || lay || live_rec_sel() || chain_busy())
+    if (!step_page() || pads_on(TSEL) || ui.menu || ui.confirm || name_on() || lay || live_rec_sel() || chain_busy())
         seq_midi_events(0);                         /* discard events during modal/layer input too */
     if (ui.seen_pattern_gen != TSEL->pattern_gen) {
         if (ui.seen_pattern_gen) { seq_midi_reset(); ui.entry_open = ui.step_move = ui.note_move = ui.note_copy = 0; cursor_set(0); ui.force = 1; }

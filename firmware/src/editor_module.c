@@ -31,7 +31,7 @@ static int ed_module_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
     }
     if (k < NMOD && op == 5u && n == 2u) {
         ed_b(0); ed_b(mods[k].state); ed_b(mods[k].engine); ed_b(mods[k].abi);
-        ed_u35(mods[k].crc); ed_u35(mods[k].key); ed_u35(MOD3_PADS_KEY);
+        ed_u35(mods[k].crc); ed_u35(mods[k].key); ed_u35(0);   /* (its own key: none since host 4) */
         return 1;
     }
     if (k < NMOD && op >= 1u && op <= 4u) {

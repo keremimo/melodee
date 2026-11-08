@@ -32,10 +32,9 @@ static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (be
 #include "eng_trio.c"
 #include "eng_wheel.c"
 #include "eng_phys.c"           /* PHYS: DaisySP physical models (phys_dsp.c, MIT) */
-#include "drum_map.c"           /* what the firmware knows of DRUM: its lanes, the GM map, the kits' numbers, the pads */
-#include "drum_kit.h"           /* the user kits' records (kit_store.c) */
+#include "pads.h"               /* a synth's pads and data records: the firmware's side (pads.c, rec_store.c) */
 #if MELODEE_DRUM_BUILTIN
-#include "eng_drum.c"           /* DRUM: synthesized 808 circuits (drum_808.c), the 909, a C64's SID (drum_sid.c), CR78, FM
+#include "../modules/drum/eng_drum.c"   /* DRUM: synthesized 808 circuits (drum_808.c), the 909, a C64's SID (drum_sid.c), CR78, FM
                                  * (a synth module on the device: firmware/modules/drum) */
 #endif
 #if MELODEE_LEGACY_EXTRAS
@@ -105,15 +104,6 @@ static int eng_state_prepare(const track_t *t)
     return !size || resource_get(RES_ENGINE0 + (uint32_t)(t - trk), size) != 0;
 }
 static phys_slot_t *phys_slots(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(phys_slot_t) * PHYS_POLY); }
-#if MELODEE_DRUM_BUILTIN
-static drum909_part_t *drum909_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drum909_part_t)); }
-static drum_lane_t *drum_kit_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drum_lane_t) * DV_NLANE); }
-static dsk_part_t *dsk_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(dsk_part_t)); }
-static dlk_part_t *dlk_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(dlk_part_t)); }
-#if MELODEE_USER_KITS
-static drk_part_t *drk_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drk_part_t)); }
-#endif
-#endif
 static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + (uint32_t)(t - trk), sizeof(drw_part_t)); }
 #if MELODEE_FM6_BUILTIN
 static fm6_part_t *fm6_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(fm6_part_t)); }
@@ -264,8 +254,6 @@ static uint32_t preset_builtin_patch(uint32_t e, uint32_t k, uint8_t *p)
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
 static inline uint32_t eng_idx(uint32_t e) { return e < NENGINES ? e : 0u; }
 static const engine_t *eng_of(uint32_t e) { return ENGINES[eng_idx(e)]; }
-/* the KIT parameter's value names (DRUM's E1): a user kit's value shows the kit's own name (params.c, ui_draw.c) */
-static int drum_kit_names(const param_desc_t *d) { return d->names && d->names == ENGINES[ENGI_DRUM]->edit[0].names; }
 
 #include "presets.c"            /* the factory presets: fetched, named, their patches put on a part (a synth
                                  * module's from its file) */
@@ -382,11 +370,13 @@ static uint32_t trk_def_preset(uint32_t k) { return k < NPART ? TRK_DEF[k][1] : 
 #include "eng_module.c"         /* synth modules: engines loaded into SRAM (module_store.c keeps them) */
 #include "eng_module_main.c"    /* (their lists, loading, registration: main loop) */
 #include "schema.c"             /* a synth's schema (its file's or built in), the patches by it */
+#include "pads.c"               /* a synth's pads (its schema's MOD3_R_PADS) */
 #define SHIPPED_OK() mod_shipped_ok()  /* the synth modules the image needs are on the device (else: setup) */
 #else
 #define SHIPPED_OK() 1
 static int mod_idle(uint32_t e) { (void)e; return 0; }
 #include "schema.c"
+#include "pads.c"
 static const char *eng_name(uint32_t e) { return ENGINES[e % NENGINES]->name; }
 static uint32_t eng_npresets(uint32_t e) { return ENGINES[e % NENGINES]->npresets; }
 static void mod_want(uint32_t e) { (void)e; }

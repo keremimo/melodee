@@ -50,11 +50,11 @@ static void slot_save_sheet(void);
 static int track_remove(uint32_t k);                    /* tracks.c */
 static void track_add(void);
 static int track_create_to(uint32_t k);
-#if KIT_REC
-static void kit_rec_open(void);                         /* kit_rec_ui.c */
+#if REC_TAKES
+static void kit_rec_open(void);                         /* rec_ui.c */
 static void kit_rec_poll(void);
 static void kit_rec_delete(uint32_t u);
-#define KIT_ROW , {"Record kit\x85", 0, 0, kit_rec_open, 0}   /* the last row: a drum track's only */
+#define KIT_ROW , {"Record kit\x85", 0, 0, kit_rec_open, 0}   /* the last row: a kit that records its pads only */
 #else
 #define KIT_ROW
 #endif
@@ -147,8 +147,8 @@ static const sheet_row_t SHEET_STAGE[] = {
 #if BOARD_SMK37
     {"Pads", ps_pads_v, ps_pads_turn, ps_pads, 0},
 #endif
-#if KIT_REC
-    {"Record kit\x85", 0, 0, kit_rec_open, 0},             /* the last row: a drum track's only */
+#if REC_TAKES
+    {"Record kit\x85", 0, 0, kit_rec_open, 0},             /* the last row: a kit that records its pads only */
 #endif
 };
 /* the song's (SONG) */
@@ -303,7 +303,7 @@ static const sheet_row_t SHEET_NOTE[] = {{"Length", nt_len_v, nt_len, 0, 0}, {"V
     {"Chance", nt_chance_v, nt_chance, 0, 0}, {"Slide", nt_slide_v, 0, nt_slide, 0}, {"Move note",0,0,note_move_arm,0}, {"Copy note",0,0,nt_copy,0}, {"Delete note", 0, 0, nt_delete, SR_RED}};
 static const sheet_row_t SHEET_REC_NOTE[] = {{"Length", nt_len_v, nt_len, 0, 0}, {"Velocity", nt_vel_v, nt_vel, 0, 0},
     {"Move note",0,0,note_move_arm,0}, {"Copy note",0,0,nt_copy,0}, {"Delete note", 0, 0, nt_delete, SR_RED}};
-static int ht_acc_on(void) { return (step_accents(&seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u; }
+static int ht_acc_on(void) { return (step_accents(TSEL, &seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u; }
 static void ht_acc_v(char *b) { str_cpy(b, ht_acc_on() ? "On" : "Off", 8); }
 static void ht_acc(void) { edit_param(3u, ht_acc_on() ? -1 : 1); }
 static void ht_clear(void) { edit_param(2u, -1); }
@@ -321,11 +321,11 @@ static int step_enter(void)
     str_cpy(sub, "step ", sizeof sub);
     fmt_int(sub + 5, (int32_t)ui.cursor + 1);
     if (grid_on()) {
-        if (!((step_lanes(&seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u)) {
+        if (!((step_lanes(TSEL, &seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u)) {
             edit_param(2u, 1);                          /* (the grid's HIT: its checks) */
             return 1;
         }
-        str_cpy(t, drum_lane_abbr(TSEL, ui.lane), sizeof t);   /* "SD \xB7 step 5" */
+        str_cpy(t, lane_abbr(TSEL, ui.lane), sizeof t);   /* "SD \xB7 step 5" */
         str_cpy(t + str_len(t), " \xB7 ", 4);
         str_cpy(t + str_len(t), sub, sizeof t - str_len(t));
         sheet_open(t, "", SHEET_HIT, NELEM(SHEET_HIT));
@@ -365,7 +365,7 @@ static uint32_t page_sheet(void)
         return 5;
     return fam == FAM_EDIT || fam == FAM_ENV || fam == FAM_LFO || fam == FAM_FX ? 1u : 0u;
 }
-#define KIT_ROWS_OFF (KIT_REC && TSEL->eng_req != ENGI_DRUM ? 1u : 0u)   /* Record kit: drum tracks only */
+#define KIT_ROWS_OFF (REC_TAKES && !pads_flag(TSEL, MOD3_PD_RECORD) ? 1u : 0u)   /* Record kit: a kit that records its pads only */
 static void page_sheet_open(void)
 {
     char nm[20];

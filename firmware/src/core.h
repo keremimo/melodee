@@ -4,7 +4,7 @@
 /* MELODEE core types: tracks, voices, engines, parameters.
  * Up to eight tracks (all four parts to start with: song.ntrk). Tracks 1..4 are synth parts: their own engine, preset,
  * parameters, voices and 64-step patterns. The parts share one budget of VBUDGET units of sounding voices (voice.c).
- * Drums are the DRUM engine (synthesized 808 on the General MIDI map) on any part. Tracks 5..8 are MIDI-only: always
+ * Drums are a synth that plays pads (pads.c: DRUM, a module) on any part. Tracks 5..8 are MIDI-only: always
  * the MIDI Track engine, sequenced like the parts, never rendered or mixed (NMIDI).
  * Sections: sizes, parameters, voices and engines, tracks and the song, system.
  *
@@ -163,7 +163,7 @@ enum {                          /* per-track parameters */
     P_FM4_ATK, P_FM4_DEC, P_FM4_SUS, P_FM4_REL, P_FM4_LEVEL,
     P_CHRD, P_VOIC,                            /* chord keys (chord.c): one key plays a chord; its voicing */
     P_MPCDEG,                                  /* QNT MPC: the scale degree pad 02 of each bank plays, 1 = root */
-    P_LN0, P_LN1, P_LN2, P_LN3, P_LN4, P_LN5, P_LN6, P_LN7, /* DRUM lane levels, 127 = original gain */
+    P_LN0, P_LN1, P_LN2, P_LN3, P_LN4, P_LN5, P_LN6, P_LN7, /* a kit's lane levels, 127 = original gain */
     P_LSYNC, P_LTRIG, P_LPOL, P_SPRD, /* Felucca 1.4 common LFO controls and stereo spread */
     P_FXTYPE, P_FXMIX, P_FXRATE, P_FXCHAR, /* new FX; legacy effect IDs remain inert */
     P_FX2TYPE, P_FX2MIX, P_FX2RATE, P_FX2CHAR,
@@ -369,7 +369,7 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     uint8_t sampled;             /* 1 = plays recorded material (a position, not a phase): voice.c keeps
                                   * no phases over a retrigger, spreads none for UNISON, renders at SUS 0 */
     uint8_t keep;                /* bit k: s[k] is kept when a sounding voice is retriggered (filters) */
-    uint8_t oneshot;             /* 1 = hits (DRUM): always POLY, no glide; amp ends its voices (eng_drum.c) */
+    uint8_t oneshot;             /* 1 = hits (a kit's): always POLY, no glide; amp ends its voices */
     void (*note_on)(struct track *t, voice_t *v);
     void (*render)(struct track *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m);
     /* optional (0 = none): the voice amplitude instead of the ADSR curve, once per control tick;
@@ -410,7 +410,7 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     /* optional: 1 = the keys held are a chord the engine's one voice plays itself (voice.c keeps them in the mono
      * stack; SID's C64 in POLY) */
     int (*chord)(const struct track *t);
-    /* optional: the voice a new note retriggers (DRUM: its lane's), 0 = voice.c's choice */
+    /* optional: the voice a new note retriggers (a kit's: its lane's), 0 = voice.c's choice */
     voice_t *(*reuse)(struct track *t, uint32_t note);
     /* optional: render the part's voices on the audio worker (CPU1): their cost class (AP_*), < 0 = not now;
      * render_p, when set, renders there from p, the E1..E8 and lane levels as the block began (else render) */
@@ -444,6 +444,11 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
      * patch as its SysEx (the sends) */
     uint32_t (*sysex)(const uint8_t *f, uint32_t n, uint32_t ev);
     uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
+    /* host 4 (mod_abi3.h): its data records (rec_store.c keeps them): one checked before it plays it, a take made a
+     * record's pad, whether a record has a pad's take */
+    int (*rec_check)(const uint32_t *const *secs, uint32_t nsec, uint32_t len);
+    uint32_t (*rec_take)(uint32_t slot, uint32_t pad, int16_t *pcm, uint32_t n, uint32_t cap);
+    int (*rec_pad)(uint32_t slot, uint32_t pad);
 } engine_t;
 #endif
 /* Built-in engines that are synth modules on the device (firmware/modules/<name>): host builds compile them in, the
@@ -484,47 +489,20 @@ enum { ST_NOTE, ST_TIE, ST_REST };
 #define RECORD_MAX 1024u
 #define RECORD_UNIT 65536u                     /* fractional onset within its swung step; duration uses an exponent */
 #include "recorded_note.h"
-/* Melodee 1.x's KIT store format (module_schema.h MOD_SCH_STORE_KIT: a patch of 16 x 4 signed bytes, a sound's four
- * values): projects and user presets keep it bit packed in 54 bytes, per sound one 6-bit value (+ 24), then three
- * 7-bit ones (+ 64, + 64, + 0) */
-#define KIT_WIRE_BYTES 54u
-#if !MOD_SIDE
-static void kit_wire_pack(uint8_t *b, const uint8_t *patch)
-{
-    const int8_t *c = (const int8_t *)(const void *)patch;
-    uint32_t pos = 0;
-    memset(b, 0, KIT_WIRE_BYTES);
-    for (uint32_t i = 0; i < 16u; i++, c += 4) {
-        wire_bits_put(b, &pos, (uint32_t)(c[0] + 24), 6);
-        wire_bits_put(b, &pos, (uint32_t)(c[1] + 64), 7);
-        wire_bits_put(b, &pos, (uint32_t)(c[2] + 64), 7);
-        wire_bits_put(b, &pos, (uint32_t)c[3], 7);
-    }
-}
-static void kit_wire_unpack(uint8_t *patch, const uint8_t *b)
-{
-    int8_t *c = (int8_t *)(void *)patch;
-    uint32_t pos = 0;
-    for (uint32_t i = 0; i < 16u; i++, c += 4) {
-        c[0] = (int8_t)((int32_t)wire_bits_get(b, &pos, 6) - 24);
-        c[1] = (int8_t)((int32_t)wire_bits_get(b, &pos, 7) - 64);
-        c[2] = (int8_t)((int32_t)wire_bits_get(b, &pos, 7) - 64);
-        c[3] = (int8_t)wire_bits_get(b, &pos, 7);
-    }
-}
-#endif
-
-#define NLANE 8                  /* drum lanes of a step (the DRUM engine's: eng_drum.c DRUM_LANE_NOTE) */
+#define NLANE 8                  /* a step's lanes (a kit's grid: pads.c; MOD3_NLANE) */
 typedef struct {                 /* acid-style step: up to 4 notes (POLY), time, accent, slide; drum hits */
     uint8_t note[4];
     uint8_t n;                   /* notes in use, 0 = empty */
     uint8_t time;                /* ST_NOTE / ST_TIE / ST_REST */
     uint8_t flags;               /* SF_ACCENT | SF_SLIDE */
     uint8_t vel;
-    uint8_t hit;                 /* bit l: lane l hits (its GM note, on any engine): the DRUM grid */
+    uint8_t hit;                 /* bit l: lane l hits (its lane's note, on any engine: pads.c lane_note): the grid */
     uint8_t acc;                 /* hit != 0: lane accents; hit == 0: recorded gate, 1..255 of a step (0 legacy) */
     uint8_t probability;         /* 0 = legacy 100%; 1..100 = percent, 101 = silent */
 } step_t;
+/* the notes a step's lane hits play, on any synth (the pattern format's lanes: mod_abi3.h MOD3_LANE_NOTE; a synth with
+ * pads maps them to its pads) */
+#define STEP_LANE_NOTE MOD3_LANE_NOTE
 typedef struct {                 /* a step as formats 1..4 (projects to FUN4) stored it: no hits */
     uint8_t note[4];
     uint8_t n, time, flags, vel;

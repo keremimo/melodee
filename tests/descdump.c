@@ -132,7 +132,7 @@ int main(void)
     printf("}");
     printf(",\n\"LANE_NOTE\":[");                    /* the DRUM grid: each lane's GM note, the lane of GM 35..81 */
     for (k = 0; k < NLANE; k++)
-        printf("%s%d", k ? "," : "", DRUM_LANE_NOTE[k]);
+        printf("%s%d", k ? "," : "", STEP_LANE_NOTE[k]);
     printf("]");
     printf(",\n\"LANE_OF\":\"");
     for (k = 35; k <= 81; k++)

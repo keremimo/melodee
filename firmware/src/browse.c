@@ -31,9 +31,6 @@ static const char *const PRESET_CAT[NENGINES] = {
 #if MELODEE_SID_BUILTIN
     [3] = "OLBBBBBBLLLLLLLLPSPPGGKKUUERFFFF",          /* SID */
 #endif
-#if MELODEE_DRUM_BUILTIN
-    [10] = "DDDDDD",                                    /* DRUM: the kits (808, 909, SID, SID DIGI, CR78, FM) */
-#endif
 #if MELODEE_FM6_BUILTIN
     [12] = "KEBRPEGUKRBEEKGSPLUEWEBEO",                 /* FM6, INIT VOICE */
 #endif
@@ -46,7 +43,8 @@ static const char *const PRESET_CAT[NENGINES] = {
         "PSBUEFDEEEWEUOUEOOOOSERPUOBOOOBOFLGUGRLOOOBUFOOFEUFORSKKWKLGLGGKROGBGLKSLOOFOFOFLUUEFFEOFEPF",
 #endif
 };
-static uint32_t cat_of_engine(uint32_t e) { return e == ENGI_DRUM ? CAT_DRUM : e == 11u ? CAT_FX : CAT_OTHER; }
+static uint32_t cat_of_engine(uint32_t e) { return pads_eng(e) ? CAT_DRUM : e == 11u ? CAT_FX : CAT_OTHER; }   /* (a synth with
+                                                  * pads: its kits) */
 static uint32_t preset_cat(uint32_t e, uint32_t k)           /* factory preset k of engine e */
 {
     const char *s = e < NENGINES ? PRESET_CAT[e] : 0;
@@ -123,7 +121,7 @@ static uint32_t cat_guess(uint32_t e, const char *nm)
 {
     uint32_t k, np = eng_npresets(e % NENGINES);
     char pn[MOD_PST_NAME + 1u];
-    if (e == ENGI_DRUM || e == 11u)
+    if (pads_eng(e % NENGINES) || e == 11u)
         return cat_of_engine(e);
     for (k = 0; k < np; k++) {                               /* (a synth module's names: its file's, read in order) */
         eng_preset_name(e, k, pn, sizeof pn);

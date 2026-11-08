@@ -39,15 +39,15 @@ static int ed_st_map(uint8_t *own)
     st_read_failed = 0;
     for (i = 0; i < ST_LN; i++)
         own[i] = st_lin_ok(i) ? 0u : 127u;
-    for (o = 0; o < ST_KFILE0 + ST_NKIT; o++) {          /* as st_pool_used: every current record */
-#if !MELODEE_USER_KITS
-        if (o >= ST_KFILE0) break;
+    for (o = 0; o < ST_RFILE0 + ST_NREC; o++) {          /* as st_pool_used: every current record */
+#if !MELODEE_RECORDS
+        if (o >= ST_RFILE0) break;
 #endif
         if (!(o < OBJ_COUNT ? st_listed(o) && !st_retired(o) : st_pfile(o)) || (c = st_current(o, &h)) < 0)
             continue;
         memset(used, 0, sizeof used);
         st_project_used(used, o, (uint32_t)c, &h);
-        who = o >= ST_KFILE0 ? 33u + o - ST_KFILE0 : o >= ST_PFILE0 ? 1u + o - ST_PFILE0 : o - OBJ_BANK0 < 4u ? 1u + o - OBJ_BANK0 : 41u;
+        who = o >= ST_RFILE0 ? 33u + o - ST_RFILE0 : o >= ST_PFILE0 ? 1u + o - ST_PFILE0 : o - OBJ_BANK0 < 4u ? 1u + o - OBJ_BANK0 : 41u;
         for (i = 0; i < ST_LN; i++)
             if ((used[i / 32u] >> (i % 32u)) & 1u)
                 own[i] = (uint8_t)who;

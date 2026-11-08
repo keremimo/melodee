@@ -205,7 +205,7 @@ static const struct { const char *word; uint16_t p; int16_t def; uint8_t sweep; 
     {"Vibrato", P_LD_PIT, 4, 0}, {"Wobble", P_LD_FLT, 24, 1}, {"Tremolo", P_LD_AMP, 40, 0}, {"Filter env", P_ED_FLT, 32, 1}};
 static uint32_t designer_feats(void)                    /* FEATURES' rows (a drum kit: none) */
 {
-    if(drum_track(TSEL) || midi_track_only(TSEL))return 0;
+    if(pads_on(TSEL) || midi_track_only(TSEL))return 0;
     return ds_blk()?ds_rb(2):MOD3_HF_COUNT;
 }
 static uint32_t designer_code(uint32_t r)               /* FEATURES' row r: its path */
@@ -329,7 +329,7 @@ static void designer_recipe(void)
     static const uint8_t ROLE[4]={MOD3_R_ENV_A,MOD3_R_ENV_D,MOD3_R_ENV_S,MOD3_R_ENV_R};
     track_t *t=TSEL;uint32_t g=ds.goal,e=eng_idx(t->eng_req),i,n=0,id,fl,lb;
     mod_sch_head h;
-    if(g==DG_FREE || drum_track(t) || midi_track_only(t))return;
+    if(g==DG_FREE || pads_on(t) || midi_track_only(t))return;
     int pad=g==DG_PAD, shorty=g==DG_PLUCK||g==DG_KEYS;
     int16_t env[4]={(int16_t)(pad?75:0),(int16_t)(shorty?70:45),(int16_t)(shorty?0:110),(int16_t)(pad?85:shorty?40:20)};
     t->p[P_VOICE]=(g==DG_BASS||g==DG_LEAD)?V_MONO:V_POLY;
@@ -372,7 +372,7 @@ static int designer_category(uint32_t i)
     if(p->fam==FAM_ENV)return DT_ENV;
     if(p->fam==FAM_LFO)return DT_MOVE;
     if(str_prefix(s,"VOICE"))return DT_PLAY;
-    if(str_eq(s,"EDIT 2") || str_prefix(s,"DRUM MIX"))return DT_TONE;
+    if(str_eq(s,"EDIT 2") || (p->scope==SC_PADS && p->id[1]==4))return DT_TONE;   /* (a kit's second page: its mix) */
     return DT_SOURCE;
 }
 static int designer_page_ok(uint32_t i)
@@ -385,7 +385,7 @@ static int designer_page_ok(uint32_t i)
     if(p->scope==SC_GLOBAL || str_prefix(p->title,"LANES"))return 0;
     if(ds_flag(MOD3_DSF_NO_VOICE) && (str_eq(p->title,"VOICE") || str_eq(p->title,"VOICE 2")))return 0;
     if(ds_flag(MOD3_DSF_NO_EDIT) && p->scope==SC_ENGINE)return 0;
-    if(drum_track(TSEL) && (str_prefix(p->title,"VOICE") || p->fam==FAM_ENV))return 0;
+    if(pads_on(TSEL) && (str_prefix(p->title,"VOICE") || p->fam==FAM_ENV))return 0;
     return 1;
 }
 /* MAIN pages: the engine's own first. A synth with LFOs of its own (the track LFO and the matrix: ALL), a drum kit
@@ -396,7 +396,7 @@ static int designer_guided(uint32_t i)
     const page_t *p=&PG(i);const char *s=p->title;
     for(uint32_t j=0;j<NELEM(skip);j++)if(str_eq(s,skip[j]))return 0;
     if(ds_pg(i)&MOD3_DS_SKIP)return 0;
-    if(p->scope==SC_TRACK && p->fam==FAM_LFO && (ds_flag(MOD3_DSF_OWN_LFO) || drum_track(TSEL)))return 0;
+    if(p->scope==SC_TRACK && p->fam==FAM_LFO && (ds_flag(MOD3_DSF_OWN_LFO) || pads_on(TSEL)))return 0;
     if(ds_flag(MOD3_DSF_EDIT_ALL) && p->scope==SC_ENGINE)return 0;
     return 1;
 }

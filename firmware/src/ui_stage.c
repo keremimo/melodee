@@ -203,7 +203,7 @@ static int stage_notes(int32_t x1, int32_t cy)
 static int graph_notes(void) { return stage_notes(220, ST_BAND_H / 2) != 0; }
 
 /* a DRUM track: its eight lanes across the band, a lane's name lit (the track's colour, a bar under it) while it hits
- * (drum_flash: the ISR's), else dim */
+ * (pads_flash: the ISR's), else dim */
 static void stage_hits(void)
 {
     uint32_t l;
@@ -212,7 +212,7 @@ static void stage_hits(void)
     for (l = 0; l < NLANE; l++) {
         int32_t xc = 4 + 29 * (int32_t)l + 14;
         int lit = stage.hit_t[l] != 0u;
-        cv_text_c(xc, ty_y(ST_BAND_H / 2 - 2, lf), lf, drum_lane_abbr(TSEL, l), lit ? T_THEME : T_DIM, T_BG);
+        cv_text_c(xc, ty_y(ST_BAND_H / 2 - 2, lf), lf, lane_abbr(TSEL, l), lit ? T_THEME : T_DIM, T_BG);
         if (lit)
             cv_rrect(xc - 9, ST_BAND_H - 5, 18, 3, 1, T_THEME, T_BG);
     }
@@ -286,8 +286,8 @@ static void stage_panel_hits(void)                      /* every frame: the DRUM
     uint32_t k, sel = song.sel % NTRK, l;
     fm1_irq_off();
     for (k = 0; k < NTRK; k++) {
-        f[k] = drum_flash[k];
-        drum_flash[k] = 0;
+        f[k] = pads_flash[k];
+        pads_flash[k] = 0;
     }
     fm1_irq_on();
     if (stage.hit_trk != sel + 1u) {
@@ -300,7 +300,7 @@ static void stage_panel_hits(void)                      /* every frame: the DRUM
 /* the band: the selected track's waveform, faint, the chord and notes in front (a DRUM track: its lanes) */
 static void stage_band(void)
 {
-    uint32_t sel = song.sel % NTRK, drum = (uint32_t)drum_track(TSEL), i;
+    uint32_t sel = song.sel % NTRK, drum = (uint32_t)pads_on(TSEL), i;
     int held = 0;
     cv_begin(240, ST_BAND_H, T_BG);
     if (!drum) {

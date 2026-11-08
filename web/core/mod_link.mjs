@@ -57,8 +57,7 @@ export async function linkModule(x, wasm) {
   const env = {
     memory: x.memory, __indirect_function_table: table, __memory_base: i32(memBase), __table_base: i32(tableBase),
     __stack_pointer: i32(stack + STACK, true), memcpy: x.memcpy, memset: x.memset, memcmp: x.memcmp,
-    core_nor_ptr: x.core_nor_ptr,                    /* (the DRUM's user kits: the pool, MOD_IN_CORE) */
-  };
+  };                                                 /* (a module's data records: its host table's rec_base, the pool) */
   const got = {};                                    /* (a core function whose address the module takes: a slot) */
   for (const im of WebAssembly.Module.imports(mod)) {
     if (im.module !== "GOT.func") continue;

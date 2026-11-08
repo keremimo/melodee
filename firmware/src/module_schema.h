@@ -21,3 +21,4 @@
 static const uint8_t MOD_SCH_STORE_BYTES[] = {0, MOD_SCH_VOICE_BYTES, MOD_SCH_TONE_BYTES, MOD_SCH_PROGRAM_BYTES,
                                               MOD_SCH_KIT_BYTES};
 #define MOD_SCH_STORE_FN 16u
+#define MOD_SCH_KIT_PACKED 54u                   /* a KIT patch bit packed (projects, user presets: its schema's MOD3_R_PACK) */

@@ -863,7 +863,7 @@ class Link {
    cache: engine -> {key, schema} of the schemas read from a device (SCHEMA's key: the chunk's CRC) */
 const SYNTH = (() => {
   const NONE = 0xFFFF, F_ENUM = 8, SF_HIDDEN = 4, SF_FORMAT = 8, SF_SIGNED = 1, SK_FIELD = 0, SK_TRACK = 1;
-  const PG_BANK = 4, PG_INST = 8, W_STORE = 4, W_TOOLS = 5, R_SYSEX = 21, MBYTES = 1, MLANES = 16;
+  const PG_BANK = 4, PG_INST = 8, W_STORE = 4, W_TOOLS = 5, R_SYSEX = 21, R_CHECK = 22, R_PADS = 25, R_PACK = 26, MBYTES = 1, MLANES = 16;
   function parse(bytes) {
     const b = Uint8Array.from(bytes), u16 = (o) => b[o] | b[o + 1] << 8, s16 = (o) => (u16(o) << 16) >> 16;
     const h = { version: u16(0), patch: u16(2), nparam: u16(4), npage: u16(6), nrole: u16(8), def: u16(12), param: u16(14),
@@ -898,8 +898,43 @@ const SYNTH = (() => {
       const at = h.wid + h.mmap + 2 * h.patch;
       if (h.flags & MLANES) { const names = strs(u16(at), b[at + 2]); lanes = Array.from(b.slice(at + 3, at + 3 + h.patch), (x) => names[x] ?? ""); }
     }
-    return { head: h, params, pages, roles, sysex, lmax, lanes, def: Array.from(b.slice(h.def, h.def + h.patch)), title: str(h.pname) || str(h.abbr) };
+    /* its pads (MOD3_R_PADS: a kit's: the grid's lanes, its pads' parameters), its stored patch's packing (MOD3_R_PACK:
+       Melodee 1.x's KIT store) and checks (MOD3_R_CHECK) */
+    let pads = null, pack = null;
+    const checks = [];
+    for (const r of roles) {
+      const o = h.wid + r.id;
+      if (r.role === R_PADS && r.flags === 1) pads = { flags: b[o + 1], nmap: b[o + 2], npar: b[o + 5], pstride: b[o + 6],
+        lanes: strs(u16(o + 18), 8), abbrs: strs(u16(o + 20), 8), words: strs(u16(o + 16), 5) };
+      if (r.role === R_PACK) pack = { fields: Array.from({ length: r.flags }, (_, i) => [b[o + 2 * i], (b[o + 2 * i + 1] << 24) >> 24]),
+        count: b[o + 2 * r.flags], stride: b[o + 2 * r.flags + 1] };
+      if (r.role === R_CHECK) for (let k = 0; k < r.flags; k++) { const c = o + 8 * k; checks.push({ off: u16(c), n: b[c + 2], stride: b[c + 3] || 1, mask: b[c + 4], flags: b[c + 5], lo: b[c + 6], hi: b[c + 7] }); }
+    }
+    return { head: h, params, pages, roles, sysex, lmax, lanes, pads, pack, checks, def: Array.from(b.slice(h.def, h.def + h.patch)), title: str(h.pname) || str(h.abbr) };
   }
+  /* a stored patch as the synth packs it (pack): its bytes (null: not a packed patch of this synth's), and its checks */
+  const packedLen = (s) => s?.pack ? Math.ceil(s.pack.fields.reduce((n, f) => n + f[0], 0) * s.pack.count / 8) : 0;
+  function unpack(s, raw) {
+    if (!s?.pack || raw.length !== packedLen(s)) return null;
+    const out = new Array(s.head.patch).fill(0);
+    let pos = 0;
+    const get = (w) => { let v = 0; for (let i = 0; i < w; i++, pos++) v |= ((raw[pos >> 3] >> (pos & 7)) & 1) << i; return v; };
+    for (let g = 0; g < s.pack.count; g++) s.pack.fields.forEach(([w, bias], i) => { out[g * s.pack.stride + i] = (get(w) - bias) & 255; });
+    return out;
+  }
+  function checked(s, patch) {                     /* (schema.c patch_check) */
+    for (const c of s.checks) {
+      let sh = 0;
+      while (!((c.mask >> sh) & 1)) sh++;
+      for (let j = 0, off = c.off; j < c.n; j++, off += c.stride) {
+        let v = (patch[off] & c.mask) >> sh, lo = c.lo, hi = c.hi;
+        if (c.flags & 1) { v = (patch[off] << 24) >> 24; lo = (c.lo << 24) >> 24; hi = (c.hi << 24) >> 24; }
+        if (c.flags & 2 ? v !== lo && v !== hi : v < lo || v > hi) return false;
+      }
+    }
+    return true;
+  }
+  const packedOk = (s, raw) => { const p = unpack(s, raw); return !!p && checked(s, p); };
   /* a page's columns, instance k: [{id, param}] (null: an empty column; param null: one the schema does not name) */
   const columns = (s, g, k = 0) => g.ids.map((id, c) => id === NONE ? null : { id: (id + k * g.istride[c]) & 0xFFFF })
     .map((c) => c && { ...c, param: s.params.get(c.id) || null });
@@ -980,7 +1015,8 @@ const SYNTH = (() => {
     }
     return null;
   }
-  return { NONE, parse, columns, sections, shown, text, get, put, frames, engineOf, nameOf, sound, whole, lane, cache, SF_FORMAT, F_ENUM };
+  return { NONE, parse, columns, sections, shown, text, get, put, frames, engineOf, nameOf, sound, whole, lane, cache, SF_FORMAT, F_ENUM,
+           unpack, packedLen, packedOk };
 })();
 /* a synth's schema from the device, null when the engine has none: its key first (SCHEMA of no bytes), the bytes (in
    pages) only when no schema here has that key (SYNTH.cache: read before, or seeded, e.g. by Studio from its bundle) */
@@ -1371,10 +1407,12 @@ const patternUsed = (pat) => !!pat && pat.some((x) => x && x[0]);
 /* a DRUM track's first 16 steps -> a grid, as the firmware's UP_STORE stores one (its notes on their lanes) */
 const gridFromSteps = (steps) => Array.from({ length: UP.PAT }, (_, i) => (steps[i] ? [stepLanes(steps[i]), stepAccents(steps[i])] : [0, 0]));
 
-function drumWireValid(raw){
-  if(!Array.isArray(raw)||raw.length!==54||raw.some(v=>!Number.isInteger(v)||v<0||v>255))return false;
-  for(let voice=0;voice<16;voice++){let tune=0;for(let bit=0;bit<6;bit++){const at=voice*27+bit;tune|=((raw[at>>3]>>(at&7))&1)<<bit;}if(tune>48)return false;}
-  return true;
+/* a synth's patch as Melodee 1.x packed it (a library's "drum": the KIT store): its synth's schema's packing and checks
+   when the editor has read it (SYNTH.cache), else bytes the device checks */
+function packedValid(engine,raw){
+  if(!Array.isArray(raw)||!raw.length||raw.length>64||raw.some(v=>!Number.isInteger(v)||v<0||v>255))return false;
+  const s=SYNTH.cache.get(engine)?.schema;
+  return !s||SYNTH.packedOk(s,raw);
 }
 function cleanPatch(pt) {
   const now = new Date().toISOString();
@@ -1394,7 +1432,7 @@ function cleanPatch(pt) {
     created: pt.created || now, modified: pt.modified || pt.created || now,
   };
   if (Number.isInteger(pt.slot)) o.slot = pt.slot;
-  if(pt.drum!=null){if(pt.engine!==10||!drumWireValid(pt.drum))throw Error("Invalid drum patch");o.drum=pt.drum.slice();}
+  if(pt.drum!=null){if(!packedValid(pt.engine|0,pt.drum))throw Error("Invalid drum patch");o.drum=pt.drum.slice();}
   /* the synth's own patch as the device stores it (Melodee 1.x's files: the same bytes under p5 / cz / fm6) */
   const raw = pt.native ?? pt.p5 ?? pt.cz ?? pt.fm6;
   if (raw != null) {
@@ -1565,7 +1603,7 @@ const sharedBank = {
   async put(rq,info,slot,pt) {
     const sch=pt.native?SYNTH.cache.get(pt.engine)?.schema:null;   /* (a whole patch: its sound, as slots keep it) */
     const kind=pt.native?1:pt.drum?4:0,raw=kind?(sch?SYNTH.sound(sch,pt.native):pt.native||pt.drum):null;   /* (the device checks the synth's bytes) */
-    if(kind===1 && (!raw.length||raw.some(x=>!Number.isInteger(x)||x<0||x>255)) || kind===4&&!drumWireValid(raw))throw Error("Invalid synth patch");
+    if(kind===1 && (!raw.length||raw.some(x=>!Number.isInteger(x)||x<0||x>255)) || kind===4&&!packedValid(pt.engine|0,raw))throw Error("Invalid synth patch");
     const name=String(pt.name||"PATCH").replace(/[^ -~]/g," ").trim().slice(0,kind?20:12)||"PATCH";
     const values=Array.from({length:info.pcount},(_,i)=>pt.p?.[i]??0),defaults=!pt.p;
     const nativeName=kind===1?SYNTH.nameOf(SYNTH.cache.get(pt.engine)?.schema,raw):"";
@@ -1609,7 +1647,8 @@ async function capturePatch(rq, info, name) {
   const dump = parse[CMD.DUMP](await rq(req.dump()), info);
   const steps = [];
   for (let i = 0; i < UP.PAT && i < info.nstep; i++) steps.push(parse[CMD.STEP_GET](await rq(req.stepGet(i))));
-  const drum = info.engines[dump.engine] === "DRUM";   /* (a DRUM track that strikes a lane: its grid) */
+  const drum = info.synths ? !!(await synthSchema(rq, dump.engine))?.pads   /* (a kit's track: its grid; a synth's pads */
+    : info.engines[dump.engine] === "DRUM";                                /* in its schema, else 1.x's DRUM by name) */
   let native=null;                                    /* (a synth's own patch: PATCH, the part's) */
   if(info.synths){const r=parse[CMD.PATCH](await rq(req.patch(0,0,dump.engine,info.ntrk?parse[CMD.TRACK](await rq(req.track())).sel:0)));
     if(!r.rc){const s=await synthSchema(rq,r.engine);native=s?SYNTH.sound(s,r.bytes):r.bytes;}}
@@ -1890,7 +1929,7 @@ function makeMockDevice(opt = {}) {
     return d;
   };
   const EMPTY = { n: 0, notes: [0, 0, 0, 0], time: 2, flags: 0, vel: 0, hit: 0, acc: 0 };
-  const isDrum = () => ENG[st.engine].name === "DRUM";
+  const isDrum = () => st.schemaParsed.has(st.engine) ? !!st.schemaParsed.get(st.engine).pads : ENG[st.engine].name === "DRUM";   /* (a kit: its schema's pads) */
   const clearSteps = () => st.step.forEach((s) => Object.assign(s, EMPTY, { notes: [0, 0, 0, 0] }));
   function toGrid(s) {                            /* eng_drum.c step_to_grid: a lane's own note becomes its hit */
     if (s.time !== 0) return;
@@ -2921,7 +2960,7 @@ const LAYOUT = (pe0) => [
                                                     MELODEE_FM4=1 firmware only: DIGITAL retired, its engine is "-") */
     ...[0, 1, 2, 3].map((k) => [`OP${k + 1}`, 0, [61 + 5 * k, 62 + 5 * k, 63 + 5 * k, 64 + 5 * k]]),
     ["OP LVL", 0, [65, 70, 75, 80]]] }] : []),
-  ...(pe0>=92 && engName()==="DRUM"?[{t:"DRUM LEVELS",pages:[["LANES",0,[84,85,86,87]],["LANES 2",0,[88,89,90,91]]]}]:[]),
+  ...(pe0>=92 && kitNow()?[{t:"DRUM LEVELS",pages:[["LANES",0,[84,85,86,87]],["LANES 2",0,[88,89,90,91]]]}]:[]),
   ...(pe0>=100 ? [{t:"FX",pages:Array.from({length:pe0>=108?3:1},(_,k)=>[[`FX ${k+1}`,0,[96+k*4,97+k*4,98+k*4,99+k*4]], ...(pe0>=114&&[6,7,8,17,18,19].includes(dev.dump.p[96+k*4])?[[`FX ${k+1} ${dev.dump.p[96+k*4]>=17?"RESO":"TONE"}`,0,[111+k]]]:[])]).flat()}] : []),
   ...(pe0>=109 ? [{t:"FX SEND",pages:[["TRACK SEND",0,[108]], ["RETURN",1,[39]], ...(pe0>=111?[["SEND MODE",1,[40]],["SEPARATE SENDS",0,[108,109,110]]]:[]), ...Array.from({length:3},(_,k)=>[[`SEND FX ${k+1}`,1,[27+k*4,28+k*4,29+k*4,30+k*4]], ...(pe0>=114&&[6,7,8,17,18,19].includes(dev.dump.g[27+k*4])?[[`SEND FX ${k+1} ${dev.dump.g[27+k*4]>=17?"RESO":"TONE"}`,1,[42+k]]]:[])]).flat()]}] : []),
   { t: "VOICE", pages: [["LEVEL", 0, [0]], ["VOICE", 0, [37, 38, 41, 42]], ["VOICE 2", 0, [43, 44, 39, 40]], ...(pe0>=96 ? [["VOICE 3",0,[95]]] : [])] },
@@ -2936,6 +2975,8 @@ const LAYOUT = (pe0) => [
 const G_SKIP = new Set(["SLOT", "NAME", "BOOT", "LOAD", "SAVE", "ENG", "SET", "CLRSQ", "INIT", "MIDI", "SYNC", "DRUM", "CPU", "CLK"]);
 const key = (s, id) => s + ":" + id;
 const engName = () => (dev && dev.info && dev.dump ? dev.info.engines[dev.dump.engine] : "");
+/* the track shown is a kit's: its synth's schema names pads (a firmware without schemas: 1.x's DRUM by name) */
+const kitNow = () => { const c = dev && dev.dump ? SYNTH.cache.get(dev.dump.engine) : null; return c ? !!c.schema?.pads : engName() === "DRUM"; };
 const gEng = () => { const i = dev.gdesc.findIndex((d) => d && d.label === "ENG"); return i >= 0 ? i : 20; };
 const pSlen = () => { const i = dev.pdesc.findIndex((d) => d && d.fmt === F.STEPS); return i >= 0 ? i : P.SLEN; };
 /* mixer ids by DESC label (core.h: P_PAN 39, P_MUTE 40) */

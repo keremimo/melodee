@@ -41,7 +41,7 @@ static uint32_t pv_nbox;
 static uint32_t pv_kind(void)
 {
     const page_t *pg = cur_page();
-    if (!ui.home && grid_on() && (pg->graph == GR_ROLL || pg->graph == GR_DRUMHIT) && !ui.layer)
+    if (!ui.home && grid_on() && (pg->graph == GR_ROLL || pg->graph == GR_PADHIT) && !ui.layer)
         return PV_GRID;
     if (ui.home || act_cols() || grid_on())
         return PV_NONE;
@@ -52,7 +52,7 @@ static uint32_t pv_kind(void)
         return PV_RINGS;
     if (pg->graph == GR_TRK)
         return PV_MIXER;
-    if (pg->graph == GR_ROLL && !drum_track(TSEL))
+    if (pg->graph == GR_ROLL && !pads_on(TSEL))
         return PV_NOTES;
     if (pg->graph == GR_MOD)
         return PV_MOD;
@@ -451,18 +451,18 @@ static void pv_grid_mark(void)                          /* (rows 1 .. 3, over th
 static void pv_grid(int32_t h)
 {
     const track_t *t = TSEL;
-    uint32_t l, i, len = (uint32_t)t->p[P_SLEN], base = ui.bank * 16u, sound = ui.drum_sound % drum_sound_count(t);
+    uint32_t l, i, len = (uint32_t)t->p[P_SLEN], base = ui.bank * 16u, sound = ui.pad % pads_count(t);
     (void)h;
     pv_grid_mark();
     for (l = 0; l < NLANE; l++) {                       /* (lanes 18 apart from row 6: the name in the label face) */
         int32_t y = 6 + (int32_t)l * 18;
         int sel = l == ui.lane;
-        int pick = sel && cur_page()->scope == SC_DRUMHIT && drum_lane(drum_sound_note(t, sound)) == l;   /* DRUM HIT:
+        int pick = sel && cur_page()->scope == SC_PADHIT && pads_lane(t, pads_note(t, sound)) == l;   /* DRUM HIT:
                                                          * the lane is KNOB 2's drum, named; its other drums hollow */
         uint16_t row = sel ? T_LIFT : T_PANEL;
         if (sel)
             cv_rrect(2, y, PV_PANEL_W - 4, 17, 4, T_LIFT, T_PANEL);
-        cv_text_on(6, ty_y(y + 8, TY_LB), TY_LB, pick ? drum_sound_abbr(t, sound) : drum_lane_abbr(t, l),
+        cv_text_on(6, ty_y(y + 8, TY_LB), TY_LB, pick ? pads_abbr(t, sound) : lane_abbr(t, l),
                    sel ? T_KNOB(l) : ux_mix(T_PANEL, T_KNOB(l), 70), row);
         for (i = 0; i < 16u && base + i < len; i++) {
             const step_t *st = &seq_steps(t)[base + i];
@@ -472,10 +472,10 @@ static void pv_grid(int32_t h)
                 cv_rrect(x - 2, y, 13, 17, 4, T_SEC, row);
                 cv_rrect(x - 1, y + 1, 11, 15, 3, row, T_SEC);
             }
-            if (step_lanes(st) & b) {
-                uint16_t col = (step_accents(st) & b) ? T_TEXT : T_KNOB(l);   /* (each lane a colour) */
+            if (step_lanes(t, st) & b) {
+                uint16_t col = (step_accents(t, st) & b) ? T_TEXT : T_KNOB(l);   /* (each lane a colour) */
                 cv_rrect(x, y + 2, 9, 13, 3, col, row);
-                if (pick && step_sound_note(t, st, sound) < 0)
+                if (pick && step_pad_note(t, st, sound) < 0)
                     cv_rrect(x + 2, y + 4, 5, 9, 2, row, col);
             } else
                 cv_disc(x + 4, y + 8, i % 4u == 0u || sel ? 4 : 3, i % 4u == 0u || sel ? T_MID : T_DIM, 0);

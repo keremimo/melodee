@@ -74,9 +74,20 @@ static void sch_pages_sync(void)
     }
     sch_pgs.n = (uint8_t)j;
 }
+/* a kit's pages (SC_PADS, SC_PADHIT: the selected track's synth's pads block titles them) */
+static page_t pads_pg[3] __attribute__((section(".pool")));
+static const page_t *pads_page(const page_t *p)
+{
+    uint32_t w = p->scope == SC_PADHIT ? MOD3_PW_HIT : p->id[1] == 4u ? MOD3_PW_PAGE2 : MOD3_PW_PAGE1;
+    pads_pg[w] = *p;
+    pads_pg[w].title = pads_word(TSEL, w);
+    return &pads_pg[w];
+}
 static const page_t *page_at(uint32_t i)
 {
     const page_t *p = &PAGE_TAB[i < NPAGES ? i : 0u];
+    if (p->scope == SC_PADS || p->scope == SC_PADHIT)
+        return pads_page(p);
     if (p->scope != SC_MOD)
         return p;
     sch_pages_sync();

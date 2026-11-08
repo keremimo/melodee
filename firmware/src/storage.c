@@ -84,24 +84,25 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
  * are pool records of type ST_PFILE0 + slot. Empty slots own no sector. */
 #define ST_NPROJ 32u
 #define ST_PFILE0 64u
-/* User drum kits (kit_store.c): 8 slots, pool records of type ST_KFILE0 + slot, as slots 5..32 are */
-#ifndef MELODEE_USER_KITS                      /* (eng_drum.c sets it first in the firmware; storage tests alone: on) */
-#define MELODEE_USER_KITS 1
+/* Data records (rec_store.c: a synth module's own, recorded kits): 8 slots, pool records of type ST_RFILE0 + slot, as
+ * slots 5..32 are */
+#ifndef MELODEE_RECORDS                      /* (pads.h sets it first in the firmware; storage tests alone: on) */
+#define MELODEE_RECORDS 1
 #endif
-#define ST_NKIT 8u
-#define ST_KFILE0 (ST_PFILE0 + ST_NPROJ)
+#define ST_NREC 8u
+#define ST_RFILE0 (ST_PFILE0 + ST_NPROJ)
 /* Synth modules (module_store.c): NMOD slots, pool records of type ST_MFILE0 + slot, the module file as built; a file
  * longer than a record goes on in the record ST_MXFILE0 + slot */
 #ifndef NMOD
 #define NMOD 8u                                /* (core.h; storage tests alone) */
 #endif
 #define ST_NMOD NMOD
-#define ST_MFILE0 (ST_KFILE0 + ST_NKIT)
+#define ST_MFILE0 (ST_RFILE0 + ST_NREC)
 #define ST_MXFILE0 (ST_MFILE0 + ST_NMOD)
 #define ST_OBJ_END (ST_MXFILE0 + ST_NMOD)      /* every object number below this */
 static uint32_t st_proj_obj(uint32_t slot) { return slot < 4u ? OBJ_BANK0 + slot : ST_PFILE0 + slot; }
 /* a record that lives only in the pool, never in a fixed pair: projects 5..32, the user kits, the synth modules */
-static int st_pfile(uint32_t obj) { return (obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ) || (obj >= ST_KFILE0 && obj < ST_OBJ_END); }
+static int st_pfile(uint32_t obj) { return (obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ) || (obj >= ST_RFILE0 && obj < ST_OBJ_END); }
 static int st_obj_ok(uint32_t obj) { return obj < OBJ_COUNT || st_pfile(obj); }
 
 typedef struct {
@@ -625,8 +626,8 @@ static int st_pool_used(uint32_t used[ST_LW], uint32_t obj, uint32_t *seq)
     for (uint32_t w = 0; w < ST_LW; w++) used[w] = 0;
     for (uint32_t o = 0; o < ST_OBJ_END; o++) {
         uint32_t live = o < OBJ_COUNT ? st_listed(o) && !st_retired(o) : st_pfile(o);
-#if !MELODEE_USER_KITS
-        live &= o < ST_KFILE0 || o >= ST_MFILE0;
+#if !MELODEE_RECORDS
+        live &= o < ST_RFILE0 || o >= ST_MFILE0;
 #endif
         if (!live) continue;
         st_hdr_t current; int copy = st_current(o, &current);
