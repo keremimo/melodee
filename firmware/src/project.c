@@ -1648,12 +1648,13 @@ static void persist_boot(void)                    /* before settings_init / pane
 #ifdef RES_BASE
     res_boot(st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR) == 0);   /* the resource region (res.c) installed? */
 #endif
-#ifdef REC_STORE
-    rec_scan();                                    /* the synths' data records, for the audio (rec_store.c) */
-#endif
     eng_map_spare = proj_engine_spare;             /* (a lent engine number given back when another is needed) */
 #ifdef MODULE_STORE
     mod_boot();                                    /* the synth modules, before the boot project names one */
+#endif
+#ifdef REC_STORE
+    rec_scan();                                    /* the synths' data records, for the audio (rec_store.c): after
+                                                    * mod_boot, which lists their owners (the map, the pads) */
 #endif
 #if MELODEE_SLICE
     slc_store_boot();                              /* (the scans read each slot's stored slices) */

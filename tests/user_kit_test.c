@@ -246,6 +246,18 @@ int main(void)
         check("the boot scan finds the kits again", drk_user[2].n && rec_len[2] && !drk_user[3].n);
     }
 
+    {   /* boot before DRUM is listed (a module written after power-on; nightly dc2209de scanned before mod_boot) */
+        const engine_t *drum = ENGINES[ENGI_DRUM];
+        memset(drk_user, 0, sizeof drk_user); memset(rec_len, 0, sizeof rec_len);
+        ENGINES[ENGI_DRUM] = &ENG_RETIRED; sch_gen++;
+        rec_scan();
+        int waited = !drk_user[2].n && (rec_pend >> 2 & 1u);
+        ENGINES[ENGI_DRUM] = drum; sch_gen++;
+        rec_recheck();                                    /* (eng_module_main.c mod_register: DRUM in SRAM) */
+        check("kits found before their synth is listed wait for it, then play (not dropped until a save)",
+              waited && drk_user[2].n && rec_len[2] && !drk_user[3].n && !rec_pend);
+    }
+
     {   /* delete while it rings */
         kit(2); trk_note_on(&trk[0], 49, 127); run(0, 20u);
         int rc = rec_delete(2);

@@ -83,7 +83,8 @@ static int rec_scan_slot(uint32_t u)
     const uint32_t *p[MOD3_REC_SEC];
     int copy = st_current(rec_obj(u), &h), ok;
     uint32_t n = copy >= 2 ? rec_sectors(u, &h, sec, p) : 0u;
-    ok = n ? rec_checked(u, p, n, h.len) : 1;
+    /* (a stored record whose owner no listed synth is yet waits for it: a module written after power-on) */
+    ok = n ? rec_checked(u, p, n, h.len) : copy >= 2 && !rec_owner(u) ? -1 : 1;
     rec_pend = (uint8_t)(ok < 0 ? rec_pend | 1u << u : rec_pend & ~(1u << u));
     if (ok)
         n = 0;
