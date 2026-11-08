@@ -236,6 +236,25 @@ outside_author() {                                # the SDK alone: firmware/modu
         step "outside author: installed, listed, loaded and played in the host firmware as the reference plays it, unsigned (the warning); the in-tree file signed and the same module" \
             "$OUT/outside_author_test" "$_d/out/trio.mmod" build/modules/trio.mmod
 }
+outside_j106() {                                  # an outside synth: Saadet's JUNO-106 (outside/j106) and the SDK alone
+    _d="$OUT/outside_j106"
+    rm -rf "$_d" && mkdir -p "$_d" && cp -R firmware/modules/sdk "$_d/sdk" && cp -R outside/j106 "$_d/j106" ||
+        { fail "outside JUNO-106: the folder"; return; }
+    step "outside JUNO-106: Saadet's synth built from the SDK folder alone (no Melodee tree, no key: unsigned)" \
+        sh -c "cd '$_d' && MELODEE_SIGN_KEY= '$PY' sdk/mod_build.py j106/j106.c -o out/j106.mmod >/dev/null" || return
+    $CC -c -O2 -DMOD_HOSTED -I"$_d/sdk" "$_d/j106/j106.c" -o "$_d/j106.o" || { fail "outside JUNO-106: the host object"; return; }
+    build outside_j106_test outside_j106_test -O1 $FW "$_d/j106.o" || return
+    step "outside JUNO-106: installed (the first free number, unsigned), its presets from its file, plays, its pages, SysEx, a project saved, loaded, on another device" \
+        "$OUT/outside_j106_test" "$_d/out/j106.mmod" "$_d/mel"
+    if command -v node >/dev/null 2>&1; then
+        step "outside JUNO-106: its project through a .mel file (web/mel_file.js: export, import)" \
+            node tests/outside_j106_mel.mjs "$_d/mel" &&
+            step "outside JUNO-106: what the .mel import sent goes in through the backup PUT, loads, plays the same" \
+                "$OUT/outside_j106_test" --mel "$_d/out/j106.mmod" "$_d/mel"
+    else
+        echo "== skip the outside JUNO-106 .mel round trip (no node)"
+    fi
+}
 desc_json() { "$OUT/descdump" > "$OUT/desc.json"; }
 mel_tests() {                                     # the .mel project file: the page's coding against the firmware's records
     build mel_fixture mel_fixture -DMELODEE_USB_AUDIO=1 $FW || return
@@ -455,6 +474,7 @@ if core; then
     t "retired synth identities, project/user patch preservation and favorites" engine_retirement_test -O2 $FW
     job module_tests
     job outside_author
+    job outside_j106
     t "identity: the engine map (UIDs, numbers given, kept), stores carrying their entries and patches, record owners, crash blame, signatures" \
         identity_test -O1 $FW
     t "the resource region's freed sectors to the pool: a c53538c9 install (53,884-B region) updated, cut at every step, nothing lost, the pool 6 sectors bigger" \
