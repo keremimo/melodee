@@ -173,6 +173,42 @@ int main(void)
         check("storage.c: a retired or legacy-only object refuses a save", st_save(OBJ_PROJECT0, "x", 1) == -1);
     }
     check("FL_PLAIN_LO = the VM start 0x9D000", FL_PLAIN_LO == 0x9D000u);
+    {   /* the resource region's sectors past the reserve (9 of 16 since the factory sounds went into the synth modules):
+         * an install from before (a 53,884-byte region, its header's window the whole 16) keeps the pool out of them; once
+         * this build's header (its window 9) stands, they are the pool's (linear indices 60..66), taken last, their old
+         * bytes no trouble, nothing in the windows moved */
+        static uint8_t back[ST_PROJECT_MAX];
+        uint32_t i, before = 0, after = 0, given = 0, saved = 0, same = 1, old_res = 1;
+        memset(nor, 0xFF, sizeof nor);
+        for (i = 0; i < 53884u; i++) nor[FL_RES_LO + i] = (uint8_t)(i * 7u + 3u);   /* (the old region: 14 sectors) */
+        for (i = 0; i < sizeof payload; i++) payload[i] = (uint8_t)(i * 13u + 7u);
+        st_res_end = FL_RES_HI;                     /* (res.c res_window: the old header's window, all 16) */
+        int kept = st_save(OBJ_BANK0, payload, sizeof payload) == 0 && st_save(OBJ_CZBANK0, payload, 3716u) == 0;
+        for (i = 0; i < ST_LN; i++) before += st_lin_ok(i);
+        st_res_end = FL_RES_LO + FL_RES_RESERVE * 0x1000u;   /* (this build's header: its window 9) */
+        for (i = 0; i < ST_LN; i++) after += st_lin_ok(i);
+        for (uint32_t s = 4u; s < ST_NPROJ && !st_save(ST_PFILE0 + s, payload, sizeof payload); s++) saved++;
+        for (uint32_t s = 4u + saved; s < ST_NPROJ && !st_save(ST_PFILE0 + s, payload, 4056u); s++) saved++;
+        for (uint32_t s = FL_RES_LO + FL_RES_RESERVE * 0x1000u; s < FL_RES_HI; s += 0x1000u) {
+            st_hdr_t h;
+            memcpy(&h, nor + s, sizeof h);
+            given += h.magic == ST_MAGIC;
+        }
+        for (i = 0; i < FL_RES_RESERVE * 0x1000u; i++) old_res &= nor[FL_RES_LO + i] == (uint8_t)(i * 7u + 3u);
+        for (uint32_t s = 4u; s < 4u + saved; s++) {
+            int n = st_load(ST_PFILE0 + s, back, sizeof back);
+            if (!(n > 0 && !memcmp(back, payload, (uint32_t)n))) printf("  record %u: %d\n", s, n);
+            same &= n > 0 && !memcmp(back, payload, (uint32_t)n);
+        }
+        same &= st_load(OBJ_BANK0, back, sizeof back) == (int)sizeof payload && !memcmp(back, payload, sizeof payload) &&
+                st_load(OBJ_CZBANK0, back, sizeof back) == 3716 && !memcmp(back, payload, 3716u);
+        printf("smk flash: pool %u sectors (%u B) with the old window, %u (%u B) with this build's; %u records filled it, "
+               "%u of them in the region's given sectors\n", before, before * 4056u, after, after * 4056u, saved, given);
+        check("res region: the old window keeps the pool out (60 sectors); this build's gives it 7 more (67), taken last "
+              "(the old bytes erased first), every record read back, the region's reserve untouched",
+              kept && before == 60u && after == 67u && given > 0u && same && old_res && bad_writes == 0);
+        st_res_end = FL_RES_HI;
+    }
     {   /* the store owner tag at 0xAF000 */
         static const uint8_t SLOOP_TAG[16] = "SMK37DATASLOOP";
         uint32_t k, outside_ok = 1, store_clear = 1;

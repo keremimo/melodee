@@ -217,7 +217,7 @@ static uint32_t st_lin_at(uint32_t i)
 static uint32_t st_lin_of(uint32_t addr)
 {
     uint32_t i = 0;
-    while (i < ST_LN && st_pool_at(i) != (addr & ~(ST_SECTOR - 1u))) i++;
+    while (i < ST_LN && st_lin_at(i) != (addr & ~(ST_SECTOR - 1u))) i++;
     return i;
 }
 #else

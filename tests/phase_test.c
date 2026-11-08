@@ -84,7 +84,7 @@ int main(void)
     host_preset(t, 2, 0); trk_note_on(t, 60, 100); track_render(t, out, CTL);
     voice_kill(&t->v[0]); track_render(t, out, CTL);
     check("shared voice stealing still frees a native-envelope voice", !t->v[0].active);
-    check("split descriptors keep stored ranges/defaults", CZ_ED[0].max == TP[P_FM1_ATK].max && CZ_ED[4].def == TP[P_FM1_LEVEL].def);
+    check("split descriptors keep stored ranges/defaults", PH_ED[0].max == TP[P_FM1_ATK].max && PH_ED[4].def == TP[P_FM1_LEVEL].def);
     check("PHASE remains its own engine with six presets", ENGINES[2] == &ENG_PHASE && !strcmp(ENG_PHASE.name,"PHASE") && ENG_PHASE.npresets == 6);
     memset(trk,0,sizeof trk);trk_voices_bind(); host_tracks_init(); t=&trk[0]; cz_init(); eng_state_clear(0);
     host_preset(t, ENGI_CZ, 0);

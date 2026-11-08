@@ -279,9 +279,10 @@ old_to_new() {                                    # a package of another app (th
         "$OUT/ldr_test" "$OUT/old.fwsc" build/melodee.fwsc
 }
 smk_packages() {                                  # SMK-37 layout packages of this build's binaries (BOARD_SMK37 tests)
-    # (a resource region the SMK-37's 16 sectors hold: the FM-1's, cut short, its header remade; NEW with an app
+    # (a resource region the SMK-37's 16 sectors hold: the FM-1's, cut short, its header remade with the window 9
+    # (FL_RES_RESERVE, both boards: build.py's offset 12); NEW with an app
     # area tail from 0x93000 of 0xA000 - 100 pseudo-random bytes: firmware/src/smkx.c)
-    "$PY" -c 'import struct,sys,zlib; d=open(sys.argv[1],"rb").read()[32:60032]; h=struct.pack("<7I",0x3153524D,len(d),zlib.crc32(d),0,0,0,0); open(sys.argv[2],"wb").write(h+struct.pack("<I",zlib.crc32(h))+d)' build/melodee-res.bin "$OUT/smk_res.bin" &&
+    "$PY" -c 'import struct,sys,zlib; d=open(sys.argv[1],"rb").read()[32:60032]; h=struct.pack("<7I",0x3153524D,len(d),zlib.crc32(d),9,0,0,0); open(sys.argv[2],"wb").write(h+struct.pack("<I",zlib.crc32(h))+d)' build/melodee-res.bin "$OUT/smk_res.bin" &&
     "$PY" -c "import random, sys; r = random.Random(37); sys.stdout.buffer.write(bytes(r.randrange(256) for _ in range(0xA000 - 100)))" \
         > "$OUT/smk_tail.bin" &&
         "$PY" tools/fm1pkg_make.py --board smk37 --res "$OUT/smk_res.bin" --tail "$OUT/smk_tail.bin" build/melodee.bin \

@@ -192,6 +192,9 @@ int main(int argc, char **argv)
                (unsigned)saved, (unsigned)small, (unsigned)given);
         bad += check("filled: the given sectors hold records too (the last ones), each reads back, every older record kept",
                      given > 0u && same && records_kept());
+        const char *dump = getenv("RES_POOL_DUMP");   /* (the flash as it is now: an older firmware's check, by hand) */
+        FILE *df = dump ? fopen(dump, "wb") : 0;
+        if (df) { fwrite(nor, 1, sizeof nor, df); fclose(df); }
     }
     printf("%s\n", bad ? "RES POOL TEST FAILED" : "res pool test passed");
     return bad ? 1 : 0;

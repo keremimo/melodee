@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Synth modules in the pool (eng_module.c plays them): slot k is the record ST_MFILE0 + k holding a module file as
- * tools/mod_build.py wrote it (a file longer than a record, ST_PROJECT_MAX: its first ST_PROJECT_MAX bytes there,
- * the rest in the record ST_MXFILE0 + k). At power-on only the heads are read (mod_catalog: the engines listed, nothing in
- * SRAM), unless the last boot died early (bootguard: a module that crashes the device must not keep it from
- * starting). A module is loaded when it is wanted (eng_module.c mod_want, mod_service below) and goes back to the
+/* Synth modules in the pool (eng_module.c plays them): NMOD slots, slot k's module file as mod_build.py wrote it in up
+ * to MOD_RECS pool records (storage.c st_mod_obj: ST_PROJECT_MAX bytes each, the last one the rest). At power-on only
+ * the heads are read (mod_catalog: who each is, the number the device's engine map gives it, nothing in SRAM); a module
+ * whose code was running when the last run crashed is left out once (mod_blame: the noinit marker core.h mod_run), and
+ * after a boot that died early with no module to blame all of them are (bootguard). A module is loaded when it is wanted (eng_module.c mod_want, mod_service below) and goes back to the
  * flash when nothing has used it for a while; an upload is loaded once when it is committed (its check). The loader
  * checks the file's head, copies the image into the audio working arena, checks the CRC while it moves the address
  * words (and reads the chunks after them for it: never into SRAM), then the descriptor, and only then registers the

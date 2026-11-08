@@ -63,8 +63,21 @@ static uint32_t mmod_chunks(const char *stem, uint8_t *dst, uint32_t cap)
     at = MOD3_HEAD + h.image + 4u * h.nrel;
     if (h.abi != MOD3_ABI || !(h.flags & MOD3_FILE_CHUNKS) || at > n || n - at > cap)
         return 0;
-    memcpy(dst, b + at, n - at);
-    return n - at;
+    uint32_t got = 0;                               /* (its presets and schema; who it is comes from the test's name) */
+    while (at + 8u <= n) {
+        uint32_t tag, len;
+        memcpy(&tag, b + at, 4);
+        memcpy(&len, b + at + 4, 4);
+        uint32_t whole = 8u + ((len + 3u) & ~3u);
+        if (whole > n - at)
+            break;
+        if (tag != MOD3_IDNT_TAG && tag != MOD3_SIGN_TAG) {
+            memcpy(dst + got, b + at, whole);
+            got += whole;
+        }
+        at += whole;
+    }
+    return got;
 }
 /* a module file for the host loader (its image a pattern; the host plays hdesc()); key: its legacy key (0: an SDK
  * module), host: the host table it needs; stem: the device build's file whose chunks it carries (its presets), 0 none */

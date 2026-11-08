@@ -105,7 +105,7 @@ static int phase_done(track_t *t, voice_t *v)
     return c->eg[0][2].stage > 2u && (!line2 || c->eg[1][2].stage > 2u);
 }
 
-/* (its split envelopes' parameters, the retired FM4 storage: params.c CZ_ED) */
+/* (its split envelopes' parameters, the retired FM4 storage: params.c PH_ED) */
 
 static inline int32_t pd_cos(uint32_t ph16)             /* -cos, Q15, from the 16-bit PD phase */
 {
