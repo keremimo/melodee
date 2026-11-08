@@ -271,7 +271,8 @@ static uint32_t ed_bk_commit_inner(void)
             memcpy(&tm, t + tl - 4u, 4);
         }
         if (!(ed_bk_len>=sizeof *p && ed_bk_len<=sizeof ed_bk_set && p->magic==PERSIST_MAGIC &&
-              p->ext.usb_off<=3u && p->ext.boot<=PROJ_SLOTS &&
+              (p->ext.usb_off<=3u || (p->ext.usb_off&0xFFFF00FCu)==WORK_BUDGET_TAG) && p->ext.boot<=PROJ_SLOTS &&   /* (the
+                                                   * voice budget's tag: settings_export writes it, settings_import reads it) */
               (ed_bk_len==sizeof *p || tmpl_blob_valid(t,tl))) || !palette_stored_ok(p->palette) ||
             p->lowcut > 2u || (p->zoom & 0xFFu) > 1u || (p->zoom > 0xFFu && (p->zoom & 0xFFFF0000u) != RECORD_PREF_TAG) || !hold_stored_ok(p->bold) || p->favorites.filter > 1u || !ed_bk_panel_valid(&p->panel)) return 2;
         if(tl && ed_bk_len>sizeof *p && !tmpl_blob_valid(t,tl))return 2;
