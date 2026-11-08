@@ -31,7 +31,7 @@ const HERE = new URL(".", import.meta.url).pathname;
 const html = readFileSync(join(HERE, "editor.html"), "utf8");
 const proto = html.slice(html.indexOf("/*PROTO-BEGIN*/"), html.indexOf("/*PROTO-END*/"));
 const E = vm.runInNewContext(proto + `
-;({ frame, unframe, parse, req, Link, parseWav, resample, normalize, takeSample, autoTrim, zoomView, rootFromName, buildSlot, makeMockDevice, CMD, SMP,
+;({ frame, unframe, parse, req, Link, MODS, parseWav, resample, normalize, takeSample, autoTrim, zoomView, rootFromName, buildSlot, makeMockDevice, CMD, SMP,
    UP, bank, nativeBank, capturePatch, auditionPatch, startWatch, libraryFile, readLibraryFile, paramKeys, patternFromSteps, stepsFromPattern, upName,
    mixer, parseNotes, parseHits, hitsText, gridFromSteps, LANE_NOTE, LANE_OF, isDevicePort, readDevicePreferences, devicePresetRows, engineOrder, ENGINE_ORDER, aliasOf, fmtValue, F, FM6,
    FM4, fromDigital, CZ, P5, P5_FACTORY, p5LibraryPatch, readSysexLibrary, nativeImportTargets, scaleRows, SCALE_INFO, czLibraryPatch, czBankEncode, czBankDecode, czBankUpload, czBankRead, czLegacyTone })`,
@@ -1292,6 +1292,42 @@ async function editorSong() {
   l.close(); old.stop();
 }
 
+/* synth modules (cmd 84): a .mmod file's head, an upload in 256-byte pieces, the list, a taken number, delete */
+async function editorModules() {
+  const m = E.makeMockDevice({ auto: false });
+  const link = new E.Link((d) => [...m.access.outputs.values()][0].send(d), { timeout: 200 });
+  [...m.access.inputs.values()][0].onmidimessage = (e) => link.receive(e.data);
+  const rq = (r, o) => link.request(r, o);
+  const file = (engine, name, n) => {
+    const b = new Uint8Array(52 + n), v = new DataView(b.buffer);
+    v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 1, true); b[6] = engine; v.setUint32(8, b.length, true);
+    v.setUint32(12, n, true); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); }); v.setUint32(48, 2, true);
+    for (let i = 52; i < b.length; i++) b[i] = (i * 37) & 255;
+    return b;
+  };
+  let bad = 0; try { E.MODS.head(new Uint8Array(60)); } catch (e) { bad++; }
+  const f = file(6, "TRIO", 1000), h = E.MODS.head(f);
+  ok(bad === 1 && h.engine === 6 && h.name === "TRIO" && h.version === 2 && h.total === 1052, "modules: a .mmod head read, a foreign file refused");
+  const built = join(HERE, "..", "build", "modules", "trio.mmod");   /* (tools/mod_build.py: the C head's layout) */
+  if (existsSync(built)) {
+    const t = E.MODS.head(new Uint8Array(readFileSync(built)));
+    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1, "modules: the built TRIO file's head reads as the firmware's");
+  }
+  let list = await E.MODS.list(rq);
+  ok(!list.rc && !list.skipped && list.slots.length === 4 && list.slots.every((x) => !x.len), "modules: four empty slots listed");
+  const r = await E.MODS.upload(rq, f, null);
+  list = await E.MODS.list(rq);
+  ok(!r.rc && r.slot === 0 && r.engine === 6 && list.slots[0].len === 1052 && list.slots[0].name === "TRIO" && list.slots[0].state === 1,
+     "modules: upload in pieces, committed, listed with its name and size");
+  const again = await E.MODS.upload(rq, file(22, "J106", 500), null);
+  const clash = await E.MODS.upload(rq, file(22, "J106 B", 400), 2);
+  ok(!again.rc && again.slot === 1 && clash.rc === 6, "modules: the next empty slot; a number another slot has refused");
+  const replaced = await E.MODS.upload(rq, file(6, "TRIO", 800), null);
+  ok(!replaced.rc && replaced.slot === 0, "modules: the same engine again replaces its slot");
+  ok(!(await E.MODS.remove(rq, 1)) && !(await E.MODS.list(rq)).slots[1].len, "modules: delete empties the slot");
+  link.close(); m.stop();
+}
+
 /* Run the page's actual session helpers and connect-load path with delayed replies. */
 async function editorSessions() {
   const state = html.slice(html.indexOf("let busy = 0;"), html.indexOf("let dragging", html.indexOf("let busy = 0;")));
@@ -1313,6 +1349,7 @@ async function editorSessions() {
     buildUI: () => { shown++; }, renderPanels: noop, loadSteps: noop,
     startWatch: async () => false, renderLive: noop, renderLib: noop,
     renderBank: noop, renderSysinfo: noop, sayK: noop, report: noop, syncPreferences: noop,
+    MODS: { list: async () => null }, renderModules: noop,
   });
   const oldRelease = S.beginBusy();
   S.resetBusy();
@@ -1889,6 +1926,7 @@ await editorMixer();
 await editorTrackParam();
 await editorSong();
 await editorSessions();
+await editorModules();
 await editorFm6();
 await editorFm4();
 editorTabs();

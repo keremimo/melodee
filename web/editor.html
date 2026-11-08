@@ -393,6 +393,14 @@
       <p class="dim">Click, count-in and stopped note editing. REC arms; PLAY starts recording.</p>
       <div id="device-recording-controls"></div>
     </div>
+    <div class="group" id="device-modules" hidden style="margin-top:12px">
+      <h2>Synth modules</h2>
+      <p class="dim">Engines kept on the device outside the firmware, loaded at power-on: a module plays as its own engine
+        number (TRIO as engine 6 again). Build one with <code>tools/mod_build.py</code>, upload the <code>.mmod</code> file here.</p>
+      <table id="module-slots"></table>
+      <p><input type="file" id="module-file" accept=".mmod"> <button id="module-upload">Upload module</button></p>
+      <p class="dim" id="module-status"></p>
+    </div>
     <div class="group" style="margin-top:12px">
       <h2 data-t="system" data-ic="symbol_cog"></h2>
       <table id="sysinfo"></table>
@@ -430,7 +438,7 @@ const CMD = { INFO: 1, GET: 2, SET: 3, DUMP: 4, DESC: 5, STEP_GET: 6, STEP_SET: 
   TRACK_PARAM: 31, TRACK_CHANGED: 32, SONG: 33, PATTERN: 73, BANK_SONG: 74,
   UI_STATE: 34, UI_SET: 35, UI_PALETTES: 36, FAV_GET: 37, FAV_SET: 38,
   MOTION: 64, BACKUP_LIST: 65, BACKUP_GET: 66, BACKUP_PUT: 67,
-  FM6_GET: 68, FM6_PUT: 69, FM6_LIST: 70, FM6_ERASE: 71, CZ_GET: 75, CZ_PUT: 76, CZ_BANK: 77, NATIVE: 78, LIBRARY:80, PROPHET:95 };
+  FM6_GET: 68, FM6_PUT: 69, FM6_LIST: 70, FM6_ERASE: 71, CZ_GET: 75, CZ_PUT: 76, CZ_BANK: 77, NATIVE: 78, LIBRARY:80, MODULE: 84, PROPHET:95 };
 /* frames the device sends on its own (while WATCH is on); never replies */
 
 /*P5-FACTORY-BEGIN*/
@@ -854,6 +862,12 @@ const req = {
   smpEnd: (s, hdr) => [CMD.SMP_END, [s & 0x7F, ...pack7(hdr)]],
   smpErase: (s) => [CMD.SMP_ERASE, [s & 0x7F]],
   smpInfo: () => [CMD.SMP_INFO, []],
+  /* synth modules (src/editor_module.c): 0 list, 1 begin (length u35), 2 write (offset 3 x 7 bits, packed), 3 commit, 4 delete */
+  moduleList: () => [CMD.MODULE, [0]],
+  moduleBegin: (k, len) => [CMD.MODULE, [1, k & 0x7F, ...[0, 7, 14, 21, 28].map((sh) => (len >>> sh) & 0x7F)]],
+  moduleWrite: (k, off, bytes) => [CMD.MODULE, [2, k & 0x7F, off & 0x7F, (off >> 7) & 0x7F, (off >> 14) & 0x7F, ...pack7(bytes)]],
+  moduleCommit: (k) => [CMD.MODULE, [3, k & 0x7F]],
+  moduleDelete: (k) => [CMD.MODULE, [4, k & 0x7F]],
   upList: (start, count) => [CMD.UP_LIST, [start & 0x7F, Math.max(1, Math.min(UP.LIST_MAX, count | 0))]],
   upGet: (s) => [CMD.UP_GET, [s & 0x7F]],
   /* patch: {engine, name, p: P_COUNT values, pattern: 16 x [note, flags] or grid: 16 x [hit, acc] (v5: kind 1)} */
@@ -1515,6 +1529,49 @@ const nativeBank = {
   async load(rq,engine,slot,track) { const info=parse[CMD.INFO](await rq(req.info()));if(info.shared)return bank.load(rq,slot,info,track);return parse[CMD.NATIVE](await rq(req.native(engine,4,slot,track))).rc; },
   async erase(rq,engine,slot) { const info=parse[CMD.INFO](await rq(req.info()));if(info.shared)return bank.erase(rq,slot,info);return parse[CMD.NATIVE](await rq(req.native(engine,5,slot),FLASH_OPT)).rc; },
 };
+/* Synth modules (src/module_abi.h, tools/mod_build.py): the device's slots, a .mmod file's head, an upload */
+const MODS = {
+  STATE: ["empty", "loaded", "stored", "bad file", "no RAM", "number taken", "skipped this boot"],
+  RC: ["ok", "bad request", "storage full", "flash error", "busy", "not a module for this firmware", "engine number taken", "no RAM"],
+  parseList(a) {
+    const r = new Reader(a), o = { rc: r.b(), skipped: !!r.b(), slots: [] }, n = r.b();
+    for (let k = 0; k < n; k++) {
+      const state = r.b(), engine = r.b(), version = r.b() | r.b() << 7;
+      let len = 0; for (let j = 0; j < 5; j++) len += r.b() * 2 ** (7 * j);
+      o.slots.push({ slot: k, state, engine, version, len, name: r.s() });
+    }
+    return o;
+  },
+  /* the head of a module file (mod_file_t, 52 bytes) or an Error */
+  head(bytes) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    if (b.length < 52 || v.getUint32(0, true) !== 0x31444D4D) throw new Error("not a module file (.mmod)");
+    if (v.getUint16(4, true) !== 1) throw new Error("module ABI " + v.getUint16(4, true) + ": this editor knows ABI 1");
+    const total = v.getUint32(8, true);
+    if (total !== b.length) throw new Error("module file length " + b.length + ", its head says " + total);
+    return { engine: b[6], total, image: v.getUint32(12, true), name: String.fromCharCode(...b.slice(32, 48)).replace(/\0.*$/, ""),
+      version: v.getUint32(48, true) };
+  },
+  async list(rq, opt) { return MODS.parseList(await rq(req.moduleList(), opt)); },
+  /* into slot k (or the slot holding its engine, else the first empty one); progress(done, total) */
+  async upload(rq, bytes, k, progress) {
+    const h = MODS.head(bytes), list = await MODS.list(rq);
+    if (k == null) k = list.slots.findIndex((s) => s.len && s.engine === h.engine);
+    if (k < 0) k = list.slots.findIndex((s) => !s.len);
+    if (k < 0) throw new Error("every module slot is in use: delete one first");
+    const opt = { timeout: 4000, retries: 0 };
+    let rc = (await rq(req.moduleBegin(k, bytes.length), opt))[0];
+    for (let off = 0; !rc && off < bytes.length; off += 256) {
+      rc = (await rq(req.moduleWrite(k, off, bytes.slice(off, off + 256)), opt))[0];
+      if (progress) progress(Math.min(off + 256, bytes.length), bytes.length);
+    }
+    if (rc) throw new Error("upload: " + (MODS.RC[rc] || "rc " + rc));
+    const a = await rq(req.moduleCommit(k), opt);
+    return { slot: k, rc: a[0], state: a[1], engine: a[2], name: h.name };
+  },
+  async remove(rq, k) { return (await rq(req.moduleDelete(k), { timeout: 4000, retries: 0 }))[0]; },
+};
+
 const sharedBank = {
   request(op,slot,...args) {
     if(!Number.isInteger(slot)||slot<0||slot>=384)throw Error("Invalid shared preset slot");
@@ -2731,6 +2788,23 @@ function makeMockDevice(opt = {}) {
         b(a[0]); b(rc);
         break;
       }
+      case CMD.MODULE: {                         /* synth modules: four slots, a file kept as sent (never played) */
+        st.mods ??= Array.from({ length: 4 }, () => ({ len: 0, engine: 0, name: "", buf: null }));
+        const m = st.mods[a[1]];
+        if (a[0] === 0 && a.length === 1) {
+          b(0); b(0); b(4);
+          for (const x of st.mods) { b(x.len ? 1 : 0); b(x.engine); b(1); b(0); for (let j = 0; j < 5; j++) b(Math.floor(x.len / 2 ** (7 * j)) & 0x7F); s(x.name); }
+        } else if (!m || a[0] < 1 || a[0] > 4) b(1);
+        else if (a[0] === 1) { const len = a.slice(2, 7).reduce((n, x, j) => n + x * 2 ** (7 * j), 0); m.up = { len, buf: new Uint8Array(len), pos: 0 }; b(0); }
+        else if (a[0] === 2) { const off = a[2] | a[3] << 7 | a[4] << 14, d = unpack7(a.slice(5)); if (!m.up || off !== m.up.pos || off + d.length > m.up.len) b(1); else { m.up.buf.set(d, off); m.up.pos += d.length; b(0); } }
+        else if (a[0] === 3) {
+          let h = null; try { h = m.up && m.up.pos === m.up.len ? MODS.head(m.up.buf) : null; } catch (e) { h = null; }
+          if (!h) { b(5); b(0); b(0); }
+          else if (st.mods.some((x, j) => j !== a[1] && x.len && x.engine === h.engine)) { b(6); b(0); b(0); }
+          else { Object.assign(m, { len: h.total, engine: h.engine, name: h.name, buf: m.up.buf }); m.up = null; b(0); b(1); b(h.engine); }
+        } else { Object.assign(m, { len: 0, engine: 0, name: "", buf: null }); b(0); }
+        break;
+      }
       case CMD.SMP_INFO:
         b(3); b(SMP.SLOT_SIZE / 1024);
         st.smp.forEach((u) => { b(u.zones); s(u.zones ? u.name : ""); b(u.zones ? Math.ceil(u.len / 1024) : 0); });
@@ -3432,6 +3506,8 @@ async function load(d) {
     }
     try { d.smp = parse[CMD.SMP_INFO](await sessionRequest(d, req.smpInfo())); }
     catch (e) { if (e.message === "closed") throw e; d.smp = null; }   /* older firmware, or no flash */
+    try { d.modules = await MODS.list((r, o) => sessionRequest(d, r, o), { timeout: 800, retries: 0, quiet: true }); }
+    catch (e) { if (e.message === "closed") throw e; d.modules = null; }   /* firmware without synth modules */
     d.keys = paramKeys(d.pdesc, d.info.pe0, d.info.pcount);
     await libAdopt(d);
     assertSession(d);
@@ -3457,6 +3533,7 @@ async function load(d) {
     renderLib();
     renderBank();
     renderSysinfo();
+    renderModules();
     sayK("ready");
   } finally { releaseBusy(); }
 }
@@ -3529,6 +3606,40 @@ function selectTrack(i) {
     await afterSoundChange();
   });
 }
+
+/* settings > synth modules: the device's slots; upload / delete, then the session read again (the engines changed) */
+function renderModules() {
+  const m = dev && dev.modules, box = $("module-slots");
+  $("device-modules").hidden = !m;
+  if (!m) return;
+  $("module-status").textContent = m.skipped ? "The last power-on died early: modules were left out this time." : "";
+  box.replaceChildren(el("tr", {}, ...["Slot", "Module", "Engine", "State", "Size", ""].map((h) => el("th", { text: h }))),
+    ...m.slots.map((x) => el("tr", {}, el("td", { text: String(x.slot + 1) }), el("td", { text: x.len ? x.name + " v" + x.version : "-" }),
+      el("td", { text: x.len ? String(x.engine) : "" }), el("td", { text: MODS.STATE[x.state] || String(x.state) }),
+      el("td", { text: x.len ? (x.len / 1024).toFixed(1) + " KiB" : "" }),
+      el("td", {}, x.len ? el("button", { text: "Delete", onclick: () => moduleDelete(x.slot) }) : ""))));
+}
+async function moduleChanged(note) {
+  const d = dev;
+  try { await load(d); } catch (e) { if (e.message !== "closed") throw e; }
+  if (dev === d) $("module-status").textContent = note;
+}
+async function moduleDelete(k) {
+  const x = dev.modules.slots[k];
+  if (!confirm(`Delete ${x.name} from slot ${k + 1}? Tracks on engine ${x.engine} keep it and go silent.`)) return;
+  const rc = await MODS.remove(rq, k);
+  await moduleChanged(rc ? "Delete failed: " + (MODS.RC[rc] || rc) : `${x.name} deleted.`);
+}
+$("module-upload").addEventListener("click", async () => {
+  const f = $("module-file").files[0], st = $("module-status");
+  if (!f || !dev) return;
+  try {
+    const bytes = new Uint8Array(await f.arrayBuffer()), h = MODS.head(bytes);
+    const r = await MODS.upload(rq, bytes, null, (n, t) => { st.textContent = `Uploading ${h.name}: ${Math.round(100 * n / t)} %`; });
+    await moduleChanged(r.rc ? `${h.name} stored in slot ${r.slot + 1}: ${MODS.RC[r.rc] || r.rc} (${MODS.STATE[r.state]})`
+                             : `${h.name} loaded as engine ${r.engine} (slot ${r.slot + 1}).`);
+  } catch (e) { st.textContent = "Upload failed: " + e.message; }
+});
 
 /* settings > system: what the device reported */
 function renderSysinfo() {
