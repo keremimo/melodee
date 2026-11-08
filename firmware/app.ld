@@ -59,6 +59,7 @@ SECTIONS
     _cpu1_ustack_top = _cpu1_stacks_lo + 3072;
     _cpu1_sstack_top = _cpu1_stacks_lo + 4096;
     _resource_end = ORIGIN(POOL) + LENGTH(POOL);
+    _guard_code_end = _resource_end;   /* synth modules run in the arena: the PC window reaches its end (hal/fm1_guard.h) */
     /* Complete resident interrupt/input graph trades arena capacity for code.
      * Four largest engine states must fit 48 KiB (ram_audio_test); effect
      * delay memory has its own admission/allocation limits. */

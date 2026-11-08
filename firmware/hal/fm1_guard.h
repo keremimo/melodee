@@ -38,6 +38,7 @@
 
 extern char _guard0[], _ustack_lo[], _guard1[], _sstack_lo[], _sstack_top[], _etext[];
 extern uint32_t _rt_start[], _guard_ram_end[];
+extern char _guard_code_end[] __attribute__((weak));   /* app.ld: the end of the arena synth modules run in (0: none) */
 
 enum { FM1_GUARD_STACK = 1, FM1_GUARD_WRITE = 2, FM1_GUARD_BUS = 4, FM1_GUARD_PC = 8 };
 
@@ -81,6 +82,9 @@ static void fm1_guard_enable(uint32_t which)
              * window. Include resident POOL code before allowing audio/CPU1
              * to execute it; an empty .audio_text keeps the original limit. */
             volatile uint32_t rs = (uint32_t)(uintptr_t)_rt_start, re = (uint32_t)(uintptr_t)_guard_ram_end;
+            volatile uint32_t ce = (uint32_t)(uintptr_t)_guard_code_end;
+            if (ce > re)
+                re = ce;                /* synth modules: code in the arena (resources.c resource_allocate_code) */
             FM1_PC_LIMIT1_L = re > rs ? rs : 0x02000120u;
             FM1_PC_LIMIT1_H = re > rs ? re - 1u : (uint32_t)(uintptr_t)_etext;
         }
