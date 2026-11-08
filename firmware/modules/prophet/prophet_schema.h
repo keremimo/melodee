@@ -115,6 +115,162 @@ static const uint8_t P5_SCH_WID[] = {
 };
 static void p5_sch_def(uint8_t *b) { p5_patch_init((p5_patch_t *)(void *)b); }
 static const char *const P5S_STRIP[] = {"P5 ", 0};   /* (the pages' short names: the title past these) */
+/* The sound designer (mod_schema.h): FEATURES (the mixer's paths, Poly-Mod, the wheel's LFO, the envelopes' switches,
+ * unison), what a dim control needs, the build that cannot sound, the pages' stages; the goals' recipes (records) */
+#define P5S_E6 (MOD3_D_TRACK | (MOD3_P_E0 + 6u))        /* (the part's OSC A / B levels: EDIT's mixer offsets) */
+#define P5S_E7 (MOD3_D_TRACK | (MOD3_P_E0 + 7u))
+#define P5S_WAVE_B D_NZ(P5_SAW_B), D_NZ(P5_TRI_B), MOD3_D_OR, D_NZ(P5_PULSE_B), MOD3_D_OR
+#define P5S_B_ON P5S_WAVE_B, D_VAL(P5_LEVEL_B), D_VAL(P5S_E7), MOD3_D_ADD, D_CONST(0), MOD3_D_GT, MOD3_D_AND
+#define P5S_A_ON(...) __VA_ARGS__, D_VAL(P5_LEVEL_A), D_VAL(P5S_E6), MOD3_D_ADD, D_CONST(0), MOD3_D_GT, MOD3_D_AND
+#define P5S_B_SET D_AMT(P5_LEVEL_B, 80), D_IF(1), D_VAL(P5_LEVEL_B), D_VAL(P5S_E7), MOD3_D_ADD, D_CONST(0), MOD3_D_LE, \
+    MOD3_D_END, D_SET(P5S_E7, 0), D_IF(1), P5S_WAVE_B, MOD3_D_NOT, MOD3_D_END, D_SET(P5_SAW_B, 1)
+static const uint8_t P5S_D_OSCB[] = {P5S_B_ON, MOD3_D_END};
+static const uint8_t P5S_D_OSCB_ON[] = {P5S_B_SET, MOD3_D_END};
+static const uint8_t P5S_D_OSCB_OFF[] = {D_SET(P5_LEVEL_B, 0), D_IF(1), D_VAL(P5S_E7), D_CONST(0), MOD3_D_GT, MOD3_D_END,
+                                         D_SET(P5S_E7, 0), MOD3_D_END};
+static const uint8_t P5S_D_PULSEA[] = {D_NZ(P5_PULSE_A), MOD3_D_END};
+static const uint8_t P5S_D_PULSEA_ON[] = {D_SETS(P5_PULSE_A), D_AMT(P5_LEVEL_A, 100), D_IF(1), D_VAL(P5_LEVEL_A),
+                                          D_VAL(P5S_E6), MOD3_D_ADD, D_CONST(0), MOD3_D_LE, MOD3_D_END, D_SET(P5S_E6, 0),
+                                          MOD3_D_END};
+static const uint8_t P5S_D_PULSEA_OFF[] = {D_SETS(P5_PULSE_A), MOD3_D_END};
+static const uint8_t P5S_D_PULSEB[] = {D_NZ(P5_PULSE_B), MOD3_D_END};
+static const uint8_t P5S_D_PULSEB_ON[] = {D_SETS(P5_PULSE_B), P5S_B_SET, MOD3_D_END};   /* (B into the mix) */
+static const uint8_t P5S_D_PULSEB_OFF[] = {D_SETS(P5_PULSE_B), MOD3_D_END};
+static const uint8_t P5S_D_NOISE[] = {D_NZ(P5_NOISE), MOD3_D_END};
+static const uint8_t P5S_D_NOISE_ON[] = {D_AMT(P5_NOISE, 60), MOD3_D_END};
+static const uint8_t P5S_D_NOISE_OFF[] = {D_SET(P5_NOISE, 0), MOD3_D_END};
+static const uint8_t P5S_D_SYNC[] = {D_NZ(P5_SYNC), MOD3_D_END};
+/* (A heard: a wave and its level; else a level, then a saw: the level first, while A's waves are as they were) */
+static const uint8_t P5S_D_SYNC_ON[] = {D_SETS(P5_SYNC), D_IF(1), D_NZ(P5_LEVEL_A), MOD3_D_NOT, D_NZ(P5_SAW_A),
+                                        D_NZ(P5_PULSE_A), MOD3_D_OR, D_VAL(P5S_E6), D_CONST(0), MOD3_D_GT, MOD3_D_AND,
+                                        MOD3_D_NOT, MOD3_D_AND, MOD3_D_END, D_SET(P5_LEVEL_A, 100), D_IF(1),
+                                        D_VAL(P5_LEVEL_A), D_VAL(P5S_E6), MOD3_D_ADD, D_CONST(0), MOD3_D_LE, MOD3_D_END,
+                                        D_SET(P5S_E6, 0), D_IF(1), D_NZ(P5_SAW_A), D_NZ(P5_PULSE_A), MOD3_D_OR,
+                                        MOD3_D_NOT, MOD3_D_END, D_SET(P5_SAW_A, 1), MOD3_D_END};
+static const uint8_t P5S_D_SYNC_OFF[] = {D_SETS(P5_SYNC), MOD3_D_END};
+static const uint8_t P5S_D_POLY[] = {D_NZ(P5_POLY_FREQ), D_NZ(P5_POLY_PW), MOD3_D_OR, D_NZ(P5_POLY_FILTER), MOD3_D_OR,
+                                     D_NZ(P5_POLY_ENV), D_NZ(P5_POLY_B), MOD3_D_OR, MOD3_D_AND, MOD3_D_END};
+static const uint8_t P5S_D_POLY_ON[] = {D_IF(1), D_NZ(P5_POLY_FREQ), D_NZ(P5_POLY_PW), MOD3_D_OR, D_NZ(P5_POLY_FILTER),
+                                        MOD3_D_OR, MOD3_D_NOT, MOD3_D_END, D_SET(P5_POLY_FILTER, 1), D_IF(1),
+                                        D_NZ(P5_POLY_ENV), D_NZ(P5_POLY_B), MOD3_D_OR, MOD3_D_NOT, MOD3_D_END,
+                                        D_SET(P5_POLY_ENV, 35), D_IF(1), P5S_WAVE_B, MOD3_D_NOT, MOD3_D_END,
+                                        D_SET(P5_SAW_B, 1), MOD3_D_END};
+static const uint8_t P5S_D_POLY_OFF[] = {D_SET(P5_POLY_FREQ, 0), D_SET(P5_POLY_PW, 0), D_SET(P5_POLY_FILTER, 0), MOD3_D_END};
+#define P5S_WHEEL D_NZ(P5_WHEEL_FREQ_A), D_NZ(P5_WHEEL_FREQ_B), MOD3_D_OR, D_NZ(P5_WHEEL_PW_A), MOD3_D_OR, \
+    D_NZ(P5_WHEEL_PW_B), MOD3_D_OR, D_NZ(P5_WHEEL_FILTER), MOD3_D_OR
+#define P5S_LFO_WAVE D_NZ(P5_LFO_SAW), D_NZ(P5_LFO_TRI), MOD3_D_OR, D_NZ(P5_LFO_PULSE), MOD3_D_OR
+static const uint8_t P5S_D_LFO[] = {P5S_WHEEL, D_NZ(P5_LFO_INITIAL), MOD3_D_AND, P5S_LFO_WAVE, D_NZ(P5_WHEEL_MIX),
+                                    MOD3_D_OR, MOD3_D_AND, MOD3_D_END};
+static const uint8_t P5S_D_LFO_ON[] = {D_IF(1), P5S_LFO_WAVE, MOD3_D_NOT, MOD3_D_END, D_SET(P5_LFO_TRI, 1), D_IF(1),
+                                       P5S_WHEEL, MOD3_D_NOT, MOD3_D_END, D_SET(P5_WHEEL_FILTER, 1),
+                                       D_AMT(P5_LFO_INITIAL, 25), D_AMT(P5_LFO_RATE, 50), D_IF(1), D_VAL(P5_WHEEL_MIX),
+                                       D_CONST(127), MOD3_D_EQ, MOD3_D_END, D_SET(P5_WHEEL_MIX, 0), MOD3_D_END};
+static const uint8_t P5S_D_LFO_OFF[] = {D_SET(P5_WHEEL_FREQ_A, 0), D_SET(P5_WHEEL_FREQ_B, 0), D_SET(P5_WHEEL_PW_A, 0),
+                                        D_SET(P5_WHEEL_PW_B, 0), D_SET(P5_WHEEL_FILTER, 0), MOD3_D_END};
+static const uint8_t P5S_D_FENV[] = {D_NZ(P5_ENV_FILTER), MOD3_D_END};
+static const uint8_t P5S_D_FENV_ON[] = {D_AMT(P5_ENV_FILTER, 40), MOD3_D_END};
+static const uint8_t P5S_D_FENV_OFF[] = {D_SET(P5_ENV_FILTER, 0), MOD3_D_END};
+static const uint8_t P5S_D_UNISON[] = {D_NZ(P5_UNISON), MOD3_D_END};
+static const uint8_t P5S_D_UNISON_ON[] = {D_SETS(P5_UNISON), D_IF(1), D_VAL(P5_UNISON_COUNT), D_CONST(1), MOD3_D_EQ,
+                                          MOD3_D_END, D_SET(P5_UNISON_COUNT, 3), D_NOTE(P5_UNISON), MOD3_D_END};
+static const uint8_t P5S_D_UNISON_OFF[] = {D_SETS(P5_UNISON), D_NOTE(P5_UNISON), MOD3_D_END};   /* (its voice settings:
+                                                                                                * the part's) */
+static const uint8_t P5S_D_RELEASE[] = {D_NZ(P5_RELEASE_ON), MOD3_D_END};
+static const uint8_t P5S_D_RELEASE_SET[] = {D_SETS(P5_RELEASE_ON), MOD3_D_END};
+static const uint8_t P5S_D_VEL[] = {D_NZ(P5_VEL_AMP), D_NZ(P5_VEL_FILTER), MOD3_D_OR, MOD3_D_END};
+static const uint8_t P5S_D_VEL_SET[] = {D_SETS(P5_VEL_AMP), D_SETS(P5_VEL_FILTER), MOD3_D_END};
+static const uint8_t P5S_D_GLIDE[] = {D_NZ(P5_GLIDE), MOD3_D_END};
+static const uint8_t P5S_D_GLIDE_ON[] = {D_AMT(P5_GLIDE, 30), MOD3_D_END};
+static const uint8_t P5S_D_GLIDE_OFF[] = {D_SET(P5_GLIDE, 0), MOD3_D_END};
+enum { P5S_F_OSCB, P5S_F_PULSEA, P5S_F_PULSEB, P5S_F_NOISE, P5S_F_SYNC, P5S_F_POLY, P5S_F_LFO, P5S_F_FENV, P5S_F_UNISON,
+       P5S_F_RELEASE, P5S_F_VEL, P5S_F_GLIDE };
+static const mod_sch_feat_src P5S_DFEAT[] = {
+    {"Osc B", 0, 0, 2, 0, 0, 0, P5S_D_OSCB, P5S_D_OSCB_ON, P5S_D_OSCB_OFF},
+    {"Pulse A", 0, 0, 2, 0, 0, 0, P5S_D_PULSEA, P5S_D_PULSEA_ON, P5S_D_PULSEA_OFF},
+    {"Pulse B", 0, 0, 2, 0, 0, 0, P5S_D_PULSEB, P5S_D_PULSEB_ON, P5S_D_PULSEB_OFF},
+    {"Noise", 0, 0, 2, 0, 0, 0, P5S_D_NOISE, P5S_D_NOISE_ON, P5S_D_NOISE_OFF},
+    {"Sync", 0, 0, 2, 0, 0, 0, P5S_D_SYNC, P5S_D_SYNC_ON, P5S_D_SYNC_OFF},
+    {"Poly-Mod", 0, 0, 2, 0, 0, 0, P5S_D_POLY, P5S_D_POLY_ON, P5S_D_POLY_OFF},
+    {"LFO", 0, 0, 2, 0, 0, 0, P5S_D_LFO, P5S_D_LFO_ON, P5S_D_LFO_OFF},
+    {"Filter env", 0, 0, 2, 0, 0, 0, P5S_D_FENV, P5S_D_FENV_ON, P5S_D_FENV_OFF},
+    {"Unison", 0, 0, 2, 0, 0, 0, P5S_D_UNISON, P5S_D_UNISON_ON, P5S_D_UNISON_OFF},
+    {"Release", 0, 0, 2, 0, 0, 0, P5S_D_RELEASE, P5S_D_RELEASE_SET, P5S_D_RELEASE_SET},
+    {"Velocity", 0, 0, 2, 0, 0, 0, P5S_D_VEL, P5S_D_VEL_SET, P5S_D_VEL_SET},
+    {"Glide", 0, 0, 2, 0, 0, 0, P5S_D_GLIDE, P5S_D_GLIDE_ON, P5S_D_GLIDE_OFF},
+};
+static const uint8_t P5S_D_PW_POLY[] = {P5S_A_ON(D_NZ(P5_PULSE_A)), MOD3_D_END};   /* (pulse A heard: Poly-Mod's) */
+static const uint8_t P5S_D_PW_B[] = {D_NZ(P5_PULSE_B), MOD3_D_END};
+static const uint8_t P5S_D_REL_ON[] = {D_NZ(P5_RELEASE_ON), MOD3_D_END};
+#define P5S_N(lo, hi, f) {lo, hi, 0, MOD3_DN_DIM, f, 0, 0}
+static const mod_sch_need_src P5S_DNEED[] = {     /* (a dim control of the panel: else the LFO's, rate, waves, mix) */
+    P5S_N(P5_PW_A, P5_PW_A, P5S_F_PULSEA), P5S_N(P5_WHEEL_PW_A, P5_WHEEL_PW_A, P5S_F_PULSEA),
+    {P5_POLY_PW, P5_POLY_PW, 0, MOD3_DN_DIM, P5S_F_POLY, P5S_F_PULSEA, P5S_D_PW_POLY},
+    {P5_PW_B, P5_PW_B, 0, MOD3_DN_DIM, P5S_F_OSCB, P5S_F_PULSEB, P5S_D_PW_B},
+    {P5_WHEEL_PW_B, P5_WHEEL_PW_B, 0, MOD3_DN_DIM, P5S_F_OSCB, P5S_F_PULSEB, P5S_D_PW_B},
+    P5S_N(P5_FREQ_B, P5_FINE_B, P5S_F_OSCB), P5S_N(P5_LOW_B, P5_KEY_B, P5S_F_OSCB),
+    P5S_N(P5_UNISON_COUNT, P5_UNISON_DETUNE, P5S_F_UNISON), P5S_N(P5_RETRIGGER, P5_RETRIGGER, P5S_F_UNISON),
+    P5S_N(P5_POLY_ENV, P5_POLY_FREQ, P5S_F_POLY), P5S_N(P5_POLY_FILTER, P5_POLY_FILTER, P5S_F_POLY),
+    P5S_N(P5_RELEASE_AMP, P5_RELEASE_AMP, P5S_F_RELEASE),
+    {P5_RELEASE_FILTER, P5_RELEASE_FILTER, 0, MOD3_DN_DIM, P5S_F_FENV, P5S_F_RELEASE, P5S_D_REL_ON},
+    P5S_N(P5_ATTACK_FILTER, P5_ATTACK_FILTER, P5S_F_FENV), P5S_N(P5_DECAY_FILTER, P5_DECAY_FILTER, P5S_F_FENV),
+    P5S_N(P5_SUSTAIN_FILTER, P5_SUSTAIN_FILTER, P5S_F_FENV), P5S_N(P5_VEL_FILTER, P5_VEL_FILTER, P5S_F_FENV),
+    P5S_N(0, 0xFFFFu, P5S_F_LFO),
+};
+#undef P5S_N
+/* (osc A, osc B and the noise all out of the mix) */
+static const uint8_t P5S_D_SILENT[] = {P5S_A_ON(D_NZ(P5_SAW_A), D_NZ(P5_PULSE_A), MOD3_D_OR), P5S_B_ON, MOD3_D_OR,
+                                       D_NZ(P5_NOISE), MOD3_D_OR, MOD3_D_NOT, MOD3_D_END};
+/* the pages' stages (P5_SCH_PAGE's order) */
+static const uint8_t P5S_DPAGE[] = {
+    MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0,   /* STORE, OSC A, OSC B, B WAVES */
+    MOD3_DS_SOURCE, 0, 0, MOD3_DS_TONE, 0, 0, MOD3_DS_ENV, 0, 0, MOD3_DS_ENV, 0, 0,          /* MIXER, FILTER, FLT ENV, AMP ENV */
+    MOD3_DS_ENV, 0, 0, MOD3_DS_MOVE, 0, 0, MOD3_DS_MOVE, 0, 0, MOD3_DS_MOVE, 0, 0,           /* ENV MOD, POLYMOD, MOD FLT, LFO */
+    MOD3_DS_MOVE, 0, 0, MOD3_DS_MOVE, 0, 0, MOD3_DS_PLAY, 0, 0, MOD3_DS_PLAY | MOD3_DS_SKIP, 0, 0,   /* WHEEL, WHEEL 2, UNISON,
+                                                                                               * BEND */
+    MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0,                                               /* (the SMK-37's banks) */
+};
+_Static_assert(sizeof P5S_DPAGE == 3u * sizeof P5_SCH_PAGE / sizeof *P5_SCH_PAGE, "a stage a page");
+static const mod_sch_design_src P5S_DESIGN = {
+    MOD3_DSF_NO_VOICE | MOD3_DSF_NO_EDIT | MOD3_DSF_OWN_LFO, P5S_DFEAT, sizeof P5S_DFEAT / sizeof *P5S_DFEAT,
+    P5S_DNEED, sizeof P5S_DNEED / sizeof *P5S_DNEED, P5S_D_SILENT, "MIXER SILENT", P5S_DPAGE,
+};
+/* the goals' recipes (START: a goal from INIT): the envelopes, the cutoff, a pad's detuned B, a lead's unison, FX's
+ * Poly-Mod on A's frequency from a low B */
+static const mod_sch_rec_src P5S_REC[] = {
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), P5_ATTACK_AMP, 0},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_ATTACK_AMP, 70},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), P5_DECAY_AMP, 45},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), P5_DECAY_AMP, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), P5_SUSTAIN_AMP, 110},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), P5_SUSTAIN_AMP, 0},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(LEAD) | MOD3_GM(FX), P5_RELEASE_AMP, 20},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_RELEASE_AMP, 85},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), P5_RELEASE_AMP, 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, P5_RELEASE_ON, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), P5_ATTACK_FILTER, 0},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_ATTACK_FILTER, 55},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, P5_DECAY_FILTER, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), P5_SUSTAIN_FILTER, 0},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_SUSTAIN_FILTER, 90},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), P5_RELEASE_FILTER, 30},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_RELEASE_FILTER, 70},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(KEYS) | MOD3_GM(PLUCK), P5_ENV_FILTER, 55},
+    {MOD3_Q_GOAL, MOD3_GM(PAD) | MOD3_GM(LEAD) | MOD3_GM(FX), P5_ENV_FILTER, 20},
+    {MOD3_Q_GOAL, MOD3_GM(BASS), P5_CUTOFF, 55},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_CUTOFF, 80},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(BASS) | MOD3_GM(PAD)), P5_CUTOFF, 100},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_LEVEL_B, 80},
+    {MOD3_Q_GOAL, MOD3_GM(PAD) | MOD3_GM(FX), P5_SAW_B, 1},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), P5_FINE_B, 68},
+    {MOD3_Q_GOAL, MOD3_GM(LEAD), P5_UNISON, 1},
+    {MOD3_Q_GOAL, MOD3_GM(LEAD), P5_UNISON_COUNT, 3},
+    {MOD3_Q_GOAL, MOD3_GM(LEAD), P5_UNISON_DETUNE, 2},
+    {MOD3_Q_GOAL, MOD3_GM(FX), P5_POLY_B, 25},
+    {MOD3_Q_GOAL, MOD3_GM(FX), P5_POLY_FREQ, 1},
+    {MOD3_Q_GOAL, MOD3_GM(FX), P5_LOW_B, 1},
+    {MOD3_Q_GOAL, MOD3_GM(FX), P5_KEY_B, 0},
+    {MOD3_Q_GOAL | MOD3_RQ_NOTE, MOD3_GM_ALL, P5_UNISON, 0},   /* (its voice settings: the part's) */
+};
 static const mod_sch_src P5_SCHEMA = {
     .patch = sizeof(p5_patch_t), .def_make = p5_sch_def, .store = MOD_SCH_STORE_PROGRAM, .utag = 'P', .mtag = 1,
     .flags = MOD_SCH_F_MBYTES | MOD_SCH_F_PCT127 | MOD_SCH_F_SNAME, .abbr = "P5", .wdef = MOD_SCH_NONE, .mmap = 0,
@@ -123,5 +279,6 @@ static const mod_sch_src P5_SCHEMA = {
     .page = P5_SCH_PAGE, .npage = sizeof P5_SCH_PAGE / sizeof *P5_SCH_PAGE,
     .role = P5_SCH_ROLE, .nrole = sizeof P5_SCH_ROLE / sizeof *P5_SCH_ROLE,
     .wid = P5_SCH_WID, .nwid = sizeof P5_SCH_WID,
-    .strip = P5S_STRIP,
+    .rec = P5S_REC, .nrec = sizeof P5S_REC / sizeof *P5S_REC,
+    .strip = P5S_STRIP, .design = &P5S_DESIGN,
 };

@@ -236,6 +236,109 @@ static const uint8_t CZ_SCH_WID[] = {
 static void cz_sch_def(uint8_t *b) { cz_patch_init(b); }
 static const char *const CZS_MLANE[] = {"Detune", "Vibrato", "Wave 1", "DCA key 1", "DCW key 1", "DCA 1 env", "DCW 1 env", "Pitch 1 env", "Wave 2", "DCA key 2", "DCW key 2", "DCA 2 env", "DCW 2 env", "Pitch 2 env"};
 static const char *const CZS_STRIP[] = {"CZ1 ", "CZ2 ", "CZ ", "C1 PIT ", "C1 WAV ", "C1 AMP ", "C2 PIT ", "C2 WAV ", "C2 AMP ", 0};   /* (the pages' short names: the title past these) */
+/* The sound designer (mod_schema.h): FEATURES (the line mode, ring, noise, line 2's detune, vibrato), what a dim
+ * control needs (the line or path it belongs to), the pages' stages (a line's pages while its line plays); the goals'
+ * recipes (each line's amp envelope, its end point first) */
+static const char *const CZS_DLINES[] = {"Line 1", "Line 2", "1+2'", "1+1'"};
+static const uint8_t CZS_D_LINES[] = {D_VAL(LCZ_LINE), MOD3_D_END};
+static const uint8_t CZS_D_LINES_SET[] = {D_SETS(LCZ_LINE), MOD3_D_END};
+#define CZS_LINE2 D_IF(1), D_NZ(LCZ_LINE), MOD3_D_NOT, MOD3_D_END, D_SET(LCZ_LINE, 2)   /* (line 2 needs a second line: 1+2') */
+static const uint8_t CZS_D_RING[] = {D_NZ(LCZ_LINE), D_VAL(LCZ_MOD), D_CONST(1), MOD3_D_EQ, MOD3_D_AND, MOD3_D_END};
+static const uint8_t CZS_D_RING_ON[] = {CZS_LINE2, D_SET(LCZ_MOD, 1), MOD3_D_END};
+static const uint8_t CZS_D_RING_OFF[] = {D_IF(1), D_VAL(LCZ_MOD), D_CONST(1), MOD3_D_EQ, MOD3_D_END, D_SET(LCZ_MOD, 0), MOD3_D_END};
+static const uint8_t CZS_D_NOISE[] = {D_NZ(LCZ_LINE), D_VAL(LCZ_MOD), D_CONST(2), MOD3_D_EQ, MOD3_D_AND, MOD3_D_END};
+static const uint8_t CZS_D_NOISE_ON[] = {CZS_LINE2, D_SET(LCZ_MOD, 2), MOD3_D_END};
+static const uint8_t CZS_D_NOISE_OFF[] = {D_IF(1), D_VAL(LCZ_MOD), D_CONST(2), MOD3_D_EQ, MOD3_D_END, D_SET(LCZ_MOD, 0), MOD3_D_END};
+#define CZS_DETUNED D_NZ(LCZ_FINE), D_NZ(LCZ_NOTE), MOD3_D_OR, D_NZ(LCZ_DOCT), MOD3_D_OR
+static const uint8_t CZS_D_DETUNE[] = {D_NZ(LCZ_LINE), CZS_DETUNED, MOD3_D_AND, MOD3_D_END};
+static const uint8_t CZS_D_DETUNE_ON[] = {CZS_LINE2, D_IF(1), CZS_DETUNED, MOD3_D_NOT, MOD3_D_END, D_SET(LCZ_FINE, 8), MOD3_D_END};
+static const uint8_t CZS_D_DETUNE_OFF[] = {D_SET(LCZ_FINE, 0), D_SET(LCZ_NOTE, 0), D_SET(LCZ_DOCT, 0), MOD3_D_END};
+static const uint8_t CZS_D_VIB[] = {D_NZ(LCZ_VDEP), MOD3_D_END};
+static const uint8_t CZS_D_VIB_ON[] = {D_AMT(LCZ_VDEP, 15), MOD3_D_END};
+static const uint8_t CZS_D_VIB_OFF[] = {D_SET(LCZ_VDEP, 0), MOD3_D_END};
+enum { CZS_F_LINES, CZS_F_RING, CZS_F_NOISE, CZS_F_DETUNE, CZS_F_VIB };
+static const mod_sch_feat_src CZS_DFEAT[] = {
+    {"Lines", CZS_DLINES, "Line 2", 4, 0, 0, 2, CZS_D_LINES, CZS_D_LINES_SET, CZS_D_LINES_SET},
+    {"Ring", 0, 0, 2, 0, 0, 0, CZS_D_RING, CZS_D_RING_ON, CZS_D_RING_OFF},
+    {"Noise", 0, 0, 2, 0, 0, 0, CZS_D_NOISE, CZS_D_NOISE_ON, CZS_D_NOISE_OFF},
+    {"Detune", 0, 0, 2, 0, 0, 0, CZS_D_DETUNE, CZS_D_DETUNE_ON, CZS_D_DETUNE_OFF},
+    {"Vibrato", 0, 0, 2, 0, 0, 0, CZS_D_VIB, CZS_D_VIB_ON, CZS_D_VIB_OFF},
+    {"Voice", 0, 0, 4, MOD3_FF_HOST, MOD3_HF_VOICE, 0, 0, 0, 0},
+};
+static const uint8_t CZS_D_LIVE1[] = {MOD3_D_ACT, MOD3_D_ID(LCZ_LBASE(0) + LCZ_W1), MOD3_D_END};
+static const uint8_t CZS_D_LIVE2[] = {MOD3_D_ACT, MOD3_D_ID(LCZ_LBASE(1) + LCZ_W1), MOD3_D_END};
+/* a dim control: the vibrato's, the detune's sign, the globals (DETUNE, MOD: line 2's), an envelope step after its
+ * END while its line plays (the POINT page's to change), else the line mode (line 2's values; line 1's in LINE2) */
+static const mod_sch_need_src CZS_DNEED[] = {
+    {LCZ_VWAVE, LCZ_VRATE, 0, MOD3_DN_DIM, CZS_F_VIB, 0, 0}, {LCZ_VDELAY, LCZ_VDELAY, 0, MOD3_DN_DIM, CZS_F_VIB, 0, 0},
+    {LCZ_SIGN, LCZ_SIGN, 0, MOD3_DN_DIM, CZS_F_DETUNE, 0, 0}, {0, LCZ_GLOBALS - 1u, 0, MOD3_DN_DIM, CZS_F_LINES, 0, 0},
+    {LCZ_EBASE(0, 0), LCZ_EBASE(1, 0) - 1u, 0, MOD3_DN_DIM, MOD3_DN_END, CZS_F_LINES, CZS_D_LIVE1},
+    {LCZ_EBASE(1, 0), LCZ_OLD_NP - 1u, 0, MOD3_DN_DIM, MOD3_DN_END, CZS_F_LINES, CZS_D_LIVE2},
+    {0, 0xFFFFu, 0, MOD3_DN_DIM, CZS_F_LINES, 0, 0},
+};
+#define CZS_L1 MOD3_D_ID(LCZ_LBASE(0) + LCZ_W1)
+#define CZS_L2 MOD3_D_ID(LCZ_LBASE(1) + LCZ_W1)
+/* the pages' stages (CZ_SCH_PAGE's order): a line's pages shaped while its line plays (its first wave acts) */
+static const uint8_t CZS_DPAGE[] = {
+    MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0, MOD3_DS_PLAY, 0, 0, MOD3_DS_MOVE, 0, 0,       /* TOOLS, LINE, DETUNE, VIBRATO */
+    MOD3_DS_TONE | MOD3_DS_SKIP, 0, 0,                                                        /* WINDOW */
+#define CZS_LINE_PAGES(L) \
+    MOD3_DS_SOURCE | MOD3_DS_LIVE, L, MOD3_DS_SOURCE | MOD3_DS_LIVE, L,                       /* WAVE, TOUCH */ \
+    MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L, MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L, /* PIT R1-4, R5-8 */ \
+    MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L, MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L, /* PIT L1-4, L5-8 */ \
+    MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L,                                             /* PIT POINT */ \
+    MOD3_DS_ENV | MOD3_DS_LIVE, L, MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L,               /* WAV R1-4, R5-8 */ \
+    MOD3_DS_ENV | MOD3_DS_LIVE, L, MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L,               /* WAV L1-4, L5-8 */ \
+    MOD3_DS_ENV | MOD3_DS_LIVE, L,                                                            /* WAV POINT */ \
+    MOD3_DS_ENV | MOD3_DS_LIVE, L, MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L,               /* AMP R1-4, R5-8 */ \
+    MOD3_DS_ENV | MOD3_DS_LIVE, L, MOD3_DS_ENV | MOD3_DS_SKIP | MOD3_DS_LIVE, L,               /* AMP L1-4, L5-8 */ \
+    MOD3_DS_ENV | MOD3_DS_LIVE, L                                                             /* AMP POINT */
+    CZS_LINE_PAGES(CZS_L1), CZS_LINE_PAGES(CZS_L2),
+#undef CZS_LINE_PAGES
+};
+_Static_assert(sizeof CZS_DPAGE == 3u * sizeof CZ_SCH_PAGE / sizeof *CZ_SCH_PAGE, "a stage a page");
+static const mod_sch_design_src CZS_DESIGN = {
+    MOD3_DSF_OWN_LFO | MOD3_DSF_TITLE_CHIP, CZS_DFEAT, sizeof CZS_DFEAT / sizeof *CZS_DFEAT,
+    CZS_DNEED, sizeof CZS_DNEED / sizeof *CZS_DNEED, 0, 0, CZS_DPAGE,
+};
+/* the goals' recipes, in this order (an end point moved: sustain off while it moves); FX: 1+2', ring, detuned */
+static const mod_sch_rec_src CZS_REC[] = {
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(0, 2) + 16, 8},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(0, 2) + 17, 3},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), LCZ_EBASE(0, 2), 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), LCZ_EBASE(0, 2), 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(0, 2) + 1, 80},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(0, 2) + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(0, 2) + 2, 70},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), LCZ_EBASE(0, 2) + 3, 75},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), LCZ_EBASE(0, 2) + 3, 40},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(0, 2) + 8, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(0, 2) + 9, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(0, 2) + 9, 70},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(0, 2) + 10, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(0, 2) + 10, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(0, 2) + 16, 2},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(0, 2) + 16, 8},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(1, 2) + 16, 8},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(1, 2) + 17, 3},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), LCZ_EBASE(1, 2), 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), LCZ_EBASE(1, 2), 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(1, 2) + 1, 80},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(1, 2) + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(1, 2) + 2, 70},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), LCZ_EBASE(1, 2) + 3, 75},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), LCZ_EBASE(1, 2) + 3, 40},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, LCZ_EBASE(1, 2) + 8, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(1, 2) + 9, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(1, 2) + 9, 70},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(1, 2) + 10, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(1, 2) + 10, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), LCZ_EBASE(1, 2) + 16, 2},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), LCZ_EBASE(1, 2) + 16, 8},
+    {MOD3_Q_GOAL, MOD3_GM(FX), LCZ_LINE, 2},
+    {MOD3_Q_GOAL, MOD3_GM(FX), LCZ_MOD, 1},
+    {MOD3_Q_GOAL, MOD3_GM(FX), LCZ_FINE, 30},
+};
 static const mod_sch_src CZ_SCHEMA = {
     .patch = CZ_BYTES, .def_make = cz_sch_def, .store = MOD_SCH_STORE_TONE, .utag = 'Z', .mtag = 2,
     .flags = MOD_SCH_F_MBYTES | MOD_SCH_F_NOEDIT | MOD_SCH_F_MLANES, .abbr = "CZ-1", .wdef = MOD_SCH_NONE, .mmap = 0,
@@ -245,5 +348,6 @@ static const mod_sch_src CZ_SCHEMA = {
     .role = CZ_SCH_ROLE, .nrole = sizeof CZ_SCH_ROLE / sizeof *CZ_SCH_ROLE,
     .wid = CZ_SCH_WID, .nwid = sizeof CZ_SCH_WID,
     .mlanes = CZS_MLANE, .nmlanes = sizeof CZS_MLANE / sizeof *CZS_MLANE,
-    .strip = CZS_STRIP,
+    .rec = CZS_REC, .nrec = sizeof CZS_REC / sizeof *CZS_REC,
+    .strip = CZS_STRIP, .design = &CZS_DESIGN,
 };

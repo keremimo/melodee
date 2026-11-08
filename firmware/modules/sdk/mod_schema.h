@@ -20,14 +20,16 @@
  *                    by bytes: patch bytes of each byte's highest value, 0 not recorded, then patch bytes of bits
  *                    that must be 0), name (the patch's own name: nlen bytes there), first (the preset a part
  *                    picking the synth starts from), utag (its user presets' tag letter in the lists, 0 'U'), sound (the patch's bytes that are the sound, 0: all), pname
- *                    (what the patch is called: "CZ TONE"; its NAME screen's title), 0, crc (CRC-32 of the payload
- *                    after the head)
+ *                    (what the patch is called: "CZ TONE"; its NAME screen's title), design (the sound designer's
+ *                    block: widget data, MOD_SCH_NONE none), crc (CRC-32 of the payload after the head)
  *   params           nparam records of 28 bytes, ids ascending (mod_sch_param below, packed)
  *   pages            npage records of 24 bytes
  *   roles            nrole records of 6 bytes: role (MOD3_R_*), flags, id (a parameter's, or a page's index), label
  *                    (a string: what the role shows it as, MOD_SCH_NONE: the parameter's label)
- *   recipes          nrec records of 6 bytes (the sound designer's: question, answer, id, value)
- *   widget data      what a page's widget draws from (MOD3_W_*)
+ *   recipes          nrec records of 6 bytes, the sound designer's answers in order: question (MOD3_Q_*, + MOD3_RQ_*
+ *                    flags), the answers it is for (a bit each: MOD3_GM), id (a parameter's; MOD3_D_TRACK + a P_*
+ *                    number: the part's own; MOD3_RQ_ROLE: a role, the parameter it names first), value
+ *   widget data      what a page's widget draws from (MOD3_W_*); the designer block (below)
  *   strings          NUL-terminated; an enum's names one after another
  * A parameter's id never changes (Motion, MIDI learn, the editor and stored sounds name it). */
 #pragma once
@@ -116,7 +118,7 @@ enum {
     MOD3_R_CUTOFF, MOD3_R_RESO,                  /* Stage's filter picture */
     MOD3_R_ENV_A, MOD3_R_ENV_D, MOD3_R_ENV_S, MOD3_R_ENV_R,      /* Stage's envelope picture (the amplitude's) */
     MOD3_R_BANK_FILTER, MOD3_R_BANK_ENV, MOD3_R_BANK_LFO,        /* the SMK-37's knob banks (page indexes) */
-    MOD3_R_FEATURE,                              /* the sound designer's FEATURES (see the recipes) */
+    MOD3_R_FEATURE,                              /* (retired: the designer block holds the FEATURES) */
     MOD3_R_CC_GLIDE,                             /* MIDI CC 5 (portamento time) sets it */
     MOD3_R_COUNT
 };
@@ -142,6 +144,89 @@ typedef struct {
     const char *unit;
     const char *icon;                            /* (0: its label's picture) */
 } mod_sch_param_src;
+/* ---- the sound designer (Melodee's tone wizard). START asks a question (MOD3_Q_GOAL: a goal, MOD3_G_*) and puts that
+ * goal's recipe (the recipe records answering it, in order; a synth without any: the firmware's from its roles), then
+ * FEATURES lists the synth's paths: each a row with its states (2: Off / On, or up to 4 named), read by a get program and
+ * set by an on / off program (the state in MOD3_D_STATE); a dim control turned (pactive 0) asks the need rules which path
+ * to switch on first. Programs are bytes: an expression (postfix: MOD3_D_VAL .. MOD3_D_STATE, ends MOD3_D_END) or
+ * actions (MOD3_D_SET .. MOD3_D_SETCAR, ends MOD3_D_END; MOD3_D_IF n <expression> guards the n actions after it). An
+ * id is a parameter's (sch_get / sch_put: its range), or MOD3_D_TRACK + a P_* number (the part's own, as it is). */
+enum { MOD3_Q_GOAL = 1 };                        /* recipe questions */
+enum { MOD3_G_FREE, MOD3_G_BASS, MOD3_G_PAD, MOD3_G_LEAD, MOD3_G_KEYS, MOD3_G_PLUCK, MOD3_G_FX, MOD3_G_COUNT };
+#define MOD3_GM(g) (1u << MOD3_G_##g)            /* a recipe record's answers: MOD3_GM(PAD) | MOD3_GM(LEAD) */
+#define MOD3_GM_ALL 0x7Eu                        /* (every goal: FREE puts no recipe) */
+#define MOD3_RQ_NOTE 0x80u                       /* (a recipe record's question) not a value: the synth told (patch_changed
+                                                  * EDIT, the id) */
+#define MOD3_RQ_ROLE 0x40u                       /* (a recipe record's question) its id is a role (MOD3_R_*) */
+enum { MOD3_D_END, MOD3_D_VAL, MOD3_D_NZ, MOD3_D_CONST, MOD3_D_EQ, MOD3_D_NE, MOD3_D_GT, MOD3_D_LE, MOD3_D_AND,
+       MOD3_D_OR, MOD3_D_NOT, MOD3_D_ADD, MOD3_D_CAR, MOD3_D_ACT, MOD3_D_STATE,
+       MOD3_D_SET = 0x20, MOD3_D_SETS, MOD3_D_AMT, MOD3_D_IF, MOD3_D_NOTE, MOD3_D_SETCAR };
+/* expression: VAL id16 (its value), NZ id16 (value != 0), CONST i8, EQ NE GT LE AND OR ADD (two below), NOT, CAR op8
+ * (operator op is a carrier in the patch's algorithm: the wdef chart), ACT id16 (pactive), STATE (the state set);
+ * actions: SET id16 v16 (i16), SETS id16 (the state), AMT id16 v16 (on: the value kept unless 0, then v; off: 0),
+ * IF n8 <expression>, NOTE id16 (patch_changed EDIT), SETCAR id16 op8 v8 w8 (v for a carrier, else w) */
+#define MOD3_D_TRACK 0x8000u
+#define MOD3_D_ID(id) (uint8_t)((id) & 255u), (uint8_t)((uint32_t)(id) >> 8)
+#define D_VAL(id) MOD3_D_VAL, MOD3_D_ID(id)
+#define D_NZ(id) MOD3_D_NZ, MOD3_D_ID(id)
+#define D_CONST(v) MOD3_D_CONST, (uint8_t)(int8_t)(v)
+#define D_SET(id, v) MOD3_D_SET, MOD3_D_ID(id), (uint8_t)((v) & 255), (uint8_t)(((v) >> 8) & 255)
+#define D_SETS(id) MOD3_D_SETS, MOD3_D_ID(id)
+#define D_AMT(id, v) MOD3_D_AMT, MOD3_D_ID(id), (uint8_t)((v) & 255), (uint8_t)(((v) >> 8) & 255)
+#define D_IF(n) MOD3_D_IF, (uint8_t)(n)
+#define D_NOTE(id) MOD3_D_NOTE, MOD3_D_ID(id)
+#define D_SETCAR(id, op, v, w) MOD3_D_SETCAR, MOD3_D_ID(id), (uint8_t)(op), (uint8_t)(v), (uint8_t)(w)
+/* a FEATURES row's flags: MOD3_FF_HOST a firmware path (inst: MOD3_HF_*: the part's own parameters); MOD3_FF_INST it
+ * switches instance inst (an operator: its pages are shaped only while on); MOD3_FF_CARRIER its row says carrier /
+ * modulator of operator inst (the wdef chart) */
+#define MOD3_FF_HOST 1u
+#define MOD3_FF_INST 2u
+#define MOD3_FF_CARRIER 4u
+enum { MOD3_HF_VOICE, MOD3_HF_GLIDE, MOD3_HF_SPREAD, MOD3_HF_PENV, MOD3_HF_VIB, MOD3_HF_WOBBLE, MOD3_HF_TREM,
+       MOD3_HF_ENVF, MOD3_HF_COUNT };
+/* a need rule: ids lo..hi, every step-th; the path fa (cond true or none), else fb; MOD3_DN_END: the control is past
+ * its envelope's end. MOD3_DN_DIM only while the control does nothing (pactive 0). MOD3_DN_INST: an instanced page's
+ * columns need path fa + the instance shown while that is off, but the column whose id there is lo + (int8)step *
+ * the instance. MOD3_DN_DOWN (checked first; with MOD3_DN_INST on instanced pages only): turned down, a column of
+ * these ids switches nothing on */
+#define MOD3_DN_DIM 1u
+#define MOD3_DN_INST 2u
+#define MOD3_DN_DOWN 4u
+#define MOD3_DN_END 0xFEu
+#define MOD3_DN_NONE 0xFFu
+/* a page's stage (the designer's pages: 3 bytes a page, stage | flags, u16 live id; 0: Source), MOD3_DS_SKIP not
+ * among MAIN's pages, MOD3_DS_LIVE shaped only while its live parameter acts */
+enum { MOD3_DS_DEFAULT, MOD3_DS_SOURCE, MOD3_DS_TONE, MOD3_DS_ENV, MOD3_DS_MOVE, MOD3_DS_PLAY };
+#define MOD3_DS_SKIP 16u
+#define MOD3_DS_LIVE 32u
+/* the designer block's flags: the firmware's VOICE pages left out (MOD3_DSF_NO_VOICE), EDIT 1 / 2 left out
+ * (MOD3_DSF_NO_EDIT) or in ALL only (MOD3_DSF_EDIT_ALL), the track's LFO pages in ALL only (MOD3_DSF_OWN_LFO: it has
+ * its own), its pages' titles as the header's chip (MOD3_DSF_TITLE_CHIP), the designer's engine when the track's
+ * cannot be designed (MOD3_DSF_FIRST) */
+#define MOD3_DSF_NO_VOICE 1u
+#define MOD3_DSF_NO_EDIT 2u
+#define MOD3_DSF_EDIT_ALL 4u
+#define MOD3_DSF_OWN_LFO 8u
+#define MOD3_DSF_TITLE_CHIP 16u
+#define MOD3_DSF_FIRST 32u
+typedef struct {
+    const char *word;                            /* the row */
+    const char *const *names;                    /* states > 2: their names (else Off / On) */
+    const char *eword;                           /* what a need switching it on says ("LINE 2 ON"; 0: the word) */
+    uint8_t states, flags, inst, estate;         /* estate: the state a need sets */
+    const uint8_t *get, *on, *off;               /* programs (off: s 0, on: the rest) */
+} mod_sch_feat_src;
+typedef struct { uint16_t lo, hi; uint8_t step, kind, fa, fb; const uint8_t *cond; } mod_sch_need_src;
+typedef struct {
+    uint8_t flags;                               /* MOD3_DSF_* */
+    const mod_sch_feat_src *feat;
+    uint8_t nfeat;
+    const mod_sch_need_src *need;
+    uint8_t nneed;
+    const uint8_t *silent;                       /* an expression: the build cannot sound (0: never) */
+    const char *silent_msg;
+    const uint8_t *pages;                        /* per page of the schema: stage | MOD3_DS_* flags, live id (u16) */
+} mod_sch_design_src;
 typedef struct {
     const char *title;
     uint8_t widget, flags;                       /* MOD3_W_*, MOD3_PG_* */
@@ -184,6 +269,7 @@ typedef struct {
     uint8_t nmlanes;
     const char *const *strip;                    /* title prefixes a page's short name leaves out ("P5 FLT ENV" ->
                                                   * "FLT ENV": the first that leaves something), 0-terminated; 0 none */
+    const mod_sch_design_src *design;            /* the sound designer's FEATURES, needs, pages (0: the firmware's) */
 } mod_sch_src;
 
 /* ---- the chunk as it is read */
@@ -192,7 +278,7 @@ typedef struct {
     uint8_t store, mtag, flags, nlen;
     uint16_t abbr, wdef, mmap, name;
     uint8_t first, utag;
-    uint16_t sound, pname, rsv4;
+    uint16_t sound, pname, design;
     uint32_t crc;
 } mod_sch_head;
 _Static_assert(sizeof(mod_sch_head) == MOD_SCH_HEAD, "SCHM head");
@@ -201,6 +287,21 @@ _Static_assert(sizeof(mod_sch_head) == MOD_SCH_HEAD, "SCHM head");
 /* a page record (24 bytes): title, widget, flags, id[4], ninst, chip (the title's characters its short name leaves
  * out), istride[4] (a column's id step per instance), inames
  * (an offset: ninst names), wid (the widget data's offset in the widget bytes), section */
+
+/* a designer program's op at p: its bytes (MOD3_D_IF: its two; its expression follows) */
+static uint32_t mod_sch_dop(uint32_t op)
+{
+    switch (op) {
+    case MOD3_D_VAL: case MOD3_D_NZ: case MOD3_D_ACT: case MOD3_D_SETS: case MOD3_D_NOTE: return 3;
+    case MOD3_D_CONST: case MOD3_D_CAR: case MOD3_D_IF: return 2;
+    case MOD3_D_SET: case MOD3_D_AMT: return 5;
+    case MOD3_D_SETCAR: return 6;
+    default: return 1;
+    }
+}
+#define MOD_SCH_DHEAD 10u                        /* the designer block: head, then features 16 B, needs 10 B, pages 3 B */
+#define MOD_SCH_DFEAT 16u
+#define MOD_SCH_DNEED 10u
 
 #ifndef MOD_SCH_NO_WRITER
 static uint32_t mod_sch_crc(const uint8_t *p, uint32_t n)
@@ -266,6 +367,65 @@ static uint32_t mod_sch_strs(uint8_t *str, uint32_t *n, uint32_t cap, const char
     }
     return at;
 }
+/* program p's bytes (to its last END; an IF's expression and its END inside), 0 malformed; each id it names one s has */
+static uint32_t mod_sch_dlen(const mod_sch_src *s, const uint8_t *p)
+{
+    uint32_t n = 0, depth = 0, k;
+    if (!p)
+        return 0;
+    for (;;) {
+        uint32_t op = p[n], m = mod_sch_dop(op);
+        if (n > 4096u)
+            return 0;
+        if (m == 3u || op == MOD3_D_SET || op == MOD3_D_AMT || op == MOD3_D_SETCAR) {
+            uint32_t id = p[n + 1] | (uint32_t)p[n + 2] << 8;
+            if (!(id & MOD3_D_TRACK)) {
+                for (k = 0; k < s->nparam && s->param[k].id != id; k++)
+                    ;
+                if (k == s->nparam)
+                    return 0;
+            }
+        }
+        n += m;
+        if (op == MOD3_D_IF)
+            depth++;                             /* (its expression's END closes it) */
+        else if (op == MOD3_D_END) {
+            if (!depth)
+                return n;
+            depth--;
+        }
+    }
+}
+static uint32_t mod_sch_dsize(const mod_sch_src *s)  /* the designer block's bytes, 0 none or malformed */
+{
+    const mod_sch_design_src *d = s->design;
+    uint32_t n, i, k, bad = 0;
+    if (!d)
+        return 0;
+    n = MOD_SCH_DHEAD + d->nfeat * MOD_SCH_DFEAT + d->nneed * MOD_SCH_DNEED + s->npage * 3u;
+    if (d->silent)
+        bad |= !(k = mod_sch_dlen(s, d->silent)), n += k;
+    for (i = 0; i < d->nfeat; i++)
+        if (!(d->feat[i].flags & MOD3_FF_HOST)) {
+            bad |= !(k = mod_sch_dlen(s, d->feat[i].get)), n += k;
+            bad |= !(k = mod_sch_dlen(s, d->feat[i].on)), n += k;
+            bad |= !(k = mod_sch_dlen(s, d->feat[i].off)), n += k;
+        }
+    for (i = 0; i < d->nneed; i++)
+        if (d->need[i].cond)
+            bad |= !(k = mod_sch_dlen(s, d->need[i].cond)), n += k;
+    return bad ? 0u : n;
+}
+static uint32_t mod_sch_dput(const mod_sch_src *s, uint8_t *b, uint32_t *at, const uint8_t *p)   /* its offset */
+{
+    uint32_t n = p ? mod_sch_dlen(s, p) : 0, o = *at;
+    if (!n)
+        return 0;
+    for (uint32_t i = 0; i < n; i++)
+        b[o + i] = p[i];
+    *at += n;
+    return o;
+}
 /* the SCHM payload of s into out (cap bytes): its length, 0 when it does not fit or s is malformed (ids not ascending,
  * a field outside the patch, a page naming an id it does not have, a name too long) */
 static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
@@ -274,7 +434,7 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
     uint32_t nstr = 0, i, k, o, v;
     uint32_t param = MOD_SCH_HEAD, page = param + s->nparam * MOD_SCH_PREC, role = page + s->npage * MOD_SCH_GREC;
     uint32_t rec = role + s->nrole * MOD_SCH_RREC, def = rec + s->nrec * MOD_SCH_XREC, wid = def + s->patch;
-    uint32_t at = wid + s->nwid;
+    uint32_t dsize = mod_sch_dsize(s), at = wid + s->nwid + dsize;
     if (s->patch > 512u || at > cap || (s->wdef != MOD_SCH_NONE && s->wdef >= s->nwid) ||
         (s->mmap != MOD_SCH_NONE && (uint32_t)s->mmap + 2u * s->patch > s->nwid))
         return 0;
@@ -386,6 +546,12 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
     mod_sch_w16(out + 44, v);
     for (i = 0; i < s->nrec; i++) {
         uint8_t *b = out + rec + i * MOD_SCH_XREC;
+        if (!(s->rec[i].q & (MOD3_RQ_NOTE | MOD3_RQ_ROLE)) && !(s->rec[i].id & MOD3_D_TRACK)) {
+            for (k = 0; k < s->nparam && s->param[k].id != s->rec[i].id; k++)
+                ;
+            if (k == s->nparam)
+                return 0;                        /* (a recipe's value for a parameter it does not have) */
+        }
         b[0] = s->rec[i].q;
         b[1] = s->rec[i].a;
         mod_sch_w16(b + 2, s->rec[i].id);
@@ -398,6 +564,62 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
             out[def + i] = s->def ? s->def[i] : 0;
     for (i = 0; i < s->nwid; i++)
         out[wid + i] = s->wid[i];
+    if (s->design) {                             /* the designer block (widget data after the source's) */
+        const mod_sch_design_src *d = s->design;
+        uint8_t *b = out + wid + s->nwid;
+        uint32_t fo = MOD_SCH_DHEAD, no = fo + d->nfeat * MOD_SCH_DFEAT, po = no + d->nneed * MOD_SCH_DNEED;
+        uint32_t c = po + s->npage * 3u;
+        if (!dsize || d->nfeat > 0x3Fu)
+            return 0;
+        b[0] = 1;
+        b[1] = d->flags;
+        b[2] = d->nfeat;
+        b[3] = d->nneed;
+        b[4] = (uint8_t)s->npage;
+        mod_sch_w16(b + 6, d->silent ? mod_sch_dput(s, b, &c, d->silent) : 0u);
+        v = mod_sch_str(str, &nstr, sizeof str, d->silent_msg);
+        if (v > 0xFFFFu)
+            return 0;
+        mod_sch_w16(b + 8, v);
+        for (i = 0; i < d->nfeat; i++) {
+            const mod_sch_feat_src *f = &d->feat[i];
+            uint8_t *e = b + fo + i * MOD_SCH_DFEAT;
+            uint32_t w = mod_sch_str(str, &nstr, sizeof str, f->word), x = mod_sch_str(str, &nstr, sizeof str, f->eword);
+            uint32_t nm = f->names && f->states > 2u ? mod_sch_strs(str, &nstr, sizeof str, f->names, f->states) : MOD_SCH_NONE;
+            if ((w | x | nm) > 0xFFFFu || (!(f->flags & MOD3_FF_HOST) && (!f->get || !f->on || !f->off)))
+                return 0;
+            mod_sch_w16(e, w);
+            mod_sch_w16(e + 2, nm);
+            mod_sch_w16(e + 4, x);
+            e[6] = f->states;
+            e[7] = f->flags;
+            e[8] = f->inst;
+            e[9] = f->estate;
+            if (!(f->flags & MOD3_FF_HOST)) {
+                mod_sch_w16(e + 10, mod_sch_dput(s, b, &c, f->get));
+                mod_sch_w16(e + 12, mod_sch_dput(s, b, &c, f->on));
+                mod_sch_w16(e + 14, mod_sch_dput(s, b, &c, f->off));
+            }
+        }
+        for (i = 0; i < d->nneed; i++) {
+            const mod_sch_need_src *q = &d->need[i];
+            uint8_t *e = b + no + i * MOD_SCH_DNEED;
+            mod_sch_w16(e, q->lo);
+            mod_sch_w16(e + 2, q->hi);
+            e[4] = q->step;
+            e[5] = q->kind;
+            e[6] = q->fa;
+            e[7] = q->fb;
+            mod_sch_w16(e + 8, q->cond ? mod_sch_dput(s, b, &c, q->cond) : 0u);
+        }
+        for (i = 0; i < s->npage; i++) {
+            const uint8_t *q = d->pages ? d->pages + i * 3u : 0;
+            b[po + i * 3u] = q ? q[0] : 0u;
+            mod_sch_w16(b + po + i * 3u + 1u, q && (q[0] & MOD3_DS_LIVE) ? (uint32_t)(q[1] | q[2] << 8) : MOD_SCH_NONE);
+        }
+        if (c != dsize)
+            return 0;
+    }
     if (s->flags & MOD_SCH_F_MLANES) {           /* (Motion's lane names: their offset into the widget data) */
         uint32_t at2 = wid + s->mmap + 2u * s->patch;
         if (!(s->flags & MOD_SCH_F_MBYTES) || s->mmap == MOD_SCH_NONE || !s->mlanes ||
@@ -437,6 +659,7 @@ static uint32_t mod_sch_write(const mod_sch_src *s, uint8_t *out, uint32_t cap)
     out[40] = s->first;
     out[41] = (uint8_t)s->utag;
     mod_sch_w16(out + 42, s->sound);
+    mod_sch_w16(out + 46, s->design ? s->nwid : MOD_SCH_NONE);
     if (at + nstr > 0xFFFFu)
         return 0;
     v = mod_sch_crc(out + MOD_SCH_HEAD, at + nstr - MOD_SCH_HEAD);

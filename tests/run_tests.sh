@@ -508,6 +508,8 @@ if core && [ $TABLES = 1 ]; then
         ui_test -DMELODEE_USB_AUDIO=1 $FW
     t "Prophet: all native tone knobs through the panel and sound engine" prophet_knob_test -O2 -DMELODEE_USB_AUDIO=1 $FW
     t "Sound designer: native recipes, dependencies, compare, discard and save" designer_test -O2 -DMELODEE_USB_AUDIO=1 $FW
+    t "Sound designer from the synths' blocks: every answer as a894c6f7's designer gave it" designer_parity_test -O1 \
+        -DMELODEE_USB_AUDIO=1 $FW
     t "Sequencer: tied length/move/delete, eight-level undo/redo, MIDI step entry and playing-step recording" seq_edit_test \
         -DMELODEE_USB_AUDIO=1 $FW
     t "Note/library gestures: quarter snapping, range moves/copies, undo and bulk preset erase" note_tools_test \

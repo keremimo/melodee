@@ -2291,7 +2291,7 @@ static void designer_sweep(const char *out)
         for(uint32_t i=0;i<ds.n;i++){
             ds.at=(uint8_t)i;designer_page();
             if(designer_feat_on()){                     /* FEATURES: every row lifted in turn */
-                uint32_t n;designer_feats(&n);
+                uint32_t n=designer_feats();
                 for(uint32_t r=0;r<n;r++){
                     ds.row=(uint8_t)r;
                     snprintf(name,sizeof name,"%s/designer %s FEATURES row %u",UI_PALETTES[palid].name,ENGINES[TSEL->eng_req]->name,r+1);cur_name=name;

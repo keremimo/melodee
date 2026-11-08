@@ -12,7 +12,6 @@
 #include "../modules/cz/cz_tone.h"
 #include "../modules/prophet/p5_patch.h"
 #include "../modules/drum/drum_patch.h"
-#include "../modules/cz/cz_panel.h"                /* (the sound designer's CZ-1 FEATURES: its panel ids, ui_designer.c) */
 
 /* FM6: the voice of track k unpacked (VCED: 155 bytes + 1), the functions, writes as the DX7 SysEx makes them */
 static void fm6_voice_of(uint32_t k, uint8_t *v) { fm6_unpack(patch_of(k), v); }

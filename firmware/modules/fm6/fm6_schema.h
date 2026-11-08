@@ -271,6 +271,201 @@ static const uint8_t FM6_SCH_WID[] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
+/* The sound designer (mod_schema.h): FEATURES (the operators, feedback, the pitch EG, the LFO), what a dim control
+ * needs (an operator's page: its operator), the build that cannot sound, the pages' stages; the goals' recipes */
+#define FM6S_SW 180u                             /* (the switches: 180 + the operator's block, OP1's the sixth) */
+#define FM6S_NOTE D_NOTE(MOD_SCH_NONE)           /* (the voice told: packed again as the DX7 SysEx makes it) */
+static const uint8_t FM6S_D_OP1[] = {D_NZ(FM6S_SW + 5u), D_NZ(5 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_END};
+static const uint8_t FM6S_D_OP1_ON[] = {D_IF(1), D_NZ(5 * FP_OP + FP_OL), MOD3_D_NOT, MOD3_D_END,
+                                     D_SETCAR(5 * FP_OP + FP_OL, 0, 90, 60), D_SET(FM6S_SW + 5u, 1), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP1_OFF[] = {D_SET(FM6S_SW + 5u, 0), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP2[] = {D_NZ(FM6S_SW + 4u), D_NZ(4 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_END};
+static const uint8_t FM6S_D_OP2_ON[] = {D_IF(1), D_NZ(4 * FP_OP + FP_OL), MOD3_D_NOT, MOD3_D_END,
+                                     D_SETCAR(4 * FP_OP + FP_OL, 1, 90, 60), D_SET(FM6S_SW + 4u, 1), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP2_OFF[] = {D_SET(FM6S_SW + 4u, 0), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP3[] = {D_NZ(FM6S_SW + 3u), D_NZ(3 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_END};
+static const uint8_t FM6S_D_OP3_ON[] = {D_IF(1), D_NZ(3 * FP_OP + FP_OL), MOD3_D_NOT, MOD3_D_END,
+                                     D_SETCAR(3 * FP_OP + FP_OL, 2, 90, 60), D_SET(FM6S_SW + 3u, 1), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP3_OFF[] = {D_SET(FM6S_SW + 3u, 0), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP4[] = {D_NZ(FM6S_SW + 2u), D_NZ(2 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_END};
+static const uint8_t FM6S_D_OP4_ON[] = {D_IF(1), D_NZ(2 * FP_OP + FP_OL), MOD3_D_NOT, MOD3_D_END,
+                                     D_SETCAR(2 * FP_OP + FP_OL, 3, 90, 60), D_SET(FM6S_SW + 2u, 1), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP4_OFF[] = {D_SET(FM6S_SW + 2u, 0), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP5[] = {D_NZ(FM6S_SW + 1u), D_NZ(1 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_END};
+static const uint8_t FM6S_D_OP5_ON[] = {D_IF(1), D_NZ(1 * FP_OP + FP_OL), MOD3_D_NOT, MOD3_D_END,
+                                     D_SETCAR(1 * FP_OP + FP_OL, 4, 90, 60), D_SET(FM6S_SW + 1u, 1), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP5_OFF[] = {D_SET(FM6S_SW + 1u, 0), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP6[] = {D_NZ(FM6S_SW + 0u), D_NZ(0 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_END};
+static const uint8_t FM6S_D_OP6_ON[] = {D_IF(1), D_NZ(0 * FP_OP + FP_OL), MOD3_D_NOT, MOD3_D_END,
+                                     D_SETCAR(0 * FP_OP + FP_OL, 5, 90, 60), D_SET(FM6S_SW + 0u, 1), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_OP6_OFF[] = {D_SET(FM6S_SW + 0u, 0), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_FB[] = {D_NZ(FP_FB), MOD3_D_END};
+static const uint8_t FM6S_D_FB_ON[] = {D_AMT(FP_FB, 5), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_FB_OFF[] = {D_SET(FP_FB, 0), FM6S_NOTE, MOD3_D_END};
+/* (from L4 up to L1 at once, back by R2 to the centre: a blip as the note starts) */
+static const uint8_t FM6S_D_PEG[] = {D_VAL(FP_PL1), D_CONST(50), MOD3_D_NE, D_VAL(FP_PL1 + 1), D_CONST(50), MOD3_D_NE,
+                                     MOD3_D_OR, D_VAL(FP_PL1 + 2), D_CONST(50), MOD3_D_NE, MOD3_D_OR, D_VAL(FP_PL1 + 3),
+                                     D_CONST(50), MOD3_D_NE, MOD3_D_OR, MOD3_D_END};
+static const uint8_t FM6S_D_PEG_ON[] = {D_SET(FP_PL1, 58), D_SET(FP_PL1 + 1, 50), D_SET(FP_PL1 + 2, 50), D_SET(FP_PL1 + 3, 50),
+                                        D_SET(FP_PR1, 99), D_SET(FP_PR1 + 1, 60), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_PEG_OFF[] = {D_SET(FP_PL1, 50), D_SET(FP_PL1 + 1, 50), D_SET(FP_PL1 + 2, 50),
+                                         D_SET(FP_PL1 + 3, 50), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_LFO[] = {D_NZ(FP_LPMD), D_NZ(FP_LPMS), MOD3_D_AND, D_NZ(FP_LAMD), MOD3_D_OR, MOD3_D_END};
+static const uint8_t FM6S_D_LFO_ON[] = {D_AMT(FP_LPMD, 10), D_AMT(FP_LPMS, 3), D_AMT(FP_LFS, 35), FM6S_NOTE, MOD3_D_END};
+static const uint8_t FM6S_D_LFO_OFF[] = {D_SET(FP_LPMD, 0), D_SET(FP_LAMD, 0), FM6S_NOTE, MOD3_D_END};
+#define FM6S_F(n) {"OP" #n, 0, 0, 2, MOD3_FF_INST | MOD3_FF_CARRIER, n - 1, 0, FM6S_D_OP##n, FM6S_D_OP##n##_ON, FM6S_D_OP##n##_OFF}
+static const mod_sch_feat_src FM6S_DFEAT[] = {
+    FM6S_F(1), FM6S_F(2), FM6S_F(3), FM6S_F(4), FM6S_F(5), FM6S_F(6),
+    {"Feedback", 0, 0, 2, 0, 0, 0, FM6S_D_FB, FM6S_D_FB_ON, FM6S_D_FB_OFF},
+    {"Pitch EG", 0, 0, 2, 0, 0, 0, FM6S_D_PEG, FM6S_D_PEG_ON, FM6S_D_PEG_OFF},
+    {"LFO", 0, 0, 2, 0, 0, 0, FM6S_D_LFO, FM6S_D_LFO_ON, FM6S_D_LFO_OFF},
+    {"Voice", 0, 0, 4, MOD3_FF_HOST, MOD3_HF_VOICE, 0, 0, 0, 0},
+};
+#undef FM6S_F
+/* an operator's page: its operator switched on first (its own switch aside, OP1's column on every page); its level
+ * turned down switches nothing on (the ids 21 apart from OL: OP2's switch too) */
+static const mod_sch_need_src FM6S_DNEED[] = {
+    {FM6S_SW + 5u, 0, (uint8_t)-1, MOD3_DN_INST, 0, 0, 0},
+    {FP_OL, 0xFFFFu, FP_OP, MOD3_DN_DOWN | MOD3_DN_INST, 0, 0, 0},
+};
+/* (no carrier that is on with a level) */
+static const uint8_t FM6S_D_SILENT[] = {MOD3_D_CAR, 0, D_NZ(FM6S_SW + 5u), MOD3_D_AND, D_NZ(5 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_CAR, 1, D_NZ(FM6S_SW + 4u), MOD3_D_AND, D_NZ(4 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_CAR, 2, D_NZ(FM6S_SW + 3u), MOD3_D_AND, D_NZ(3 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_CAR, 3, D_NZ(FM6S_SW + 2u), MOD3_D_AND, D_NZ(2 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_CAR, 4, D_NZ(FM6S_SW + 1u), MOD3_D_AND, D_NZ(1 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_CAR, 5, D_NZ(FM6S_SW + 0u), MOD3_D_AND, D_NZ(0 * FP_OP + FP_OL), MOD3_D_AND, MOD3_D_OR, MOD3_D_OR, MOD3_D_OR,
+                                        MOD3_D_OR, MOD3_D_OR, MOD3_D_NOT, MOD3_D_END};
+/* the pages' stages (FM6_SCH_PAGE's order): EDIT 1 / 2 in ALL only (its macros repeat its pages) */
+static const uint8_t FM6S_DPAGE[] = {
+    MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0, MOD3_DS_SOURCE, 0, 0,   /* STORE, ALGO, FREQ, OUT */
+    MOD3_DS_ENV, 0, 0, MOD3_DS_ENV, 0, 0, MOD3_DS_TONE | MOD3_DS_SKIP, 0, 0, MOD3_DS_TONE | MOD3_DS_SKIP, 0, 0,   /* EG RATE,
+                                                                                               * EG LVL, SCALE, CURVE */
+    MOD3_DS_ENV | MOD3_DS_SKIP, 0, 0, MOD3_DS_ENV | MOD3_DS_SKIP, 0, 0, MOD3_DS_MOVE, 0, 0, MOD3_DS_MOVE, 0, 0,   /* PITCH EG,
+                                                                                               * PITCH LV, FM LFO, 2 */
+    MOD3_DS_PLAY | MOD3_DS_SKIP, 0, 0, MOD3_DS_PLAY | MOD3_DS_SKIP, 0, 0, MOD3_DS_PLAY | MOD3_DS_SKIP, 0, 0,   /* FM BEND, PORTA,
+                                                                                               * WH/FT */
+    MOD3_DS_PLAY | MOD3_DS_SKIP, 0, 0,                                                        /* FM BR/AT */
+};
+_Static_assert(sizeof FM6S_DPAGE == 3u * sizeof FM6_SCH_PAGE / sizeof *FM6_SCH_PAGE, "a stage a page");
+static const mod_sch_design_src FM6S_DESIGN = {
+    MOD3_DSF_EDIT_ALL | MOD3_DSF_OWN_LFO | MOD3_DSF_FIRST, FM6S_DFEAT, sizeof FM6S_DFEAT / sizeof *FM6S_DFEAT,
+    FM6S_DNEED, sizeof FM6S_DNEED / sizeof *FM6S_DNEED, FM6S_D_SILENT, "NO CARRIER ON", FM6S_DPAGE,
+};
+/* the goals' recipes: algorithm 5 (three independent two-operator pairs), each operator's level, ratio and EG, every
+ * operator on; FX: feedback and a bright fifth operator */
+static const mod_sch_rec_src FM6S_REC[] = {
+    {MOD3_Q_GOAL, MOD3_GM_ALL, FP_ALG, 4},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 0 * FP_OP + FP_OL, 0},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 0 * FP_OP + FP_OL, 35},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 0 * FP_OP + FP_FC, 1},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 0 * FP_OP + FP_FC, 3},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 0 * FP_OP + FP_R1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 0 * FP_OP + FP_R1, 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 0 * FP_OP + FP_R1 + 1, 75},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 0 * FP_OP + FP_R1 + 1, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 0 * FP_OP + FP_R1 + 2, 65},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(LEAD) | MOD3_GM(FX), 0 * FP_OP + FP_R1 + 3, 80},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 0 * FP_OP + FP_R1 + 3, 42},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 0 * FP_OP + FP_R1 + 3, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 0 * FP_OP + FP_L1, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 0 * FP_OP + FP_L1 + 1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 0 * FP_OP + FP_L1 + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 0 * FP_OP + FP_L1 + 2, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 0 * FP_OP + FP_L1 + 2, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 0 * FP_OP + FP_L1 + 3, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 1 * FP_OP + FP_OL, 0},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 1 * FP_OP + FP_OL, 78},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 1 * FP_OP + FP_FC, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 1 * FP_OP + FP_R1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 1 * FP_OP + FP_R1, 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 1 * FP_OP + FP_R1 + 1, 75},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 1 * FP_OP + FP_R1 + 1, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 1 * FP_OP + FP_R1 + 2, 65},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(LEAD) | MOD3_GM(FX), 1 * FP_OP + FP_R1 + 3, 80},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 1 * FP_OP + FP_R1 + 3, 42},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 1 * FP_OP + FP_R1 + 3, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 1 * FP_OP + FP_L1, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 1 * FP_OP + FP_L1 + 1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 1 * FP_OP + FP_L1 + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 1 * FP_OP + FP_L1 + 2, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 1 * FP_OP + FP_L1 + 2, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 1 * FP_OP + FP_L1 + 3, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 2 * FP_OP + FP_OL, 0},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 2 * FP_OP + FP_OL, 35},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 2 * FP_OP + FP_FC, 1},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 2 * FP_OP + FP_FC, 3},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 2 * FP_OP + FP_R1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 2 * FP_OP + FP_R1, 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 2 * FP_OP + FP_R1 + 1, 75},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 2 * FP_OP + FP_R1 + 1, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 2 * FP_OP + FP_R1 + 2, 65},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(LEAD) | MOD3_GM(FX), 2 * FP_OP + FP_R1 + 3, 80},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 2 * FP_OP + FP_R1 + 3, 42},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 2 * FP_OP + FP_R1 + 3, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 2 * FP_OP + FP_L1, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 2 * FP_OP + FP_L1 + 1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 2 * FP_OP + FP_L1 + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 2 * FP_OP + FP_L1 + 2, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 2 * FP_OP + FP_L1 + 2, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 2 * FP_OP + FP_L1 + 3, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 3 * FP_OP + FP_OL, 0},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 3 * FP_OP + FP_OL, 78},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 3 * FP_OP + FP_FC, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 3 * FP_OP + FP_R1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 3 * FP_OP + FP_R1, 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 3 * FP_OP + FP_R1 + 1, 75},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 3 * FP_OP + FP_R1 + 1, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 3 * FP_OP + FP_R1 + 2, 65},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(LEAD) | MOD3_GM(FX), 3 * FP_OP + FP_R1 + 3, 80},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 3 * FP_OP + FP_R1 + 3, 42},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 3 * FP_OP + FP_R1 + 3, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 3 * FP_OP + FP_L1, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 3 * FP_OP + FP_L1 + 1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 3 * FP_OP + FP_L1 + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 3 * FP_OP + FP_L1 + 2, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 3 * FP_OP + FP_L1 + 2, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 3 * FP_OP + FP_L1 + 3, 0},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(PAD) | MOD3_GM(LEAD), 4 * FP_OP + FP_OL, 45},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 4 * FP_OP + FP_OL, 72},
+    {MOD3_Q_GOAL, MOD3_GM(FX), 4 * FP_OP + FP_OL, 85},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(PAD) | MOD3_GM(LEAD), 4 * FP_OP + FP_FC, 1},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 4 * FP_OP + FP_FC, 3},
+    {MOD3_Q_GOAL, MOD3_GM(FX), 4 * FP_OP + FP_FC, 7},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 4 * FP_OP + FP_R1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 4 * FP_OP + FP_R1, 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 4 * FP_OP + FP_R1 + 1, 75},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 4 * FP_OP + FP_R1 + 1, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 4 * FP_OP + FP_R1 + 2, 65},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(LEAD) | MOD3_GM(FX), 4 * FP_OP + FP_R1 + 3, 80},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 4 * FP_OP + FP_R1 + 3, 42},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 4 * FP_OP + FP_R1 + 3, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 4 * FP_OP + FP_L1, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 4 * FP_OP + FP_L1 + 1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 4 * FP_OP + FP_L1 + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 4 * FP_OP + FP_L1 + 2, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 4 * FP_OP + FP_L1 + 2, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 4 * FP_OP + FP_L1 + 3, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 5 * FP_OP + FP_OL, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 5 * FP_OP + FP_FC, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~MOD3_GM(PAD), 5 * FP_OP + FP_R1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 5 * FP_OP + FP_R1, 45},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 5 * FP_OP + FP_R1 + 1, 75},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 5 * FP_OP + FP_R1 + 1, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 5 * FP_OP + FP_R1 + 2, 65},
+    {MOD3_Q_GOAL, MOD3_GM(BASS) | MOD3_GM(LEAD) | MOD3_GM(FX), 5 * FP_OP + FP_R1 + 3, 80},
+    {MOD3_Q_GOAL, MOD3_GM(PAD), 5 * FP_OP + FP_R1 + 3, 42},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 5 * FP_OP + FP_R1 + 3, 60},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 5 * FP_OP + FP_L1, 99},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 5 * FP_OP + FP_L1 + 1, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 5 * FP_OP + FP_L1 + 1, 65},
+    {MOD3_Q_GOAL, MOD3_GM_ALL & ~(MOD3_GM(KEYS) | MOD3_GM(PLUCK)), 5 * FP_OP + FP_L1 + 2, 99},
+    {MOD3_Q_GOAL, MOD3_GM(KEYS) | MOD3_GM(PLUCK), 5 * FP_OP + FP_L1 + 2, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, 5 * FP_OP + FP_L1 + 3, 0},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, FM6S_SW + 0, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, FM6S_SW + 1, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, FM6S_SW + 2, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, FM6S_SW + 3, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, FM6S_SW + 4, 1},
+    {MOD3_Q_GOAL, MOD3_GM_ALL, FM6S_SW + 5, 1},
+    {MOD3_Q_GOAL, MOD3_GM(FX), FP_FB, 5},
+    {MOD3_Q_GOAL | MOD3_RQ_NOTE, MOD3_GM_ALL, MOD_SCH_NONE, 0},
+};
 static void fm6_sch_def(uint8_t *b)
 {
     memcpy(b, FM6_INIT, FM6_PACKED);
@@ -285,5 +480,6 @@ static const mod_sch_src FM6_SCHEMA = {
     .page = FM6_SCH_PAGE, .npage = sizeof FM6_SCH_PAGE / sizeof *FM6_SCH_PAGE,
     .role = FM6_SCH_ROLE, .nrole = sizeof FM6_SCH_ROLE / sizeof *FM6_SCH_ROLE,
     .wid = FM6_SCH_WID, .nwid = sizeof FM6_SCH_WID,
-    .strip = FM6S_STRIP,
+    .rec = FM6S_REC, .nrec = sizeof FM6S_REC / sizeof *FM6S_REC,
+    .strip = FM6S_STRIP, .design = &FM6S_DESIGN,
 };
