@@ -33,7 +33,7 @@ const WASM = resolve(opt("core", join(ROOT, "build/core/melodee_core.wasm")));
 const NATIVE = resolve(opt("native", join(ROOT, "build/core/core_native")));
 const MEL = opt("mel", [join(ROOT, "build/host/studio/mel"), join(ROOT, "build/host/mel")].find((d) => existsSync(join(d, "song.rec"))));
 const SECONDS = Number(opt("seconds", 10));
-const ABI = 3;
+const ABI = 4;
 const MODDIR = resolve(opt("modules", join(ROOT, "build/modules/wasm")));
 const SYNTHS = [["sid", 3], ["drum", 10], ["cz", 15], ["fm6", 12], ["prophet", 19]];
 const modFiles = SYNTHS.map(([s]) => readFileSync(join(MODDIR, `${s}.mmod`)));

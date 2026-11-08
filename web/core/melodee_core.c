@@ -357,8 +357,9 @@ static void core_melodee_init(void)                    /* main.c melodee_init */
 /* the page's scratch: requests, records and kits are written here before a call names them */
 static uint8_t scratch[0x20000];
 /* the exports' version: Studio refuses a core whose calls it does not know */
-#define CORE_ABI 3u                                     /* 2: motion events (core_midi_tap bit 2), core_master_raw;
-                                                         * 3: the synths as modules (core_mod_*) */
+#define CORE_ABI 4u                                     /* 2: motion events (core_midi_tap bit 2), core_master_raw;
+                                                         * 3: the synths as modules (core_mod_*); 4: modules by
+                                                         * their files' IDs (core_mod_link, _install, _crc_of) */
 EXPORT(core_abi) uint32_t core_abi(void) { return CORE_ABI; }
 EXPORT(core_scratch) uint8_t *core_scratch(void) { return scratch; }
 EXPORT(core_scratch_size) uint32_t core_scratch_size(void) { return sizeof scratch; }
@@ -369,9 +370,17 @@ EXPORT(core_fs) uint32_t core_fs(void) { return FS; }
 EXPORT(core_ntrk) uint32_t core_ntrk(void) { return NTRK; }
 EXPORT(core_taps_count) uint32_t core_taps_count(void) { return TAPS; }
 #ifdef CORE_MODULES
-/* ---- the synth modules: their code linked by the page (WebAssembly side modules) or beside the core (natively) */
-static const mod_desc_v3 *core_descs[NENGINES];       /* the linked modules' descriptors, by engine */
-static const mod_desc_v3 *core_desc(uint32_t e) { return e < NENGINES ? core_descs[e] : 0; }
+/* ---- the synth modules: their code linked by the page (WebAssembly side modules) or beside the core (natively). A
+ * module is its file's ID (mod_abi3.h; the file head's uid, its first 4 bytes, names it here): whatever number this
+ * device gives it, any number of synths whatever numbers they ask for */
+static struct { uint32_t uid; const mod_desc_v3 *d; } core_links[2u * NMOD];   /* the linked modules' descriptors */
+static const mod_desc_v3 *core_desc_id(uint32_t uid)
+{
+    for (uint32_t k = 0; uid && k < 2u * NMOD; k++)
+        if (core_links[k].uid == uid)
+            return core_links[k].d;
+    return 0;
+}
 static uint8_t core_mod_mem[1u << 20] __attribute__((aligned(16)));   /* their data, .bss and stacks */
 static uint32_t core_mod_used;
 /* n bytes of the modules' memory, aligned (a power of two): a side module's __memory_base, a stack; 0 when full */
@@ -383,32 +392,38 @@ EXPORT(core_mod_alloc) uint8_t *core_mod_alloc(uint32_t n, uint32_t align)
     memset(core_mod_mem + at, 0, n);
     return core_mod_mem + at;
 }
-/* a linked module's descriptor (its engine's code from now on, when its file is in the pool): 0 ok */
-EXPORT(core_mod_link) uint32_t core_mod_link(const mod_desc_v3 *d)
+/* a linked module's descriptor for the file whose uid (its head's) is uid: its code from now on, when that file is in
+ * the pool. 0 ok (1: not a descriptor, or no room) */
+EXPORT(core_mod_link) uint32_t core_mod_link(const mod_desc_v3 *d, uint32_t uid)
 {
-    if (!d || d->magic != MOD3_MAGIC || d->abi != MOD3_ABI || d->engine >= NENGINES) return 1;
-    core_descs[d->engine] = d;
+    uint32_t k = 0;
+    if (!d || d->magic != MOD3_MAGIC || d->abi != MOD3_ABI || !uid) return 1;
+    while (k < 2u * NMOD && core_links[k].uid && core_links[k].uid != uid) k++;
+    if (k == 2u * NMOD) return 1;
+    core_links[k].uid = uid;
+    core_links[k].d = d;
     return 0;
 }
-/* a module file (the device's, n bytes at p) into the pool, as an installer puts it (the slot playing its engine,
- * else the first free one), and loaded: MS_* (>= 0), or a storage error (< 0; -2 not a module file) */
+static uint32_t core_head_uid(const uint8_t *p, uint32_t n) { return n >= MOD3_HEAD ? mod_le32(p + 24) : 0u; }
+/* a module file (the device's, n bytes at p) into the pool, as an installer puts it (the slot holding the same synth:
+ * its ID, else the first free one), and loaded: MS_* (>= 0), or a storage error (< 0; -2 not a module file) */
 EXPORT(core_mod_install) int32_t core_mod_install(const uint8_t *p, uint32_t n)
 {
-    uint32_t e = n > 6u ? p[6] : NENGINES, k = NMOD;
-    for (uint32_t j = 0; j < NMOD && k == NMOD; j++) if (mods[j].len && mods[j].engine == e) k = j;
+    uint32_t uid = core_head_uid(p, n), k = NMOD;
+    for (uint32_t j = 0; j < NMOD && k == NMOD; j++) if (uid && mods[j].len && (uint32_t)mods[j].uid == uid) k = j;
     for (uint32_t j = 0; j < NMOD && k == NMOD; j++) if (!mods[j].len) k = j;
     if (k == NMOD) return -1;
     int rc = mod_put_begin(k, n);
     if (!rc) rc = mod_put_write(k, 0, p, n);
     return rc ? rc : mod_put_commit(k);
 }
-/* the CRC (its head's) of the file in the pool that plays as engine e, 0 none: the page puts its own file in when the
- * NOR it kept holds another */
-EXPORT(core_mod_crc) uint32_t core_mod_crc(uint32_t e)
+/* the CRC (its head's) of the file in the pool whose uid is uid, 0 none: the page puts its own file in when the NOR it
+ * kept holds another */
+EXPORT(core_mod_crc_of) uint32_t core_mod_crc_of(uint32_t uid)
 {
     mod_file3_t f;
-    for (uint32_t k = 0; k < NMOD; k++)
-        if (mods[k].len && mods[k].engine == e && mod_open(k) && !mod_rd(k, 0, &f, sizeof f))
+    for (uint32_t k = 0; uid && k < NMOD; k++)
+        if (mods[k].len && (uint32_t)mods[k].uid == uid && mod_open(k) && !mod_rd(k, 0, &f, sizeof f))
             return f.crc;
     return 0;
 }
@@ -422,7 +437,7 @@ EXPORT(core_boot) uint32_t core_boot(uint32_t keep)
 {
     if (!keep) memset(nor, 0xFF, sizeof nor);
 #ifdef CORE_MODULES
-    mod_host_desc = core_desc;                          /* (the loader's descriptors: the linked modules') */
+    mod_host_desc_id = core_desc_id;                    /* (the loader's descriptors: the linked modules') */
 #endif
     settings_init();
     persist_boot();
@@ -756,7 +771,7 @@ static int boot_modules(void)
         uint32_t n = (uint32_t)fread(scratch, 1, sizeof scratch, f);
         fclose(f);
         int32_t rc = 0;
-        if (core_mod_link(desc[i]) || (rc = core_mod_install(scratch, n)) < 0) { printf("core: %s not installed (%d)\n", path, (int)rc); return 1; }
+        if (core_mod_link(desc[i], core_head_uid(scratch, n)) || (rc = core_mod_install(scratch, n)) < 0) { printf("core: %s not installed (%d)\n", path, (int)rc); return 1; }
     }
     core_poll(100);
     core_boot(1);

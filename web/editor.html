@@ -1570,10 +1570,30 @@ const MODS = {
     return { engine: b[6], total, image: v.getUint32(12, true), name: String.fromCharCode(...b.slice(32, 48)).replace(/\0.*$/, ""),
       version: v.getUint16(48, true), npresets: b[50], key: v.getUint32(52, true), host: v.getUint16(56, true) };
   },
+  /* a file's ID (its IDNT chunk, version 2: 8 bytes little endian) as a BigInt, 0n none */
+  id(b) {
+    const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    if (b.length < 60 || !(b[7] & 1)) return 0n;
+    for (let at = 60 + v.getUint32(12, true) + 4 * v.getUint32(20, true); at + 8 <= b.length; at += 8 + ((v.getUint32(at + 4, true) + 3) & ~3))
+      if (v.getUint32(at, true) === 0x544E4449 && v.getUint32(at + 4, true) === 96 && b[at + 16] === 2) return v.getBigUint64(at + 8, true);
+    return 0n;
+  },
   async list(rq, opt) { return MODS.parseList(await rq(req.moduleList(), opt)); },
-  /* into slot k (or the slot holding its engine, else the first empty one); progress(done, total) */
+  /* slot k's file's ID (op 5: u70 at 19), 0n none or a firmware before IDs */
+  async slotId(rq, k) {
+    const a = await rq([CMD.MODULE, [5, k & 0x7F]], { timeout: 4000, retries: 0 });
+    let id = 0n;
+    if (a.length === 30 && !a[0]) for (let j = 9; j >= 0; j--) id = id << 7n | BigInt(a[19 + j] & 0x7F);
+    return id;
+  },
+  /* into slot k (or the slot holding the same synth: its ID when the file has one, else its engine; else the first
+   * empty one); progress(done, total) */
   async upload(rq, bytes, k, progress) {
-    const h = MODS.head(bytes), list = await MODS.list(rq);
+    const h = MODS.head(bytes), list = await MODS.list(rq), id = MODS.id(bytes);
+    if (k == null && id) {
+      k = -1;
+      for (const s of list.slots) if (s.len && (await MODS.slotId(rq, s.slot)) === id) { k = s.slot; break; }
+    }
     if (k == null) k = list.slots.findIndex((s) => s.len && s.engine === h.engine);
     if (k < 0) k = list.slots.findIndex((s) => !s.len);
     if (k < 0) throw new Error("every module slot is in use: delete one first");
@@ -2437,19 +2457,31 @@ function makeMockDevice(opt = {}) {
         break;
       }
       case CMD.MODULE: {                         /* synth modules: four slots, a file kept as sent (never played) */
+        /* the same synth: the same ID when both files have one, else the same number (a file without an ID) */
+        const sameSynth = (x, h, id) => { const xi = x.buf ? MODS.id(x.buf) : 0n; return id && xi ? xi === id : x.engine === h.engine; };
         st.mods ??= Array.from({ length: 8 }, () => ({ len: 0, engine: 0, name: "", buf: null }));   /* (NMOD) */
         const m = st.mods[a[1]];
         if (a[0] === 0 && a.length === 1) {
           b(0); b(0); b(8);
           for (const x of st.mods) { b(x.len ? 1 : 0); b(x.engine); b(1); b(0); for (let j = 0; j < 5; j++) b(Math.floor(x.len / 2 ** (7 * j)) & 0x7F); s(x.name); }
+        } else if (a[0] === 5 && m && a.length === 2) {   /* its file, as editor_module.c op 5: its ID (u70), signer 0 */
+          const v = m.buf ? new DataView(m.buf.buffer, m.buf.byteOffset, m.buf.byteLength) : null, id = m.buf ? MODS.id(m.buf) : 0n;
+          b(0); b(m.len ? 1 : 0); b(m.engine); b(v ? 3 : 0);
+          for (const w of [v ? v.getUint32(28, true) : 0, 0, 0]) for (let j = 0; j < 5; j++) b(Math.floor(w / 2 ** (7 * j)) & 0x7F);
+          for (let j = 0; j < 10; j++) b(Number((id >> BigInt(7 * j)) & 0x7Fn));
+          b(0);
         } else if (!m || a[0] < 1 || a[0] > 4) b(1);
         else if (a[0] === 1) { const len = a.slice(2, 7).reduce((n, x, j) => n + x * 2 ** (7 * j), 0); m.up = { len, buf: new Uint8Array(len), pos: 0 }; b(0); }
         else if (a[0] === 2) { const off = a[2] | a[3] << 7 | a[4] << 14, d = unpack7(a.slice(5)); if (!m.up || off !== m.up.pos || off + d.length > m.up.len) b(1); else { m.up.buf.set(d, off); m.up.pos += d.length; b(0); } }
         else if (a[0] === 3) {
           let h = null; try { h = m.up && m.up.pos === m.up.len ? MODS.head(m.up.buf) : null; } catch (e) { h = null; }
           if (!h) { b(5); b(0); b(0); }
-          else if (st.mods.some((x, j) => j !== a[1] && x.len && x.engine === h.engine)) { b(6); b(0); b(0); }
-          else { Object.assign(m, { len: h.total, engine: h.engine, name: h.name, buf: m.up.buf }); m.up = null; b(0); b(1); b(h.engine); }
+          else if (st.mods.some((x, j) => j !== a[1] && x.len && sameSynth(x, h, MODS.id(m.up.buf)))) { b(6); b(0); b(0); }
+          else {                                 /* (its number: the one it asks for if free, else the first free from 22: the device's handle) */
+            const taken = (e) => st.mods.some((x, j) => j !== a[1] && x.len && x.engine === e);
+            let e = h.engine; if (taken(e)) for (e = 22; taken(e); e++);
+            Object.assign(m, { len: h.total, engine: e, name: h.name, buf: m.up.buf }); m.up = null; b(0); b(1); b(e);
+          }
         } else { Object.assign(m, { len: 0, engine: 0, name: "", buf: null }); b(0); }
         break;
       }

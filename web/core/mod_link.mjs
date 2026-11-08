@@ -5,8 +5,9 @@
 // side module is linked into the core's memory and function table, as emscripten's dynamic linking does it: its data
 // at a base the core gives (core_mod_alloc), its functions after the table's (the table grows), its stack its own; it
 // imports memcpy / memset / memcmp from the core (by address too: GOT.func). Its descriptor goes to the core
-// (core_mod_link), then the device's file (the chunk left out, its CRC again) into the pool (core_mod_install): the
-// core's loader binds it to the same ABI 3 host table the device's does and plays its engine through it.
+// (core_mod_link, by the file's uid: its ID's first 4 bytes), then the device's file (the chunk left out, its CRC
+// again) into the pool (core_mod_install): the core's loader binds it to the same ABI 3 host table the device's does
+// and plays its engine through it.
 //   import { installModules } from "./mod_link.mjs";
 //   installModules(core.exports, [fileBytes, ...]) after core_boot(0); then core_boot(1)
 
@@ -81,7 +82,7 @@ export async function installModules(x, files, install = true) {
   for (const f of files) {
     const { file, wasm } = splitModule(f);
     if (!wasm) throw new Error("a module file without its WebAssembly (tools/mod_build.py --wasm)");
-    if (x.core_mod_link(await linkModule(x, wasm))) throw new Error("the core refused the module's descriptor");
+    if (x.core_mod_link(await linkModule(x, wasm), u32(file, 24))) throw new Error("the core refused the module's descriptor");
     if (!install) continue;
     const s = x.core_scratch();
     new Uint8Array(x.memory.buffer).set(file, s);

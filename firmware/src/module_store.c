@@ -16,6 +16,7 @@
 /* ---- loading: a file's bytes through rd (off, dst, n -> 0 ok) into slot k. Returns MS_LOADED or why not */
 typedef int (*mod_read_t)(uint32_t off, void *dst, uint32_t n);
 static const mod_desc_v3 *(*mod_host_desc)(uint32_t engine);   /* host tests: the module built for the host */
+static const mod_desc_v3 *(*mod_host_desc_id)(uint32_t uid);    /* .. by its file's uid (web/core: the page's links) */
 
 /* the file's head, as far as it can be checked without its body (any ABI's: an older firmware's module is known by
  * its engine and name); 0 when bad */
@@ -103,7 +104,7 @@ static int mod_load(uint32_t k, mod_read_t rd)
 #ifdef FM1_IRQ_TARGET
     const mod_desc_v3 *d = (const mod_desc_v3 *)(const void *)p;
 #else
-    const mod_desc_v3 *d = mod_host_desc ? mod_host_desc(f.engine) : 0;
+    const mod_desc_v3 *d = mod_host_desc_id ? mod_host_desc_id(f.uid) : mod_host_desc ? mod_host_desc(f.engine) : 0;
 #endif
     if (!d || !mod_dcheck(d, &f, p, f.image + f.bss))
         goto bad;

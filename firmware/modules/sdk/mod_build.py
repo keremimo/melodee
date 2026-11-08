@@ -406,7 +406,7 @@ def build(src, out, version, defs):
     out.write_bytes(head + body + chunks)
     signer = ("Melodee's key" + (" (test)" if seed == TEST_SEED else "")) if melodee and ikey else \
         f"key {ikey.hex()[:16]}" if ikey else "unsigned"
-    print(f"module {name}: {vendor}/{slug} ID {mid.hex()} ({signer}) tag {tag!r}, ABI {ABI} host {host}, engine {engine}, " +
+    print(f"module {name}: {vendor}/{slug} ID {mid[::-1].hex()} ({signer}) tag {tag!r}, ABI {ABI} host {host}, engine {engine}, " +
           (f"key {key:08x}, " if key else "") +
           f"image {len(img)} B, bss {nbss} B, {len(words)} address words, stack {need} B, {npre} presets {len(prst)} B, "
           f"schema {len(schm)} B, " + ("signed, " if ikey else "unsigned, ") +
@@ -583,7 +583,7 @@ def check(path):
     if schm and (len(schm) < 52 or zlib.crc32(schm[52:]) != struct.unpack_from("<I", schm, 48)[0]):
         raise SystemExit(f"{path}: its SCHM chunk does not check")
     signer = ("Melodee's key" if key == MELODEE_KEY else f"key {key.hex()}") if signed else "unsigned"
-    print(f"{path}: {vendor}/{slug} ({n}) ID {mid.hex()}, {signer}, engine {engine}, ABI {abi} host {host}" +
+    print(f"{path}: {vendor}/{slug} ({n}) ID {mid[::-1].hex()}, {signer}, engine {engine}, ABI {abi} host {host}" +
           f", image {image} B, bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
 
 
