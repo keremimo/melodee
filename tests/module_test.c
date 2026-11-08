@@ -190,11 +190,16 @@ static const uint32_t TW_GOLDEN[20] = {
     0xd3db4c42u, 0x83985aeeu, 0x71c4d5beu, 0x306ced21u, 0xcdf155f9u,
     0x523f744du, 0x6eceebbdu, 0xb8026cb4u, 0xe7c250fdu, 0x8f2002cbu,
 };
+/* as editor_module.c: each chunk in the editor's buffer (main_scratch, the storage's scratch too), 200 bytes so one
+ * crosses each record's end */
 static int put(uint32_t k, const uint8_t *b, uint32_t n)
 {
     int rc = mod_put_begin(k, n);
-    for (uint32_t o = 0; !rc && o < n; o += 200u)
-        rc = mod_put_write(k, o, b + o, n - o < 200u ? n - o : 200u);
+    for (uint32_t o = 0, m; !rc && o < n; o += 200u) {
+        m = n - o < 200u ? n - o : 200u;
+        memcpy(main_scratch.transfer, b + o, m);
+        rc = mod_put_write(k, o, main_scratch.transfer, m);
+    }
     return rc ? rc : mod_put_commit(k);
 }
 static int listed(uint32_t e)

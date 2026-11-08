@@ -521,6 +521,7 @@ static int mod_put_begin(uint32_t k, uint32_t len)
 static int mod_put_check(uint32_t k, uint32_t len);
 static int mod_put_write(uint32_t k, uint32_t off, const void *src, uint32_t n)
 {
+    uint8_t mod_up_rest[256];                       /* (a chunk's rest across a record's end) */
     const uint8_t *b = src;
     if (k != mod_up_slot || off != mod_up.pos + mod_up_part * ST_PROJECT_MAX || n > mod_up_len - off)
         return -1;
@@ -531,7 +532,14 @@ static int mod_put_write(uint32_t k, uint32_t off, const void *src, uint32_t n)
             return rc;
         b += m; n -= m;
         if (mod_up.pos == ST_PROJECT_MAX && mod_up_len > (mod_up_part + 1u) * ST_PROJECT_MAX) {
-            /* a record full and more to come: checked (the first one: the file's head) and published, the next begun */
+            /* a record full and more to come: checked (the first one: the file's head) and published, the next begun.
+             * The editor's chunk sits in main_scratch, the storage's own scratch: its rest is kept here first */
+            if (n && b >= (const uint8_t *)&main_scratch && b < (const uint8_t *)&main_scratch + sizeof main_scratch) {
+                if (n > sizeof mod_up_rest)
+                    return -1;
+                memcpy(mod_up_rest, b, n);
+                b = mod_up_rest;
+            }
             if ((rc = mod_up_part ? st_stream_check(&mod_up) : mod_put_check(k, mod_up_len)) != 0 ||
                 (rc = st_stream_publish(&mod_up)) != 0 ||
                 (rc = st_stream_begin(&mod_up, mod_obj(k, mod_up_part + 1u), mod_up_rec(mod_up_part + 1u))) != 0) {
