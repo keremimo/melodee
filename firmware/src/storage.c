@@ -750,6 +750,15 @@ static int st_load(uint32_t obj, void *dst, uint32_t max)
     return (int)h.len;
 }
 
+/* a committed record to read in pieces (st_read_range) without a buffer for all of it: its copy, *len its bytes; -1
+ * none */
+static int st_open(uint32_t obj, uint32_t *len)
+{
+    st_hdr_t h;
+    int cur = st_obj_ok(obj) ? st_current(obj, &h) : -1;
+    *len = cur >= 0 ? h.len : 0u;
+    return cur;
+}
 /* a committed record is there, whatever it holds (st_load: -1 for one too big for its buffer too) */
 static int st_exists(uint32_t obj)
 {

@@ -20,10 +20,14 @@ static int tone_bank_valid(const tone_bank_t *b)
     return 1;
 }
 static uint32_t program_bank_mask(uint32_t bank) { return (1u<<(bank==4u?24u:26u))-1u; }
+static int program_bank_head_ok(uint32_t magic,uint32_t used,uint32_t favorites,uint32_t bank)   /* its first 12 bytes */
+{
+    return bank<5u && magic==PROGRAM_BANK_MAGIC && !(used&~program_bank_mask(bank)) &&
+           !(favorites&~(program_bank_mask(bank)|(bank?0u:0x80000000u)));
+}
 static int program_bank_valid(const program_bank_t *b,uint32_t bank)
 {
-    if(bank>=5u || b->magic!=PROGRAM_BANK_MAGIC || (b->used&~program_bank_mask(bank)) ||
-       (b->favorites&~(program_bank_mask(bank)|(bank?0u:0x80000000u))))return 0;
+    if(!program_bank_head_ok(b->magic,b->used,b->favorites,bank))return 0;
     for(uint32_t k=0;k<PROGRAM_BANK_SLOTS;k++)if((b->used>>k&1u)&&!patch_stored_ok(MOD_SCH_STORE_PROGRAM,b->patch[k]))return 0;
     return 1;
 }
@@ -44,6 +48,25 @@ static native_fm_t *native_fm_bank(uint32_t b)
 {
     if(native_fm_cached!=b){bank_claim(BK_FM);int n=flash_ok?st_load(native_fm_obj(b),&native_fm_cache,sizeof native_fm_cache):-1;if(n!=sizeof native_fm_cache)memset(&native_fm_cache,0,sizeof native_fm_cache);native_fm_cached=(uint8_t)b;}
     return &native_fm_cache;
+}
+/* VOICE sidecar k (bank k/16's tone k%16) into raw, read from its record in pieces and the bank checked as
+ * native_fm_valid checks it: the shared bank cache (bank_buf: a user bank being converted, shared_presets.c) is left
+ * as it is; 0 none */
+static int legacy_native_tone(uint32_t k,uint8_t *raw)
+{
+    uint32_t obj=native_fm_obj(k/16u),len,h[3];
+    int c=flash_ok && k<64u?st_open(obj,&len):-1;
+    if(c<0 || len!=sizeof(native_fm_t) || st_read_range(obj,(uint32_t)c,0,h,sizeof h) || h[0]!=NATIVE_FM_MAGIC ||
+       h[1]!=(1u|16u<<16) || h[2]>>16 || !(h[2]>>(k%16u)&1u))
+        return 0;
+    for(uint32_t t=0;t<17u;t++){                   /* (each used tone checked; the one asked for read last) */
+        uint32_t i=t<16u?t:k%16u;
+        if(t<16u && !(h[2]>>t&1u))continue;
+        if(st_read_range(obj,(uint32_t)c,__builtin_offsetof(native_fm_t,tone)+i*MOD_SCH_VOICE_BYTES,raw,MOD_SCH_VOICE_BYTES) ||
+           (t<16u && !patch_stored_ok(MOD_SCH_STORE_VOICE,raw)))
+            return 0;
+    }
+    return 1;
 }
 #endif
 #else
