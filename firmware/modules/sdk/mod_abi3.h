@@ -23,6 +23,10 @@
  * to), then chunks if flags says so (the factory presets PRST, the schema SCHM, who it is IDNT, its signature SIGN
  * last). `bss` zero bytes follow the image in
  * RAM. crc = CRC-32 of every byte after the head. Little endian, 32-bit pointers (the host tests' own builds: 64-bit).
+ * A packed image (flags MOD3_FILE_PACKED, mod_build.py when it is smaller): `image` is its bytes in the file, `unpacked`
+ * the image's own (what the loader unpacks into SRAM): one byte lc + 9 lp + 45 pb (lc + lp <= MOD3_PACK_LCLP, pb <=
+ * MOD3_PACK_PB), raw LZMA1 with its end marker, zero bytes to a whole word. The address words, the chunks, the CRC and
+ * the signature are the file's bytes as they are.
  *
  * Calls: note_on, render, block and the other voice and part callbacks from the audio interrupt (one part at a time;
  * batch kernels on CPU1), bind / desc / keys / bend_range / state / preset_make from the main loop. Nothing may block or
@@ -39,6 +43,11 @@
 #define MOD3_FILE_MAGIC 0x31444D4Du              /* "MMD1": every module file's (ABI 1 and 2: older firmware's) */
 #define MOD3_MAGIC 0x33444F4Du                   /* "MOD3": the descriptor, the image's first bytes */
 #define MOD3_FILE_CHUNKS 1u                      /* mod_file3_t.flags: chunks follow the address words */
+#define MOD3_FILE_PACKED 2u                      /* .. the image is packed (above): `unpacked` its bytes in SRAM */
+#define MOD3_PACK_LCLP 1u                        /* a packed image's literal context bits, at most (lc + lp: the loader's
+                                                  * tables are 2 x (951 + 56 x 2^pb + 768 x 2^(lc + lp)) bytes, borrowed
+                                                  * from the module's own block while it unpacks) */
+#define MOD3_PACK_PB 2u
 #define MOD3_NAME_MAX 16u
 #define MOD3_IMAGE_MAX 61440u                    /* a module's code and data, at most */
 #define MOD3_BSS_MAX 4096u
@@ -439,6 +448,6 @@ typedef struct mod_file3_t {                     /* the file's head (60 bytes) *
     uint8_t rsv;
     uint32_t key;                                /* = the descriptor's */
     uint16_t host;                               /* = the descriptor's */
-    uint16_t rsv2;
+    uint16_t unpacked;                           /* MOD3_FILE_PACKED: the image's bytes unpacked; else 0 */
 } mod_file3_t;
 #define MOD3_HEAD 60u

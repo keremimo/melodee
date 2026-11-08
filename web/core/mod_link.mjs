@@ -28,7 +28,7 @@ export function splitModule(bytes) {
   if (!w) return { file: b, wasm: null };
   const file = b.slice(0, w.at);
   put32(file, 8, file.length);
-  file[7] = chunks.length > 1 ? 1 : 0;
+  file[7] = (b[7] & ~1) | (chunks.length > 1 ? 1 : 0);   /* (its other flags kept: a packed image's) */
   put32(file, 28, crc32(file.subarray(HEAD)));
   return { file, wasm: b.slice(w.at + 8, w.at + 8 + w.n) };
 }

@@ -6,7 +6,8 @@
  * whose code was running when the last run crashed is left out once (mod_blame: the noinit marker core.h mod_run), and
  * after a boot that died early with no module to blame all of them are (bootguard). A module is loaded when it is wanted (eng_module.c mod_want, mod_service below) and goes back to the
  * flash when nothing has used it for a while; an upload is loaded once when it is committed (its check). The loader
- * checks the file's head, copies the image into the audio working arena, checks the CRC while it moves the address
+ * checks the file's head, copies the image into the audio working arena (a packed one unpacked there: mod_unpack.h,
+ * mod_build.py packs an image when that is smaller), checks the CRC while it moves the address
  * words (and reads the chunks after them for it: never into SRAM), then the descriptor, and only then registers the
  * engine. A file's factory presets (its PRST chunk, module_presets.h) are read where the file is: checked when it is
  * listed, their names and categories for the lists, one preset unpacked when it is picked, the module loaded or not */
@@ -15,22 +16,25 @@
 
 /* ---- loading: a file's bytes through rd (off, dst, n -> 0 ok) into slot k. Returns MS_LOADED or why not */
 typedef int (*mod_read_t)(uint32_t off, void *dst, uint32_t n);
+#include "mod_unpack.h"                             /* (a packed image: MOD3_FILE_PACKED) */
 static const mod_desc_v3 *(*mod_host_desc)(uint32_t engine);   /* host tests: the module built for the host */
 static const mod_desc_v3 *(*mod_host_desc_id)(uint32_t uid);    /* .. by its file's uid (web/core: the page's links) */
 
+/* the image's bytes in SRAM (a packed one's unpacked) */
+static uint32_t mod_ram(const mod_file3_t *f) { return f->flags & MOD3_FILE_PACKED ? f->unpacked : f->image; }
 /* the file's head, as far as it can be checked without its body (any ABI's: an older firmware's module is known by
  * its engine and name); 0 when bad */
 static int mod_head_ok(const mod_file3_t *f, uint32_t len)
 {
-    uint32_t body = MOD3_HEAD + f->image + 4u * f->nrel;   /* (then the chunks, if any: module_presets.h) */
+    uint32_t body = MOD3_HEAD + f->image + 4u * f->nrel, ram = mod_ram(f);   /* (then the chunks, if any) */
     if (f->magic != MOD3_FILE_MAGIC || f->total != len || !mod_engine_ok(f->engine) || !f->name[0])
         return 0;
     if (f->abi != MOD3_ABI)
         return f->abi == 1u || f->abi == 2u;        /* (ABI 1, ABI 2: an older firmware's, MS_STALE) */
-    return !(f->image % 4u) && f->nrel <= f->image / 4u && f->image <= len && f->nrel <= len &&
-           !(f->flags & ~MOD3_FILE_CHUNKS) &&
+    return !(f->image % 4u) && !(ram % 4u) && f->nrel <= ram / 4u && f->image <= len && f->nrel <= len &&
+           !(f->flags & ~(MOD3_FILE_CHUNKS | MOD3_FILE_PACKED)) && (f->flags & MOD3_FILE_PACKED || !f->unpacked) &&
            (f->flags & MOD3_FILE_CHUNKS ? f->total >= body + 8u && !((f->total - body) % 4u) : f->total == body) &&
-           f->image >= sizeof(mod_desc_v3) && f->image <= MOD3_IMAGE_MAX && f->bss <= MOD3_BSS_MAX;
+           ram >= sizeof(mod_desc_v3) && ram <= MOD3_IMAGE_MAX && f->bss <= MOD3_BSS_MAX;
 }
 /* a file this firmware plays: ABI 3, a host table it has, no legacy data (a nonzero key: host 1..3's firmware data,
  * gone since host 4) */
@@ -69,16 +73,28 @@ static int mod_load(uint32_t k, mod_read_t rd)
         return s->state;
     if (rd(0, &f, sizeof f) || !mod_head_ok(&f, s->len) || !mod_head_mine(&f) || f.engine != s->want)
         goto gone;
-    uint32_t body = (f.image + f.bss + 7u) & ~7u;   /* (then its engine_t: mod_register) */
+    uint32_t ram = mod_ram(&f), body = (ram + f.bss + 7u) & ~7u;   /* (then its engine_t: mod_register) */
+    uint32_t keep = body + (uint32_t)sizeof(engine_t), need = keep;
+    if (f.flags & MOD3_FILE_PACKED && need < ram + MOD_LZ_WORK)
+        need = ram + MOD_LZ_WORK;                   /* (the unpacker's tables after the image, until it is unpacked) */
     uint32_t g = mod_guard();
-    uint8_t *p = resource_allocate_code(RES_MODULE0 + k, body + (uint32_t)sizeof(engine_t));
+    uint8_t *p = resource_allocate_code(RES_MODULE0 + k, need);
     mod_unguard(g);
     if (!p)
         return s->state = MS_NORAM;
     uint32_t crc = 0xFFFFFFFFu, w[32], base = (uint32_t)(uintptr_t)p;
-    if (rd(MOD3_HEAD, p, f.image))
-        goto bad;
-    crc = st_crc32_update(crc, p, f.image);
+    if (f.flags & MOD3_FILE_PACKED) {
+        if (!mod_unpack(p, ram, rd, MOD3_HEAD, f.image, &crc, p + ram))
+            goto bad;
+        memset(p + ram, 0, keep - ram);             /* (.bss and the engine_t zero again) */
+        g = mod_guard();
+        (void)resource_resize(RES_MODULE0 + k, keep);   /* (the tables' room given back) */
+        mod_unguard(g);
+    } else {
+        if (rd(MOD3_HEAD, p, f.image))
+            goto bad;
+        crc = st_crc32_update(crc, p, f.image);
+    }
     for (uint32_t r = 0; r < f.nrel; r += 32u) {    /* the address words, 32 at a time */
         uint32_t m = f.nrel - r < 32u ? f.nrel - r : 32u;
         if (rd(MOD3_HEAD + f.image + 4u * r, w, 4u * m))
@@ -86,7 +102,7 @@ static int mod_load(uint32_t k, mod_read_t rd)
         crc = st_crc32_update(crc, w, 4u * m);
         for (uint32_t j = 0; j < m; j++) {
             uint8_t *a = p + w[j];
-            if (w[j] > f.image - 4u)
+            if (w[j] > ram - 4u)
                 goto bad;
             uint32_t v = (a[0] | (uint32_t)a[1] << 8 | (uint32_t)a[2] << 16 | (uint32_t)a[3] << 24) + base;
             a[0] = (uint8_t)v; a[1] = (uint8_t)(v >> 8); a[2] = (uint8_t)(v >> 16); a[3] = (uint8_t)(v >> 24);
@@ -106,7 +122,7 @@ static int mod_load(uint32_t k, mod_read_t rd)
 #else
     const mod_desc_v3 *d = mod_host_desc_id ? mod_host_desc_id(f.uid) : mod_host_desc ? mod_host_desc(f.engine) : 0;
 #endif
-    if (!d || !mod_dcheck(d, &f, p, f.image + f.bss))
+    if (!d || !mod_dcheck(d, &f, p, ram + f.bss))
         goto bad;
 #ifdef FM1_IRQ_TARGET
     fm1_code_sync();                                /* the new code, before anything calls it */

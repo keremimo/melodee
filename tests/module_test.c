@@ -735,20 +735,48 @@ int main(int argc, char **argv)
         mod_delete(0);
         rc = put(0, file, n);
         blk = resource[RES_MODULE0].ptr;
-        uint32_t base = (uint32_t)(uintptr_t)blk, w[8], ok = rc == MS_LOADED && blk && f.abi == MOD3_ABI && !f.key;
+        uint32_t ram = mod_ram(&f), base = (uint32_t)(uintptr_t)blk, w[8],
+                 ok = rc == MS_LOADED && blk && f.abi == MOD3_ABI && !f.key;
         if (ok) {
             memcpy(w, blk, sizeof w);
             uint32_t eng = w[6] - base, lab, non, ren;
-            ok = w[0] == MOD3_MAGIC && w[5] - base < f.image && !strcmp((const char *)blk + (w[5] - base), "TRIO") &&
-                 eng + 196u <= f.image && w[7] - base < f.image && blk[12] == 6 && blk[13] == 5;
+            ok = w[0] == MOD3_MAGIC && w[5] - base < ram && !strcmp((const char *)blk + (w[5] - base), "TRIO") &&
+                 eng + 196u <= ram && w[7] - base < ram && blk[12] == 6 && blk[13] == 5;
             if (ok) {
                 memcpy(&lab, blk + eng + 12u, 4); memcpy(&non, blk + eng + 188u, 4); memcpy(&ren, blk + eng + 192u, 4);
-                ok = lab - base < f.image && !strcmp((const char *)blk + (lab - base), "WAVE") && non - base < f.image &&
-                     ren - base < f.image && eng_npresets(6) == 5 && !strcmp(eng_preset(ENGINES[6], 3)->name, "RING BELL");
+                ok = lab - base < ram && !strcmp((const char *)blk + (lab - base), "WAVE") && non - base < ram &&
+                     ren - base < ram && eng_npresets(6) == 5 && !strcmp(eng_preset(ENGINES[6], 3)->name, "RING BELL");
             }
         }
         bad += check("pi32v2 TRIO file (ABI 3): CRC, every address word moved, descriptor, engine and strings found through "
                      "them, its presets from its PRST chunk", ok);
+        /* its image packed (tools/mod_build.py: smaller so): unpacked in its block, the unpacker's room given back. The
+         * head is in no CRC or signature: one that says another size, a packed bit gone (its size kept), or a damaged
+         * props byte (the CRC wrong: loaded to find out) is not loaded, its block given back */
+        if (f.flags & MOD3_FILE_PACKED) {
+            uint32_t keep = ((((ram + f.bss + 7u) & ~7u) + (uint32_t)sizeof(engine_t)) + 3u) & ~3u;
+            int shrunk = rc == MS_LOADED && resource[RES_MODULE0].size == keep && f.image < ram, r[4];
+            mod_file3_t g = f;
+            for (int i = 0; i < 4; i++) {
+                memcpy(file2, file, n);
+                g = f;
+                if (i < 2)
+                    g.unpacked = (uint16_t)(i ? ram + 4u : ram - 4u);
+                else if (i == 2)
+                    g.flags = MOD3_FILE_CHUNKS;
+                else
+                    file2[MOD3_HEAD] = 2u;                  /* (lc 2: past MOD3_PACK_LCLP) */
+                memcpy(file2, &g, sizeof g);
+                mod_delete(0);
+                r[i] = put(0, file2, n);
+            }
+            bad += check("a packed TRIO image: unpacked into its block, the unpacker's tables given back; another size, the "
+                         "packed bit gone, or bad props: not loaded, nothing kept in the arena",
+                         shrunk && r[0] == MS_BAD && r[1] == MS_BAD && r[2] == -2 && r[3] == MS_BAD &&
+                         !resource[RES_MODULE0].size);
+            mod_delete(0);
+        } else
+            bad += check("the built TRIO file's image is packed (tools/mod_build.py packs one when that is smaller)", 0);
     } else
         printf("persist: (no build/modules/trio.mmod: tools/mod_build.py firmware/modules/trio/trio.c)\n");
 
