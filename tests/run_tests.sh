@@ -475,6 +475,8 @@ if core && [ $TABLES = 1 ]; then
     t "USB/TRS clock, bend, sustain, ownership and panic recovery" midi_control_test -O1 $FW
     t "CLK INT as MIDI master: clock, Start and Stop on the output queues, locked to the steps" midi_clock_out_test -O1 $FW
     t "MIDI panel knobs: profiles, native edits, encoder modes and bounded foreground dispatch" midi_knob_test -O1 $FW
+    t "synth schemas: field mappings, roles, patch blobs, Motion and learned knobs by id, mutations caught" schema_test \
+        -O1 $FW
     t "MIDI timing: quantized TRS/USB recording, audio timeline, tempo changes and timer wrap" midi_timing_test -O1 $FW
     t "MIDI recording: raw events, quantization at take end, independent releases, banks and capacity" recording_test \
         -O1 $FW
@@ -518,6 +520,8 @@ if core && [ $TABLES = 1 ]; then
         -DMELODEE_BENCH_SILENT=1 $FW
     t "384 shared presets: all-engine capacity, conversion, torn writes and high-slot identity" unified_presets_test $FW
     t "persistence: deferred settings, retry and failed-save rollback" persistence_test $FW
+    t "synths' patches as bytes: a894c6f7's project, template, user presets and song sounds load byte for byte" \
+        schema_load_test -O1 $FW
     t "flash JEDEC gate: accepted parts (Puya, UCUN) enable writes, unknown IDs stay RAM-only" flash_id_test $FW
     t "first boot: foreign settings, safe defaults, ownership and interrupted cleanup" settings_origin_test $FW
     t "first boot: reset unsupported preset banks, preserve good entries and retry cuts" preset_boot_reset_test $FW
