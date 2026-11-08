@@ -300,7 +300,12 @@ static __attribute__((noinline)) void mix_prepare_batch(uint32_t n,uint32_t nt) 
     audio_batch_reserve=0;
     for(uint32_t p=0;p<nt && !audio_batch_reserve;p++){
         const engine_t *g=eng_of(trk[p].engine);
-        if(g->reserve && g->reserve(resource[RES_ENGINE0+p].ptr,resource[RES_ENGINE0+p].size))audio_batch_reserve=1;
+        if(!g->reserve)continue;
+#if MELODEE_MODULES
+        MOD_AUDIO_V(trk[p].engine,audio_batch_reserve=g->reserve(resource[RES_ENGINE0+p].ptr,resource[RES_ENGINE0+p].size)!=0);
+#else
+        audio_batch_reserve=g->reserve(resource[RES_ENGINE0+p].ptr,resource[RES_ENGINE0+p].size)!=0;
+#endif
     }
 #endif
     for(uint32_t p=0;p<nt;p++){
@@ -341,9 +346,14 @@ static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
             if(spread_on)spread_sum(part_buf);
             const engine_t *e=ENGINES[t->engine];
 #if MELODEE_DUAL_CORE
-            if(!batch_posted[p] && e->post)e->post(t,part_buf,n,(uint32_t)rendered);
+            if(!batch_posted[p] && e->post)
 #else
-            if(e->post)e->post(t,part_buf,n,(uint32_t)rendered);
+            if(e->post)
+#endif
+#if MELODEE_MODULES
+                MOD_AUDIO_V(t->engine,e->post(t,part_buf,n,(uint32_t)rendered));
+#else
+                e->post(t,part_buf,n,(uint32_t)rendered);
 #endif
         }
     }else

@@ -747,9 +747,11 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 struct { uint32_t magic, failed, pending; } bootguard __attribute__((section(".noinit")));
 /* synth modules' crash blame (eng_module.c, module_store.c mod_boot): the slot + 1 of the module whose code the audio
  * and the main loop are in (0: none), whether this run is alive (a reset on purpose clears it), a fault (main.c
- * fm1_fault) and where */
+ * fm1_fault) and where; spared: MODRUN_SPARED once a fault in a module's own code left CPU1 unbarred this power-on
+ * (eng_module.c mod_spare_core1) */
 #define MODRUN_MAGIC 0x4E55524Du
-struct { uint32_t magic; volatile uint8_t audio, loop, alive, crashed; uint32_t pc; } mod_run __attribute__((section(".noinit")));
+#define MODRUN_SPARED 0x52415053u
+struct { uint32_t magic; volatile uint8_t audio, loop, alive, crashed; uint32_t pc, spared; } mod_run __attribute__((section(".noinit")));
 static inline void reset_intended(void)         /* a reset on purpose (UBOOT, an update): not a failed boot */
 {
     bootguard.pending = 0;

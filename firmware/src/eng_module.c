@@ -76,6 +76,39 @@ static uint32_t mod_slot_of(uint32_t e)            /* the slot playing as engine
             return k;
     return NMOD;
 }
+/* the audio's calls into a part's module outside track_render_audio (mix.c: reserve, post): the crash blame's marker */
+#define MOD_AUDIO_V(e, x) do { mod_run.audio = mod_at[eng_idx(e)]; x; mod_run.audio = 0; } while (0)
+/* the slot + 1 whose block (its code, data, engine_t: module_store.c mod_load) holds address pc, 0: none. A fault
+ * there is that module's own whatever the markers say (main.c fm1_fault: the audio's marker is one byte both cores
+ * and every call site share), from its bind on */
+static uint32_t mod_own_pc(uintptr_t pc)
+{
+    for (uint32_t k = 0; k < NMOD; k++) {
+        uintptr_t at = (uintptr_t)resource[RES_MODULE0 + k].ptr;
+        if (resource[RES_MODULE0 + k].size && pc - at < resource[RES_MODULE0 + k].size)
+            return k + 1u;
+    }
+    return 0;
+}
+/* CPU1 is barred until power-off after its own fault, or a CPU0 crash with it working (fm1_core1_bar.h: its data can
+ * go bad where no check reaches). A fault in a module's own code is the module's (left out at the next start:
+ * mod_blame): CPU1 is spared for it, a CPU0 crash once a power-on (a second bars it as before: the unit may be one
+ * whose CPU1 fails), a CPU1 fault always (the device goes on, CPU1 held until the next start). 1: spared */
+static int mod_spare_core1(uintptr_t pc, int cpu0)
+{
+    if (!mod_own_pc(pc) || (cpu0 && mod_run.spared == MODRUN_SPARED))
+        return 0;
+    if (cpu0)
+        mod_run.spared = MODRUN_SPARED;
+    return 1;
+}
+/* a crash at pc (main.c fm1_fault, after crashed and pc): in a module's own code, that module is the one blamed */
+static void mod_fault_own(uintptr_t pc)
+{
+    uint32_t own = mod_own_pc(pc);
+    if (own)
+        mod_run.loop = (uint8_t)own;                /* (mod_blame: the loop's marker first) */
+}
 
 /* ---- the contract: the firmware's structs begin with ABI 3's views, its numbers are the frozen ones */
 #define MOD3_SAME(T, f, V, g) (__builtin_offsetof(T, f) == __builtin_offsetof(V, g) && \

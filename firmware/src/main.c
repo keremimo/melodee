@@ -222,17 +222,37 @@ static void smk_wheels(void)
 }
 #endif
 
+#if MELODEE_DUAL_CORE && MELODEE_CORE1_FALLBACK
+/* CPU1 retired (audio_worker.h): barred until power-off, unless it faulted in a synth module's own code (that
+ * module's bug: CPU1 comes back at the next start) */
+static void fm1_core1_retired(void)
+{
+#if MELODEE_MODULES
+    if (fm1_core1_fault.count && mod_spare_core1(fm1_core1_fault.pc, 0))
+        return;
+#endif
+    fm1_core1_bar_set();
+}
+#endif
+
 static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
 #if MELODEE_DUAL_CORE && MELODEE_CORE1_FALLBACK
+#if MELODEE_MODULES
+    if (audio_worker_online && !mod_spare_core1(c->pc, 1))   /* (a module's own fault: once a power-on, not CPU1's) */
+#else
     if (audio_worker_online)
+#endif
         fm1_core1_bar_set();                          /* one core on every boot until power-off */
 #endif
     fm1_audio_stop();
     mod_run.crashed = 1;                              /* (the next boot leaves out the module whose code ran) */
     mod_run.pc = c->pc;
+#if MELODEE_MODULES
+    mod_fault_own(c->pc);                             /* (a fault in a module's own code: that one, whatever the markers) */
+#endif
     scr_wake_now();
     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
     draw_text_line(0, 10, 240, TY_TX, "Melodee crash", UI_CRASH_INK, UI_CRASH_BG, 1);   /* (large type) */

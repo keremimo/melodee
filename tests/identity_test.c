@@ -314,6 +314,33 @@ int main(void)
     bad += check("a boot that died early with no module to blame: all left out, as before", mod_skipped &&
                  mods[0].state == MS_SKIPPED && mods[1].state == MS_SKIPPED);
     bootguard.failed = 0;
+    {   /* ---- a fault's own module by its address (main.c fm1_fault), CPU1 spared for it (fm1_core1_bar.h) */
+        static uint8_t blk[64];
+        mod_run.magic = 0; mod_run.spared = MODRUN_SPARED; mod_run.alive = 0;   /* power-on: the noinit's garbage */
+        boot();
+        bad += check("power-on: CPU1's spare back", mod_run.spared == 0);
+        void *was = resource[RES_MODULE0 + 1].ptr;
+        uint32_t was_n = resource[RES_MODULE0 + 1].size;
+        resource[RES_MODULE0 + 1].ptr = blk; resource[RES_MODULE0 + 1].size = sizeof blk;
+        uintptr_t in = (uintptr_t)(blk + 40), past = (uintptr_t)(blk + sizeof blk), fw = (uintptr_t)&mod_own_pc;
+        bad += check("an address in slot 1's block: slot 1's own (past it, or the firmware's: nobody's)",
+                     mod_own_pc(in) == 2u && !mod_own_pc(past) && !mod_own_pc(fw));
+        bad += check("a CPU0 crash in a module's own code: CPU1 spared once a power-on, the next crash bars it",
+                     mod_spare_core1(in, 1) && mod_run.spared == MODRUN_SPARED && !mod_spare_core1(in, 1));
+        bad += check(".. a CPU1 fault in a module's own code: spared (CPU1 held until the next start)",
+                     mod_spare_core1(in, 0));
+        bad += check("a crash outside every module: never spared", !mod_spare_core1(fw, 1) && !mod_spare_core1(fw, 0));
+        mod_run.alive = 1; mod_run.crashed = 1; mod_run.loop = 0; mod_run.audio = 1;   /* the marker: slot 0 */
+        mod_fault_own(in);
+        bad += check(".. its fault in slot 1's code: slot 1 named, whatever the audio's marker said", mod_run.loop == 2u);
+        resource[RES_MODULE0 + 1].ptr = was; resource[RES_MODULE0 + 1].size = was_n;
+        boot();
+        bad += check(".. the next start leaves out slot 1, not slot 0", mod_blamed == 2u &&
+                     mods[1].state == MS_SKIPPED && mods[0].state == MS_STORED);
+        bad += check(".. and a soft reset keeps the spare used", mod_run.spared == MODRUN_SPARED);
+        mod_run.alive = 0; mod_run.spared = 0;
+        boot();
+    }
     /* ---- Ed25519 */
     {
         static const char *const V[][3] = {

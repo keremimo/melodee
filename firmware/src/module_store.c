@@ -414,6 +414,8 @@ static void mod_blame(void)
 #endif
     if (mod_run.magic == MODRUN_MAGIC && mod_run.alive && (mod_run.crashed || wd))
         b = mod_run.loop ? mod_run.loop : mod_run.audio;
+    if (mod_run.magic != MODRUN_MAGIC)
+        mod_run.spared = 0;                         /* (power-on: CPU1's one spare comes back) */
     mod_blamed = (uint8_t)(b <= NMOD ? b : 0u);
     mod_run.magic = MODRUN_MAGIC;
     mod_run.audio = mod_run.loop = mod_run.crashed = 0;
