@@ -183,6 +183,31 @@ int main(void)
     boot();
     bad += check("records' owners: the default (DRUM's, the manifest's General MIDI kit synth) and one kept by the map record",
                  rec_owner_uid(0) == 0x86C271CFu && rec_owner_uid(3) == 0x12345678u);
+    {   /* an editor's PUT (a backup object, a module upload) is one stream over many messages, the main loop running
+         * between them: the map record's save waits for it (else the stream goes stale: the PUT fails, rc 4) */
+        static uint8_t body[1000];
+        st_stream_t w;
+        eng_map_dirty = 1;                          /* (a save owed) */
+        int rc = st_stream_begin(&w, st_proj_obj(2), sizeof body);
+        mod_service(1000);
+        uint32_t g = st_stream_generation;
+        rc |= st_stream_write(&w, body, 500);
+        mod_service(2000);
+        rc |= st_stream_write(&w, body + 500, 500);
+        mod_service(3000);
+        int waited = eng_map_dirty && st_stream_generation == g && w.generation == g;
+        mod_service(5100);                          /* (no write for 2 s: an abandoned stream, the map saved) */
+        bad += check("the map record waits while a stream is being written (an editor's PUT), at most 2 s past its last "
+                     "write", !rc && waited && !eng_map_dirty && st_stream_generation != g);
+        eng_map_dirty = 1;
+        rc = st_stream_begin(&w, st_proj_obj(2), 8);
+        mod_service(5200);
+        rc |= st_stream_write(&w, body, 8);
+        int held = eng_map_dirty;
+        (void)st_stream_publish(&w);                /* (the stream closed: published or refused) */
+        mod_service(5300);
+        bad += check(".. and once it is published, at once", !rc && held && !eng_map_dirty);
+    }
     /* ---- the crash blame */
     mod_run.magic = MODRUN_MAGIC; mod_run.alive = 1; mod_run.crashed = 1; mod_run.loop = 2; mod_run.audio = 1;
     boot();

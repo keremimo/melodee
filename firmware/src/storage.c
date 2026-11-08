@@ -471,6 +471,8 @@ static uint32_t st_pool_address(const st_hdr_t *h, uint32_t off, uint32_t *span)
     return at + ST_GUARD_OFF + ST_GUARD_LEN + (b - ST_RUN0);
 }
 static uint32_t st_stream_generation;
+static uint32_t st_stream_open;                     /* the generation of a stream begun and not yet published (0: none) */
+static uint32_t st_stream_activity;                 /* its begins and writes counted (module_store.c: still being written) */
 /* New records use their pool bitmap. Legacy reads retain the five-sector base
  * plus two padded extensions, allowing migration without moving committed data. */
 static uint32_t st_address_at(uint32_t obj, uint32_t copy, uint32_t off, uint32_t *span,uint32_t payload)

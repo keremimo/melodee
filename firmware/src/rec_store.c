@@ -155,6 +155,8 @@ static int rec_put_commit(st_stream_t *w, uint32_t u)
         rec_uid[u] = keep;
         return rc ? rc : -2;
     }
+    if (rec_put_owner == rec_owner_uid(MOD3_NREC))
+        rec_uid[u] = 0;                             /* (the default owner's: nothing for the map record to keep) */
     if (rec_uid[u] != keep)
         eng_map_dirty = 1;                          /* (its owner kept in the map record) */
     (void)rec_scan_slot(u);

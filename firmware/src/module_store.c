@@ -496,7 +496,14 @@ static void mod_service(uint32_t now)
             mods[k].state = MS_STORED;
         }
     }
-    eng_map_service(!transport_busy());             /* (a module's new number kept once nothing plays) */
+    static uint32_t act, at;                        /* (a stream still being written: 2 s since its last write at most) */
+    if (act != st_stream_activity) {
+        act = st_stream_activity;
+        at = now;
+    }
+    /* a module's new number kept once nothing plays and no stream is being written (an editor's upload or backup PUT
+     * over many messages: a save meanwhile would leave it stale) */
+    eng_map_service(!transport_busy() && (!st_stream_open || now - at >= 2000u));
 }
 
 /* ---- an upload (editor_module.c): begin with the file's length, write its bytes in order, commit. A file longer

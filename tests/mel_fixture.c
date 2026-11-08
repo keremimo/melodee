@@ -326,6 +326,7 @@ static int do_verify(void)
     /* the device test_mel.mjs imported into: KIT 1 held the 808 kit already; the page sent KIT 4 and the project */
     n = load("kit-808.bin", big, sizeof big);
     bad += check("mel: a kit record goes in through the backup's PUT", put_object(92, big, n) == 0 && rec_len[0] == n);
+    bad += check("mel: .. its owner the default (DRUM's): the engine map as it was, nothing to save", !rec_uid[0] && !eng_map_dirty);
     n = load("out-kit-12.bin", big, sizeof big);
     uint32_t n909 = load("kit-909.bin", kit[0], sizeof kit[0]);
     bad += check("mel: the kit the page sent is the file's, byte for byte, and plays", n == n909 && !memcmp(big, kit[0], n) &&
