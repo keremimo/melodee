@@ -4,7 +4,8 @@
  * records web/convert/legacy.c wrote through its own backup protocol, as an FM-1 running 2.0 takes them from the web
  * installer, and plays a project for the parity renders (tests/convert_test.sh):
  *   check_native MODDIR put DIR          each DIR/v2-<id>.bin PUT as object id; rc per object, then the LIST
- *   check_native MODDIR render REC S OUT  a 2.0 project record in slot 1, played S seconds (interleaved float) */
+ *   check_native MODDIR render REC S OUT [KITDIR]  a 2.0 project record in slot 1, played S seconds (interleaved
+ *                                       float); KITDIR's v2-92..99.bin (KIT2) put first */
 #include "melodee_core.c"
 #include "bk_client.h"
 #define PP_ID(t) (eng_map[(t)->eng_req % NENGINES].uid)
@@ -45,7 +46,7 @@ static uint32_t ck_read(const char *path, uint8_t *b, uint32_t max)
 }
 int main(int argc, char **argv)
 {
-    if (argc < 3 || ck_boot_modules(argv[1])) { printf("usage: check_native MODDIR put DIR | presets DIR OUT | render REC S OUT\n"); return 2; }
+    if (argc < 3 || ck_boot_modules(argv[1])) { printf("usage: check_native MODDIR put DIR | presets DIR OUT | render REC S OUT [KITDIR]\n"); return 2; }
     if (argc == 4 && !strcmp(argv[2], "put")) {
         uint32_t bad = 0;
         for (uint32_t id = 0; id < 100u; id++) {
@@ -79,7 +80,14 @@ int main(int argc, char **argv)
                 if (favorite_has(e, p)) printf("star %.16s %u\n", eng_map[e].name, (unsigned)p);
         return 0;
     }
-    if (argc == 6 && !strcmp(argv[2], "render")) {
+    if ((argc == 6 || argc == 7) && !strcmp(argv[2], "render")) {   /* (KITDIR: its v2-92..99.bin in first) */
+        for (uint32_t id = 92; argc == 7 && id <= 99u; id++) {
+            char path[600];
+            snprintf(path, sizeof path, "%s/v2-%u.bin", argv[6], (unsigned)id);
+            uint32_t n = ck_read(path, ck_buf, sizeof ck_buf), rc;
+            if (n && (rc = lg_bk_put(id, ck_buf, n)) != 0) { printf("check: kit %u refused (%#x)\n", (unsigned)id, (unsigned)rc); return 1; }
+        }
+        if (argc == 7) core_poll(20);                   /* (as legacy.c lg_kits_in) */
         uint32_t n = ck_read(argv[3], ck_buf, sizeof ck_buf), rc, secs = (uint32_t)atoi(argv[4]);
         if ((rc = core_load_record(ck_buf, n, 0)) != 0) { printf("check: load %u\n", (unsigned)rc); return 1; }
         core_poll(30);

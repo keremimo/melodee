@@ -372,12 +372,171 @@ static uint32_t lg_bank(uint32_t b, uint8_t *out)   /* bank b -> UPB3 in out: it
     for (uint32_t i = 0; i < n; i++) mod_put64(m + 8u + 8u * i, ids[i]);
     return sizeof head + UP_PER_BANK * 206u + 8u + 8u * n;
 }
+/* ---- the user kits (DRUM KIT 9..16 -> SAMPLER KIT 1..8). 1.x struck the 909's eleven drums by the note (DRUM's
+ * drum_map.c drum909_ins); 2.0's SAMPLER strikes pad n on C4 + n and any other note the pad the 808's General MIDI map
+ * gives it (kits/drum_map.c drum_user_pad). Drum d's take becomes pad d (lg_kit: the eleven are the sixteen's first
+ * eleven), so the lanes' notes and most of a GM beat strike the same take; a note the two maps send apart (the rides,
+ * the tambourine, every note from C4) becomes C4 + d (lg_uk_note). Both maps' tables as both releases have them */
+enum { LG_PUNCH, LG_ROUND, LG_SNARE, LG_CLAP, LG_HATC, LG_HATO, LG_TOM, LG_CONGA, LG_RIM, LG_CLAVE, LG_BELL, LG_CYM };
+static const uint8_t LG_ROLE[47] = {                    /* GM 35..81: its role (drum_map.c DRUM_GM[][0]) */
+    LG_PUNCH, LG_PUNCH, LG_RIM, LG_SNARE, LG_CLAP, LG_SNARE, LG_TOM, LG_HATC, LG_TOM, LG_HATC, LG_TOM, LG_HATO,
+    LG_TOM, LG_TOM, LG_CYM, LG_TOM, LG_CYM, LG_CYM, LG_BELL, LG_HATC, LG_CYM, LG_BELL, LG_CYM, LG_CLAVE,
+    LG_CYM, LG_CONGA, LG_CONGA, LG_CONGA, LG_CONGA, LG_CONGA, LG_TOM, LG_TOM, LG_BELL, LG_BELL, LG_HATC, LG_HATC,
+    LG_CLAVE, LG_CLAVE, LG_HATC, LG_HATC, LG_CLAVE, LG_CLAVE, LG_CLAVE, LG_CONGA, LG_CONGA, LG_BELL, LG_BELL};
+enum { LG_LKICK, LG_LSNARE, LG_LCLAP, LG_LHATC, LG_LHATO, LG_LTOM, LG_LRIM, LG_LBELL };
+static const uint8_t LG_LANE[12] = {LG_LKICK, LG_LKICK, LG_LSNARE, LG_LCLAP, LG_LHATC, LG_LHATO, LG_LTOM, LG_LTOM,
+                                    LG_LRIM, LG_LRIM, LG_LBELL, LG_LBELL};   /* a role's lane (DV_TYPE_LANE) */
+enum { LG_BD, LG_SD, LG_LT, LG_MT, LG_HT, LG_RS, LG_CP, LG_CH, LG_OH, LG_CR, LG_RD };   /* the 909's (D9_*) */
+static uint32_t lg_gm(uint32_t n) { return n >= 35u && n <= 81u ? n : 36u + (n + 120u - 36u) % 12u; }
+static uint32_t lg_v1_drum(uint32_t n)                  /* 1.x: drum909_ins */
+{
+    if (n == 49u || n == 52u || n == 55u || n == 57u) return LG_CR;
+    if (n == 51u || n == 53u || n == 59u || n == 56u) return LG_RD;
+    switch (LG_LANE[LG_ROLE[lg_gm(n) - 35u]]) {
+    case LG_LKICK: return LG_BD; case LG_LSNARE: return LG_SD; case LG_LCLAP: return LG_CP;
+    case LG_LHATC: return LG_CH; case LG_LHATO: return LG_OH; case LG_LRIM: return LG_RS;
+    default: return n < 45u ? LG_LT : n < 48u ? LG_MT : LG_HT;
+    }
+}
+static uint32_t lg_v2_pad(uint32_t n)                   /* 2.0: drum_user_pad (the 808's instruments, then its pads) */
+{
+    enum { BD, SD, LT, MT, HT, LC, MC, HC, RS, CL, CP, MA, CB, CY, OH, CH, X = 255 };
+    static const uint8_t GM[47] = {BD, BD, RS, SD, CP, SD, LT, CH, LT, CH, MT, OH, MT, HT, CY, HT, CY, CY, CY, MA, CY, CB,
+                                   CY, X, CY, HC, MC, HC, MC, LC, X, X, X, X, MA, MA, X, X, X, X, CL, CL, CL, X, X, X, X};
+    static const uint8_t OF_ROLE[12] = {BD, BD, SD, CP, CH, OH, MT, MC, RS, CL, CB, CY};
+    static const uint8_t PAD[16] = {LG_BD, LG_SD, LG_LT, LG_MT, LG_HT, 11, 12, 13, LG_RS, 14, LG_CP, 15, LG_RD, LG_CR, LG_OH, LG_CH};
+    if (n - 60u < 16u) return n - 60u;
+    uint32_t g = lg_gm(n), k = GM[g - 35u];
+    return PAD[k == X ? OF_ROLE[LG_ROLE[g - 35u]] : k];
+}
+static uint32_t lg_uk_note(uint32_t n) { uint32_t d = lg_v1_drum(n); return lg_v2_pad(n) == d ? n : 60u + d; }
+static int lg_is_uk(uint32_t e, int32_t kit) { return e == lg_drum() && kit >= 9 && kit <= 16; }
+static int lg_sound_uk(uint32_t id)                     /* a song sound (1..) is a user kit's */
+{
+    const song_sound_t *s = song_sound_get(id);
+    return s && lg_is_uk(s->engine, (int32_t)s->p[P_E0] - 64);
+}
+/* the runtime's notes played by a user kit (each pattern's own sound, else its part's) as SAMPLER strikes the same
+ * takes: the steps' notes (the lanes' hits strike the same pads) and the recorded notes */
+static void lg_uk_notes(void)
+{
+    uint8_t uk[NTRK][NPAT];
+    uint32_t moved = 0;
+    for (uint32_t k = 0; k < NTRK; k++) {
+        int part = k < NPART && lg_is_uk(trk[k].eng_req, motion_base_value(&trk[k], P_E0));
+        for (uint32_t b = 0; b < NPAT; b++) {
+            uint32_t id = pattern_sound_id(k, b);
+            uk[k][b] = (uint8_t)(id ? lg_sound_uk(id) : part);
+        }
+        for (uint32_t r = 0; r < chain_config.count; r++) {   /* (a section's own sound for the track) */
+            uint32_t id = chain_config.sound[r][k], b = chain_bank(r, k);
+            if (id && b < NPAT && lg_sound_uk(id) != uk[k][b]) {
+                lg_note("  track %u pattern %u: played by a user kit and by another sound: its notes kept\n",
+                        (unsigned)k + 1u, (unsigned)b + 1u);
+                uk[k][b] = 2u;
+            }
+        }
+        for (uint32_t b = 0; b < trk_npat(k); b++) {
+            if (uk[k][b] != 1u) continue;
+            pattern_t p;
+            uint32_t n = 0;
+            pattern_read(k, b, &p);
+            for (uint32_t i = 0; i < NSTEP; i++)
+                for (uint32_t j = 0; j < p.step[i].n && j < 4u; j++) {
+                    uint32_t v = lg_uk_note(p.step[i].note[j]);
+                    n += v != p.step[i].note[j];
+                    p.step[i].note[j] = (uint8_t)v;
+                }
+            if (n && !pattern_write(k, b, &p)) lg_note("  track %u pattern %u: its notes not moved\n", (unsigned)k + 1u, (unsigned)b + 1u);
+            else moved += n;
+        }
+    }
+    for (uint32_t i = 0; i < RECORD_MAX; i++) {
+        recorded_note_t *r = &recording[i];
+        uint32_t o = recorded_owner(r);
+        if (!r->vel || o >= NTRK * NPAT || uk[o / NPAT][o % NPAT] != 1u) continue;
+        uint32_t v = lg_uk_note(recorded_note(r));
+        if (v != recorded_note(r)) { recorded_set_note(r, v); moved++; }
+    }
+    recording_reindex();
+    if (moved) lg_note("  %u user kit note(s) moved to the pads' C4 .. D#5 (the same drums as in 1.x)\n", (unsigned)moved);
+}
+/* (the agogos and triangles, GM 67, 68, 80, 81, struck 1.x's high tom on the bell lane's DRUM MIX level; C4 + 4 is on
+ * the tom lane's) */
+
+/* a user kit: 1.x's KIT1 record (backup objects 92..99: its payload, slice k at byte 8 k) -> 2.0's KIT2 blob (a head,
+ * then a PAD2 record a pad: drum d's take on pad d, its map's settings with it). out: at least 16 x the input; its
+ * bytes, 0: no take (the kit empty), -1 not a kit 1.x played */
+#define V1_KIT_MAGIC 0x3154494Bu                         /* KIT1 (DRUM's drum_kit.h, frozen) */
+#define V1_KIT_BYTES 616u
+#define V2_PAD_MAGIC 0x32444150u                         /* PAD2 (SAMPLER's kits/drum_kit.h drk_pad_t) */
+#define V2_PAD_BYTES 72u
+#define V2_BOX_MAGIC 0x3254494Bu                         /* KIT2 (drk_box_t) */
+#define V2_BOX_BYTES 88u
+static uint32_t lg_r16(const uint8_t *b) { return b[0] | (uint32_t)b[1] << 8; }
+static uint32_t lg_r32(const uint8_t *b) { return lg_r16(b) | lg_r16(b + 2) << 16; }
+static void lg_w16(uint8_t *b, uint32_t v) { b[0] = (uint8_t)v; b[1] = (uint8_t)(v >> 8); }
+static void lg_w32(uint8_t *b, uint32_t v) { lg_w16(b, v); lg_w16(b + 2, v >> 16); }
+static int32_t lg_kit(const uint8_t *in, uint32_t n, uint32_t slot, uint8_t *out)
+{
+    static const uint8_t NS[4] = {58, 29, 19, 14};      /* samples per slice of each mode (drum_kit.h DRK_NS) */
+    const uint8_t *map = in + 20u, *smp = in + 130u, *loops = in + 264u;
+    uint32_t nsmp = n >= V1_KIT_BYTES ? in[6] : 0u, at = V2_BOX_BYTES, used = 0, spare = 11u;
+    if (n < V1_KIT_BYTES || (n & 7u) || lg_r32(in) != V1_KIT_MAGIC || lg_r16(in + 4) != V1_KIT_BYTES || in[7] != 11u ||
+        nsmp > 11u)
+        return -1;
+    memset(out, 0, V2_BOX_BYTES);
+    lg_w32(out, V2_BOX_MAGIC); out[4] = (uint8_t)V2_BOX_BYTES; out[6] = 16u;
+    {                                                   /* its name, but 1.x's "KIT n" for its own slot: none */
+        char def[8];
+        snprintf(def, sizeof def, "KIT %u", (unsigned)slot + 1u);
+        if (strncmp((const char *)in + 8, def, 12)) memcpy(out + 8, in + 8, 12);
+    }
+    for (uint32_t pass = 0; pass < 2u; pass++)
+        for (uint32_t d = 0; d < 11u; d++) {
+            const uint8_t *m = map + 10u * d;
+            uint32_t take = m[pass], pad = pass ? spare : d;
+            if (take == 0xFFu) continue;
+            if (take >= nsmp) return -1;
+            if (pass) {                                 /* (an alternate take, 1.x's closed hats': a pad of its own) */
+                if (spare >= 16u) { lg_note("  kit %u: an alternate take left out (no pad free)\n", (unsigned)slot + 1u); continue; }
+                lg_note("  kit %u: drum %u's alternate take on pad %u (it no longer alternates)\n", (unsigned)slot + 1u, (unsigned)d + 1u, (unsigned)pad + 1u);
+                spare++;
+            }
+            const uint8_t *s = smp + 12u * take;
+            uint32_t first = lg_r16(s), ns = lg_r16(s + 2), loop_at = lg_r16(s + 4), loop_slice = lg_r16(s + 6);
+            uint32_t k = first, idx = 0, st = s[11];
+            if (first < V1_KIT_BYTES / 8u || !ns || st >= nsmp) return -1;
+            while (idx < ns) {                          /* (its slices, walked by their modes) */
+                if (8u * k + 8u > n) return -1;
+                idx += NS[in[8u * k + 3u] >> 6];
+                k++;
+            }
+            uint8_t *h = out + at;
+            memset(h, 0, V2_PAD_BYTES);
+            lg_w32(h, V2_PAD_MAGIC); lg_w16(h + 4, V2_PAD_BYTES); h[6] = (uint8_t)pad; h[7] = 0;
+            lg_w32(h + 8, ns); lg_w32(h + 12, loop_at); lg_w32(h + 16, loop_slice);
+            lg_w16(h + 20, lg_r16(s + 8));              /* inc */
+            lg_w16(h + 22, 1024u);                      /* gain: unity (Q10), as 1.x played it */
+            memcpy(h + 24, m + 4, 6);                   /* out, ms, pivot */
+            h[30] = m[2]; h[31] = m[3];                 /* st, tone */
+            h[32] = s[10];                              /* dark */
+            memcpy(h + 40, loops + 32u * st, 32);       /* the predictor at its loop */
+            memcpy(h + V2_PAD_BYTES, in + 8u * first, 8u * (k - first));
+            lg_w32(out + 20u + 4u * pad, V2_PAD_BYTES + 8u * (k - first));
+            at += V2_PAD_BYTES + 8u * (k - first);
+            used++;
+        }
+    return used ? (int32_t)at : 0;
+}
+
 /* a 1.x project object (any form its readers take) -> a 2.0 FBKS record in out (BANK_STORE_SIZE): rc 0 ok */
 static uint32_t lg_project(const uint8_t *in, uint32_t n, uint8_t *out)
 {
     uint32_t rc = lg_bk_put(0, in, n);                  /* (into the runtime, as a backup's restore puts it) */
     if (rc) return rc;
     core_poll(50);
+    lg_uk_notes();
     project_capture(&proj_scratch);
     if (!bank_pack(out, &proj_scratch, 1)) return 0x80u;
     return lg_fbks(out) ? 0x81u : 0u;
@@ -478,6 +637,41 @@ static void fx_native(uint32_t k, uint32_t bank, uint32_t step, uint32_t slot, u
     uint32_t tag = motion_native_tag(&trk[k]);
     if (tag) (void)motion_set_event_at(&trk[k], bank, step, MO_NATIVE + slot, (int16_t)(tag << 8 | v));
 }
+/* a user kit's pattern: the lanes' hits, notes 1.x and 2.0 send to the same drum and notes they send apart */
+static void fx_fill_uk(uint32_t k, uint32_t b)
+{
+    static const uint8_t gm[] = {36, 38, 41, 42, 45, 46, 49, 51, 53, 54, 56, 58, 59, 60, 62, 64, 66, 69, 70, 72, 75, 80};
+    pattern_t p;
+    pattern_read(k, b, &p);
+    for (uint32_t i = 0; i < NSTEP; i++) {
+        step_t s = {{0}, 0, ST_REST};
+        uint32_t r = fx_rnd(100);
+        if (r < 35u) {
+            s.time = ST_NOTE; s.hit = (uint8_t)(1u << fx_rnd(8) | (fx_rnd(3) ? 0u : 1u << fx_rnd(8))); s.vel = (uint8_t)(90u + fx_rnd(30));
+        } else if (r < 70u) {
+            s.time = ST_NOTE; s.n = 1u + (fx_rnd(4) == 0); s.vel = (uint8_t)(70u + fx_rnd(50));
+            for (uint32_t j = 0; j < s.n; j++) s.note[j] = gm[fx_rnd(sizeof gm)];
+        }
+        p.step[i] = s;
+    }
+    p.timing[0] = 16;
+    (void)pattern_write(k, b, &p);
+}
+/* a recorded note on track k's playing pattern: step, its onset in the step (RECORD_UNIT), note, velocity */
+static void fx_rec(uint32_t k, uint32_t step, uint32_t on, uint32_t note, uint32_t vel)
+{
+    uint32_t i = 0;
+    while (i < RECORD_MAX && recording[i].vel) i++;
+    if (i == RECORD_MAX) return;
+    recorded_note_t r = {.on = (uint16_t)on, .duration = 30000, .note7 = (uint8_t)note, .vel = (uint8_t)vel};
+    recorded_set_owner(&r, k * NPAT + trk[k].pattern);
+    recorded_set_step(&r, step, 0, 0);
+    recording[i] = r;
+    step_t *s = &trk[k].step[step];
+    s->time = ST_NOTE; s->flags |= SF_RECORDED; s->hit = s->acc = 0;
+    if (s->n < 4u) s->note[s->n++] = (uint8_t)note;
+    if (!s->vel) s->vel = (uint8_t)vel;
+}
 /* fixture n into the runtime: 0 none left */
 static const char *fx_make(uint32_t n)
 {
@@ -528,16 +722,69 @@ static const char *fx_make(uint32_t n)
         (void)motion_set_event_at(&trk[0], 1, 4, P_E0, 5);
         str_cpy(proj_name, "KIT JUMP", sizeof proj_name);
         return "kitjump";
+    case 4:                                             /* the user kits (OUT/92.bin, 93.bin in first): SAMPLER's */
+        if (!rec_tab[0].n || !rec_tab[1].n) return "";  /* (no kits: none) */
+        fx_part(0, lg_drum(), 0, 9); fx_part(1, lg_drum(), 0, 10); fx_part(2, lg_drum(), 0, 4); fx_part(3, ENGI_PROPHET, 2, -1);
+        for (uint32_t b = 0; b < 3u; b++) { fx_fill_uk(0, b); fx_fill_uk(1, b); fx_fill_uk(2, b); fx_fill(3, b, 40, 0); }
+        fx_song(3, 3);
+        {                                               /* the 808 track's third pattern: KIT 1's (its notes move) */
+            uint32_t a;
+            trk[2].p[P_E0] = 9; a = fx_snap(2, "MY KIT"); trk[2].p[P_E0] = 4;
+            pattern_sound[2][2] = (uint8_t)a;
+        }
+        fx_rec(0, 1, 0, 51, 100); fx_rec(0, 5, 20000, 54, 90); fx_rec(0, 9, 40000, 62, 110); fx_rec(0, 13, 0, 36, 120);
+        fx_rec(1, 3, 10000, 51, 100); fx_rec(1, 11, 0, 75, 100);
+        recording_reindex();
+        (void)motion_set_event_at(&trk[0], 1, 8, P_E0, 10);    /* KIT 1 -> KIT 2: SAMPLER's still */
+        str_cpy(proj_name, "USER KITS", sizeof proj_name);
+        return "userkit";
     }
     return 0;
 }
-/* tests' fixtures: OUT/v1-<name>.rec (the 1.x record, its capture) and OUT/v2-<name>.rec (converted) */
+/* DIR/<id>.bin (92..99: a 1.x backup's user kits) into the 1.x runtime as a backup's restore puts them: kits put */
+static uint32_t lg_kits_in(const char *dir)
+{
+    uint32_t any = 0;
+    for (uint32_t id = 92; id <= 99u; id++) {
+        char path[600];
+        snprintf(path, sizeof path, "%s/%u.bin", dir, (unsigned)id);
+        uint32_t n = lg_read(path, lg_buf, sizeof lg_buf), rc;
+        if (!n) continue;
+        if ((rc = lg_bk_put(id, lg_buf, n)) != 0) printf("kit %u: 1.x refused it (%#x)\n", (unsigned)id, (unsigned)rc);
+        else any++;
+    }
+    core_poll(20);
+    return any;
+}
+/* DIR/<id>.bin (92..99) -> OUT/v2-<id>.bin (KIT2); 1: one not a kit */
+static int lg_kits_convert(const char *dir, const char *out)
+{
+    static uint8_t box[16u * (1u << 16)];
+    int bad = 0;
+    for (uint32_t id = 92; id <= 99u; id++) {
+        char path[600], nm[32];
+        snprintf(path, sizeof path, "%s/%u.bin", dir, (unsigned)id);
+        uint32_t n = lg_read(path, lg_buf, sizeof lg_buf);
+        if (!n) continue;
+        lg_note("kit %u\n", (unsigned)id - 91u);
+        int32_t m = n <= 65536u ? lg_kit(lg_buf, n, id - 92u, box) : -1;
+        printf("kit %u: %u B -> %d B\n", (unsigned)id, (unsigned)n, (int)m);
+        if (m < 0) { lg_note("  not a kit Melodee 1.x played: left out\n"); bad = 1; continue; }
+        snprintf(nm, sizeof nm, "v2-%u.bin", (unsigned)id);
+        lg_write(out, nm, box, (uint32_t)m);
+    }
+    return bad;
+}
+/* tests' fixtures: OUT/v1-<name>.rec (the 1.x record, its capture) and OUT/v2-<name>.rec (converted); the user kits
+ * OUT/92.bin, 93.bin (kit_fixture) in first and converted to OUT/v2-92.bin, v2-93.bin */
 static int lg_fixtures(const char *out)
 {
     static uint8_t v1[BANK_STORE_SIZE], v2[BANK_STORE_SIZE];
     const char *name;
+    if (lg_kits_in(out) && lg_kits_convert(out, out)) return 1;
     for (uint32_t n = 0; (name = fx_make(n)) != 0; n++) {
         char nm[64];
+        if (!*name) continue;
         core_poll(30);
         project_capture(&proj_scratch);
         if (!bank_pack(v1, &proj_scratch, 1)) { printf("fixture %s: 1.x capture failed\n", name); return 1; }
@@ -587,8 +834,9 @@ static int lg_store_fixture(const char *out)
     }
     return 0;
 }
-static int lg_render(const char *rec, uint32_t secs, const char *out)
+static int lg_render(const char *rec, uint32_t secs, const char *out, const char *kits)
 {
+    if (kits) lg_kits_in(kits);
     uint32_t n = lg_read(rec, lg_buf, sizeof lg_buf), rc;
     if ((rc = core_load_record(lg_buf, n, 0)) != 0) { printf("legacy: load %u\n", (unsigned)rc); return 1; }
     core_poll(30);
@@ -645,6 +893,7 @@ static int lg_convert_dir(const char *in, const char *out)
             }
         }
     }
+    bad += lg_kits_convert(in, out);
     {
         static uint8_t set[sizeof(persist_t) + sizeof(v2_tmpl_t)];
         char path[600];
@@ -663,7 +912,7 @@ static int lg_convert_dir(const char *in, const char *out)
 int main(int argc, char **argv)
 {
     if (argc < 3 || lg_boot_modules(argv[1])) {
-        printf("usage: legacy_native MODDIR convert BACKUPDIR OUT | fixtures OUT | store OUT | render REC S OUT\n");
+        printf("usage: legacy_native MODDIR convert BACKUPDIR OUT | fixtures OUT | store OUT | render REC S OUT [KITDIR]\n");
         return 2;
     }
     if (argc == 5 && !strcmp(argv[2], "convert")) return lg_convert_dir(argv[3], argv[4]);
@@ -681,7 +930,8 @@ int main(int argc, char **argv)
             if (up_used(k) && pp_state(k, stdout)) printf("preset %u: not loaded\n", (unsigned)k);
         return 0;
     }
-    if (argc == 6 && !strcmp(argv[2], "render")) return lg_render(argv[3], (uint32_t)atoi(argv[4]), argv[5]);
+    if ((argc == 6 || argc == 7) && !strcmp(argv[2], "render"))   /* (KITDIR: its 92..99.bin in first) */
+        return lg_render(argv[3], (uint32_t)atoi(argv[4]), argv[5], argc == 7 ? argv[6] : 0);
     return 2;
 }
 #endif

@@ -26,7 +26,10 @@ CFLAGS="-O2 -ffp-contract=off -std=gnu99 -w -DMELODEE_RAM_AUDIO=1 -DMELODEE_VERS
 MFLAGS="-O2 -ffp-contract=off -w -DMOD_IN_CORE=1 -I$L/firmware/modules/sdk -I$L/firmware/hal -I$L/build/gen -I$L/firmware/src"
 for m in $MODS; do cc -c $MFLAGS "$L/firmware/modules/$m/$m.c" -o "build/convert/mods/$m.o"; done
 cc $CFLAGS -DLEGACY_NATIVE_MAIN -o build/convert/legacy_native web/convert/legacy.c build/convert/mods/*.o -lm
-echo "convert: build/convert/legacy_native (1.x $REF, $VERSION)"
+KT_ON=$(sed -n 's/^#define KT_ON \([0-9][0-9]*\).*/\1/p' "$L/firmware/src/usb_audio_stream.c")   # (1.x's kit maker)
+cc -O2 -ffp-contract=off -std=gnu99 -w -DKT_ON=$KT_ON -I$L/web/kit -I$L/firmware/modules/drum -I$L/firmware/src \
+    -o build/convert/kit_fixture web/convert/kit_fixture.c -lm
+echo "convert: build/convert/legacy_native, kit_fixture (1.x $REF, $VERSION)"
 if [ "${CHECK:-0}" = 1 ]; then                             # (the tests' 2.0 side: this tree's core, ./build.sh first)
     V2=$(sed -n 's/^#define MELODEE_VERSION "\([^"]*\)".*/\1/p' firmware/src/melodee.c | head -n 1)
     C2="-O2 -ffp-contract=off -std=gnu99 -w -DMELODEE_RAM_AUDIO=1 -DMELODEE_VERSION=\"$V2\" -Ibuild/gen -Ifirmware/src -Itests -Iweb/core -DCORE_MODULES=1"
