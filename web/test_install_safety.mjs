@@ -204,7 +204,10 @@ for (const valid of [false,true]) {
            win.document.getElementById('log').textContent);
     assert.match(win.document.getElementById('endtips').textContent,/the SID and DRUM synths are installed/);
     assert(!win.document.querySelector('#phases [data-ph="setup"]').hidden);
-  }else assert(!win.document.getElementById('pagefail').hidden);
+  }else{   /* (the page's fetch and SHA-256 finish when they do: a loaded machine takes longer than 30 ms) */
+    for(const until=Date.now()+5000;win.document.getElementById('pagefail').hidden && Date.now()<until;)await new Promise(r=>nativeSet(r,10));
+    assert(!win.document.getElementById('pagefail').hidden);
+  }
   page.window.close();
 }
 console.log('Published bundle: starts with actual firmware; checksum mismatch blocks Install; cancellation sends no MIDI; complete controller install verifies the returned identity and writes the resource region');

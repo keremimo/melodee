@@ -69,6 +69,11 @@
 #                   and its manifest's hashes; with web/core/build.sh's WebAssembly, the virtual FM-1 core
 #                   (web/core/core_check.mjs): Studio's commands, a render, taps, events, kits, the NOR, WASM == native,
 #                   the synths' modules in WebAssembly (tools/mod_build.py --wasm) == the native core's.
+# converter (tests/convert_test.sh; web/convert): Melodee 1.x's stores -> 2.0's, against both firmwares' own code:
+#                   the 1.x fixtures (projects, user kits, a store of presets) played in 1.x's core and, converted, in
+#                   2.0's (render_cmp.mjs), every object PUT into 2.0, user presets and stars the same, a real backup;
+#                   with the WebAssembly builds, the page's converter == the native one, the installer's update and
+#                   the editor's 1.x files over the backup protocol (once: web/convert/build.sh builds the 1.x tree).
 # DRUM (tests/drum_test.c): the drum voices (src/drum_voice.c): pitch, decay, centroid and level against
 #                   Melodee's targets, the controls' directions, no clipping, DC, retriggers, the hat choke, the
 #                   kick on a small speaker; the DRUM engine (src/eng_drum.c): its key map, the 8 lanes together,
@@ -182,18 +187,6 @@ web_tests() {                                     # the editor mock's tables mus
         step "installer safety: tab locks, wake/leave guards, throttled MIDI, preflight and interrupted resumes" node web/test_install_safety.mjs
         step "TransitFM1: verified package, backup, loader isolation and resume" node web/test_transit.mjs
         step "web backup: capture, validation before writes, restore order" node web/test_backup.mjs
-        # the update from Melodee 1.x (web/install/conversion.js): 1.x's and 2.0's virtual FM-1s in WebAssembly
-        # (web/convert/build.sh, web/core/build.sh: emcc in Docker), the converter's fixtures from its native build
-        if [ -f build/melodee-convert.bin ] && [ -f build/core/melodee_core.wasm ] && [ -x build/convert/legacy_native ]; then
-            step "installer 1.x -> 2.0: backup, conversion, write back over the backup protocol, both FM-1s' own code" \
-                node web/convert/update_check.mjs
-            step "installer page 1.x -> 2.0: backed up before the write, converted, written back; safe and failed cases" \
-                node web/test_install_convert.mjs
-            step "editor 1.x files on 2.0: a 1.x .mel (1.x's own writer) and backup converted, opened, restored; 1.x Backup" \
-                node web/convert/editor_check.mjs
-        else
-            echo "== skip the installer's 1.x -> 2.0 checks (no build/melodee-convert.bin, build/core/melodee_core.wasm: web/convert/build.sh, web/core/build.sh)"
-        fi
         step "stock restore: the unmodified official V15 file is the image, CHECK HEAD range" node web/test_stock_restore.mjs
         if [ -f FM-1_v15.fwsc ]; then
             build v15_ldr ldr_test &&
@@ -292,6 +285,27 @@ outside_ppg() {                                   # an outside synth: Saadet's P
         "$OUT/outside_ppg_test" "$_d/out/ppg.mmod" "$_d/dir"
 }
 desc_json() { "$OUT/descdump" > "$OUT/desc.json"; }
+convert_tests() {                                 # Melodee 1.x -> 2.0 (web/convert): both firmwares' own code
+    _ref=$(tr -d ' \n' < web/convert/LEGACY_REF)
+    if [ ! -f "build/legacy/$_ref/src/build/modules/drum.mmod" ] || ! command -v node >/dev/null 2>&1; then
+        echo "== skip the 1.x -> 2.0 converter (the 1.x tree not built: web/convert/build.sh once; or no node)"; return 0
+    fi
+    step "converter 1.x -> 2.0: fixtures play the same in both cores, the store PUT, user presets and stars the same, a real backup" \
+        sh tests/convert_test.sh "$OUT/convert"
+    # the page's side in WebAssembly (web/convert/build.sh, web/core/build.sh: emcc in Docker): the installer's update,
+    # the editor's 1.x files, the converter the page runs against the native one
+    if [ -f build/melodee-convert.bin ] && [ -f build/core/melodee_core.wasm ]; then
+        step "converter in WebAssembly == native, byte for byte: the fixtures, a real backup, its file" node web/convert/convert_check.mjs
+        step "installer 1.x -> 2.0: backup, conversion, write back over the backup protocol, both FM-1s' own code" \
+            node web/convert/update_check.mjs
+        step "installer page 1.x -> 2.0: backed up before the write, converted, written back; safe and failed cases" \
+            node web/test_install_convert.mjs
+        step "editor 1.x files on 2.0: a 1.x .mel (1.x's own writer) and backup converted, opened, restored; 1.x Backup" \
+            node web/convert/editor_check.mjs
+    else
+        echo "== skip the converter in WebAssembly (no build/melodee-convert.bin, build/core/melodee_core.wasm: web/convert/build.sh, web/core/build.sh)"
+    fi
+}
 mel_tests() {                                     # the .mel project file: the page's coding against the firmware's records
     build mel_fixture mel_fixture -DMELODEE_USB_AUDIO=1 $FW || return
     step ".mel project file: the firmware's records and kits for the page (tests/mel_fixture.c emit)" \
@@ -464,6 +478,7 @@ core && t "MIDI Track: USB notes, TRS routing, song/recording, cleanup, silent m
 core && t "MIDI Track: host output, reconnect cleanup and USB input loss" midi_track_host_test:midi_track_test -O1 -DMELODEE_USB_HOST=1 $FW
 core && t "EQ accelerator: register layout, isolated histories and bounded timeout" eq_hw_test
 core && job web_tests
+core && job convert_tests
 core && [ $TABLES = 1 ] && job mel_tests
 core && [ $TABLES = 1 ] && job studio_bundle
 sound && [ $TABLES = 1 ] && job dsp_tracks
