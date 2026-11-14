@@ -1286,3 +1286,5 @@ whole chord immediately. Kits and single-voice modes retain their normal behavio
 Strum settings belong to the track, survive sound loads and save with projects;
 older projects load with STRUM OFF. Existing manually entered sequencer chords
 are unchanged; recorded strums replay their captured timing.
+
+You can also try Melodee in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
