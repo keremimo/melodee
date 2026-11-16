@@ -430,6 +430,7 @@ static void hw_master_setup(void)
     drv.rx_next = 0;
     drv.rx_sn = 0;
     drv.rx_seen = drv.rx_any = 0;
+    drv.good_evt = 0;
     drv.tx_rec[0] = drv.tx_rec[1] = 0;                     /* no PDU recorded in either buffer */
     drv.tx_md[0] = drv.tx_md[1] = 0;
     drv.upd = 0;

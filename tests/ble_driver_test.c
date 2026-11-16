@@ -97,7 +97,11 @@ static void ble_app_central_keys(const struct ble_keys *k) { (void)k; }
 #define MIDI_EVT 300u                   /* the app's note (after the Mac's discovery, and its pairing) */
 
 enum { C_WAITS, C_MAC, C_SILENT };      /* the central: answers our FEATURE_REQ / asks first (blell8) / never answers */
-enum { O_QUIRK = 1, O_LOSS = 2, O_OLDPOL = 4 };   /* run options */
+enum { O_QUIRK = 1, O_LOSS = 2, O_OLDPOL = 4, O_VANISH = 8, O_STUCK = 16, O_NOISE = 32 };   /* run options */
+/* O_VANISH: the central goes silent at VANISH_EVT (its radio off); with O_STUCK the engine still writes EVTCOUNT for
+ * every event, with O_NOISE it fills a buffer with an errored packet every event */
+#define VANISH_EVT 1500u
+static uint32_t vanish_c[BLE_HW_COUNTS];   /* the driver's counts as the central went */
 
 static struct {
     int kind, opt;                      /* C_*, O_* */
@@ -601,6 +605,7 @@ static void eng_event(uint32_t rb, int c_lost, int p_lost)
     const uint8_t *q;
     if (c_lost)
         return;                                                         /* the engine heard nothing: no answer */
+    CB->evtcount = (uint16_t)cen.e;                                     /* (a repeat it drops moves it too) */
     if (eng.in_flight && cen.nesn != eng.tsn) {                         /* our last acknowledged */
         if (eng.last_b >= 0) {
             CB->txbufcntl[eng.last_b] |= 1u;                            /* finished: empty again */
@@ -666,7 +671,19 @@ static void event(uint32_t e)
     if (cen.kind == C_MAC && e == MIDI_EVT)
         app.on = 1;
     cen_next();
-    eng_event(b, loss && e % 7u == 3u, loss && e % 11u == 5u);
+    if ((cen.opt & O_VANISH) && e == VANISH_EVT)
+        ble_hw_link_counts(vanish_c);
+    if ((cen.opt & O_VANISH) && e >= VANISH_EVT) {
+        if (cen.opt & O_STUCK)
+            CB->evtcount = (uint16_t)e;
+        if (cen.opt & O_NOISE) {
+            CB->rxdhdr[b] = 0;
+            CB->rxstat[b] = 0x9404u;
+            CB->rxbufcntl[b] |= 1u;
+            CB->rxtog ^= 1u;
+        }
+    } else
+        eng_event(b, loss && e % 7u == 3u, loss && e % 11u == 5u);
     eng_save();
     ble_wl82_rx_irq();
     eng_watch(0);
@@ -726,6 +743,19 @@ static void run(int kind, int opt, uint32_t ticks0, uint32_t events, const char 
     }
     for (e = 0; e < events && ble_ll_connected(); e++)
         event(e);
+    if (opt & O_VANISH) {
+        uint32_t c[BLE_HW_COUNTS];
+        ble_hw_link_counts(c);
+        snprintf(what, sizeof what, "%s: closed by supervision %u events after the central went (720 ms = 24, "
+                 "+ %u of EVTCOUNT), reason %02X by %u; since: no reception %u, EVTCOUNT alone %u", name,
+                 (unsigned)(e - VANISH_EVT), HW_FALLBACK_EVTS, (unsigned)DGV(ble_dg.close_reason),
+                 (unsigned)DGV(ble_dg.close_by), (unsigned)(c[4] - vanish_c[4]), (unsigned)(c[5] - vanish_c[5]));
+        check(what, !ble_ll_connected() && e > VANISH_EVT && e - VANISH_EVT <= 26u + HW_FALLBACK_EVTS &&
+                        DG(ble_dg.close_reason == BLE_ERR_CONN_TIMEOUT && ble_dg.close_by == BDC_SUPERVISION) &&
+                        c[4] - vanish_c[4] >= 16u && c[5] - vanish_c[5] <= HW_FALLBACK_EVTS);
+        ble_enable(0);
+        return;
+    }
     if (opt & O_OLDPOL) {
         snprintf(what, sizeof what, "%s: stalls: %u bit0 = 1 writes on loaded buffers, VERSION_IND %d, FEATURE_RSP %d, "
                  "data PDUs sent %u", name, (unsigned)eng.old_writes, cen.ver_rx, cen.feat_rsp_rx,
@@ -788,6 +818,13 @@ static void run(int kind, int opt, uint32_t ticks0, uint32_t events, const char 
         snprintf(what, sizeof what, "%s: our PERIPHERAL_FEATURE_REQ out (%d)", name, cen.feat_req_rx);
         check(what, cen.feat_req_rx == 1 && DG(ble_dg.tx_queued >= 2 && ble_dg.tx_acked >= 2 && ble_dg.ctl_tx_n >= 2));
     }
+    if (loss) {
+        uint32_t c[BLE_HW_COUNTS];
+        ble_hw_link_counts(c);
+        snprintf(what, sizeof what, "%s: dropped repeats counted from EVTCOUNT (%u), events with nothing heard %u",
+                 name, (unsigned)c[5], (unsigned)c[4]);
+        check(what, c[5] > 0u && c[4] > 0u);
+    }
     snprintf(what, sizeof what, "%s: no column 0 / 14 (slot clock) read from the ISRs over %u events", name,
              (unsigned)e);
     check(what, fk.col_reads[0] == 0 && fk.col_reads[14] == 0);
@@ -820,6 +857,9 @@ int main(void)
     run(C_WAITS, O_QUIRK, 1000u, 2100u, "§8.2 engine, a central that waits");
     run(C_MAC, O_QUIRK, 0xFFFFFFFFu - 10u * 24000000u, 2100u, "§8.2 engine, TIMER4 wraps 10 s in");
     run(C_SILENT, O_QUIRK, 5000u, 2100u, "§8.2 engine, the central silent");
+    run(C_MAC, O_QUIRK | O_VANISH, 1000u, 2100u, "§8.2 engine, the Mac's radio off");
+    run(C_MAC, O_QUIRK | O_VANISH | O_STUCK, 1000u, 2100u, "§8.2 engine, the Mac's radio off, EVTCOUNT still moving");
+    run(C_MAC, O_QUIRK | O_VANISH | O_NOISE, 1000u, 2100u, "§8.2 engine, the Mac's radio off, errored packets heard");
     run(C_MAC, O_QUIRK | O_OLDPOL, 1000u, 300u, "§8.2 engine, the previous drivers' polarity (bit0 = 1 = loaded)");
     printf("%s\n", fails ? "BLE driver: FAILED" : "BLE driver: all passed");
     return fails != 0;
