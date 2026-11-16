@@ -132,6 +132,10 @@ BLE_API void ble_ll_hw_master_start(void);
 BLE_API uint8_t ble_hw_addr(uint8_t addr[6]);
 /* a free-running microsecond clock (wraps at 2^32) */
 BLE_API uint32_t ble_hw_time_us(void);
+/* the radio's running counts since start: connection events, new packets, repeats, errored packets, events with
+ * nothing heard, events taken as heard from the engine's event counter alone (the DIAG page shows them per link) */
+#define BLE_HW_COUNTS 6u
+BLE_API void ble_hw_link_counts(uint32_t c[BLE_HW_COUNTS]);
 /* n random octets (the encryption's SKDs and IVs: BLE_LL_ENC only) */
 BLE_API void ble_hw_rand(uint8_t *out, uint8_t n);
 

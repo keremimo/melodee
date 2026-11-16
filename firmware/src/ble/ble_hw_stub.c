@@ -29,6 +29,12 @@ BLE_API uint8_t ble_hw_addr(uint8_t addr[6])
     return 1;
 }
 BLE_API uint32_t ble_hw_time_us(void) { return 0; }
+BLE_API void ble_hw_link_counts(uint32_t c[BLE_HW_COUNTS])
+{
+    uint32_t i;
+    for (i = 0; i < BLE_HW_COUNTS; i++)
+        c[i] = 0;
+}
 BLE_API uint32_t ble_hw_diag_now(void) { return 0; }
 BLE_API void ble_hw_rand(uint8_t *out, uint8_t n)
 {

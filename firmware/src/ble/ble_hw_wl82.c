@@ -134,7 +134,8 @@ enum { UPD_CONN = 1, UPD_CHM = 2 };
 
 static struct {
     uint8_t state, gen;                /* gen: moves on every state change (a callback may stop / restart the link) */
-    uint8_t rx_next, rx_sn, rx_seen, rx_any;
+    uint8_t rx_next, rx_sn, rx_seen, rx_any;   /* rx_seen: a good packet this event; rx_any: one this connection */
+    uint16_t good_evt;                 /* the last event with a good packet (bounds the EVTCOUNT fallback) */
     uint8_t win_wide, upd, sca;
     uint16_t interval, last_evt, wide_from, upd_instant, chm_instant;
     struct ble_hw_conn_upd u;
@@ -160,9 +161,12 @@ static struct {
 #endif
 } drv;
 
+#define HW_FALLBACK_EVTS 8u            /* events after a good packet in which EVTCOUNT alone counts as a reception */
+
 /* counters for the console and the emulator test (read-only for the rest of the firmware) */
 struct ble_hw_stats {
     uint32_t events, rx, rx_repeat, rx_error, tx, acked, connects, late_instant, isr_max_ticks;
+    uint32_t no_rx, fallback;          /* events with nothing heard / taken as heard from EVTCOUNT alone */
 };
 static struct ble_hw_stats ble_hw_stat;
 
@@ -244,6 +248,12 @@ BLE_API uint32_t ble_hw_time_us(void)
     drv.t_us = t;
     drv.t_conn = drv.state == HW_CONN;
     return t;
+}
+
+BLE_API void ble_hw_link_counts(uint32_t c[BLE_HW_COUNTS])
+{
+    c[0] = ble_hw_stat.events, c[1] = ble_hw_stat.rx, c[2] = ble_hw_stat.rx_repeat, c[3] = ble_hw_stat.rx_error;
+    c[4] = ble_hw_stat.no_rx, c[5] = ble_hw_stat.fallback;
 }
 
 BLE_API void ble_hw_rand(uint8_t *out, uint8_t n)
@@ -545,6 +555,7 @@ BLE_API void ble_hw_conn_start(const struct ble_hw_conn *c)
     drv.rx_next = 0;
     drv.rx_sn = 0;
     drv.rx_seen = drv.rx_any = 0;
+    drv.good_evt = 0;
     drv.tx_rec[0] = drv.tx_rec[1] = 0;                     /* no PDU recorded in either buffer (HW §8.2 point 7) */
     drv.tx_md[0] = drv.tx_md[1] = 0;
     drv.upd = 0;
@@ -949,7 +960,8 @@ static void hw_rx_service(void)
         else
             BLE_DG(ble_dg.rxc_tog_at++);
         drv.rx_next ^= 1u;
-        drv.rx_seen = drv.rx_any = 1;
+        drv.rx_any = 1;
+        drv.rx_seen |= (uint8_t)((st & 0xFu) == 1u);       /* (an errored packet does not keep the link alive) */
         if (!hwd.first_rx) {                               /* (diagnostics) the first packet of this connection */
             hwd.first_rx = 1;
             BLE_DG(ble_dg.first_rx_us = (fm1_ticks() - hwd.conn_t0) / FM1_TICKS_PER_US);
@@ -1063,8 +1075,18 @@ static void hw_event_service(void)
     ble_hw_stat.events++;
     BLE_DG(ble_dg.conn_events++);
     BLE_DG(ble_dg.last_evt = counter);
-    /* a reception in this event: an RX interrupt, or EVTCOUNT (also moved by a repeat the engine dropped) */
-    rx_ok = (uint8_t)(drv.rx_seen || (drv.rx_any && CB->evtcount == counter));
+    /* a reception in this event: a good packet, or EVTCOUNT (also moved by a repeat the engine dropped). EVTCOUNT is
+     * believed only within HW_FALLBACK_EVTS of a good packet: on the FM-1 an OXI that switched its Bluetooth off left
+     * the link up for minutes (CLOSE 0/0, supervision 1 s), which the EVTCOUNT rule alone would explain */
+    rx_ok = drv.rx_seen;
+    if (rx_ok)
+        drv.good_evt = counter;
+    else if (drv.rx_any && CB->evtcount == counter && (uint16_t)(counter - drv.good_evt) <= HW_FALLBACK_EVTS) {
+        rx_ok = 1;
+        ble_hw_stat.fallback++;
+    }
+    if (!rx_ok)
+        ble_hw_stat.no_rx++;
     drv.rx_seen = 0;
     hw_instants(counter);
 #if BLE_CENTRAL
