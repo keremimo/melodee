@@ -2181,15 +2181,15 @@ static void ui_input(void)
         for (k = 0; k < NE; k++) (void)panel_enc(k);
         panel_moved = 0;
         boot_work_input(pressed);
-        return;
+        goto autosave_defer;
     }
     if(ui.import_refresh){pop.on=0;brw.on=0;ui.import_refresh=0;ui.force=1;}
     if (song_picker.active && song_picker.epoch != pattern_epoch) song_preset_cancel();
     if (song_picker.active && transport_busy()) song_preset_finish(0);
     if (song_punch_on() && (song_punch_epoch != pattern_epoch || song_punch.row >= chain_config.count))
         pop_close();
-    if (scr_input(pressed, notes)) return;
-    if (designer_on() && !name_on() && !ui.confirm && designer_input(pressed, notes)) return;
+    if (scr_input(pressed, notes)) goto autosave_defer;
+    if (designer_on() && !name_on() && !ui.confirm && designer_input(pressed, notes)) goto autosave_defer;
     preset_pick_poll();                              /* restore key selection before handling new edges */
     if (notes)
         browse_commit();                              /* a key played while browsing: hear the sound shown */
@@ -2355,7 +2355,7 @@ static void ui_input(void)
 #endif
         if (!ui.home_t0)
             menu_input(oct);
-        return;
+        goto autosave_defer;
     }
     if (name_on() && !ui.confirm) {                     /* NAME: the keys type, KNOB 1 / 2, OCT+ / OCT- (ui_name.c); */
         if (ui.save_t0)                                 /* SAVE does nothing */
@@ -2365,14 +2365,14 @@ static void ui_input(void)
                                                          * editor) so the name can be saved; it never starts one */
         ui.pg_down = 0;
         name_input(notes, oct);
-        return;
+        goto autosave_defer;
     }
     if (new_on() && !ui.confirm) {                      /* NEW SONG: its knobs, OCT+ / OCT-, HOME cancels (ui_new.c) */
         if (ui.save_t0)
             ui.save_t0 |= 2u;
         ui.pg_down = 0;
         new_input(oct, home == BT_TAP);
-        return;
+        goto autosave_defer;
     }
     if (save == BT_HOLD && !ui.confirm) {
         qsave_chord();
@@ -2412,7 +2412,7 @@ static void ui_input(void)
         song.grid = (uint8_t)keys_mode();               /* (closed: the keys play at once) */
         ui.pg_down = 0;
         enc_drop();
-        return;
+        goto autosave_defer;
     }
     if (smap.on) {                                      /* KNOB 1 / SELECT pages, KNOB 2 categories; OCT+ opens */
         int32_t k1 = panel_enc(EN_K1), k2 = panel_enc(EN_K2);   /* closes it too (page_tap) */
@@ -2433,7 +2433,7 @@ static void ui_input(void)
         for (k = 0; k < NE; k++)
             if (!smap.on || (k != EN_K1 && k != EN_K2 && k != EN_SELECT))
                 panel_enc(k);
-        return;
+        goto autosave_defer;
     }
     if (song_punch_on()) {
         if (home == BT_TAP) { pop_close(); go_home(); }
@@ -2441,7 +2441,7 @@ static void ui_input(void)
         ui.pg_down = 0;
         enc_drop();
         song.grid = (uint8_t)keys_mode();
-        return;
+        goto autosave_defer;
     }
     if (pop.on == POP_SHEET || pop.on == POP_LIST) {   /* an action sheet, a value's list: KNOB 1 / 2, OCT+ / OCT-
                                                          * (ui_popup.c) */
@@ -2454,7 +2454,7 @@ static void ui_input(void)
         ui.pg_down = 0;
         enc_drop();
         step_history_end();                             /* (a note's sheet: its CHANCE, LENGTH, ... edits undo too) */
-        return;
+        goto autosave_defer;
     }
     if (lytap)                                          /* a layer's button acts on release (held: the layer) */
         layer_tap(lytap);
@@ -2734,6 +2734,12 @@ static void ui_input(void)
     step_history_end();                                 /* (seq_undo.c: this frame's STEP edit) */
     ui_notices();
     song.grid = (uint8_t)keys_mode();                 /* encoder track/page changes also change key ownership */
+    return;
+
+autosave_defer:
+    /* Modal and swallowed input frames start a fresh rest, including the closing frame.
+     * Use the active path: it only resets the timer and never writes a project. */
+    autosave_poll(1);
 }
 
 /* ---------------------------------------------------- panel setup --- */

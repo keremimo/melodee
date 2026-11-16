@@ -157,8 +157,12 @@ int main(void)
             assert(settings_import(&q, sizeof q));
             assert(settings_autosave_seconds == (byte >= 5u && byte <= 60u && byte % 5u == 0u ? byte : 15u));
         }
-        q.favorites.factory[1][AUTOSAVE_TIME_BYTE] = 0;
-        assert(settings_import(&q, sizeof q) && settings_autosave_seconds == 15u);
+        const uint8_t bad_tags[][3] = {{0, 'S', 1}, {'A', 'X', 1}, {'A', 'S', 2}};
+        for (uint32_t k = 0; k < sizeof bad_tags / sizeof bad_tags[0]; k++) {
+            memcpy(q.favorites.factory[1] + AUTOSAVE_TIME_BYTE, bad_tags[k], 3u);
+            q.favorites.factory[1][AUTOSAVE_TIME_BYTE + 3] = 45u;
+            assert(settings_import(&q, sizeof q) && settings_autosave_seconds == 15u);
+        }
         settings_autosave = 0;
         settings_export(&q);
         assert(sizeof q == 604u && q.favorites.factory[15][28] == AUTOSAVE_OFF_TAG);
