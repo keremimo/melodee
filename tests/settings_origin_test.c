@@ -24,13 +24,19 @@ static int defaults(void)
     int ok = settings.palette == UI_DEFAULT_INDEX && !settings.zoom && !settings.lowcut &&
         !settings_boot && settings_drumch == 10u && settings_hold == HOLD_DEF &&
         settings_lights == LIGHTS_MID && tuning_a4 == A4_DEFAULT &&
-        settings_autosave && !settings_screen && !settings_click && settings_click_level == CLICK_LEVEL_DEFAULT &&
+        settings_autosave && settings_autosave_seconds == AUTOSAVE_SECONDS_DEFAULT &&
+        !settings_screen && !settings_click && settings_click_level == CLICK_LEVEL_DEFAULT &&
         !settings_countin && !settings_preview && !settings_chord_add &&
         !ua_off && !ua_off_want && !ua_tracks && !ua_tracks_want &&
         !memcmp(&panel, &PANEL_DEFAULT, sizeof panel) && !template_used() && !template_old();
     for (uint32_t k = 0; k < 4u; k++) ok &= settings_glo[k] == GP[GLO_KEPT[k]].def;
-    for (uint32_t i = 0; i < sizeof favorites; i++)
-        if (i < 60u || i >= 64u) ok &= !((const uint8_t *)&favorites)[i]; /* owner tag isn't a preference */
+    const uint8_t autosave_time[4] = {'A', 'S', 1, AUTOSAVE_SECONDS_DEFAULT};
+    int tagged_time = !memcmp(favorites.factory[1] + AUTOSAVE_TIME_BYTE, autosave_time, sizeof autosave_time);
+    for (uint32_t i = 0; i < sizeof favorites; i++) {
+        /* Import retains the default time tag; neither it nor the owner tag is a star. */
+        if (i >= 32u + AUTOSAVE_TIME_BYTE && i < 36u + AUTOSAVE_TIME_BYTE && tagged_time) continue;
+        if (i < 60u || i >= 64u) ok &= !((const uint8_t *)&favorites)[i];
+    }
     return ok && !favorites_user_hi;
 }
 static void stale_ram(void)
@@ -38,7 +44,7 @@ static void stale_ram(void)
     settings.magic = SETTINGS_MAGIC; settings.palette = 2; settings.zoom = 1;
     panel = PANEL_DEFAULT; panel.dir[0] = -1;
     settings_boot = 4; settings_drumch = 0; settings_hold = 3; settings_lights = 0;
-    tuning_a4 = 432; settings_autosave = 0; settings_screen = 7;
+    tuning_a4 = 432; settings_autosave = 0; settings_autosave_seconds = 60; settings_screen = 7;
     settings_click = settings_click_level = settings_countin = 2;
     settings_preview = settings_chord_add = 1;
     memset(&favorites, 0xFF, sizeof favorites); favorites_user_hi = 0xFFFFFFFFu;
