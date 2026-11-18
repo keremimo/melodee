@@ -82,7 +82,7 @@ static int song_punch_on(void);                       /* ui_popup.c: the visual 
 static uint16_t punch_color(uint32_t fx);             /* ui_layer.c: same family colours as live FX */
 static uint32_t song_punch_steps_at(uint32_t row)
 {
-    uint32_t bank = chain_patterns[row][0];
+    uint32_t bank = chain_conductor(row);
     return bank < NPAT ? (uint32_t)pattern_timing(0, bank, 0) : 16u;
 }
 static void song_punch_edit(uint32_t field, int32_t delta)

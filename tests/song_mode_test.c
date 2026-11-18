@@ -170,17 +170,26 @@ static int block_spans(void)
     bad += check("long-song sample arithmetic retains its full timeline precision", quotient==long_time/50321u && remainder==long_time%50321u);
     return bad;
 }
+/* a 4-bar track 1 grown over two sections plays 8 bars: a continued conductor lasts one loop of its pattern */
+static void steps_block(uint32_t steps, uint32_t period) { while (steps--) units_block(period); }
 static int conductor_resize(void)
 {
     int bad=0;ui_power_on();trk[0].p[P_SLEN]=64;trk[0].p[P_SDIV]=2;pattern_commit(&trk[0]);
     arrangement(3);memset(chain_patterns,CHAIN_REST,sizeof chain_patterns);
     for(uint32_t r=0;r<3;r++)chain_config.row[r].slot=CHAIN_REST;
     chain_patterns[0][0]=0;chain_config.row[0].slot=0;chain_patterns[1][1]=0;
-    uint64_t before=chain_row_samples(1);song_page();ui.song_row=0;turn(EN_K4,1);
-    bad+=check("resizing track one preserves the timing and contents of following sections",chain_patterns[1][0]==CHAIN_HOLD&&chain_patterns[1][1]==0&&chain_row_samples(1)==before);
-    chain_prepare_from(1);events_block(1);
-    chain.rest_pos=(uint32_t)before-1u;trk[0].seq_idx=0;trk[0].seq_pos=0;events_block(1);
-    bad+=check("a continued conductor advances sections independently of its pattern loop",chain.row==2&&chain.running);
+    uint64_t loop=chain_row_samples(0);song_page();ui.song_row=0;turn(EN_K4,1);
+    bad+=check("growing track one over a section adds one loop of its pattern (4 + 4 bars)",chain_patterns[1][0]==CHAIN_HOLD&&
+               chain_patterns[1][1]==0&&chain_row_samples(1)==loop&&sg_row_bars(0)==4&&sg_row_bars(1)==4&&song_punch_steps_at(1)==64);
+    chain_prepare();events_block(1);uint32_t period=seq_div_samples(trk[0].p[P_SDIV]);
+    steps_block(64,period);
+    bad+=check("the continued section starts the pattern's second loop at step zero",chain.running&&chain.row==1&&trk[0].seq_idx==0);
+    steps_block(63,period);
+    bad+=check("the continued section lasts the whole loop, not one bar",chain.running&&chain.row==1&&trk[0].seq_idx==63);
+    steps_block(1,period);
+    bad+=check("the section after the block starts when the second loop ends",chain.running&&chain.row==2);
+    seq_stop();chain_prepare_from(1);events_block(1);
+    bad+=check("PLAY on the continued section starts its loop at step zero",chain.running&&chain.row==1&&trk[0].seq_idx==0);
     seq_stop();return bad;
 }
 static int recorded_block(void)

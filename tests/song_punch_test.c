@@ -141,7 +141,7 @@ static int visual_controls(void)
     bad += check("turning right from OFF adds the first effect with fresh timing", chain_config.fx[0][1].fx == punch_fx_of_key(0) + 1 && !chain_config.fx[0][1].start && chain_config.fx[0][1].length == 1);
     bad += check("the visual grid follows the conductor pattern length", song_punch_steps_at(0) == 16);
     chain_patterns[1][0] = CHAIN_HOLD;
-    bad += check("continued sections show their own sixteen-step punch grid", song_punch_steps_at(1) == 16);
+    bad += check("continued sections show the held conductor's punch grid", song_punch_steps_at(1) == 16);
     turn(EN_SELECT, 1);
     bad += check("SELECT browses sections without leaving the selector", song_punch_on() && song_punch.row == 1 && ui.song_row == 1);
     press(B_PLAY); events_block(1); frame();

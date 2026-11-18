@@ -1005,12 +1005,14 @@ static int studio_song(void)
     bad += check("SONG2 section 1: 2 repeats, 16 steps of 1/16, 2 x 16 x 6144 units, cells and sounds", host_wire[18] == 2 && host_wire[19] == 16 &&
                  host_wire[20] == 2 && u35_at(21) == 2u * 16u * 6144u && !host_wire[25] && host_wire[26] == 0 && !host_wire[27] &&
                  host_wire[28] == 1 && host_wire[29] == 3 && host_wire[38] == 7);
-    bad += check("SONG2 section 2 (track 1 goes on): one bar of 1/16 (the conductor's four beats)", host_wire[42] == 1 && host_wire[43] == 16 &&
+    bad += check("SONG2 section 2 (track 1 goes on): one loop of the held 16 steps of 1/16", host_wire[42] == 1 && host_wire[43] == 16 &&
                  u35_at(45) == 16u * 6144u && host_wire[50] == CHAIN_HOLD && !host_wire[51] && host_wire[52] == 2);
     trk[0].p[P_SLEN] = 12; trk[0].p[P_SDIV] = 1; trk[0].p[P_SSWING] = 50;
     request(ED_SONG2, a, 3);
     bad += check("SONG2 timing follows track 1's pattern: 12 eighths swung, x 2", host_wire[19] == 12 && host_wire[20] == 1 &&
                  u35_at(21) == 2u * 12u * 12288u);
+    bad += check("SONG2 continued section: the held pattern's 12 eighths, once", host_wire[43] == 12 && host_wire[44] == 1 &&
+                 u35_at(45) == 12u * 12288u);
     a[0] = 1; n = request(ED_SONG2, a, 1);
     bad += check("SONG2 timing table: swing, 16 banks a part, 8 a MIDI-only track, (steps, division, swing) each", !host_wire[6] &&
                  n == 14u + NTRK + 3u * (NPART * NPAT + (NTRK - NPART) * NPAT_MIDI) && host_wire[13] == NPAT && host_wire[14] == 12 &&

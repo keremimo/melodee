@@ -98,7 +98,7 @@ static int ed_song_handle(uint32_t cmd, const uint8_t *a, uint32_t n)
         ed_echo(a, n, 1u); ed_b(rc); ed_song_head();
         if (!rc && !op)                                   /* each: repeats, steps, division, length (units), cells */
             for (r = x, c = ed_song_page(x, y, chain_config.count, ED_SONG_ROW); c; c--, r++) {
-                k = chain_patterns[r][0];
+                k = chain_conductor(r);
                 ed_b(chain_config.row[r].repeat); ed_b(song_punch_steps_at(r));
                 ed_b(k < NPAT ? (uint32_t)pattern_timing(0, k, 1) : 2u);
                 ed_u35((uint32_t)chain_row_samples(r));

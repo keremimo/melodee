@@ -432,7 +432,7 @@ Bank capability tag `50 02 08 40` advertises 64 sections and REST bank id 8. Ver
 bank ids 0..7. BANK_SONG op 1 accepts up to 64 rows on version 2; its reply has the same five bytes per row.
 Op 2 optionally accepts a zero-based start row (`02 row`); omitted means row 0. Invalid start rows are rejected.
 Playback starts at step zero with that section's complete repeat count and continues to the final section.
-A resting track suppresses grid notes, recorded notes and motion; track 1 rests and continuations use a four-beat bar per repeat.
+A resting track suppresses grid notes, recorded notes and motion; track 1 rests use a four-beat bar per repeat, track 1 continuations one loop of the held pattern.
 Existing FUN and FBKK/FBKL codecs retain their fixed 16-row layout. Songs requiring longer arrangements or rests
 use FBKM, a new sparse bank container of the same extent: FBKL fixed fields, then count + three zero bytes,
 64 × (repeat, eight bank ids), then sparse patterns. Active FUN metadata retains the first 16 sections, with rests

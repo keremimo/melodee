@@ -365,7 +365,8 @@ static struct { uint32_t first, ncols, sel, bars, play; uint64_t total; int32_t 
 
 static uint32_t sg_row_bars(uint32_t r)                 /* the conductor pattern defines a section */
 {
-    return (chain_patterns[r][0] >= NPAT ? 1u : pat_bars(0, chain_patterns[r][0])) * chain_config.row[r].repeat;
+    uint32_t bank = chain_conductor(r);
+    return (bank >= NPAT ? 1u : pat_bars(0, bank)) * chain_config.row[r].repeat;
 }
 static void sg_time_text(char *text, uint64_t units)
 {
@@ -397,7 +398,7 @@ static void sg_frame(void)
         const track_t *t = &trk[0];
         uint32_t len = t->p[P_SLEN] ? (uint32_t)t->p[P_SLEN] : 1u, rep = chain_config.row[chain.row].repeat;
         uint32_t done = rep > chain.remaining ? rep - chain.remaining : 0u, at;
-        if (chain_patterns[chain.row][0] >= NPAT) { len = 16u; at = done * len + chain.rest_pos / seq_div_samples(2u); }
+        if (chain_conductor(chain.row) >= NPAT) { len = 16u; at = done * len + chain.rest_pos / seq_div_samples(2u); }
         else at = done * len + t->seq_idx % len;
         if (chain.row >= sg.first && chain.row < sg.first + SG_COLS)
             sg.px = 8 + SG_COL_W * (int32_t)(chain.row - sg.first) + (int32_t)(at * SG_COL_W / (rep * len));
