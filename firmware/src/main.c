@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* MELODEE boot and main loop. Boot order: WDT first, boot-loop guard, fatal vectors,
- * guards; then LCD, input (TIMER5 IRQ, 10 kHz), audio (ALNK0 IRQ). */
+ * guards; then LCD, input (TIMER5 IRQ, FM1_TICK_HZ: 5 kHz FM-1, 10 kHz SMK-37), audio (ALNK0 IRQ). */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _dsp_start[], _dsp_end[], _dsp_load[], _dt_start[], _dt_end[], _dt_load[];
 extern uint32_t _audio_start[], _audio_end[], _audio_load[];
@@ -33,7 +33,7 @@ static void stack_report(uint32_t *v)
 }
 
 
-/* TIMER5 outranks ALNK0, so the scan keeps its 100 us pace while a half buffer renders: before,
+/* TIMER5 outranks ALNK0, so the scan keeps its tick's pace (fm1_time.h FM1_TICK_US) while a half buffer renders: before,
  * the ticks stopped for the whole render (0.7 ms idle, several ms loaded), the column lit when it
  * began stayed lit that long (a ~16 Hz flicker over all LEDs, beating with the scan) and the
  * encoders lost frames. Nested in ALNK0 it scans GPIO, counts ms and receives TRS MIDI;
@@ -41,14 +41,15 @@ static void stack_report(uint32_t *v)
  * while UART input keeps polling into its single-producer MIDI queue,
  * and the time spent nested is handed to the audio ISR so its load figures stay render-only.
  * The USB audio streams cannot wait for the render (a packet each way per 1 ms frame, a render takes up to
- * ~5 ms): ua_service also runs nested, by elapsed time (every 250 us at most: work spanning ticks does not
- * stretch the next deadline). It touches only the audio endpoints (INDEX is set on every access) and the
+ * ~5 ms): ua_service also runs nested, by elapsed time (every 250 us at most: every other tick at 5 kHz, 2.5 kHz,
+ * two or more services in each 1 ms USB frame; work spanning ticks does not stretch the next deadline). It touches only the audio endpoints (INDEX is set on every access) and the
  * USB side of the audio rings (audio.c copies with the IRQs off), and usb_poll never runs nested, so the
  * two never interleave. */
+#define T5_POLL_DIV (FM1_TICK_HZ / 2000u)     /* ticks per USB / UART poll: 2 at 5 kHz (2.5 kHz), 5 at 10 kHz (2 kHz) */
 void fm1_timer5_irq(void)
 {
     static uint32_t sub, owed;
-    uint32_t t0 = fm1_ticks(), usb_due = sub % 5u == 0u;
+    uint32_t t0 = fm1_ticks(), usb_due = sub == 0u;
     fm1_timer5_ack();
     melodee_dbg.timer_irqs++;
     AP_START(input_start);fm1_input_tick();
@@ -66,12 +67,12 @@ void fm1_timer5_irq(void)
         }
     }
     if (usb_due)
-        owed |= 1u;                             /* 2 kHz: all USB SIE traffic lives here */
+        owed |= 1u;                             /* 2..2.5 kHz: all USB SIE traffic lives here */
 #if MELODEE_UART
-    if (sub % 5u == 2u)
-        owed |= 2u;                             /* 2 kHz: <= ~7 bytes per call at 31250 baud */
+    if (sub == T5_POLL_DIV / 2u)
+        owed |= 2u;                             /* the same rate, the other ticks: <= ~7 bytes per call at 31250 baud */
 #endif
-    if (++sub == 10u)
+    if (++sub == T5_POLL_DIV)
         sub = 0;
 #if MELODEE_USB_AUDIO
     {
@@ -120,7 +121,7 @@ void fm1_timer5_irq(void)
 }
 extern void isr_timer5(void);
 
-static void timer5_start(void)                 /* OSC /4 = 6 MHz, PRD 600 -> 10 kHz */
+static void timer5_start(void)                 /* OSC /4 = 6 MHz, PRD 6 MHz / FM1_TICK_HZ (hal/fm1_timer.h) */
 {
     fm1_timer5_start(isr_timer5, 4);   /* above ALNK0 (3): the scan nests into the render (see fm1_timer5_irq) */
 }

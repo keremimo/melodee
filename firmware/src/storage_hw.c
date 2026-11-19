@@ -27,6 +27,10 @@ static void audio_silence(void)                 /* IRQs off: the DMA would loop 
     uint32_t i;
     for (i = 0; i < sizeof abuf / sizeof abuf[0]; i++)
         abuf[i] = 0;
+#if MELODEE_RENDER_AHEAD
+    for (i = 0; i < sizeof ahead / sizeof ahead[0]; i++)
+        ahead[i] = 0;                           /* (the next IRQ would copy the block from before the silence) */
+#endif
 }
 #if BOARD_SMK37
 static void st_stock_release(void);             /* storage.c: the stock mapping's end marker */

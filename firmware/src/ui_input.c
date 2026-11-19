@@ -9,7 +9,7 @@ static int pat_keys_silent(void);
 #include "ui_midi_knobs.c"
 /* ----------------------------------------------------------- LEDs --- */
 /* The LED picture is built off-line and copied one byte per column: clearing
- * and relighting would let the 10 kHz scan catch the dark gap and flicker. */
+ * and relighting would let the TIMER5 scan catch the dark gap and flicker. */
 #if BOARD_SMK37
 /* SMK-37: one flag per id. Ids 0..18 are the button LEDs (smk_input.h); the note keys (no LEDs of
  * their own) take LED_KEY(k); ui_leds shows the white keys F3..G5 on the 16 RGB pads. */

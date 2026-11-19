@@ -3,10 +3,10 @@
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Host test of the key / button debounce in hal/fm1_input.h (fm1__key, fm1__frame), against a model
  * of the scan and of bouncing contacts. The scan is the TIMER5 one (fm1_input_tick): one column every
- * 100 us, sampled one tick after it was latched; a frame (the debounce step) every 11 ticks.
+ * FM1_TICK_US (200 us at 5 kHz), sampled one tick after it was latched; a frame (the debounce step) every 11 ticks.
  * A contact closes at time T, bounces (closed / open runs of 30..700 us) for up to 3 ms, stays closed,
  * and on the way up bounces again for up to 5 ms. Checked:
- *   - a clean press counts at the FM1_DEB_PRESS-th scan that sees it (<= 2.3 ms of the contact) and
+ *   - a clean press counts at the FM1_DEB_PRESS-th scan that sees it (<= 2 frames and a tick of the contact) and
  *     the press stat measures it;
  *   - 2000 bouncy presses of every note key and button: exactly one note-on (press edge) and one
  *     release each, no note ending while the key is held, none hanging 12 ms after the last bounce;
@@ -22,7 +22,9 @@ static uint32_t host_now;                          /* TIMER4 ticks (24 MHz) */
 #pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
 #include "../firmware/hal/fm1_input.h"
 
-#define TICK_US 100u
+#define TICK_US FM1_TICK_US
+#define FRAME_US (FM1_NCOL * TICK_US)
+#define PRESS_MAX_US (FM1_DEB_PRESS * FRAME_US + TICK_US)   /* 4.6 ms at 5 kHz, 2.3 at 10 */
 static int fails;
 static int check(const char *what, int ok)
 {
@@ -186,14 +188,14 @@ int main(void)
     printf("clean press: contact -> press avg %u us, max %u us; release -> note off max %u us\n",
            (unsigned)(lat_sum / lat_n), (unsigned)lat_max, (unsigned)worst_rel);
     check("clean presses: one press and one release each, every key and button", bad == 0u);
-    check("clean press: counted within 2.3 ms of the contact (2 frames)", lat_max <= 2300u);
+    check("clean press: counted within 2 frames and a tick of the contact", lat_max <= PRESS_MAX_US);
     check("clean release: the note ends within 10 ms", worst_rel <= 10000u);
     {
         uint32_t stat = fm1_in_stat.press_n ? fm1_in_stat.press_sum / fm1_in_stat.press_n / 24u : 0u;
         printf("press stat (first closed frame -> press): avg %u us over %u\n", (unsigned)stat,
                (unsigned)fm1_in_stat.press_n);
         check("the press stat counts the note keys' presses (one frame after the first)",
-              fm1_in_stat.press_n == 1u && stat >= 1000u && stat <= 1200u);
+              fm1_in_stat.press_n == 1u && stat >= FRAME_US - 100u && stat <= FRAME_US + 100u);
     }
 
     /* bouncy presses and releases */
@@ -205,9 +207,9 @@ int main(void)
             id = rnd(FM1_NKEY);
             locate(id);
             reset();
-            sim_us = rnd(1100u);
+            sim_us = rnd(FRAME_US);
             sim_col = rnd(FM1_NCOL);
-            t0 = 5000u + rnd(1100u);
+            t0 = 5000u + rnd(FRAME_US);
             tb = bounce(t0, rnd(3000u), 1);        /* settled closed from tb */
             hold = 15000u + rnd(300000u);
             tr = tb + hold;
@@ -236,7 +238,7 @@ int main(void)
         check("2000 bouncy presses: exactly one note-on / press and one release each", onebad == 0u);
         check("no note ends while its key is held", early == 0u);
         check("no hanging note 12 ms after the last bounce of a release", hang == 0u);
-        check("bouncy press: counted within 2.3 ms of the contact settling, or sooner", settle_max <= 2300u);
+        check("bouncy press: counted within 2 frames and a tick of the contact settling", settle_max <= PRESS_MAX_US);
         check("bouncy release: the note ends within 10 ms of the last bounce", rel_max <= 10000u);
     }
 
@@ -296,7 +298,7 @@ int main(void)
         printf("encoder 0: one cycle -> %d step(s)\n", (int)s);
         check("an encoder detent cycle is one step", s == 1 || s == -1);
     }
-    /* a fast spin: ten detents at 4, 2 and 1 frames a state (1 frame ~1.1 ms: ~4.4 ms a detent), both ways, and a
+    /* a fast spin: ten detents at 4, 2 and 1 frames a state (1 frame 2.2 ms at 5 kHz: ~8.8 ms a detent), both ways, and a
      * flick that skips a state now and then; every detent counts. A one-frame glitch of a line at rest counts none. */
     {
         static const uint8_t CYC[4] = {1, 3, 2, 0};
