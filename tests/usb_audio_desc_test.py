@@ -96,7 +96,7 @@ def descriptors(audio, cdc, loader=0):
         assert ac[0][7:] == bytes([2, 3, 4]) and len(ac) == 6
         assert ac[2] == bytes([10, 0x24, 6, 5, 1, 1, 3, 0, 0, 0])
         chain = [(2, 1, 0x0101, None), (3, 2, 0x0301, 5),
-                 (2, 3, 0x0713, None), (3, 4, 0x0101, 3)]
+                 (2, 3, 0x0201, None), (3, 4, 0x0101, 3)]
         for d, (subtype, unit, kind, source) in zip((ac[1], ac[3], ac[4], ac[5]), chain):
             assert d[2:4] == bytes([subtype, unit])
             assert int.from_bytes(d[4:6], "little") == kind

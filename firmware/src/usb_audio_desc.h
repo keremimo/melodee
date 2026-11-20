@@ -13,7 +13,7 @@
     12, 0x24, 2, 1, 0x01, 0x01, 0, 2, 3, 0, 0, 0,  /* USB streaming input */
     10, 0x24, 6, 5, 1, 1, 3, 0, 0, 0,              /* FU5: master mute/volume, no per-channel controls */
     9, 0x24, 3, 2, 0x01, 0x03, 0, 5, 0,             /* speaker output from FU5 */
-    12, 0x24, 2, 3, 0x13, 0x07, 0, 4, 0, 0, 0, 0,  /* four non-spatial synth/drum channels */
+    12, 0x24, 2, 3, 0x01, 0x02, 0, 4, 0, 0, 0, 0,  /* four non-spatial synth/drum channels, typed microphone so Windows lists it */
     9, 0x24, 3, 4, 0x01, 0x01, 0, 3, 0,             /* USB streaming output */
 
     9, 4, 3, 0, 0, 1, 2, 0, 0,
