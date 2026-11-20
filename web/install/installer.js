@@ -49,6 +49,7 @@ const TEXT = {
     mbootrisk: "It writes the FM-1's boot area, the one step where a power cut can need hardware recovery. Leave it off if you're unsure: you can add it later from this page.",
     mbootby: "By Julius Vitkauskas, MIT licence.", newtab: " (opens in a new tab)",
     s3h: "Install", s3p: "Back up your sounds first: Settings, then Backup, in the editor.",
+    s3pConvert: "Projects and sounds from Melodee 1.x are backed up to this computer and converted for Melodee {v}.",
     gohint: "Find your FM-1 first.",
     goInstall: "Install Melodee {v}", goUpdate: "Update to Melodee {v}", goReinstall: "Reinstall Melodee {v}",
     goResume: "Resume installation", goBoot: "Install m-bootloader",
@@ -105,8 +106,8 @@ const TEXT = {
     endSetupH: "Setup isn't finished",
     endSetup: "Melodee {v} runs, but its fonts and factory sounds weren't written. Until they are, the FM-1 uses a plain font and INIT sounds.",
     tipResOk: "The fonts and factory sounds are installed.",
-    tipResModsOk: "The fonts, factory sounds and the SID and DRUM synths are installed.",
-    endSetupMods: "Melodee {v} runs, but its SID and DRUM synths weren't written. Until they are, tracks on them stay silent.",
+    tipResModsOk: "The fonts, factory sounds and synths are installed.",
+    endSetupMods: "Melodee {v} runs, but its synths weren't written. Until they are, tracks on them stay silent.",
     tipResRestart: "Switch the FM-1 off and on once, so every sound list shows the factory sounds.",
     tipEditor: "Open the editor to browse sounds and make backups.",
     tipConverted: "Your projects and sounds were converted for Melodee {v} and written back.",
@@ -197,6 +198,7 @@ const TEXT = {
     mbootrisk: "FM-1 のブート領域に書き込みます。この工程中に電源が切れると、ハードウェアでの復旧が必要になることがあります。迷ったらオフのままで構いません。あとからこのページで追加できます。",
     mbootby: "Julius Vitkauskas 作、MIT ライセンス。", newtab: "（新しいタブで開きます）",
     s3h: "インストール", s3p: "先にサウンドをバックアップしてください（エディターの「設定」→「バックアップ」）。",
+    s3pConvert: "Melodee 1.x のプロジェクトとサウンドは、このコンピューターにバックアップしてから Melodee {v} 用に変換します。",
     gohint: "先に FM-1 を探してください。",
     goInstall: "Melodee {v} をインストール", goUpdate: "Melodee {v} にアップデート", goReinstall: "Melodee {v} を再インストール",
     goResume: "インストールを再開", goBoot: "m-bootloader をインストール",
@@ -253,8 +255,8 @@ const TEXT = {
     endSetupH: "セットアップが完了していません",
     endSetup: "Melodee {v} は動いていますが、フォントとファクトリーサウンドを書き込めませんでした。書き込むまでは、FM-1 はシンプルなフォントと INIT サウンドを使います。",
     tipResOk: "フォントとファクトリーサウンドをインストールしました。",
-    tipResModsOk: "フォント、ファクトリーサウンド、SID と DRUM のシンセをインストールしました。",
-    endSetupMods: "Melodee {v} は動いていますが、SID と DRUM のシンセを書き込めませんでした。書き込むまでは、これらのトラックは鳴りません。",
+    tipResModsOk: "フォント、ファクトリーサウンド、シンセをインストールしました。",
+    endSetupMods: "Melodee {v} は動いていますが、シンセを書き込めませんでした。書き込むまでは、それらのトラックは鳴りません。",
     tipResRestart: "FM-1 の電源を一度切って入れ直すと、すべてのサウンドリストにファクトリーサウンドが表示されます。",
     tipEditor: "エディターでサウンドの閲覧やバックアップができます。",
     tipConverted: "プロジェクトとサウンドを Melodee {v} 用に変換して書き戻しました。",
@@ -390,7 +392,7 @@ async function fetchRegion(chosen) {
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return new Uint8Array(await r.arrayBuffer());
 }
-/* the build's synth modules (fm1mods.js: SID, DRUM, out of the firmware since they became modules), <package>-mods.bin
+/* the build's synth modules (fm1mods.js: every synth is one since 2.0, none in the firmware), <package>-mods.bin
    beside its package, fetched as the region is: null when the build has none */
 const bundles = new Map();
 async function fetchBundle(chosen) {
@@ -631,7 +633,8 @@ function render() {
     go.textContent = t(dev?.kind === "loader" ? "goResume" : "goInstall", { v: ver() });
     go.disabled = true;
     $("gohint").hidden = !!dev;
-    $("plantext").textContent = !dev ? t("s3p") : t(dev.kind === "open" ? "planOpen" : "planModel", { id: dev.id.text });
+    $("plantext").textContent = !dev ? t(st.hasConvert ? "s3pConvert" : "s3p", { v: ver() })
+      : t(dev.kind === "open" ? "planOpen" : "planModel", { id: dev.id.text });
   } else {
     const label = plan.resume ? "goResume" : !plan.firmware ? "goBoot" : dev.kind === "this" ? "goReinstall"
       : ["melodee", "dev"].includes(dev.kind) ? "goUpdate" : "goInstall";
@@ -974,7 +977,7 @@ async function convertAfter(up, step) {
 /* the resource region (firmware/src/res.c) after the firmware, or alone (Finish setup): the build's region through
  * editor command 82, then its synth modules through command 84 (fm1mods.js: into the pool, first come first served,
  * as projects and preset banks). Never fails the install: without them the FM-1 runs Melodee Pixel and INIT sounds,
- * SID and DRUM tracks stay silent, and the end screen says so and offers Finish setup.
+ * tracks on the synths stay silent, and the end screen says so and offers Finish setup.
  * -> null (the build has neither), { ok: true, how } or { ok: false, error } */
 async function pushResources(up, step) {
   let region, bundle;

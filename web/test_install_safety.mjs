@@ -202,7 +202,7 @@ for (const valid of [false,true]) {
     assert(simulated.device.log.includes('resources installed'),win.document.getElementById('log').textContent);
     assert(simulated.device.log.includes('module DRUM installed in slot 1') && simulated.device.log.includes('module SID installed in slot 2'),
            win.document.getElementById('log').textContent);
-    assert.match(win.document.getElementById('endtips').textContent,/the SID and DRUM synths are installed/);
+    assert.match(win.document.getElementById('endtips').textContent,/factory sounds and synths are installed/);
     assert(!win.document.querySelector('#phases [data-ph="setup"]').hidden);
   }else{   /* (the page's fetch and SHA-256 finish when they do: a loaded machine takes longer than 30 ms) */
     for(const until=Date.now()+5000;win.document.getElementById('pagefail').hidden && Date.now()<until;)await new Promise(r=>nativeSet(r,10));
