@@ -47,4 +47,9 @@
 #ifndef MELODEE_CAPTURE_FAST
 #define MELODEE_CAPTURE_FAST 1
 #endif
+/* audio.c: each half is rendered one half ahead of the DMA, so a render has two halves to finish in
+ * (one half more latency, 2.9 ms) */
+#ifndef MELODEE_RENDER_AHEAD
+#define MELODEE_RENDER_AHEAD 1
+#endif
 #endif

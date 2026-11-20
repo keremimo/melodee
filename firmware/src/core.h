@@ -84,7 +84,7 @@
 #define NPAT_V1 8u
 #define trk_npat(k) ((uint32_t)(k) < NPART ? NPAT : NPAT_MIDI)   /* the patterns track k has */
 _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers (seven bits)");
-#define HALF_FRAMES 128          /* I2S half buffer: 2.9 ms at 44.1 kHz (a key waits 0..1 half, then plays 1 half later) */
+#define HALF_FRAMES 128          /* I2S half buffer: 2.9 ms at 44.1 kHz (a key waits 0..1 half, then plays 1 half later, 2 rendering ahead: audio.c) */
 /* host builds (every build but the device's): the synths Melodee ships built in, the reference their modules are held to
  * (firmware/modules/host: their engines, numbers and names live outside the firmware's sources) */
 #ifndef MELODEE_HOST_ENGINES

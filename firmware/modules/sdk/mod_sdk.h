@@ -157,7 +157,7 @@ static inline int32_t md_svf_lp(const md_svf_t *c, int32_t in, int32_t *ic1, int
 static inline __attribute__((always_inline)) int32_t md_amp_at(const mod_vmod_v3 *m, uint32_t i)
 {
     int32_t x = (m->amp1 - m->amp0) * (int32_t)i;
-    return m->amp0 + ((x + ((x >> 31) & (MOD_CTL - 1))) >> MOD_CTL_LOG2);
+    return m->amp0 + ((x + ((x >> 31) & (int32_t)(MOD_CTL - 1u))) >> MOD_CTL_LOG2);
 }
 /* (p + 1/2 LSB + dither) >> sh, 1 <= sh <= 15; 0 stays 0 */
 static inline __attribute__((always_inline)) int32_t md_dith_cut(int32_t p, uint32_t sh, uint32_t k)
