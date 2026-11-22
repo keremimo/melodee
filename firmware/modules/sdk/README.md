@@ -6,7 +6,7 @@ Melodee's source tree. A module built once keeps working across firmware updates
     mod_abi3.h    the contract: the frozen views of a part and a voice, the host table, the engine, the file format
     mod_sdk.h     the helpers a module uses (sine, soft clip, SVF, the voice's level), MOD3_EXPORT / IDENT / PRESETS
     mod_schema.h  optional: parameters and pages (MOD3_SCHEMA)
-    module.ld, mod_rt.c, mod_dump.c, mod_build.py, mod_presets.py, mod_sign.py   the builder
+    module.ld, module_a64.ld, mod_rt.c, mod_dump.c, mod_build.py, mod_presets.py, mod_sign.py   the builder
     example/drone.c   a complete module
 
 ## Build
@@ -18,6 +18,14 @@ Needs Python 3, a host C compiler (`cc`) and the JieLi pi32v2 toolchain (`JIELI_
     python3 mod_build.py --check drone.mmod
 
 Install it with Melodee's web installer (Settings > Synth modules) or `tools/fm1_modules.py`.
+
+For the plug-in hosts (melodee-modules: the Melodee Modules CLAP on the MPC Sample and on a Mac), add the module built
+for AArch64 with LLVM's `clang` and `ld.lld` (`module_a64.ld`):
+
+    python3 mod_build.py --native drone.mmod --src example/drone.c -o native/drone.mmod
+
+The AA64 chunk follows SIGN, as a WASM chunk does: the signature does not cover it, and a file sent to the FM-1 leaves
+it out.
 
 ## Who it is
 

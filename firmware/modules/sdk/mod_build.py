@@ -8,6 +8,8 @@ an SDK module (mod_sdk.h), anywhere; in Melodee's tree it builds Melodee's engin
     mod_build.py --check FILE.mmod     (its head, CRC, address list, descriptor, presets, schema, who it is, signature)
     mod_build.py --wasm FILE.mmod [--src SRC.c] [-o OUT.mmod]   (the file with its module built for WebAssembly, a WASM
                                        chunk; SRC.c: its source, outside Melodee's tree)
+    mod_build.py --native FILE.mmod [--src SRC.c] [-o OUT.mmod] (the file with its module built for AArch64, an AA64
+                                       chunk: the plug-in hosts' code, melodee-modules)
 
 Needs: Python 3, a host C compiler (cc, or HOST_CC: a module's schema is written by its own source, built natively),
 and the JieLi pi32v2 toolchain (JIELI_TOOLCHAIN, else ~/.jieli/toolchain; off Linux x86-64 it runs in Docker,
@@ -38,7 +40,17 @@ IDNT (who it is), SIGN (the signature, last).
 --wasm: the same file with a WASM chunk last, the module's source built as a WebAssembly side module (emcc -fPIC
 -sSIDE_MODULE, MOD_IN_CORE). Melodee Studio's virtual FM-1 (web/core: CORE_MODULES) links it into its own memory and
 table and installs the file without the chunk: the device's file, byte for byte. emcc: a local one, else the emsdk
-Docker image web/core/build.sh uses (EMSDK_IMAGE). Written to build/modules/wasm/<name>.mmod."""
+Docker image web/core/build.sh uses (EMSDK_IMAGE). Written to build/modules/wasm/<name>.mmod.
+
+--native: the same file with an AA64 chunk last, an SDK module's source built for AArch64 (Linux on the MPC Sample's A55,
+macOS on Apple silicon: x18 left alone, the platform register there) with clang and ld.lld (NATIVE_CC, NATIVE_LD),
+freestanding as on the device (mod_rt.c, no library). It links twice as the device's image does (module_a64.ld: the
+descriptor first, the data on 16 KB pages of its own) and keeps the 64-bit absolute words (R_AARCH64_ABS64) as its
+address list. The chunk: version, the code's bytes (code, constants, the descriptor and engine, read-only once moved),
+where the data begins, the data's bytes, .bss, the address words' count (six u32), then the code, the data and the
+words (u32 offsets of 8-byte words the loader adds its base to). A plug-in host (melodee-modules) runs it; the device
+never sees it: like WASM it follows SIGN, outside the signature, and a tool sending the file to the device leaves it
+out. Written to build/modules/native/<name>.mmod."""
 import argparse
 import hashlib
 import lzma
@@ -633,10 +645,23 @@ def check(path):
     schm = chunks.get(SCHM_TAG, b"")
     if schm and (len(schm) < 52 or zlib.crc32(schm[52:]) != struct.unpack_from("<I", schm, 48)[0]):
         raise SystemExit(f"{path}: its SCHM chunk does not check")
+    nat = chunks.get(NATIVE_TAG, b"")
+    if nat:
+        if len(nat) < NATIVE_HEAD.size:
+            raise SystemExit(f"{path}: its AA64 chunk is too short")
+        nv, ncode, ndat_at, ndat, _, nw = NATIVE_HEAD.unpack_from(nat)
+        if nv != NATIVE_VERSION or len(nat) != NATIVE_HEAD.size + ncode + ndat + 4 * nw or ndat_at % NATIVE_PAGE or \
+                ndat_at < ncode or struct.unpack_from("<I", nat, NATIVE_HEAD.size)[0] != MAGIC:
+            raise SystemExit(f"{path}: its AA64 chunk does not check")
+        for k in range(nw):
+            w = struct.unpack_from("<I", nat, NATIVE_HEAD.size + ncode + ndat + 4 * k)[0]
+            if not (w + 8 <= ncode or ndat_at <= w and w + 8 <= ndat_at + ndat):
+                raise SystemExit(f"{path}: its AA64 chunk lists a word outside its code and data")
     signer = ("Melodee's key" if key == MELODEE_KEY else f"key {key.hex()}") if signed else "unsigned"
     print(f"{path}: {vendor}/{slug} ({n}) ID {mid[::-1].hex()}, {signer}, engine {engine}, ABI {abi} host {host}" +
           f", image {len(img)} B" + (f" (packed {image} B)" if flags & FILE_PACKED else "") +
-          f", bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}: ok")
+          f", bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}" +
+          (f", AArch64 {len(nat)} B" if nat else "") + (", WebAssembly" if WASM_TAG in chunks else "") + ": ok")
 
 
 WASM_TAG = 0x4D534157                          # "WASM": the module as a WebAssembly side module (Studio's core)
@@ -687,6 +712,128 @@ def wasm(path, out, src=None):
     print(f"module {name.rstrip(bytes(1)).decode()}: WebAssembly {len(w)} B, file {len(head) + len(body)} B -> {out}")
 
 
+NATIVE_TAG = 0x34364141                        # "AA64": the module built for AArch64 (melodee-modules' plug-in host)
+NATIVE_HEAD = struct.Struct("<IIIIII")         # version, code bytes, data's place, data bytes, bss, address words
+NATIVE_VERSION = 1
+NATIVE_PAGE = 0x4000                           # (module_a64.ld: the data's alignment)
+R_AARCH64_ABS64 = 257
+NATIVE_CFLAGS = ["--target=aarch64-none-elf", "-mcpu=cortex-a55", "-O2", "-ffp-contract=off", "-ffreestanding",
+                 "-fno-builtin", "-fno-pic", "-mcmodel=small", "-ffixed-x18", "-fno-stack-protector",
+                 "-fno-asynchronous-unwind-tables", "-fno-unwind-tables", "-ffunction-sections", "-fdata-sections",
+                 "-mno-outline-atomics", "-Wall", "-Werror", "-Wno-unused-function"]
+
+
+def elf64_sections(d):
+    shoff, = struct.unpack_from("<Q", d, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", d, 0x3A)
+    sh = [struct.unpack_from("<IIQQQQIIQQ", d, shoff + i * shentsize) for i in range(shnum)]
+    names = sh[shstrndx][4]
+    out = []
+    for s in sh:
+        nm = d[names + s[0]: d.index(b"\0", names + s[0])].decode()
+        out.append(dict(name=nm, type=s[1], addr=s[3], off=s[4], size=s[5], info=s[7]))
+    return out
+
+
+def native_image(elf, base):
+    """an AArch64 link at base: its code, the data's place (from base) and bytes, .bss, the 8-byte address words (from
+    base, in the image as it lies in memory)"""
+    d = elf.read_bytes()
+    secs = elf64_sections(d)
+    sec = {s["name"]: s for s in secs}
+    text, data, bss = sec[".text"], sec.get(".data"), sec.get(".bss")
+    if text["addr"] != base:
+        raise SystemExit(f"mod_build: .text at {text['addr']:#x}, not {base:#x}")
+    code = d[text["off"]: text["off"] + text["size"]]
+    data_at = (data["addr"] - base) if data else (len(code) + NATIVE_PAGE - 1) & ~(NATIVE_PAGE - 1)
+    dat = d[data["off"]: data["off"] + data["size"]] if data and data["size"] else b""
+    if data_at % NATIVE_PAGE or data_at < len(code):
+        raise SystemExit(f"mod_build: the data at {data_at:#x} is not on its own {NATIVE_PAGE:#x} page")
+    nbss = bss["size"] if bss else 0
+    if nbss and bss["addr"] - base != data_at + len(dat):
+        raise SystemExit("mod_build: .bss does not follow the data")
+    words = set()
+    for s in secs:
+        if s["type"] != 4 or secs[s["info"]]["name"] not in (".text", ".data"):   # SHT_RELA of the image's sections
+            continue
+        for k in range(s["size"] // 24):
+            off, info, _ = struct.unpack_from("<QQq", d, s["off"] + 24 * k)
+            if info & 0xFFFFFFFF == R_AARCH64_ABS64:
+                words.add(off - base)
+    for w in words:
+        if not (0 <= w and w + 8 <= len(code) or data_at <= w and w + 8 <= data_at + len(dat)):
+            raise SystemExit(f"mod_build: address word at {w:#x} outside the code and the data")
+    return code, data_at, dat, nbss, sorted(words)
+
+
+def native(path, out, src=None):
+    """path (a built .mmod) again with its source (src; Melodee's tree: firmware/modules/<name>/<name>.c) built for
+    AArch64 in an AA64 chunk, last"""
+    b = bytearray(path.read_bytes())
+    magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, r0, key, host, r1 = HEAD.unpack_from(b)
+    if magic != FILE_MAGIC or abi != ABI or total != len(b) or zlib.crc32(b[HEAD.size:]) != crc:
+        raise SystemExit(f"{path}: not an ABI {ABI} module file")
+    end = HEAD.size + image + 4 * nrel
+    if flags & FILE_CHUNKS and NATIVE_TAG in mod_presets.chunks(bytes(b), end):
+        raise SystemExit(f"{path}: has an AA64 chunk already")
+    stem = path.stem
+    src = src or (SRC / "firmware" / "modules" / stem / (stem + ".c") if SRC else None)
+    if not src or not src.exists():
+        raise SystemExit(f"mod_build: no source for {path.name} (--src)")
+    if is_engine(src):
+        raise SystemExit("mod_build: --native builds SDK modules (mod_sdk.h); an engine-source module needs the "
+                         "firmware's headers and tables")
+    cc, ld = os.environ.get("NATIVE_CC", "clang"), os.environ.get("NATIVE_LD", "ld.lld")
+    for tool in (cc, ld):
+        if not shutil.which(tool):
+            raise SystemExit(f"mod_build: --native needs {tool} (LLVM's clang and ld.lld: NATIVE_CC, NATIVE_LD)")
+    work = out.parent / ".mod_native"
+    work.mkdir(parents=True, exist_ok=True)
+    obj, rt = work / (stem + ".o"), work / "mod_rt.o"
+    e0, e1 = work / (stem + ".elf"), work / (stem + ".b2.elf")
+    inc = ["-I" + str(SDK)]
+
+    def run(cmd):
+        r = subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
+        if r.returncode:
+            sys.stderr.write(r.stdout + r.stderr)
+            raise SystemExit("mod_build: the AArch64 build failed")
+
+    run([cc, *NATIVE_CFLAGS, *inc, "-c", src, "-o", obj])
+    run([cc, *NATIVE_CFLAGS, "-c", SDK / "mod_rt.c", "-o", rt])
+    ldf = ["--gc-sections", "--emit-relocs", "-T", SDK / "module_a64.ld"]
+    run([ld, *ldf, "--defsym=MOD_BASE=0", obj, rt, "-o", e0])
+    run([ld, *ldf, f"--defsym=MOD_BASE={BASE2:#x}", obj, rt, "-o", e1])
+    code, data_at, dat, nbss, words = native_image(e0, 0)
+    code1, data_at1, dat1, nbss1, words1 = native_image(e1, BASE2)
+    if (len(code), data_at, len(dat), nbss, words) != (len(code1), data_at1, len(dat1), nbss1, words1):
+        raise SystemExit("mod_build: the two AArch64 links differ in layout")
+    span0 = code + bytes(data_at - len(code)) + dat
+    span1 = code1 + bytes(data_at - len(code1)) + dat1
+    listed = set()
+    for w in words:
+        a, c = struct.unpack_from("<Q", span0, w)[0], struct.unpack_from("<Q", span1, w)[0]
+        if (c - a) & 0xFFFFFFFFFFFFFFFF != BASE2:
+            raise SystemExit(f"mod_build: listed word {w:#x} moved by {(c - a):#x}, not {BASE2:#x}")
+        listed.update(range(w, w + 8))
+    for i, (x, y) in enumerate(zip(span0, span1)):
+        if x != y and i not in listed:
+            raise SystemExit(f"mod_build: byte {i:#x} depends on the base but no address word covers it "
+                             "(an absolute address the loader would not move)")
+    dmagic, dabi, _, dhost, _, deng, dnpre = struct.unpack_from("<IHHHHBB", code, 0)
+    if dmagic != MAGIC or dabi != abi or dhost != host or deng != engine or dnpre != npre:
+        raise SystemExit("mod_build: the AArch64 descriptor and the file's head differ")
+    payload = NATIVE_HEAD.pack(NATIVE_VERSION, len(code), data_at, len(dat), nbss, len(words)) + code + dat + \
+        b"".join(struct.pack("<I", w) for w in words)
+    body = bytes(b[HEAD.size:]) + mod_presets.chunk(NATIVE_TAG, payload)
+    head = HEAD.pack(magic, abi, engine, flags | FILE_CHUNKS, HEAD.size + len(body), image, bss, nrel, desc,
+                     zlib.crc32(body), name, version, npre, r0, key, host, r1)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(head + body)
+    print(f"module {name.rstrip(bytes(1)).decode()}: AArch64 code {len(code)} B, data {len(dat)} B, bss {nbss} B, "
+          f"{len(words)} address words, file {len(head) + len(body)} B -> {out}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("src", type=Path)
@@ -694,7 +841,9 @@ def main():
     ap.add_argument("--version", type=int, default=1)
     ap.add_argument("--check", action="store_true", help="check a built .mmod file instead")
     ap.add_argument("--wasm", action="store_true", help="a built .mmod file with its module built for WebAssembly")
-    ap.add_argument("--src", dest="src_c", type=Path, help="--wasm: the module's source (outside Melodee's tree)")
+    ap.add_argument("--native", action="store_true", help="a built .mmod file with its module built for AArch64")
+    ap.add_argument("--src", dest="src_c", type=Path,
+                    help="--wasm, --native: the module's source (outside Melodee's tree)")
     a, rest = ap.parse_known_args()
     if a.check:
         return check(a.src)
@@ -703,6 +852,11 @@ def main():
             raise SystemExit("mod_build: --wasm outside Melodee's tree needs the module's source (--src SRC.c)")
         out = a.out or (SRC / "build" / "modules" / "wasm" if SRC else a.src.parent / "wasm") / a.src.name
         return wasm(a.src.resolve(), out.resolve(), a.src_c.resolve() if a.src_c else None)
+    if a.native:
+        if not SRC and not a.src_c:
+            raise SystemExit("mod_build: --native outside Melodee's tree needs the module's source (--src SRC.c)")
+        out = a.out or (SRC / "build" / "modules" / "native" if SRC else a.src.parent / "native") / a.src.name
+        return native(a.src.resolve(), out.resolve(), a.src_c.resolve() if a.src_c else None)
     src = a.src.resolve()
     out = (a.out or (SRC / "build" / "modules" if SRC else src.parent) / (src.stem + ".mmod")).resolve()
     if any(not d.startswith("-D") for d in rest):
