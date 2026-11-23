@@ -87,7 +87,7 @@ static void reset(void)
     memset(&chain, 0, sizeof chain);
     chain_defaults(&chain_config);
     memset(proj_slot, 0, sizeof proj_slot);
-    up_cache_reset(); native_cache_reset();
+    up_cache_reset();
     memset(&persist_saved, 0, sizeof persist_saved);
     memset(&settings, 0, sizeof settings);
     memset(&ui, 0, sizeof ui);
@@ -109,26 +109,6 @@ static void reset(void)
     irq_start_race = irq_races = 0;
 }
 
-/* Melodee 1.x's TONE banks (the CZ-1's eight): read only now (converted into the shared user presets), their objects A/B */
-static int tone_bank_get(uint32_t k, uint8_t *raw)
-{
-    static tone_bank_t b;
-    if (st_load(OBJ_CZBANK0 + k, &b, sizeof b) != (int)sizeof b || !tone_bank_valid(&b) || !(b.used & 1u)) return 1;
-    memcpy(raw, b.tone[0], CZ_BYTES);
-    return 0;
-}
-static int cz_bank_persistence(void)
-{
-    int bad=0;reset();tone_bank_t bank;uint8_t raw[CZ_BYTES];
-    for(uint32_t k=0;k<8;k++){memset(&bank,0,sizeof bank);bank.magic=TONE_BANK_MAGIC;bank.ver=1;bank.slots=16;memcpy(bank.name,"BANK A",6);bank.name[5]=(char)('A'+k);bank.used=1;cz_patch_init(bank.tone[0]);bank.tone[0][128]=(uint8_t)('A'+k);bad+=check("dedicated CZ bank writes its own A/B object",!st_save(OBJ_CZBANK0+k,&bank,sizeof bank));}
-    for(uint32_t k=0;k<8;k++)bad+=check("CZ banks survive cache reset and boot",!tone_bank_get(k,raw)&&raw[128]=='A'+k);
-    bank.tone[0][128]='X';fail_after=2;
-    bad+=check("interrupted CZ bank write reports failure",st_save(OBJ_CZBANK0+1,&bank,sizeof bank)!=0);
-    fail_after=-1;
-    bad+=check("torn CZ bank write keeps previous committed tone",!tone_bank_get(1,raw)&&raw[128]=='B');
-    bad+=check("CZ bank writes leave neighbouring project objects untouched",st_sector(OBJ_BANK0+3,1)+5u*ST_SECTOR==st_sector(OBJ_CZBANK0,0));
-    return bad;
-}
 #ifndef PERSISTENCE_TEST_NO_MAIN
 static int staged_import_persistence(void)
 {
@@ -138,7 +118,7 @@ static int staged_import_persistence(void)
     reset();for(uint32_t i=0;i<32;i++){memcpy(fm6_rx+6+i*FM6_PACKED,FM6_INIT,FM6_PACKED);fm6_rx[6+i*FM6_PACKED+118]=(uint8_t)('A'+i%26);}
     msx_serving=1;sysex_stage(ENGI_FM6,fm6_rx+6,32,FM6_PACKED);msx_serving=0;ui.uslot=4;fail_after=(int)writes;sysex_choose();if(ui.confirm==CF_IMPORT){ui.confirm=0;preset_old_allow(1);sysex_commit();preset_old_allow(0);}
     bad+=check("partial SysEx write retains only unsaved tones for retry",sx_import.count==18&&sx_import.first==18&&sx_import.data==fm6_rx+6+14u*FM6_PACKED&&msx.ready==2&&native_used(ENGI_FM6,4)&&!native_used(ENGI_FM6,18));
-    native_cache_reset();bad+=check("committed import prefix survives cache reset and torn next slot",native_used(ENGI_FM6,4)&&native_raw(ENGI_FM6,4)[118]=='A'&&!native_used(ENGI_FM6,18));
+    up_cache_reset();bad+=check("committed import prefix survives cache reset and torn next slot",native_used(ENGI_FM6,4)&&native_raw(ENGI_FM6,4)[118]=='A'&&!native_used(ENGI_FM6,18));
     fail_after=-1;sysex_choose();
     bad+=check("retry starts after committed prefix and unlocks the receive buffer",!sx_import.count&&!msx.ready&&native_used(ENGI_FM6,35)&&native_raw(ENGI_FM6,5)[118]=='B'&&native_raw(ENGI_FM6,4)[118]=='A');
     return bad;
@@ -239,7 +219,7 @@ int main(void)
                   !memcmp(got + 8u, &old, sizeof old));
     project_save(0);
     bad += check("successful project save publishes new RAM", !strcmp(ui.msg, "SAVED") &&
-                  proj_import(&proj_scratch, &proj_slot[0], sizeof proj_slot[0]) &&
+                  proj_import_same(&proj_scratch, &proj_slot[0], sizeof proj_slot[0]) &&
                   proj_scratch.t[0].step[0].note[0] == 72u && proj_ok(&proj_scratch));
     before = erases;
     transport_req = 1;
@@ -305,6 +285,7 @@ int main(void)
     memset(&r, 0, sizeof r);
     r.used = UP_USED;
     r.ver = UP_VER;
+    r.engine = ENGI_SID;                             /* (2.0: a record names a synth; none is no record) */
     r.np = P_COUNT;
     memcpy(r.name, "First", 6);
     erase_error = 1;
@@ -356,7 +337,6 @@ int main(void)
     settings_save();
     bad += check("PLAY consumed before the settings snapshot defers the write",
                   irq_races == 3u && song.playing && !transport_req && persist_pending && erases == before);
-    bad += cz_bank_persistence();
     bad += staged_import_persistence();
     printf("%s\n", bad ? "PERSISTENCE TEST FAILED" : "persistence test passed");
     return bad != 0;

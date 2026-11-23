@@ -160,7 +160,7 @@ static void silent_and_saved(void)
     assert(t->eng_req == ENGI_MIDI && t->p[P_E0] == 14 && t->p[P_E1] == 1);
     static project_store_t packed;
     project_capture(&saved); assert(proj_pack(&packed, &saved));
-    assert(proj_import(&proj_scratch, &packed, sizeof packed));
+    assert(proj_import_same(&proj_scratch, &packed, sizeof packed));
     assert(proj_scratch.t[0].engine == ENGI_MIDI && proj_scratch.t[0].p[P_E0] == 14 && proj_scratch.t[0].p[P_E1] == 1);
     puts("MIDI Track: disabled mixer/FX, zero voices/FX resources, silence and project round-trip passed");
 }
@@ -345,7 +345,7 @@ static void midi_only_tracks(void)
     bank_fill(1, 1, 30, 7, 32);                         /* (a part's other bank: sparse in FBKL too) */
     song.sel = 6;
     assert(!project_save_as(0, "EIGHT"));
-    assert(slot_magic(0) == BANKP_MAGIC);
+    assert(slot_magic(0) == BANKS_MAGIC);
     project_new_blank(); assert(trk_n() == NPART && bank_is(4, 0, 0, 0, TP[P_SLEN].def));
     project_load(0);
     assert(trk_n() == NTRK && song.sel == 6);
@@ -364,7 +364,7 @@ static void midi_only_tracks(void)
     assert(bank_is(3, 0, 48, 16, 16) && bank_is(3, 3, 50, 64, 64) && bank_is(5, 2, 70, 5, 8) && trk[5].pattern == 2);
     assert(chain_patterns[1][3] == 3 && chain_patterns[0][5] == 2);
     /* four tracks in use: FBKP too (FBKK only when FBKP cannot hold a dense four-part project) */
-    project_new_blank(); assert(!project_save_as(1, "FOUR")); assert(slot_magic(1) == BANKP_MAGIC);
+    project_new_blank(); assert(!project_save_as(1, "FOUR")); assert(slot_magic(1) == BANKS_MAGIC);
     /* every bank of every track full: more than a project holds. The edit past its room is refused (and leaves the
      * bank as it was), so the project still saves */
     for (uint32_t k = trk_n(); k < NTRK; k++) track_add();
@@ -377,7 +377,7 @@ static void midi_only_tracks(void)
             pattern_t after; pattern_read(k, b, &after); assert(!memcmp(&before, &after, sizeof after)); refused++;
         }
     assert(refused && pattern_full && pattern_file_cost() <= pattern_room());
-    assert(!project_save_as(2, "FULL") && !bank_too_full && slot_magic(2) == BANKP_MAGIC);
+    assert(!project_save_as(2, "FULL") && !bank_too_full && slot_magic(2) == BANKS_MAGIC);
     puts("MIDI-only tracks 5..8: add, MIDI only, FBKP save/load, removal, edits past a project's room refused passed");
 }
 int main(void)

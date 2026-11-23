@@ -7,7 +7,7 @@
 static track_t *edit_setup(void)
 {
     ui_power_on();
-    set_engine_of(TSEL, 3);                       /* (SID: the generic ENV) */
+    set_engine_of(TSEL, ENGI_SID);                       /* (SID: the generic ENV) */
     TSEL->engine = TSEL->eng_req;
     TSEL->p[P_VOICE] = V_POLY;
     TSEL->p[P_QUANT] = Q_OFF;

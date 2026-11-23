@@ -103,15 +103,10 @@ static const char *const N_MDST[] = {"OFF", "PITCH", "CUT", "SHP", "AMP", "PAN",
                                      "VIB", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "DEPTH"};
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winitializer-overrides"
-#define SHIP_NAME(n, u, nm, tg, wc, st, ns, f) [n] = (f) & SHIP_F_MODS ? nm : "-",
-static const char *const N_ENGNAME[] = {[0 ... NENGINES - 1] = "-",   /* (retired and reserved numbers; 22..: synth
-                                                                       * modules, INFO names them) */
-    SHIP_ROWS(SHIP_NAME)                                               /* the shipped synths (../modules/shipped.h) */
-    [5] = MELODEE_LEGACY_EXTRAS ? "VOICE" : "-", [ENGI_PHYS] = MELODEE_LEGACY_EXTRAS ? "PHYS" : "-",
-    [11] = MELODEE_LEGACY_EXTRAS ? "NOISE" : "-", [ENGI_SLICE] = MELODEE_SLICE ? "SLICE" : "-", [ENGI_MIDI] = "MIDI Track",
-#if MELODEE_HOST_ENGINES
-    HOST_ENGNAMES                                                      /* (reference builds: PHASE TRIO WHEEL) */
-#endif
+#define SHIP_NAME(u, nm, tg, wc, st, ns, f) (f) & SHIP_F_MODS ? nm : "-",
+static const char *const N_ENGNAME[] = {[0 ... NENGINES - 1] = "-",   /* (none; the modules after the manifest's
+                                                                       * synths: INFO names them) */
+    [ENGI_MIDI] = "MIDI Track", SHIP_ROWS(SHIP_NAME)                  /* the shipped synths, from ENG_H_SHIP0 on */
 };
 #undef SHIP_NAME
 #pragma clang diagnostic pop
@@ -329,8 +324,6 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
         else if(type>=6u && type<=8u){fx_desc.label=type==6u?"TIME":"SIZE";fx_desc.fmt=F_PCT;}
         return &fx_desc;
     }
-    if (t->eng_req == 2u && id >= P_FM1_ATK && id <= P_FM4_LEVEL)
-        return &PH_ED[id - P_FM1_ATK];
     if (id == P_MPCDEG) {                             /* a degree of the track's scale */
         static param_desc_t degree;
         degree = TP[P_MPCDEG];
@@ -349,8 +342,6 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
  * only; range and default are the same): what the editor protocol, user presets and projects use */
 static const param_desc_t *param_desc_of(uint32_t e, uint32_t id)
 {
-    if (e == 2u && id >= P_FM1_ATK && id <= P_FM4_LEVEL)
-        return &PH_ED[id - P_FM1_ATK];
     return id >= P_E0 ? &ENGINES[e]->edit[id - P_E0] : &TP[id];
 }
 
@@ -724,9 +715,9 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
             for (uint32_t c = 0; c < VOICE_KINDS; c++) {
                 static const param_desc_t row = PE("-", N_VPOINTS, 0);
                 weights[c] = row;
-                for (uint32_t k = 0; k < NSHIP; k++)
+                for (uint32_t k = 0, n = 0; k < NSHIP; k++)  /* (a class one synth: its tag; the kits' class: DRUM) */
                     if (SHIP[k].wclass == c + 1u)
-                        weights[c].label = SHIP[k].tag;
+                        weights[c].label = n++ ? "DRUM" : SHIP[k].tag;
             }
             weights[VOICE_KINDS] = guard;
         }

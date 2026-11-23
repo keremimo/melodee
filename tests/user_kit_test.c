@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* The user's drum kits (DRUM's data records: src/rec_store.c keeps them, modules/drum/kit_store.c checks them,
- * modules/drum/drum_real.c plays them) on a simulated NOR flash: a kit of eleven synthetic takes
- * (src/drum_enc.c, a looped crash among them) written as a pool record spanning seven sectors decodes, take by take,
- * sample for sample as the same slices read from one block of RAM (the sector edges cost nothing), and the track
- * plays it the same twice and without the resource region; an empty slot, a deleted kit and a rewritten slot are
- * silent until the next hit; a record the player could not trust is refused and the old kit stays; the boot scan finds
- * the kits again; the KIT card shows a kit's name; a torn write leaves the slot as it was. */
+/* SAMPLER's kits (its data records: src/rec_store.c keeps them, modules/kits/kit_store.c checks them,
+ * modules/kits/drum_real.c plays them) on a simulated NOR flash: a kit of sixteen synthetic takes (drum_enc.c, a looped
+ * crash among them), each pad a record of its own, decodes take by take sample for sample as the same slices read from
+ * one block of RAM (sector edges, the guard and the loop cost nothing), and the track plays it the same twice and
+ * without the resource region; an empty kit, a deleted kit and a rewritten pad are silent until the next hit; the
+ * records of the other pads keep playing as the table moves under them; a record the player could not trust is
+ * refused and the old one stays; the boot scan finds the kits again (waiting for their synth when it is not listed
+ * yet); the KIT card shows a kit's name; a torn write leaves the pad as it was. */
 static unsigned char nor[0x100000];
 #define REC_BASE ((const uint8_t *)nor)        /* (the data records' flash: the player reads them in place) */
 static int res_absent_for_test;
@@ -27,73 +28,61 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
     return 0;
 }
 #include "../firmware/src/storage.c"
-#include "../firmware/src/rec_store.c"            /* (DRUM's own record helpers and encoder: built in) */
+#include "../firmware/src/rec_store.c"            /* (SAMPLER's record helpers and encoder: built in) */
 
 static int fails;
 static void check(const char *s, int ok) { printf("USER KIT: %-86s %s\n", s, ok ? "ok" : "FAIL"); fails += !ok; }
 
-/* a kit of eleven synthetic takes (seed: which), its record in rec, about target bytes (the crash takes the rest);
- * its length */
-static uint8_t rec[DRK_KIT_MAX + 64];
+/* pad p's synthetic take (seed: which kit), its record in rec (a looped crash on pad 9); its length */
+static uint8_t rec[DRK_NPAD][FS * 2u];
+static uint32_t rlen[DRK_NPAD];
 static uint32_t lcg;
 static int32_t noise(void) { lcg = lcg * 1664525u + 1013904223u; return (int32_t)(lcg >> 16) - 32768; }
-static uint32_t take_of(uint32_t seed, uint32_t d, int16_t *x, uint32_t n)
-{
-    float ph = 0.0f;
-    lcg = 777u + seed * 31u + d;
-    for (uint32_t i = 0; i < n + 64u; i++) {
-        float t = (float)i / (float)FS, v = d < D9_RS ? sinf(ph += 6.2831853f * (60.0f + 40.0f * (float)d + 80.0f * dlk_exp2(-t * 30.0f)) / (float)FS)
-                                                     : (float)noise() / 32768.0f;
-        x[i] = i < n ? (int16_t)(v * 26000.0f * dlk_exp2(-t * (d == D9_CR ? 0.7f : 9.0f + (float)seed))) : 0;
-    }
-    return n;
-}
-static uint32_t make_record(uint32_t seed, const char *name, uint32_t target)
+static uint32_t make_pad(uint32_t seed, uint32_t p)
 {
     static int16_t x[FS * 2u + 64u];
-    drk_kit_t H;
-    uint32_t at = DRK_KIT_BYTES / 8u;
-    memset(&H, 0, sizeof H);
-    memset(rec, 0, sizeof rec);
-    H.magic = DRK_KIT_MAGIC; H.bytes = DRK_KIT_BYTES; H.ndrum = DRK_NDRUM; H.nsmp = DRK_NDRUM;
-    memcpy(H.name, name, strlen(name));
-    for (uint32_t d = 0; d < DRK_NDRUM; d++) {
-        uint32_t n = d == D9_CR ? FS * 2u : FS / (d < D9_RS ? 6u : 12u), loop;
-        dke_out_t o;
-        if (d == D9_CR) {                            /* (the crash last in D9 order but two: sized to the room left) */
-            uint32_t room = target > at * 8u + 5000u ? target - at * 8u - 3000u : 2000u;
-            for (uint32_t bytes; take_of(seed, d, x, n), (bytes = dke_encode(x, n, 24, 0, 0, &o)) > room;)
-                n = (uint32_t)((uint64_t)n * room / bytes) * 15u / 16u;
-        }
-        take_of(seed, d, x, n);
-        loop = d == D9_CR ? n * 7u / 10u : 0u;
-        uint32_t bytes = dke_encode(x, n, 24, loop, (uint32_t *)(void *)(rec + at * 8u), &o);
-        drk_sample_t s = {(uint16_t)at, (uint16_t)n, (uint16_t)o.loop_at, (uint16_t)o.loop_slice, 32768, (uint8_t)(loop ? 2 : 0), (uint8_t)d};
-        if (loop) memcpy(H.loops[d], o.loop, sizeof H.loops[d]);
-        H.smp[d] = s;
-        H.map[d] = (drk_map_t){(uint8_t)d, 0xFFu, 0, 0, 4096, (uint16_t)(d == D9_CR ? 2400 : 600), 4000};
-        at += bytes / 8u;
+    drk_pad_t H;
+    dke_out_t o;
+    uint32_t n = p == 9u ? FS * 2u : FS / (p < 5u ? 6u : 12u), loop = p == 9u ? n * 7u / 10u : 0u;
+    float ph = 0.0f;
+    lcg = 777u + seed * 31u + p;
+    for (uint32_t i = 0; i < n + 64u; i++) {
+        float t = (float)i / (float)FS, v = p < 5u ? sinf(ph += 6.2831853f * (60.0f + 40.0f * (float)p + 80.0f * dlk_exp2(-t * 30.0f)) / (float)FS)
+                                                   : (float)noise() / 32768.0f;
+        x[i] = i < n ? (int16_t)(v * 26000.0f * dlk_exp2(-t * (p == 9u ? 0.7f : 9.0f + (float)seed))) : 0;
     }
-    memcpy(rec, &H, sizeof H);
-    if (at * 8u > DRK_KIT_MAX) { printf("USER KIT: test record too long (%u)\n", at * 8u); exit(1); }
-    return at * 8u;
+    memset(&H, 0, sizeof H);
+    memset(rec[p], 0, sizeof rec[p]);
+    uint32_t bytes = dke_encode(x, n, 24, loop, (uint32_t *)(void *)(rec[p] + DRK_PAD_BYTES), &o);
+    H.magic = DRK_PAD_MAGIC; H.bytes = (uint16_t)DRK_PAD_BYTES; H.pad = (uint8_t)p; H.codec = DRK_CODEC_LMS;
+    H.n = n; H.inc = 32768u; H.gain = 1024u; H.out = 4096u; H.ms = (uint16_t)(p == 9u ? 2400u : 0u); H.pivot = 4000u;
+    if (loop) { H.loop_at = o.loop_at; H.loop_slice = o.loop_slice; H.dark = 2; memcpy(H.loop, o.loop, sizeof H.loop); }
+    memcpy(rec[p], &H, sizeof H);
+    return rlen[p] = DRK_PAD_BYTES + bytes;
 }
-static int put(uint32_t slot, const uint8_t *src, uint32_t len)
+static int put(uint32_t s, const uint8_t *src, uint32_t len)
 {
     st_stream_t w;
-    int rc = rec_put_begin(&w, slot, len);
+    int rc = rec_put_begin(&w, s, len);
     for (uint32_t off = 0; !rc && off < len; off += 256u)
         rc = rec_put_write(&w, src + off, len - off < 256u ? len - off : 256u);
-    return rc ? rc : rec_put_commit(&w, slot);
+    return rc ? rc : rec_put_commit(&w, s);
 }
-static void kit(int user_slot)
+/* kit u: every pad's record (seed), its name; 0 */
+static int make_kit(uint32_t u, uint32_t seed, const char *name)
+{
+    int rc = 0;
+    for (uint32_t p = 0; p < DRK_NPAD && !rc; p++) { make_pad(seed, p); rc = put(u * MOD3_RPAD + p, rec[p], rlen[p]); }
+    return rc ? rc : rec_put_name(u, name, (uint32_t)strlen(name));
+}
+static void kit(int u)
 {
     host_tracks_init();
     for (uint32_t p = 0; p < NPART; p++)
         memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, 0);
-    trk[0].p[P_E0] = (int16_t)(user_slot < 0 ? DK_808 : DK_USER0 + user_slot);
+    host_preset(&trk[0], u < 0 ? ENGI_808 : ENGI_SAMPLER, 0);
+    trk[0].p[P_E0] = (int16_t)(u < 0 ? DK_808 : DK_USER0 + u);
 }
 static int32_t run(int32_t *buf, uint32_t nb)
 {
@@ -107,10 +96,10 @@ static int32_t run(int32_t *buf, uint32_t nb)
     }
     return pk;
 }
-/* every drum, overlapping, then the crash ringing on into its loop */
+/* every pad, overlapping, then the crash ringing on into its loop */
 static void groove(int32_t *buf)
 {
-    static const uint8_t notes[] = {36, 42, 38, 42, 36, 46, 38, 42, 41, 45, 48, 37, 39, 49, 51, 42, 36, 38};
+    static const uint8_t notes[] = {36, 42, 38, 42, 36, 46, 38, 42, 41, 45, 50, 37, 39, 49, 56, 64, 61, 60, 75, 70, 36, 38};
     uint32_t at = 0;
     for (uint32_t i = 0; i < sizeof notes; i++) {
         trk_note_on(&trk[0], notes[i], (uint8_t)(70 + (i * 13u) % 57u));
@@ -119,38 +108,39 @@ static void groove(int32_t *buf)
     }
     run(buf + at, (uint32_t)(FS * 3u / CTL));
 }
-#define GROOVE (18u * 40u * CTL + FS * 3u)
-/* slot u's take for drum d: sample by sample through the player's channel, from the flash sectors (ram 0) or from
- * the record as one block of RAM */
-static uint32_t decode(uint32_t u, uint32_t d, const uint8_t *ram, int16_t *y)
+#define GROOVE (22u * 40u * CTL + FS * 3u)
+/* pad record s's take sample by sample through the player's channel, from the flash sectors (ram 0) or from the record
+ * as one block of RAM laid out as in flash (the guard's place skipped), once past its end into its loop */
+static uint8_t phys[16][4096];
+static uint8_t plist[16];
+static uint32_t decode(uint32_t s, const uint8_t *ram, uint32_t len, int16_t *y)
 {
-    static drk_part_t P;
-    const uint32_t *secs[DRK_KSEC];
-    uint32_t n = drk_user[u].n;
-    static uint32_t phys[DRK_KSEC][DRK_SLOTS * 2u];      /* (the RAM block laid out as in flash: the guard's place skipped) */
-    if (ram) {
+    const uint8_t *list = &rec_list[rec_tab[s].at];
+    if (ram) {                                   /* (sector numbers 0x10.. outside the store: phys[] at their place) */
+        static unsigned char keep[16][4096];
         memset(phys, 0xFF, sizeof phys);
-        for (uint32_t k = 0; k < rec_len[u] / 8u; k++) memcpy(&phys[k / DRK_SECSLICES][DRK_SLOT(k % DRK_SECSLICES)], ram + 8u * k, 8u);
+        for (uint32_t k = 0; k < len / 8u; k++)
+            memcpy(&phys[k / DRK_SECSLICES][DRK_SECOFF + 4u * DRK_SLOT(k % DRK_SECSLICES)], ram + 8u * k, 8u);
+        for (uint32_t k = 0; k < 16u; k++) { memcpy(keep[k], nor + (0x10u + k) * 4096u, 4096); memcpy(nor + (0x10u + k) * 4096u, phys[k], 4096); plist[k] = (uint8_t)(0x10u + k); }
+        list = plist;
+        (void)keep;
     }
-    for (uint32_t k = 0; k < n; k++)
-        secs[k] = ram ? phys[k] : (const uint32_t *)(const void *)DRK_XIP(drk_user[u].sec[k] * 4096u + DRK_SECOFF);
-    const drk_kit_t *H = (const drk_kit_t *)(const void *)secs[0];
-    const drk_sample_t *s = &H->smp[H->map[d].sample];
+    const drk_pad_t *H = (const drk_pad_t *)(const void *)DRK_SEC(list[0]);
     drk_ch_t c;
     memset(&c, 0, sizeof c);
-    for (uint32_t k = 0; k < n; k++) P.sec[k] = secs[k];
-    c.secs = P.sec;
-    drk_stream_start(&c, s);
-    uint32_t len = s->n + (s->loop_at ? s->n - s->loop_at : 0u);   /* once past its end into the loop */
-    for (uint32_t i = 0; i < len; i++) {
-        if (c.idx >= c.n && s->loop_at) {
-            for (uint32_t k = 0; k < 4u; k++) { c.h[k] = H->loops[s->st][k]; c.w[k] = H->loops[s->st][4u + k]; }
-            drk_seek(&c, (uint32_t)s->at + s->loop_slice); c.nleft = 0; c.idx = s->loop_at;
+    c.list = list;
+    drk_stream_start(&c, H);
+    uint32_t n = H->n + (H->loop_at ? H->n - H->loop_at : 0u);
+    for (uint32_t i = 0; i < n; i++) {
+        if (c.idx >= c.n && H->loop_at) {
+            for (uint32_t k = 0; k < 4u; k++) { c.h[k] = H->loop[k]; c.w[k] = H->loop[4u + k]; }
+            drk_seek(&c, DRK_FIRST + H->loop_slice); c.nleft = 0; c.idx = H->loop_at;
         }
         y[i] = (int16_t)drk_next(&c);
         c.idx++;
     }
-    return len;
+    if (ram) memset(nor + 0x10000u, 0xFF, 16u * 4096u);
+    return n;
 }
 
 /* a blank store's free sectors (storage.c): the data flash less OTA staging, the settings pair and the resource region
@@ -161,19 +151,18 @@ int main(void)
     static int32_t a[GROOVE], b[GROOVE];
     static int16_t y[FS * 4u], z[FS * 4u];
     memset(nor, 0xFF, sizeof nor);
-    check("KIT 9..16 are the user's: eight slots after FM, names KIT 1..8 until written",
-          DK_USER0 == DK_FM + 1 && DK_KIT_MAX == DK_USER0 + 7 && ENG_DRUM.edit[0].max == DK_KIT_MAX &&
+    check("KIT 9..16 are SAMPLER's: eight kits after FM, names KIT 1..8 until named",
+          DK_USER0 == DK_FM + 1 && DK_KIT_MAX == DK_USER0 + 7 && ENG_SAMPLER.edit[0].max == DK_KIT_MAX && ENG_SAMPLER.edit[0].min == DK_USER0 &&
           !strcmp(N_DRUM_KIT[DK_USER0], "KIT 1") && !strcmp(N_DRUM_KIT[DK_KIT_MAX], "KIT 8"));
 
-    uint32_t len = make_record(0, "ROCK", 27500);       /* (past six 4,056-byte sectors) */
-    check("eleven takes as a record fit seven sectors and cross sector edges", len <= DRK_KIT_MAX && len > 6u * DRK_SECBYTES);
-    check("the record is written, checked and published into slot 3", put(2, rec, len) == 0 && drk_user[2].n == 7u &&
-          rec_len[2] == len);
+    check("sixteen pad records written, checked and published into KIT 3, its name ROCK", make_kit(2, 0, "ROCK") == 0 &&
+          rec_used(2) == 1 && rec_tab[2u * MOD3_RPAD + 9u].n == (rlen[9] + DRK_SECBYTES - 1u) / DRK_SECBYTES);
     {
         uint32_t differ = 0, total = 0;
-        for (uint32_t d = 0; d < DRK_NDRUM; d++) {
-            uint32_t n = decode(2, d, 0, y);
-            decode(2, d, rec, z);
+        for (uint32_t p = 0; p < DRK_NPAD; p++) {
+            uint32_t n = decode(2u * MOD3_RPAD + p, 0, 0, y);
+            make_pad(0, p);
+            decode(2u * MOD3_RPAD + p, rec[p], rlen[p], z);
             total += n;
             for (uint32_t i = 0; i < n; i++) differ += y[i] != z[i];
         }
@@ -194,71 +183,95 @@ int main(void)
     res_absent_for_test = 0;
 
     kit(5); trk_note_on(&trk[0], 38, 120);
-    check("an empty slot is silent", run(0, 40u) == 0);
+    check("an empty kit is silent", run(0, 40u) == 0);
 
     {   /* the card's name */
         const char *unit; char v[8], e[8];
-        param_format(&ENG_DRUM.edit[0], DK_USER0 + 2, v, &unit);
-        param_format(&ENG_DRUM.edit[0], DK_USER0 + 5, e, &unit);
+        param_format(&ENG_SAMPLER.edit[0], DK_USER0 + 2, v, &unit);
+        param_format(&ENG_SAMPLER.edit[0], DK_USER0 + 5, e, &unit);
         check("the KIT card shows the kit's own name, EMPTY for none", !strcmp(v, "ROCK") && !strcmp(e, "EMPTY"));
     }
 
-    {   /* rewritten while it rings: the next block is silent, the next hit is the new kit's */
+    {   /* a pad rewritten while it rings: the next block is silent, the next hit is the new take's; the others play on */
         kit(2); trk_note_on(&trk[0], 49, 127); run(0, 20u);
-        uint32_t blen = make_record(1, "BOOM", 12000);
-        int rc = put(2, rec, blen);
+        make_pad(1, 0);
+        int rc = put(2u * MOD3_RPAD, rec[0], rlen[0]);
         int32_t pk = run(0, 4u);
         trk_note_on(&trk[0], 36, 120); run(a, 200u);
-        put(4, rec, blen);
+        put(4u * MOD3_RPAD, rec[0], rlen[0]);
         kit(4); trk_note_on(&trk[0], 36, 120); run(b, 200u);
-        check("a slot rewritten while it rings: silent at once, then the new kit plays",
+        check("a pad rewritten while the kit rings: silent at once, then the new take plays",
               !rc && pk == 0 && !memcmp(a, b, 200u * CTL * sizeof a[0]));
+        uint32_t before = 0, after = 0;
+        make_pad(0, 9);
+        decode(2u * MOD3_RPAD + 9u, rec[9], rlen[9], z);
+        before = decode(2u * MOD3_RPAD + 9u, 0, 0, y);
+        before = !memcmp(y, z, before * 2u);
         rec_delete(4);
-        check("the storage counts the kit and nothing else of it",
-              st_project_free() == T_FREE0 - (int)((blen + DRK_SECBYTES - 1u) / DRK_SECBYTES));
+        after = decode(2u * MOD3_RPAD + 9u, 0, 0, y);
+        after = !memcmp(y, z, after * 2u);
+        check("the other pads' sectors stay found as the table moves under them", before && after);
+        int used = 0;
+        for (uint32_t p = 0; p < DRK_NPAD; p++) used += (int)rec_tab[2u * MOD3_RPAD + p].n;
+        check("the storage counts the kit's records and nothing else of it", st_project_free() == T_FREE0 - used - 1);
     }
 
     {   /* refused records */
-        uint32_t ok_len = make_record(0, "ROCK", 25000), bad = 0;
-        memcpy(rec + 4, "\x00\x00", 2);                  /* bytes 0: not a header */
-        bad += put(3, rec, ok_len) == -2;
-        make_record(0, "ROCK", 25000); memcpy(((drk_kit_t *)(void *)rec)->name, "TOOLONG", 7);
-        bad += put(3, rec, ok_len) == -2;
-        make_record(0, "ROCK", 25000); ((drk_kit_t *)(void *)rec)->map[3].sample = 11;
-        bad += put(3, rec, ok_len) == -2;
-        make_record(0, "ROCK", 25000);
-        bad += put(3, rec, ok_len - 8u) == -2;           /* cut short: the last take runs past the end */
-        check("headers, names, maps and streams the player cannot trust are refused", bad == 4u && !drk_user[3].n);
+        uint32_t bad = 0, s = 3u * MOD3_RPAD + 1u;
+        make_pad(0, 1); memcpy(rec[1], "PAD1", 4);
+        bad += put(s, rec[1], rlen[1]) == -2;
+        make_pad(0, 1); ((drk_pad_t *)(void *)rec[1])->pad = 16;
+        bad += put(s, rec[1], rlen[1]) == -2;
+        make_pad(0, 1); ((drk_pad_t *)(void *)rec[1])->inc = 40000u;
+        bad += put(s, rec[1], rlen[1]) == -2;
+        make_pad(0, 1); ((drk_pad_t *)(void *)rec[1])->codec = 1;
+        bad += put(s, rec[1], rlen[1]) == -2;
+        make_pad(0, 1);
+        bad += put(s, rec[1], rlen[1] - 16u) == -2;      /* cut short: the take runs past the end */
+        check("headers, pads, rates, codecs and streams the player cannot trust are refused", bad == 5u && !rec_tab[s].n &&
+              !rec_pad_stored(s));
         kit(3); trk_note_on(&trk[0], 38, 120);
-        check("... and leave the slot empty (silent)", run(0, 40u) == 0);
-        make_record(0, "ROCK", 25000);
+        check("... and leave the kit empty (silent)", run(0, 40u) == 0 && !rec_used(3));
+        make_pad(0, 0);
         kit(2); trk_note_on(&trk[0], 36, 120); run(a, 100u);
-        fail_after = 30;
-        int rc = put(2, rec, ok_len);
+        fail_after = 5;
+        int rc = put(2u * MOD3_RPAD, rec[0], rlen[0]);
         fail_after = -1;
         kit(2); trk_note_on(&trk[0], 36, 120); run(b, 100u);
-        check("a torn write leaves the slot's kit as it was", rc != 0 && drk_user[2].n && !memcmp(a, b, 100u * CTL * sizeof a[0]));
+        check("a torn write leaves the pad's take as it was", rc != 0 && rec_tab[2u * MOD3_RPAD].n && !memcmp(a, b, 100u * CTL * sizeof a[0]));
     }
 
     {   /* boot */
-        memset(drk_user, 0, sizeof drk_user); memset(rec_len, 0, sizeof rec_len);
+        memset(rec_tab, 0, sizeof rec_tab); memset(rec_nm, 0, sizeof rec_nm);
         rec_scan();
-        check("the boot scan finds the kits again", drk_user[2].n && rec_len[2] && !drk_user[3].n);
+        check("the boot scan finds the kits and their names again", rec_tab[2u * MOD3_RPAD + 9u].n && !strcmp(rec_nm[2], "ROCK") &&
+              rec_used(2) == 1 && !rec_used(3));
     }
 
-    {   /* boot before DRUM is listed (a module written after power-on; nightly dc2209de scanned before mod_boot) */
-        const engine_t *drum = ENGINES[ENGI_DRUM];
-        memset(drk_user, 0, sizeof drk_user); memset(rec_len, 0, sizeof rec_len);
-        ENGINES[ENGI_DRUM] = &ENG_RETIRED; sch_gen++;
+    {   /* boot before SAMPLER is listed (a module written after power-on; nightly dc2209de scanned before mod_boot) */
+        const engine_t *smp = ENGINES[ENGI_SAMPLER];
+        memset(rec_tab, 0, sizeof rec_tab);
+        ENGINES[ENGI_SAMPLER] = &ENG_NONE; sch_gen++;
         rec_scan();
-        int waited = !drk_user[2].n && (rec_pend >> 2 & 1u);
-        int hidden = rec_hidden(2) && !rec_hidden(3);     /* (Record kit's sheet never takes slot 2 for an empty one) */
-        ENGINES[ENGI_DRUM] = drum; sch_gen++;
-        rec_recheck();                                    /* (eng_module_main.c mod_register: DRUM in SRAM) */
-        check("kits found before their synth is listed wait for it, then play (not dropped until a save)",
-              waited && drk_user[2].n && rec_len[2] && !drk_user[3].n && !rec_pend);
-        check("... and while it waits its slot is a kit, not an empty slot a take may write over",
-              hidden && !rec_hidden(2));
+        int waited = !rec_tab[2u * MOD3_RPAD].n && (rec_pend >> 2 & 1u);
+        int hidden = rec_hidden(2u * MOD3_RPAD) && rec_used(2) == 2 && !rec_hidden(3u * MOD3_RPAD);
+        ENGINES[ENGI_SAMPLER] = smp; sch_gen++;
+        rec_recheck();                                    /* (eng_module_main.c mod_register: SAMPLER in SRAM) */
+        check("kits found before their synth is listed wait for it, then play (not dropped until a save), named again",
+              waited && rec_tab[2u * MOD3_RPAD].n && rec_tab[2u * MOD3_RPAD + 15u].n && !rec_pend && !strcmp(rec_nm[2], "ROCK"));
+        check("... and while they wait each pad is a take, not an empty pad a take may write over",
+              hidden && !rec_hidden(2u * MOD3_RPAD));
+    }
+
+    {   /* a record of another form where a kit's name goes (Melodee 1.x's KIT1 kit): no name, the kit still taken */
+        static uint8_t old[600];
+        memset(old, 0x11, sizeof old); memcpy(old, "KIT1", 4); memcpy(old + 8, "OLDKT", 5);
+        int rc = st_project_save(rec_name_obj(6), old, sizeof old);
+        rec_scan();
+        check("a 1.x kit record where a name goes names nothing; the kit stays taken (Record kit passes it by)",
+              !rc && !rec_nm[6][0] && rec_used(6) == 1);
+        st_project_delete(rec_name_obj(6));
+        rec_scan();
     }
 
     {   /* delete while it rings */
@@ -267,8 +280,8 @@ int main(void)
         int rc = rec_delete(2);
         int32_t pk = run(0, 4u);
         trk_note_on(&trk[0], 38, 120);
-        check("a kit deleted while it rings: silent at once and after, the slot empty, its sectors free",
-              !rc && pk == 0 && run(0, 40u) == 0 && !drk_user[2].n && !rec_len[2] && st_project_free() == T_FREE0);
+        check("a kit deleted while it rings: silent at once and after, the kit empty, its sectors free",
+              !rc && pk == 0 && run(0, 40u) == 0 && !rec_used(2) && !rec_nm[2][0] && st_project_free() == T_FREE0);
         check("... and the room it gave back is counted again (SLOTS card: st_pool_gen moved on)", st_pool_gen != gen);
     }
     if (fails) { printf("USER KIT: %d FAILED\n", fails); return 1; }

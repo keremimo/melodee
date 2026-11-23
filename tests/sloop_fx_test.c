@@ -114,7 +114,7 @@ static void returns(void)
     project_t q;project_store_t p;
     for(uint32_t type=FX_SOFT;type<=FX_PEDAL_CHORUS;type++){
         TSEL->p[P_FXTYPE]=(int16_t)type;TSEL->p[P_FXTONE]=-63;song.g[G_MFXTYPE]=(int16_t)type;song.g[G_MFXTONE]=63;
-        project_capture(&q);assert(proj_pack(&p,&q) && proj_import(&proj_scratch,&p,sizeof p));
+        project_capture(&q);assert(proj_pack(&p,&q) && proj_import_same(&proj_scratch,&p,sizeof p));
         assert(proj_scratch.t[0].p[P_FXTYPE]==FX_OFF && proj_scratch.t[0].p[P_FXTONE]==-63);
         assert(proj_scratch.g[G_MFXTYPE]==type && proj_scratch.g[G_MFXTONE]==63);
     }

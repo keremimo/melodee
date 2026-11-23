@@ -504,80 +504,9 @@ static uint32_t str_hash(uint32_t h, const char *s)
     return h;
 }
 
-#if MELODEE_SLICE
-/* SLICES (ui_slice.c): the waveform from the marker before the selected one to the one after it (the selected
- * slice tinted, its marker the accent, outside the slices DIM), under it the whole material with every marker and
- * the view; then the selected slice's length and the source */
-static void graph_slices(void)
-{
-    uint32_t a, b, len, n = slice_count(), j = slice_sel(), i, src, div, ma, mb;
-    char t[20], u[12];
-    if (!slice_src(&src, &div) || !n) {
-        panel_note("NO SAMPLE", "SRC: BREAK OR USR1-3", 0);
-        return;
-    }
-    slice_view(&a, &b, &len);
-    slice_env(a, b);
-    ma = slice_mark(0);
-    mb = slice_mark(n);
-#define SPX(p) (12 + (int32_t)((uint32_t)((p) - a) * SP_COLS / (b - a)))   /* p in [a, b] */
-    if (j < n) {                                     /* the selected slice */
-        uint32_t s0 = slice_mark(j), s1 = slice_mark(j + 1u);
-        int32_t x0 = SPX(s0 > a ? s0 : a), x1 = SPX(s1 < b ? s1 : b);
-        if (x1 > x0)
-            cv_rect(x0, 6, x1 - x0, 80, T_TINT);
-    }
-    for (i = 0; i < SP_COLS; i++) {
-        uint32_t p = a + (uint32_t)((uint32_t)i * (b - a) / SP_COLS);
-        cv_line(12 + (int32_t)i, 46 - sp.hi[i] * 38 / 64, 12 + (int32_t)i, 46 - sp.lo[i] * 38 / 64,
-                p >= ma && p < mb ? T_THEME : T_DIM);
-    }
-    for (i = 0; i <= n; i++) {                       /* the markers in the view (the selected one last: on top) */
-        uint32_t p = slice_mark(i);
-        if (i != j && p >= a && p <= b)
-            cv_rect(SPX(p), 4, 1, 84, T_MID);
-    }
-    {
-        uint32_t p = slice_mark(j);
-        if (p >= a && p <= b)
-            cv_rect(SPX(p) > 226 ? 226 : SPX(p), 2, 2, 88, T_ACCENT);
-    }
-#undef SPX
-    cv_rrect(12, 96, (int32_t)SP_COLS, 3, 1, T_RAISE, T_SURF);   /* the whole: every marker, the view */
-    for (i = 0; i <= n; i++)
-        cv_rect(12 + (int32_t)((uint32_t)slice_mark(i) * (SP_COLS - 1u) / len), 94, 1, 7, i == j ? T_ACCENT : T_MID);
-    {
-        int32_t x0 = 12 + (int32_t)((uint32_t)a * SP_COLS / len), x1 = 12 + (int32_t)((uint32_t)b * SP_COLS / len);
-        cv_rect(x0, 103, x1 - x0 < 2 ? 2 : x1 - x0, 2, T_THEME);
-    }
-    str_cpy(t, "LEN ", sizeof t);
-    slice_time(u, j < n ? slice_mark(j + 1u) - slice_mark(j) : len - mb);
-    str_cpy(t + 4, u, sizeof t - 4);
-    str_cpy(t + str_len(t), " S", sizeof t - str_len(t));
-    cv_text(12, ty_y(114, TY_LB), TY_LB, t, T_MID);
-    cv_text_r(228, ty_y(114, TY_LB), TY_LB, src ? N_SLC_SRC[src] : "BREAK", src ? T_THEME : T_DIM, T_SURF);
-}
-#endif
 
 /* WHEEL: the nine drawbars as rounded bars over RAISE slots (the bars of the knob just turned: the accent),
  * their footages under them */
-#if MELODEE_LEGACY_EXTRAS
-static void graph_wheel(const track_t *t, uint16_t c)
-{
-    uint32_t k;
-    static const char *const names[9] = {"16", "5.3", "8", "4", "2.7", "2", "1.6", "1.3", "1"};
-    for (k = 0; k < 9u; k++) {
-        int32_t x = 11 + (int32_t)k * 25, level = drw_level(t->p, k);
-        if (t->p[P_E4] && k == 8u) level = 0; /* DSP's percussion cancels the 1-foot bar. */
-        int hot = ui.hot_t && cur_page()->id[0] == P_E0 &&
-                  (ui.hot_col == 0u || ui.hot_col == (k < 2u ? 1u : k < 4u ? 2u : 3u));
-        cv_rrect(x + 7, 2, 4, 73, 2, T_RAISE, T_SURF);
-        if (level) cv_rrect(x + 3, 75 - level * 8, 12, level * 8, 3, hot ? T_ACCENT : c, T_SURF);
-        else cv_rrect(x + 3, 73, 12, 2, 1, hot ? T_ACCENT : T_DIM, T_SURF);
-        cv_text_c(x + 9, ty_y(88, TY_LB), TY_LB, names[k], T_MID, T_SURF);
-    }
-}
-#endif
 /* The FM charts' parts: an operator box 21 x 17 (rows 23 px apart, columns 24), junction dots, Manhattan routes */
 #define FM_BH 17
 static void fm_dot(int32_t x, int32_t y, uint16_t c) { cv_rect(x - 1, y - 1, 3, 3, c); }
@@ -859,10 +788,7 @@ static uint32_t graph_sig(int play)
     if (pg->scope == SC_MOD)                         /* a synth's pages: its patch, the instance shown, its slots */
         h ^= fnv(2166136261u, patch_of(song.sel), patch_len(eng_idx(t->eng_req))) * 2654435761u + sch_inst * 131u +
              up_gen * 104729u;
-#if MELODEE_SLICE
-    if (pg->graph == GR_SLICES && slice_page_ok()) h ^= slice_sig();
-#endif
-    if (pg->scope == SC_ENGINE && ((MELODEE_LEGACY_EXTRAS && t->eng_req % NENGINES == 7u) || sch_wdef(eng_idx(t->eng_req))))
+    if (pg->scope == SC_ENGINE && sch_wdef(eng_idx(t->eng_req)))
         h ^= (ui.hot_t ? ui.hot_col + 1u : 0u) * 65537u;
     if (pg->scope == SC_ENGINE && sch_wdef(eng_idx(t->eng_req)))   /* the patch its picture shows (FM6's algorithm) */
         h ^= (fnv(2166136261u, patch_of(trk_ix(t)), patch_len(eng_idx(t->eng_req))) + 1u) * 2246822519u;
@@ -877,20 +803,14 @@ static uint32_t graph_sig(int play)
     return h;
 }
 static uint32_t graph_signature(void) { return graph_sig(1); }
-/* 4-letter engine tags of the preset list: a synth Melodee makes, its manifest row's (../modules/shipped.h); the
- * firmware's retired engines (reference builds) their own; any other its name */
+/* 4-letter engine tags of the preset list: a synth Melodee makes, its manifest row's (../modules/shipped.h); any other
+ * its name */
 static const char *eng_tag(uint32_t e)
 {
-    static const char *const A[][2] = {{"PHASE", "PHAS"}, {"SAMPLE", "SMPL"}, {"VOICE", "VOCL"}, {"GRAIN", "GRAN"},
-                                       {"NOISE", "NOIS"}, {"SLICE", "SLCE"}};
     const char *name = eng_name(e);
     const ship_t *r = ship_of(e % NENGINES);
-    uint32_t i;
     if (r && str_eq(name, r->name))
         return r->tag;
-    for (i = 0; i < sizeof A / sizeof A[0]; i++)
-        if (str_eq(name, A[i][0]))
-            return A[i][1];
     return name;
 }
 
@@ -1109,20 +1029,10 @@ static void draw_graph(void)
                 cv_oy = 0;
                 graph_chord(t, c);
                 break;
-#if MELODEE_SLICE
-            case GR_SLICES:
-                cv_oy = 0;
-                graph_slices();
-                break;
-#endif
             case GR_ENV8:                                    /* a synth's envelope page (FM6's EG, pitch EG) */
                 graph_env8(pg, c);
                 break;
             default:
-#if MELODEE_LEGACY_EXTRAS
-                if (pg->scope == SC_ENGINE && t->eng_req % NENGINES == 7u) graph_wheel(t, c);
-                else
-#endif
                 if ((pg->scope == SC_ENGINE || pg->scope == SC_MOD) && graph_wdef(t, c))
                     ;                                        /* EDIT 1 and 2, a synth's pages: its picture (FM6's) */
                 else { cv_oy = 0; graph_scope(c, 0, H_GRAPH); }

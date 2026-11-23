@@ -90,7 +90,7 @@ define void @copy_boot(i8* %d, i8* %s, i8 %fill) {
         roots=engine_roots(src)
         self.assertIn('click_render',roots)
         self.assertNotIn('fm6_key',roots)        # (FM6's engine is its module's: firmware/modules/fm6)
-        self.assertNotIn('drum_keys',roots)      # (DRUM's engine is its module's: firmware/modules/drum)
+        self.assertNotIn('drum_keys',roots)      # (DRUM's engine is its module's: firmware/modules/kits)
         self.assertNotIn('p5_preset_make',roots)
 
     def test_new_callback_requires_classification(self):

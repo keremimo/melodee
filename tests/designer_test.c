@@ -121,7 +121,7 @@ static void designer_render(int32_t *pcm)
 }
 static void feature_tests(void)
 {
-    static const uint8_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,3};
+    static const uint8_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID};
     int first=1,states=1,audible=1,steady=1,drums=1;
     for(uint32_t ei=0;ei<NENG_SHOWN;ei++){
         eng_state_reset();ui_power_on();sound_init_of(TSEL,eng_vis(ei));designer_open();press(B_OCTUP);
@@ -224,12 +224,14 @@ static void route_recipe_tests(void)
         trk_note_on(TSEL,pads_on(TSEL)?36:60,100);int64_t energy=0;int32_t out[CTL];
         for(uint32_t k=0;k<1000;k++){track_render(TSEL,out,CTL);for(uint32_t n=0;n<CTL;n++)energy+=llabs(out[n]);}
         if(TSEL->eng_req==ENGI_MIDI)valid &= !energy && !gates();
-        else if(!energy){printf("silent recipe: %s %s\n",ENGINES[TSEL->eng_req]->name,DS_GOAL[goal]);audible=0;}
+        else if(!energy && !(pads_flag(TSEL,MOD3_PD_RECORD) && pads_rec(TSEL)>=0 && !rec_tab[pads_rec(TSEL)].n)){   /* (SAMPLER's
+            * kit with no take recorded here: silent, as the device's) */
+            printf("silent recipe: %s %s\n",ENGINES[TSEL->eng_req]->name,DS_GOAL[goal]);audible=0;}
         trk_note_off(TSEL,pads_on(TSEL)?36:60);
         designer_close(1);
     }
     failures+=check("ALL pages: every eligible page, each FM operator switched on, nothing switched off",coverage);
-    failures+=check("every engine and goal recipe produces audio through the real DSP",audible);
+    failures+=check("every engine and goal recipe produces audio through the real DSP (SAMPLER's kits: once recorded)",audible);
     failures+=check("all CZ goal recipes retain valid native envelope records",valid);
     failures+=check("wizard keys stay playable and do not become layer/grid shortcuts",clean);
 }
@@ -287,7 +289,7 @@ static void role_recipe_tests(void)
     designer_close(1);
     if(fl)*fl&=(uint8_t)~MOD3_RF_INVERT;
     memcpy(h+10,nrec,2);
-    ui_power_on();sound_init_of(TSEL,3);
+    ui_power_on();sound_init_of(TSEL,ENGI_SID);
     designer_open();ds.current=0;ds.goal=DG_PAD;press(B_OCTUP);
     failures+=check("no block, no roles: the part's ADSR",TSEL->p[P_ATK]==75 && TSEL->p[P_DEC]==45 && TSEL->p[P_SUS]==110 &&
                     TSEL->p[P_REL]==85);

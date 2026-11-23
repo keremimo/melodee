@@ -157,20 +157,21 @@ int main(void)
     boot();
     uint32_t juno = mods[slot_of_name("JUNO")].engine, ppg = mods[slot_of_name("PPG")].engine,
              fake = mods[slot_of_name("FAKEFM")].engine;
-    bad += check("IDs from the files (8 bytes: the head's uid their first 4), Melodee's numbers by the manifest's IDs (FM6 "
-                 "12, SID 3, the Prophet 19)", (uint32_t)mods[0].uid == juno_uid && mods[0].uid >> 32 &&
-                 eng_map[12].uid == 0x918284C33909E71AULL && eng_map[3].uid == 0x8757CDD57F9158D4ULL &&
-                 eng_map[19].uid == 0x4624E600C585ED74ULL);
-    bad += check("numbers: the one asked for (JUNO 22), the first free (PPG 23, its 22 taken), never Melodee's own (FAKEFM "
-                 "asked for 12: 24)", juno == 22u && ppg == 23u && fake == 24u && mods[2].state == MS_STORED &&
-                 !strcmp(eng_name(22), "JUNO") && !strcmp(eng_name(23), "PPG"));
+    bad += check("IDs from the files (8 bytes: the head's uid their first 4), Melodee's synths at their manifest rows' "
+                 "handles (the Prophet 2, FM6 3, SID 5)", (uint32_t)mods[0].uid == juno_uid && mods[0].uid >> 32 &&
+                 eng_map[ENGI_FM6].uid == 0x918284C33909E71AULL && eng_map[ENGI_SID].uid == 0x8757CDD57F9158D4ULL &&
+                 eng_map[ENGI_PROPHET].uid == 0x4624E600C585ED74ULL);
+    bad += check("handles: the first free ones in slot order past the manifest's (JUNO 7, PPG 8, FAKEFM 9: what a file "
+                 "asks for means nothing)", juno == ENG_H_FREE0 && ppg == ENG_H_FREE0 + 1u && fake == ENG_H_FREE0 + 2u &&
+                 mods[2].state == MS_STORED && !strcmp(eng_name(juno), "JUNO") && !strcmp(eng_name(ppg), "PPG"));
     eng_map_service(1);                             /* (the main loop: saved once nothing plays) */
     bad += check("phase 9: the numbers are this device's, made again at power-on: no record of them", !st_exists(ST_MAPOBJ));
     (void)mod_delete(slot_of_name("FAKEFM"));
     install(3, "zeta", "OTHER", 23, 0);
     boot();
-    bad += check("power-on: the numbers kept; a deleted module's number free again (OTHER asked for 23: PPG's; given 24)",
-                 mods[0].engine == 22u && mods[1].engine == 23u && mods[3].engine == 24u && mods[2].state == MS_EMPTY);
+    bad += check("power-on: the handles again in slot order; a deleted module's free again (OTHER in slot 3: 9)",
+                 mods[0].engine == ENG_H_FREE0 && mods[1].engine == ENG_H_FREE0 + 1u && mods[3].engine == ENG_H_FREE0 + 2u &&
+                 mods[2].state == MS_EMPTY);
     /* ---- a project naming them */
     host_tracks_init();
     for (uint32_t i = 0; i < sizeof patch; i++) patch[i] = (uint8_t)(0x91u + 3u * i);
@@ -179,12 +180,12 @@ int main(void)
     patch_set(1, juno, patch, sizeof patch, MOD3_PATCH_SET);
     bad += check("fixture: JUNO's patch on part 2 (32 bytes, no 1.x format)", patch_len(juno) == 32u &&
                  patch_store_tag(juno) == MOD_SCH_STORE_NONE && !memcmp(patch_of(1), patch, sizeof patch));
-    bad += check("a project naming them saves as FBKR (its entries, JUNO's patch)",
-                 !project_save_as(1, "MAPPED") && stored_magic(1) == BANKR_MAGIC);
+    bad += check("a project naming them saves as FBKS (its entries, JUNO's patch)",
+                 !project_save_as(1, "MAPPED") && stored_magic(1) == BANKS_MAGIC);
     host_tracks_init();
     for (uint32_t k = 0; k < NPART; k++) host_preset(&trk[k], TRK_DEF[k][0], TRK_DEF[k][1]);
-    bad += check("a project of Melodee's own synths saves as it always did (no end block)",
-                 !project_save_as(2, "PLAIN") && stored_magic(2) != BANKR_MAGIC);
+    bad += check("a project of Melodee's own synths: FBKS too (2.0: every record names its synths)",
+                 !project_save_as(2, "PLAIN") && stored_magic(2) == BANKS_MAGIC);
     /* "another device": OTHER first (22), JUNO and PPG not there */
     for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
     eng_map_service(1);
@@ -199,20 +200,21 @@ int main(void)
     track_render(&trk[1], buf, CTL);
     uint32_t silent = 1;
     for (uint32_t i = 0; i < CTL; i++) silent &= buf[i] == 0;
-    bad += check("on another device: OTHER keeps 22; JUNO and PPG take free numbers, their names from the project's entries",
-                 mods[0].engine == 22u && j2 < NENGINES && j2 != 22u && p2 < NENGINES && p2 != 22u && p2 != j2 &&
+    bad += check("on another device: OTHER at 7; JUNO and PPG lent free handles, their names from the project's entries",
+                 mods[0].engine == ENG_H_FREE0 && j2 < NENGINES && j2 != ENG_H_FREE0 && p2 < NENGINES && p2 != ENG_H_FREE0 && p2 != j2 &&
                  trk[1].eng_req == j2 && trk[2].eng_req == p2);
     bad += check(".. JUNO's patch kept with it (its number here), the parts silent", patch_eng_of(1) == j2 &&
                  !memcmp(patch_of(1), patch, sizeof patch) && silent);
-    bad += check(".. saved again: FBKR, the same patch back after a load", !project_save_as(3, "AGAIN") &&
-                 stored_magic(3) == BANKR_MAGIC && (host_tracks_init(), project_load(3), 1) && trk[1].eng_req == j2 &&
+    bad += check(".. saved again: FBKS, the same patch back after a load", !project_save_as(3, "AGAIN") &&
+                 stored_magic(3) == BANKS_MAGIC && (host_tracks_init(), project_load(3), 1) && trk[1].eng_req == j2 &&
                  !memcmp(patch_of(1), patch, sizeof patch) && !strcmp(eng_name(j2), "JUNO"));
     /* ---- a user-preset bank */
     host_tracks_init();
-    trk[0].engine = trk[0].eng_req = 22;            /* OTHER's sound (its module not loaded here: its E values 0) */
+    uint32_t oth = mods[0].engine;                  /* (OTHER's handle here) */
+    trk[0].engine = trk[0].eng_req = (uint8_t)oth;  /* OTHER's sound (its module not loaded here: its E values 0) */
     for (uint32_t i = 0; i < 8u; i++) trk[0].p[P_E0 + i] = 0;
-    patch_set(0, 22, patch, 16, MOD3_PATCH_SET);
-    bad += check("a user preset of OTHER (22) stored", !up_store_to(5, 0, "OTHER SOUND") && up_used(5));
+    patch_set(0, oth, patch, 16, MOD3_PATCH_SET);
+    bad += check("a user preset of OTHER (7) stored", !up_store_to(5, 0, "OTHER SOUND") && up_used(5));
     for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
     eng_map_service(1);
     eng_map_defaults();
@@ -221,14 +223,14 @@ int main(void)
     boot();
     up_cache_reset();
     uint32_t o3 = mods[1].engine;
-    bad += check("its bank read on a device where OTHER is not 22: the record names OTHER's number here",
-                 o3 != 22u && up_rec(5)->engine == o3 && up_used(5) && !memcmp(up_rec(5)->packed, patch, 16));
+    bad += check("its bank read on a device where OTHER is not 7: the record names OTHER's handle here",
+                 o3 != oth && up_rec(5)->engine == o3 && up_used(5) && !memcmp(up_rec(5)->packed, patch, 16));
     /* ---- the data records' owners */
     rec_uid[3] = 0x0123456789ABCDEFULL;
     eng_map_dirty = 1;
     boot();
-    bad += check("records' owners: the default (DRUM's, the manifest's General MIDI kit synth) and one kept by the owners "
-                 "record (its whole ID)", rec_owner_uid(0) == 0x241AACC57D998FFEULL &&
+    bad += check("records' owners: the default (SAMPLER's, the manifest's records' synth; DRUM's until 2.0) and one kept by "
+                 "the owners record (its whole ID)", rec_owner_uid(0) == 0xA7C6C5DCAB17D386ULL &&
                  rec_owner_uid(3) == 0x0123456789ABCDEFULL);
     {   /* an editor's PUT (a backup object, a module upload) is one stream over many messages, the main loop running
          * between them: the map record's save waits for it (else the stream goes stale: the PUT fails, rc 4) */
@@ -278,7 +280,7 @@ int main(void)
         install(0, "zeta", "OTHER", 22, 16);
         power();
         uint32_t here = mods[0].engine;
-        bad += check(".. where OTHER has another number (22 here): that one, its patch", here == 22u && here != other &&
+        bad += check(".. where OTHER has another handle (7 here): that one, its patch", here == ENG_H_FREE0 && here != other &&
                      trk[2].eng_req == here && patch_eng_of(2) == here && !memcmp(patch_of(2), tp, sizeof tp));
         (void)mod_delete(0);
         eng_map_service(1);
@@ -399,9 +401,9 @@ int main(void)
         bad += check(".. a file naming Melodee's key, signed by an author: refused", rx == -4 && !mods[6].len);
         n = authored("melodee", "trio", TEST_SEED, MOD_SIGN_KEYS[0], 0, TEST_SEED, 1, &ix);
         rx = put(6, file, n);
-        bad += check(".. Melodee's key named, one of Melodee's keys signing (the host's test key): Melodee's, TRIO's ID "
-                     "and number (6)", rx != -4 && mods[6].sig == MOD_SIG_MELODEE && mods[6].uid == 0xC273261A2CF92788ULL &&
-                     mods[6].engine == 6u);
+        bad += check(".. Melodee's key named, one of Melodee's keys signing (the host's test key): Melodee's, TRIO's ID, "
+                     "a handle as any module's", rx != -4 && mods[6].sig == MOD_SIG_MELODEE &&
+                     mods[6].uid == 0xC273261A2CF92788ULL && mods[6].engine >= ENG_H_FREE0 && mods[6].engine < NENGINES);
         (void)mod_delete(6);
         ui.msg[0] = 0;
         n = authored("Saadet", "juno-106", 0, 0, 0, 0, 1, &ix);
@@ -435,8 +437,8 @@ int main(void)
             maxe = mods[i].engine > maxe ? mods[i].engine : maxe;
             for (uint32_t j = 0; j < i; j++) distinct &= mods[j].engine != mods[i].engine;
         }
-        bad += check("phase 9: 12 outside synths installed, a number each (past the 8 there were: 22..33)", stored && distinct &&
-                     maxe == 33u);
+        bad += check("phase 9: 12 outside synths installed, a handle each (7..18)", stored && distinct &&
+                     maxe == ENG_H_FREE0 + 11u);
         /* a project naming the 12: parts 1..4 on S01..S04, eight song sounds on S05..S12 */
         host_tracks_init();
         song_sound_reset();
@@ -452,8 +454,8 @@ int main(void)
             trk[k].engine = trk[k].eng_req = mods[k].engine;
             patch_set(k, mods[k].engine, pt, sizeof pt, MOD3_PATCH_SET);
         }
-        bad += check(".. a project naming them saves (FBKR: 12 entries, by ID)", !project_save_as(4, "TWELVE") &&
-                     stored_magic(4) == BANKR_MAGIC);
+        bad += check(".. a project naming them saves (FBKS: 12 entries, by ID)", !project_save_as(4, "TWELVE") &&
+                     stored_magic(4) == BANKS_MAGIC);
         /* a device without any of them */
         for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
         boot();
@@ -471,7 +473,7 @@ int main(void)
             for (uint32_t j = 0; j < i; j++) distinct &= eng[i] != eng[j];
         bad += check(".. on a device without them: each lent a number, named by its ID and name, the parts silent",
                      named && distinct && !mod_have(eng[0]));
-        bad += check(".. saved again there: every ID kept", !project_save_as(5, "AGAIN12") && stored_magic(5) == BANKR_MAGIC);
+        bad += check(".. saved again there: every ID kept", !project_save_as(5, "AGAIN12") && stored_magic(5) == BANKS_MAGIC);
         /* a device that has them, installed in the other order (other numbers) */
         for (uint32_t i = 0; i < 12u; i++) install(11u - i, "acme", nm[i], 22, 16);
         boot();
@@ -486,14 +488,17 @@ int main(void)
         }
         bad += check(".. that save on a device that has them (installed in another order: other numbers): every part and "
                      "sound plays its own synth", named && mods[11].engine != eng[0]);
-        /* a number given back: 27 synths named one after another on a device without them (26 numbers) */
+        /* a number given back: 12 + N2 synths named one after another on a device without them (NENGINES - ENG_H_FREE0
+         * handles: 2.0's ten shipped synths leave 18; the last project's N2 as many as fit beside the 4 the loaded song's
+         * parts still name) */
+        const uint32_t N2 = NENGINES - ENG_H_FREE0 - 4u < 15u ? NENGINES - ENG_H_FREE0 - 4u : 15u;
         for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
-        for (uint32_t i = 12; i < 27u; i++) install(i - 12u, "acme", nm[i], 22, 16);
+        for (uint32_t i = 12; i < 12u + N2; i++) install(i - 12u, "acme", nm[i], 22, 16);
         boot();
         host_tracks_init();
         song_sound_reset();
-        chain_config.count = 11;
-        for (uint32_t i = 16; i < 27u; i++) {
+        chain_config.count = (uint8_t)(N2 - 4u);
+        for (uint32_t i = 16; i < 12u + N2; i++) {
             song_sound_t snd;
             trk[0].engine = trk[0].eng_req = mods[i - 12u].engine;
             song_sound_capture(&snd, &trk[0], nm[i]);
@@ -507,30 +512,34 @@ int main(void)
         project_load(4);                             /* (12 lent) */
         host_tracks_init();
         song_sound_reset();                          /* (another project: nothing names those 12 any more) */
-        project_load(6);                             /* (15 more: 27 > 26, the 12 given back as needed) */
+        project_load(6);                             /* (N2 more: more than are free, the 12 given back as needed) */
         named = 1;
         for (uint32_t k = 0; k < 4u; k++) named &= !strcmp(eng_name(trk[k].eng_req), nm[12u + k]);
-        for (uint32_t r = 0; r < 11u; r++) {
+        for (uint32_t r = 0; r < N2 - 4u; r++) {
             const song_sound_t *snd = song_sound_get(chain_config.sound[r][0]);
             named &= snd && snd->engine < NENGINES && !strcmp(eng_name(snd->engine), nm[16u + r]);
         }
-        bad += check(".. 27 synths named one after another where 26 numbers are: the ones nothing names any more given "
-                     "back, the 15 of the last project all named", saved15 && named);
+        printf("persist: %u synths named one after another where %u handles are\n", (unsigned)(12u + N2),
+               (unsigned)(NENGINES - ENG_H_FREE0));
+        bad += check(".. more synths named one after another than there are handles: the ones nothing names any more given "
+                     "back, the last project's all named", saved15 && named && 12u + N2 > NENGINES - ENG_H_FREE0);
         /* Motion: a stored native event's synth by this device's number */
         motion_store_t ms;
         memset(&ms, 0, sizeof ms);
         ms.count = 2;
         ms.event[0].param = MO_NATIVE + 1u;
-        ms.event[0].value = (int16_t)((MO_TAG_MOD + 22u - ENGI_MOD0) << 8 | 7u);
+        ms.event[0].value = (int16_t)((MO_TAG_MOD + 7u - ENG_H_SHIP0) << 8 | 7u);
         ms.event[1].param = MO_NATIVE + 2u;
-        ms.event[1].value = (int16_t)(1u << 8 | 9u);   /* (the Prophet's: Melodee's tag 1, its number fixed) */
+        ms.event[1].value = (int16_t)((MO_TAG_MOD + ENGI_PROPHET - ENG_H_SHIP0) << 8 | 9u);   /* (the Prophet's) */
         eng_remap_reset();
-        eng_remap[22] = 22u ^ 31u;                      /* (the store's 22 is 31 here) */
+        eng_remap[7] = 13u + 1u;                        /* (the store's 7 is 13 here) */
+        eng_remap[ENGI_PROPHET] = ENGI_PROPHET + 1u;    /* (its Prophet this device's) */
         motion_tags_in(&ms);
         eng_remap_reset();
-        bad += check(".. Motion: a stored module event's synth made this device's (22 there, 31 here: tag 4 -> 13), the "
-                     "Prophet's (tag 1) as it was", ms.event[0].value == (int16_t)((MO_TAG_MOD + 31u - ENGI_MOD0) << 8 | 7u) &&
-                     ms.event[1].value == (int16_t)(1u << 8 | 9u) && motion_tag_engine(1) == ENGI_PROPHET);
+        bad += check(".. Motion: a stored event's synth made this device's (7 there, 13 here: tag 9 -> 15), the "
+                     "Prophet's as its store names it", ms.event[0].value == (int16_t)((MO_TAG_MOD + 13u - ENG_H_SHIP0) << 8 | 7u) &&
+                     ms.event[1].value == (int16_t)((MO_TAG_MOD + ENGI_PROPHET - ENG_H_SHIP0) << 8 | 9u) &&
+                     motion_tag_engine(MO_TAG_MOD) == ENGI_PROPHET);
     }
     printf("%s\n", bad ? "IDENTITY TEST FAILED" : "identity test passed");
     return bad ? 1 : 0;

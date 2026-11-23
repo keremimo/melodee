@@ -85,15 +85,6 @@
 #define trk_npat(k) ((uint32_t)(k) < NPART ? NPAT : NPAT_MIDI)   /* the patterns track k has */
 _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers (seven bits)");
 #define HALF_FRAMES 128          /* I2S half buffer: 2.9 ms at 44.1 kHz (a key waits 0..1 half, then plays 1 half later, 2 rendering ahead: audio.c) */
-/* SLICE retired. Keep its stored engine number reserved. */
-#ifdef MELODEE_SLICE
-#undef MELODEE_SLICE
-#endif
-#define MELODEE_SLICE 0
-#ifndef MELODEE_LEGACY_EXTRAS
-#define MELODEE_LEGACY_EXTRAS 0 /* reference tests only: retired TRIO, WHEEL and PHYS; PHASE, VOICE and NOISE (retired
-                                 * 2026-10-10: the flash for the redesign; CZ-1 keeps PHASE's phase-distortion core) */
-#endif
 /* host builds (every build but the device's): the synths Melodee ships built in, the reference their modules are held to
  * (firmware/modules/host: their engines, numbers and names live outside the firmware's sources) */
 #ifndef MELODEE_HOST_ENGINES
@@ -110,27 +101,31 @@ _Static_assert(NSTEP <= 128u && NTRK * NPAT <= 128u, "recorded-note identifiers 
 #define HOST_NENG 0u
 #define HOST_BUILTIN(e) 0                        /* (the device: every synth is a module) */
 #endif
-#define USER_GENERAL 16u
-#define USER_NATIVE_P5 20u
-#define ENGI_MIDI 21u            /* 20 reserved for the Prophet user-preset namespace */
-#define NENGINES 48               /* append engines without reusing preset namespaces */
-#define ENGI_MOD0 22u            /* 22..NENGINES-1 (26): synth modules' numbers on this device, the installed ones' (NMOD)
-                                  * and the ones lent to synths a store names that are not here (eng_map.c); a module may
-                                  * also take a retired engine's number when it is that engine again (TRIO = 6) */
+/* Melodee 2.0: a synth is its ID (eng_map.c: 8 bytes from its author's key and its slug, mod_abi3.h). Engine numbers
+ * are this device's handles in RAM, given at every power-on: no store keeps one without its ID (each store carries the
+ * IDs it names and reads its bytes through them: eng_in), no number means a synth anywhere else.
+ *   0 none: a sound whose synth is not here, or none at all (silent, its bytes kept)
+ *   1 the MIDI Track
+ *   2.. the manifest's synths in its order (../modules/shipped.h), then the installed modules and the IDs the stores
+ *       in RAM name that this device has not got */
+#define ENG_H_NONE 0u
+#define ENGI_MIDI 1u
+#define ENG_H_SHIP0 2u
+#define NENGINES 30              /* (motion.c: a synth's own parameters' tag MO_TAG_MOD + handle - ENG_H_SHIP0 < 32) */
+#define USER_GENERAL 0x40u       /* the user-preset library and the native pools in the browser's and favourites' kinds:
+                                  * never an engine handle */
+#define USER_NATIVE_FM 0x41u
+#define USER_NATIVE_CZ 0x42u
+#define USER_NATIVE_P5 0x43u
 #ifndef MELODEE_MODULES
 #define MELODEE_MODULES 1        /* synth modules: engines loaded from the pool into SRAM (eng_module.c) */
 #endif
 #define NMOD 16u                 /* module slots (a file in up to MOD_RECS pool records: storage.c st_mod_obj) */
 #define MOD_RECS 4u
-#define USER_NATIVE_FM 17u
-#define USER_NATIVE_CZ 18u
 #define USER_NONE 65535u
-#define ENGI_ANALOG 0u           /* retired in 1.2: never selectable (eng_ok), its stored sounds play silent */
-#define ENGI_DIGITAL 1u          /* retired: never selectable (eng_ok), its stored sounds play silent */
-#define NENG_SHOWN (1u + HOST_NENG + MELODEE_SLICE)   /* the engines one can pick: PRESETS, the EDIT
-                                                * layer, the editor, in the display order of engines.c ENGINE_ORDER */
+#define NENG_SHOWN (1u + HOST_NENG)   /* the engines one can pick: PRESETS, the EDIT layer, the editor, in the display
+                                       * order of engines.c ENGINE_ORDER */
 #define NENG_SHOWN_MAX (NENG_SHOWN + NMOD * MELODEE_MODULES)   /* and the loaded modules after them (eng_nshown) */
-#define ENGI_SLICE 13u           /* reserved without MELODEE_SLICE: never selectable (eng_ok) */
 #ifdef SMP_USER_SLOTS
 #undef SMP_USER_SLOTS
 #endif
@@ -302,8 +297,6 @@ static void params_by_count(int16_t *out, const int16_t *in, uint32_t np, const 
         out[P_FXTYPE + i * FX_PARAMS] = (int16_t)fx_track_type(out[P_FXTYPE + i * FX_PARAMS]);
 }
 
-/* engine indices the stores name (engines.c ENGINES[]: append-only) */
-#define ENGI_PHYS 9u
 
 /* ------------------------------------------------- voices, engines --- */
 enum { V_POLY, V_MONO, V_LEGATO, V_UNISON };   /* P_VOICE */
@@ -323,13 +316,8 @@ typedef struct {
     int32_t pitch16, pitch_cur;  /* 1/16 semitone, with glide */
     uint32_t ph[3];
     uint32_t age;
-#if MELODEE_LEGACY_EXTRAS
-    int32_t s[8];                /* retired VOICE/NOISE also use slots 6 and 7 (over the head's reserved word: the
-                                  * firmware's own fields move on, a host build's) */
-#else
     int32_t s[6];                /* current engines: slots 0..5, including drum gates */
     uint32_t rsv[1];
-#endif
     /* the firmware's own (any layout: no module sees them) */
 #if MELODEE_ABI_SHUFFLE                          /* (tests: another firmware's private layout, tests/module_test.c) */
     uint8_t abi_pad[20];
@@ -441,10 +429,10 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
      * patch as its SysEx (the sends) */
     uint32_t (*sysex)(const uint8_t *f, uint32_t n, uint32_t ev);
     uint32_t (*sysex_dump)(const uint8_t *patch, uint32_t what, uint32_t ch, uint8_t *out, uint32_t max);
-    /* host 4 (mod_abi3.h): its data records (rec_store.c keeps them): one checked before it plays it, a take made a
-     * record's pad, whether a record has a pad's take */
-    int (*rec_check)(const uint32_t *const *secs, uint32_t nsec, uint32_t len);
-    uint32_t (*rec_take)(uint32_t slot, uint32_t pad, int16_t *pcm, uint32_t n, uint32_t cap);
+    /* host 4, 6 (mod_abi3.h): its data records (rec_store.c keeps them): a pad record checked before it plays it, a
+     * take streamed into a pad's record as it is recorded, whether a kit's pad has a take */
+    int (*rec_check)(const uint8_t *secs, uint32_t nsec, uint32_t len);
+    uint32_t (*rec_stream)(uint32_t slot, uint32_t pad, const int16_t *pcm, uint32_t n, uint32_t op);
     int (*rec_pad)(uint32_t slot, uint32_t pad);
 } engine_t;
 #endif

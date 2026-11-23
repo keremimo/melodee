@@ -33,6 +33,16 @@ static uint32_t fnv1(uint32_t h, const void *p, uint32_t n)
         h = (h ^ *b++) * 16777619u;
     return h;
 }
+/* an engine as 88f4eb02 numbered it (the fixture's hashes hold those numbers; 2.0's handles are this device's) */
+static uint8_t sx_num(uint32_t e)
+{
+#if SX_OLD
+    return (uint8_t)e;
+#else
+    return e == ENGI_PROPHET ? 19u : e == ENGI_FM6 ? 12u : e == ENGI_CZ ? 15u : e == ENGI_SID ? 3u : e >= ENGI_808 && e <= ENGI_SAMPLER ? 10u :
+           e == ENGI_MIDI ? 21u : (uint8_t)e;
+#endif
+}
 /* the state after a step: its hashes, emitted or compared with the fixture's line */
 static void sx_state(const char *step)
 {
@@ -42,18 +52,22 @@ static void sx_state(const char *step)
     for (k = 0; k < UP_SLOTS; k++) {
         uint8_t used = (uint8_t)up_used(k);
         h[0] = fnv1(h[0], &used, 1);
-        if (used)
-            h[0] = fnv1(h[0], up_rec(k), sizeof(up_rec_t));
+        if (used) {
+            up_rec_t r = *up_rec(k);
+            r.engine = sx_num(r.engine);
+            h[0] = fnv1(h[0], &r, sizeof r);
+        }
     }
     for (k = 0; k <= NPART; k++) {
-        uint8_t e = (uint8_t)patch_eng[k];
+        uint8_t e = sx_num(patch_eng[k]);
         h[1] = fnv1(fnv1(h[1], &e, 1), part_patch[k], MOD3_PATCH_MAX);
     }
     for (k = 0; k < NTRK; k++)
         h[2] = fnv1(h[2], trk[k].p, sizeof trk[k].p);
     h[3] = fnv1(h[3], &sx_import.count, 1);
     if (sx_import.count) {
-        h[3] = fnv1(h[3], &sx_import.engine, 1);
+        uint8_t ie = sx_num(sx_import.engine);
+        h[3] = fnv1(h[3], &ie, 1);
         h[3] = fnv1(h[3], &sx_import.size, 2);
         h[3] = fnv1(h[3], &sx_import.general, 1);
         h[3] = fnv1(h[3], sx_import.data, (uint32_t)sx_import.count * sx_import.size);
@@ -210,7 +224,7 @@ static void dx7(void)
         song.sel = 2;                                    /* (a SID part: channel 1's part, track 2, is FM6) */
         { uint8_t r[] = {0xf0, 0x43, 0x11, 0, 4, 31, 0xf7}; sx_in(r, 7); }
         sx_state("dx7 parameter on channel 2");
-        sx_engine(0, 3, 0); sx_engine(1, 3, 0);
+        sx_engine(0, ENGI_SID, 0); sx_engine(1, ENGI_SID, 0);
         { uint8_t r[] = {0xf0, 0x43, 0x10, 0, 4, 31, 0xf7}; sx_in(r, 7); }
         { uint8_t r[] = {0xf0, 0x43, 0x20, 0, 0xf7}; sx_in(r, 5); }
         sx_state("dx7 with no FM6 part");
@@ -283,7 +297,7 @@ static void cz(void)
         sx_in(r, 7); host_wire_n = 0; { uint8_t s[] = {0x90, 60, 100}; sx_usb(s, 3); } SX_SERVICE(); SX_SERVICE();
         sx_state("cz handshake cut by a note");
     }
-    sx_engine(0, 3, 0); sx_engine(2, 3, 0);
+    sx_engine(0, ENGI_SID, 0); sx_engine(2, ENGI_SID, 0);
     { uint8_t r[] = {0xf0, 0x44, 0, 0, 0x70, 0x11, 0x60, 0xf7}; sx_in(r, 8); sx_state("cz request with no CZ part"); }
     n = cz_frame(f, 0x30, 0, raw, 144, 0); sx_in(f, n); sx_state("cz direct with no CZ part");
     sysex_cancel();

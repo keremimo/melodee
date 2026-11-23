@@ -55,7 +55,7 @@ static void msx_service(void)
     if (ENGINES[e] == &ENG_MOD_IDLE)
         mod_want(e);                             /* (the synth's module into SRAM for its frame) */
     g = ENGINES[e];
-    if (g == &ENG_MOD_IDLE || g == &ENG_RETIRED || !g->sysex) {
+    if (g == &ENG_MOD_IDLE || g == &ENG_NONE || !g->sysex) {
         msx_finish();                            /* (no module for it, or no room: the frame dropped) */
         return;
     }

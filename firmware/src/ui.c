@@ -311,17 +311,12 @@ static int page_visible(uint32_t i)
     if (PG(i).scope == SC_TRACK && PG(i).id[0] >= P_LN0 && PG(i).id[0] <= P_LN7)
         return pads_on(TSEL);
     if(PG(i).scope==SC_ENGINE && PG(i).fam==FAM_EDIT && (PG(i).id[0]==P_E0 || PG(i).id[0]==P_E4) && sch_noedit(TSEL->eng_req))return 0;
-    if (PG(i).scope == SC_CZ)                       /* (PHASE's CZ mode; PHASE retired without MELODEE_LEGACY_EXTRAS) */
-        return TSEL->eng_req == 2u && eng_ok(2u) && TSEL->p[P_E7] == 1;
+    if (PG(i).scope == SC_CZ)                       /* (retired PHASE's CZ mode pages) */
+        return 0;
     if (PG(i).scope == SC_MOD)
         return sch_page_shown(i);                      /* the synth's own pages (its schema) */
-#if MELODEE_SLICE
-    if (PG(i).graph == GR_SLICES)
-        return SMP_USER_SLOTS && ENGINES[TSEL->eng_req % NENGINES] == &ENG_SLICE;
-#else
     if (PG(i).graph == GR_SLICES)
         return 0;
-#endif
     return !(PG(i).fam == FAM_EDIT && PG(i).id[0] >= P_FM1_ATK &&
              PG(i).id[0] <= P_FM4_LEVEL);
 }
@@ -1262,10 +1257,6 @@ static int act_ready(void)
     uint32_t c = act_col();
     if (!c--)
         return 0;
-#if MELODEE_SLICE
-    if (cur_page()->graph == GR_SLICES)
-        return slice_act_ready(c);
-#endif
     return !chain_busy();                        /* (CZ TOOLS) */
 }
 

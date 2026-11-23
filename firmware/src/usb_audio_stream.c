@@ -255,20 +255,23 @@ static uint32_t ua_transmit(uint8_t *p)
 }
 
 #if MELODEE_RECORDS
-/* A take from the computer's or phone's playback (Record kit, rec_ui.c: its synth makes it a pad's, engine_t.rec_take):
- * armed, it keeps the last KT_PRE samples; the
- * first above KT_ON starts the take with them in front; KT_END samples below KT_QUIET in a row, or a full buffer,
- * end it. Mono, before the host's volume: its slider does not set the take's level. */
-enum { KT_OFF, KT_ARMED, KT_REC, KT_DONE };
+/* A take from the computer's or phone's playback (Record kit, rec_ui.c: its synth makes it a pad's as it comes,
+ * engine_t.rec_stream): armed, it keeps the last KT_PRE samples; the first above KT_ON starts the take with them in
+ * front, into a ring the main loop empties into the synth; KT_END samples below KT_QUIET in a row end it, or the synth
+ * falling a whole ring behind (over). Mono, before the host's volume: its slider does not set the take's level.
+ * KT_PREP: the main loop makes the store ready (no capture meanwhile) */
+enum { KT_OFF, KT_ARMED, KT_REC, KT_DONE, KT_PREP };
 #define KT_PRE 128u                                   /* ~3 ms before the trigger */
 #define KT_ON 328                                     /* -40 dBFS */
 #define KT_QUIET 33                                   /* -60 dBFS */
 #define KT_END (FS * 15u / 100u)
-_Static_assert(KT_ON == MOD3_TAKE_ON && KT_PRE == MOD3_TAKE_PRE, "the take as a synth's rec_take expects it");
+_Static_assert(KT_ON == MOD3_TAKE_ON && KT_PRE == MOD3_TAKE_PRE, "the take as a synth's rec_stream expects it");
 static struct {
-    int16_t *buf;                                     /* RES_KIT_TAKE */
-    uint32_t cap, n, quiet, pw;                       /* its samples (64 zeros kept after them); taken; below */
-    volatile uint8_t state;
+    int16_t *buf;                                     /* RES_KIT_TAKE: the ring */
+    uint32_t cap, w, quiet, pw;                       /* its samples (> KT_PRE); the next write's place; below; armed */
+    volatile uint32_t n, r;                           /* taken, the ISR's count; fed, the main loop's */
+    uint32_t ri;                                      /* the next sample to feed's place */
+    volatile uint8_t state, over;                     /* over: the synth fell a whole ring behind */
 } kt;
 static void kt_reverse(int16_t *a, uint32_t i, uint32_t j)
 {
@@ -282,17 +285,22 @@ static void kt_hear(uint32_t pr, uint32_t n)
         if (kt.state == KT_ARMED) {
             kt.buf[kt.pw++ % KT_PRE] = (int16_t)s;
             if (a < KT_ON) continue;
-            kt.n = kt.pw < KT_PRE ? kt.pw : KT_PRE;
-            if (kt.pw > KT_PRE) {                     /* the ring in order, the oldest first */
+            uint32_t m = kt.pw < KT_PRE ? kt.pw : KT_PRE;
+            if (kt.pw > KT_PRE) {                     /* the pre-roll in order, the oldest first */
                 uint32_t k = kt.pw % KT_PRE;
                 kt_reverse(kt.buf, 0, k); kt_reverse(kt.buf, k, KT_PRE); kt_reverse(kt.buf, 0, KT_PRE);
             }
+            kt.w = m; kt.r = kt.ri = 0; kt.over = 0;
             kt.quiet = 0;
+            kt.n = m;
             kt.state = KT_REC;
         } else if (kt.state == KT_REC) {
-            kt.buf[kt.n++] = (int16_t)s;
+            if (kt.n - kt.r >= kt.cap) { kt.over = 1; kt.state = KT_DONE; return; }
+            kt.buf[kt.w] = (int16_t)s;
+            kt.w = kt.w + 1u == kt.cap ? 0u : kt.w + 1u;
+            kt.n++;
             kt.quiet = a < KT_QUIET ? kt.quiet + 1u : 0u;
-            if (kt.n >= kt.cap || kt.quiet >= KT_END) { kt.state = KT_DONE; return; }
+            if (kt.quiet >= KT_END) { kt.state = KT_DONE; return; }
         } else
             return;
     }

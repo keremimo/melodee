@@ -61,38 +61,12 @@ int main(void)
         }
         check("fractional resonant cores join smoothly at sync", smooth);
     }
-    memset(trk, 0, sizeof trk);trk_voices_bind(); host_tracks_init();
-    track_t *t = &trk[0]; int32_t out[CTL];
-    host_preset(t, 2, 0); t->p[P_E7] = 1; t->p[P_E4] = 12;
-    t->p[P_FM1_ATK] = 100; t->p[P_FM2_ATK] = 0;
-    t->p[P_FM3_ATK] = 100; t->p[P_FM4_ATK] = 80;
-    trk_note_on(t, 60, 100); voice_t *v = &t->v[0];
-    track_render(t, out, CTL); cz_voice_t *c = cz_voice(t, v);
-    check("two DCW envelopes progress independently", c->eg[0][1].level < c->eg[1][1].level);
-    check("second DCA progresses independently", c->eg[1][2].level < c->eg[0][2].level);
-    check("pitch envelope progresses independently", c->eg[0][0].level != c->eg[0][2].level);
-    int32_t source = phase_env_source(t, v);
-    t->p[P_M1SRC] = MS_ENV; t->p[P_M1DST] = MD_SHP; t->p[P_M1AMT] = 32;
-    mod_begin(t); track_render(t, out, CTL); mod_end(t);
-    check("matrix ENV follows the native DCA", source > 0 && t->m_env == source);
-    int32_t untouched = c->eg[0][2].level;
-    memset(&trk[1].v[0], 0, sizeof trk[1].v[0]); phase_note_on(&trk[1], &trk[1].v[0]);
-    check("envelope state is isolated per track", untouched == c->eg[0][2].level);
-    trk_note_off(t, 60);
-    for (uint32_t k = 0; k < FS * 12 / CTL; k++) track_render(t, out, CTL);
-    check("voice lifetime follows both native DCAs", !v->active);
-    host_preset(t, 2, 0); trk_note_on(t, 60, 100); track_render(t, out, CTL);
-    voice_kill(&t->v[0]); track_render(t, out, CTL);
-    check("shared voice stealing still frees a native-envelope voice", !t->v[0].active);
-    check("split descriptors keep stored ranges/defaults", PH_ED[0].max == TP[P_FM1_ATK].max && PH_ED[4].def == TP[P_FM1_LEVEL].def);
-    check("PHASE remains its own engine with six presets", ENGINES[2] == &ENG_PHASE && !strcmp(ENG_PHASE.name,"PHASE") && ENG_PHASE.npresets == 6);
+    track_t *t; int32_t out[CTL]; voice_t *v; cz_voice_t *c;
     memset(trk,0,sizeof trk);trk_voices_bind(); host_tracks_init(); t=&trk[0]; cz_init(); eng_state_clear(0);
     host_preset(t, ENGI_CZ, 0);
     check("CZ-1 factory defaults to native playback", ENGINES[ENGI_CZ] == &ENG_CZ &&
         !strcmp(ENG_CZ.name,"CZ-1") && t->p[P_E7] == CZ_NATIVE && cz_patch_valid(cz_patch_of(0)->raw));
     cz_patch_of(0)->raw[128]='X';
-    host_preset(&trk[1],2,0);
-    check("selecting PHASE on another track leaves native CZ tone intact",cz_patch_of(0)->raw[128]=='X' && trk[1].eng_req==2);
     host_preset(t,ENGI_CZ,0);
     check("factory INIT replaces previous imported tone",cz_patch_of(0)->raw[128]=='I');
     uint8_t *raw=cz_patch_of(0)->raw;raw[20]=0xF7;

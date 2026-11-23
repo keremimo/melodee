@@ -193,15 +193,46 @@ static void dp_start(uint32_t e, uint32_t st)
         designer_close(1);
     }
 }
+/* a894c6f7's groups, by engine name and start (2.0: DRUM's kits are synths of their own; the 808's INIT and preset are
+ * DRUM's INIT and first, the other kits' groups began from DRUM's INIT, the 808's kit: none of theirs to compare) */
+static struct { char name[24]; uint32_t st, h, n; int seen; } dp_fix[256];
+static uint32_t dp_nfix;
+static int dp_read(FILE *f)
+{
+    char line[96];
+    while (dp_nfix < 256u && fgets(line, sizeof line, f)) {
+        char *t[8];
+        uint32_t k = 0;
+        for (char *w = strtok(line, " \n"); w && k < 8u; w = strtok(0, " \n")) t[k++] = w;
+        if (k < 4u) return 0;
+        dp_fix[dp_nfix].name[0] = 0;
+        for (uint32_t i = 0; i + 3u < k; i++) {
+            if (i) strncat(dp_fix[dp_nfix].name, " ", sizeof dp_fix[0].name - strlen(dp_fix[dp_nfix].name) - 1u);
+            strncat(dp_fix[dp_nfix].name, t[i], sizeof dp_fix[0].name - strlen(dp_fix[dp_nfix].name) - 1u);
+        }
+        dp_fix[dp_nfix].st = (uint32_t)strtoul(t[k - 3u], 0, 10);
+        dp_fix[dp_nfix].h = (uint32_t)strtoul(t[k - 2u], 0, 16);
+        dp_fix[dp_nfix].n = (uint32_t)strtoul(t[k - 1u], 0, 10);
+        dp_fix[dp_nfix++].seen = 0;
+    }
+    return 1;
+}
+static int dp_find(const char *name, uint32_t st)
+{
+    for (uint32_t i = 0; i < dp_nfix; i++)
+        if (!strcmp(dp_fix[i].name, name) && dp_fix[i].st == st)
+            return (int)i;
+    return -1;
+}
 int main(int argc, char **argv)
 {
     const char *fix = "tests/fixtures/designer-a894c6f7.txt";
     FILE *want = 0, *wr = 0;
-    int bad = 0, groups = 0;
+    int bad = 0, groups = 0, kits_new = 0;
     uint32_t total = 0;
     if (argc > 2 && !strcmp(argv[1], "write"))
         wr = fopen(argv[2], "w");
-    else if (!(want = fopen(argc > 1 ? argv[1] : fix, "r"))) {
+    else if (!(want = fopen(argc > 1 ? argv[1] : fix, "r")) || !dp_read(want)) {
         printf("designer parity: %s unreadable\n", fix);
         return 1;
     }
@@ -211,7 +242,7 @@ int main(int argc, char **argv)
     for (uint32_t ei = 0; ei < NENG_SHOWN; ei++) {
         uint32_t e = eng_vis(ei), np = ENGINES[e]->npresets;
         for (uint32_t st = 0; st <= np && st <= 64u; st++) {
-            char got[96], line[96];
+            char got[96];
             dp_h = 2166136261u;
             dp_lines = 0;
             if (dp_out)
@@ -220,12 +251,21 @@ int main(int argc, char **argv)
             snprintf(got, sizeof got, "%s %u %08x %u\n", ENGINES[e]->name, st, dp_h, dp_lines);
             total += dp_lines;
             groups++;
-            if (wr)
+            if (wr) {
                 fputs(got, wr);
-            else if (!fgets(line, sizeof line, want) || strcmp(line, got)) {
+                continue;
+            }
+            int i = dp_find(e == ENGI_808 ? "DRUM" : ENGINES[e]->name, st);   /* (the 808: DRUM's INIT and first) */
+            if (i < 0 && pads_eng(e)) {
+                kits_new++;                          /* (a kit synth of 2.0's: a894c6f7 had none) */
+                continue;
+            }
+            if (i < 0 || dp_fix[i].h != dp_h || dp_fix[i].n != dp_lines) {
                 printf("designer parity: %s start %u differs from a894c6f7's (%s)", ENGINES[e]->name, st, got);
                 bad++;
             }
+            if (i >= 0)
+                dp_fix[i].seen = 1;
         }
     }
     if (wr)
@@ -233,13 +273,14 @@ int main(int argc, char **argv)
     if (dp_out)
         fclose(dp_out);
     if (want) {
-        char line[96];
-        if (fgets(line, sizeof line, want)) {
-            printf("designer parity: a894c6f7 had more groups\n");
-            bad++;
-        }
+        for (uint32_t i = 0; i < dp_nfix; i++)
+            if (!dp_fix[i].seen && !(!strcmp(dp_fix[i].name, "DRUM") && dp_fix[i].st >= 2u)) {   /* (DRUM's other kits) */
+                printf("designer parity: a894c6f7's %s %u: no such group now\n", dp_fix[i].name, dp_fix[i].st);
+                bad++;
+            }
         fclose(want);
     }
-    printf("designer parity: %d groups, %u answers, %s\n", groups, total, bad ? "FAILED" : "as a894c6f7's designer gave them");
+    printf("designer parity: %d groups (%d of 2.0's kit synths with no a894c6f7 group), %u answers, %s\n", groups, kits_new,
+           total, bad ? "FAILED" : "as a894c6f7's designer gave them");
     return bad != 0;
 }

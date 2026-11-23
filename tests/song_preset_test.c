@@ -77,11 +77,11 @@ static void playback(void)
 }
 static void native_and_persistence(void)
 {
-    const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_DRUM, 3};
+    const uint32_t engines[] = {ENGI_PROPHET, ENGI_FM6, ENGI_CZ, ENGI_808, ENGI_SID};
     for (uint32_t j = 0; j < NELEM(engines); j++) {
         setup(3); uint32_t id = choose(1, engines[j], 1);
         song_sound_t expected = *song_sound_get(id);
-        assert(!project_save(0)); assert(*(uint32_t *)proj_bank_slot[0] == BANKP_MAGIC);   /* (FBKP keeps the song's sound copies) */
+        assert(!project_save(0)); assert(*(uint32_t *)proj_bank_slot[0] == BANKS_MAGIC);   /* (FBKP keeps the song's sound copies) */
         uint8_t raw[BANK_STORE_SIZE]; memcpy(raw, proj_bank_slot[0], sizeof raw);
         /* Library and live sound edits cannot change the saved song copy. */
         engine_load_of(TSEL, ENGI_FM6, 8); project_load(0);
@@ -218,7 +218,7 @@ static void pattern_presets(void)
     assert(!pattern_copy(TSEL, 0, 3) && pattern_sound[0][3] == a);
     assert(!pattern_empty(0, 3));
     song_sound_t pa = *song_sound_get(a), pb = *song_sound_get(b), sc = *song_sound_get(c);
-    assert(!project_save(0)); assert(*(uint32_t *)proj_bank_slot[0] == BANKQ_MAGIC);
+    assert(!project_save(0)); assert(*(uint32_t *)proj_bank_slot[0] == BANKS_MAGIC);
     uint8_t raw[BANK_STORE_SIZE]; memcpy(raw, proj_bank_slot[0], sizeof raw);
     project_new_blank(); project_load(0);
     assert(!memcmp(song_sound_get(pattern_sound[0][0]), &pa, sizeof pa));
@@ -241,14 +241,14 @@ static void pattern_presets(void)
     seq_clear_now(CF_DEL_PAT, 0); assert(!pattern_sound[0][0]);
     undo_step(0); assert(pattern_sound[0][0]); undo_step(1); assert(!pattern_sound[0][0]);
     project_new_blank(); assert(!pattern_sounds_any());
-    assert(!project_save(1)); assert(*(uint32_t *)proj_bank_slot[1] == BANKP_MAGIC);
+    assert(!project_save(1)); assert(*(uint32_t *)proj_bank_slot[1] == BANKS_MAGIC);
     project_load(1); assert(!pattern_sounds_any());
     puts("Pattern presets: browser, manual switches, Song > Pattern > Default, direct start, copy, save/load, legacy and invalid IDs passed");
 }
 
 static void pattern_native_and_recorded_undo(void)
 {
-    const uint32_t engines[] = {ENGI_FM6, ENGI_CZ, ENGI_PROPHET, ENGI_DRUM, 3};
+    const uint32_t engines[] = {ENGI_FM6, ENGI_CZ, ENGI_PROPHET, ENGI_808, ENGI_SID};
     for (uint32_t e = 0; e < NELEM(engines); e++) {
         setup(0); engine_load_of(TSEL, ENGI_FM6, 9);
         song_sound_t base, live;

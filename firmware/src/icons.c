@@ -158,20 +158,6 @@ static uint32_t param_icon(const param_desc_t *d, int32_t v)
         return ICON_DIVISION;                 /* arp RATE is a note division, not Hz */
     if (d->names == N_TRIO_MODE)
         return ICON_CUTOFF;                   /* TRIO's MODE is the filter type, not the arp mode */
-#if MELODEE_LEGACY_EXTRAS
-    if (d->names == N_NOISE_MODE)
-        return ICON_NOISE;                    /* NOISE's MODE is the source; its CLK the register clock */
-    if (d == &NOISE_CLK)
-        return ICON_RATE;
-#endif
-#if MELODEE_SLICE
-    if (d->names == N_SLC_DIV)
-        return ICON_SLICE;                    /* SLICE: DIV is the slicing, MODE the gate, REV the direction */
-    if (d->names == N_SLC_MODE)
-        return ICON_GATE;
-    if (d->names == N_SLC_REV)
-        return ICON_ORDER;
-#endif
     return icon_for_label(d->label);
 }
 

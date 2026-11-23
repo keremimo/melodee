@@ -6,7 +6,7 @@
 
 static void reset_tools(void)
 {
-    seq_stop(); momentary_restore(); ui_power_on(); set_engine_of(&trk[0], 3); recording_reset();   /* (SID: knobs and CC macros on p[]) */ memset(&midi_clock,0,sizeof midi_clock); song.master_q12=4096;
+    seq_stop(); momentary_restore(); ui_power_on(); set_engine_of(&trk[0], ENGI_SID); recording_reset();   /* (SID: knobs and CC macros on p[]) */ memset(&midi_clock,0,sizeof midi_clock); song.master_q12=4096;
     settings_click=settings_countin=settings_preview=settings_chord_add=0;
     settings_click_level=CLICK_LEVEL_DEFAULT; memset(cin_n,0,sizeof cin_n); clk.env=click_req=0;
 }
@@ -135,16 +135,16 @@ static void test_compatibility(void)
     for(uint32_t t=0;t<NPART;t++)q.t[t].p[P_RESERVED35]=77;   /* delay sends and their automation (a FUN16's are kept) */
     q.g[G_RESERVED25]=3;q.g[G_RESERVED26]=9;q.g[G_RESERVED4]=2;q.motion.count=1;q.motion.event[0]=(motion_event_t){0,P_RESERVED35,100};q.sum=proj_sum(&q);
     assert(proj_pack(&current,&q));
-    assert(proj_import(&back,&current,PROJ_STORE_SIZE) && back.t[1].p[P_RESERVED35]==77 && back.g[G_RESERVED25]==3 && back.g[G_RESERVED26]==9 &&
+    assert(proj_import_same(&back,&current,PROJ_STORE_SIZE) && back.t[1].p[P_RESERVED35]==77 && back.g[G_RESERVED25]==3 && back.g[G_RESERVED26]==9 &&
            back.motion.count==1 && back.motion.event[0].value==100);
     {   /* Both current and earlier user presets ignore retired effects in their live values. */
-        up_rec_t r;int16_t v[P_COUNT];memset(&r,0,sizeof r);r.used=UP_USED;r.ver=UP_VER_GRID;r.engine=3;r.np=P_COUNT;memcpy(r.name,"OLD",3);
+        up_rec_t r;int16_t v[P_COUNT];memset(&r,0,sizeof r);r.used=UP_USED;r.ver=UP_VER_GRID;r.engine=ENGI_SID;r.np=P_COUNT;memcpy(r.name,"OLD",3);
         for(uint32_t i=0;i<P_COUNT;i++)up_set_value(&r,i,param_desc_of(0,i)->def);
         up_set_value(&r,P_RESERVED35,77);up_values(&r,v);assert(v[P_RESERVED35]==0);
         r.np=100;up_values(&r,v);assert(v[P_RESERVED35]==0);
     }
     {   /* a factory preset: no delay send (its sends predate the delay coming back) */
-        TSEL->eng_req=3;TSEL->p[P_RESERVED35]=77;apply_preset_to(TSEL,8);assert(TSEL->p[P_RESERVED35]==0 && TSEL->p[P_RESERVED36]==0);
+        TSEL->eng_req=ENGI_SID;TSEL->p[P_RESERVED35]=77;apply_preset_to(TSEL,8);assert(TSEL->p[P_RESERVED35]==0 && TSEL->p[P_RESERVED36]==0);
     }
 }
 int main(void)

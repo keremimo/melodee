@@ -44,7 +44,7 @@ static void compare(track_t *t)
 }
 static void parity(void)
 {
-    static const uint32_t engines[]={19,12,15,3,10};
+    static const uint32_t engines[]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_808};
     host_tracks_init();
     for(uint32_t k=0;k<50000;k++){
         track_t *t=&trk[k%NPART];
@@ -81,7 +81,7 @@ static void parity(void)
      * invalid signed values, inactive slots, collisions and mixed DEPTH. */
     static const int16_t invalid[]={-32768,-1,MS_N,32767};
     for(uint32_t d=MD_PITCH;d<MD_N;d++){
-        host_preset(t,19,0);
+        host_preset(t, ENGI_PROPHET, 0);
         for(uint32_t slot=0;slot<NMSLOT;slot++){
             t->p[P_M1SRC+3u*slot]=MS_LFO;
             t->p[P_M1DST+3u*slot]=(int16_t)(slot==3?MD_DEPTH:d);
@@ -107,13 +107,13 @@ static void parity(void)
 static volatile uint32_t checksum;
 static void benchmark(void)
 {
-    track_t *t=&trk[0];host_preset(t,19,0);t->lfo_val=12131;t->lfo_fade=32767;
+    track_t *t=&trk[0];host_preset(t, ENGI_PROPHET, 0);t->lfo_val=12131;t->lfo_fade=32767;
     static const char *changes[]={"static","amount","source","all_sources","destination","zero_crossing","engine"};
     puts("routing,changing,reference_instructions_per_block,cached_instructions_per_block");
     for(uint32_t active=0;active<3;active++)for(uint32_t changing=0;changing<(active?NELEM(changes):2u);changing++){
         double costs[2];
         for(uint32_t cached=0;cached<2;cached++){
-            host_preset(t,19,0);t->lfo_val=12131;t->lfo_fade=32767;
+            host_preset(t, ENGI_PROPHET, 0);t->lfo_val=12131;t->lfo_fade=32767;
             memset(mod_routes,0,sizeof mod_routes);
             for(uint32_t k=0;k<NMSLOT;k++){
                 t->p[P_M1SRC+3u*k]=active?MS_LFO:0;

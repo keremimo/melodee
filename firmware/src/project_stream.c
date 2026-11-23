@@ -38,10 +38,6 @@ static int proj_image_capture(int runtime)
     project_t *q=&proj_scratch;uint32_t f=motion_guard();
     project_capture(q);
     int ok=bank_pack_tail(proj_image_tail(),q,runtime);
-    if(!ok&&bank_too_full&&runtime&&bank_v1_fits()){          /* a dense project of before 16 patterns: as FBKK */
-        bank_force_v1=1;ok=bank_pack_tail(proj_image_tail(),q,runtime)&&!bank_wide;bank_force_v1=0;
-        if(!ok)bank_too_full=1;
-    }
     motion_unguard(f);
     /* The captured RAM is private until this synchronous operation returns;
      * validation can run with audio interrupts enabled. */
@@ -73,61 +69,19 @@ static int proj_stream_read_hash(uint32_t obj,uint32_t copy,uint32_t off,uint32_
     }
     return 0;
 }
-/* Compact images (PJ1): the 27,904-byte record with its empty 256-byte pages left out, so a project occupies what
- * it holds. Two regions, each paged from its own start: the bank tail T [BANK_ACTIVE_OFF, end) (map bits 0..57)
- * and the header + active record S [0, BANK_ACTIVE_OFF) (bits 64..115). Stored: the 32-byte head below, T's present
- * pages, then S's, each region's last page short. A raw record (FBK magic first) is read as it is. */
-#define PJ_MAGIC 0x314A5048u                     /* HPJ1 */
+/* A stored project: packed (HPJ2, below: every save writes one) or a raw record (FBKS first: an editor's put), read
+ * as it is. pj: the image proj_stream_load read last (on 2: packed) */
 #define PJ_HEAD 32u
-#define PJ_TPAGES ((BANK_TAIL_SIZE + 255u) / 256u)
-#define PJ_SPAGES ((BANK_ACTIVE_OFF + 255u) / 256u)
-_Static_assert(PJ_TPAGES <= 64u && PJ_SPAGES <= 64u, "one 64-bit map a region");
 typedef struct { uint32_t magic, len, map[4], rsv[2]; } pj_head_t;
-_Static_assert(sizeof(pj_head_t) == PJ_HEAD, "compact image head");
-static struct { pj_head_t h; uint8_t on; } pj __attribute__((section(".pool")));   /* the image proj_stream_load reads */
-static int pj_bit(const pj_head_t *h, uint32_t b) { return (int)((h->map[b / 32u] >> (b % 32u)) & 1u); }
-static uint32_t pj_rank(const pj_head_t *h, uint32_t from, uint32_t to)
-{
-    uint32_t n = 0;
-    for (uint32_t b = from; b < to; b++) n += (uint32_t)pj_bit(h, b);
-    return n;
-}
-static uint32_t pj_tbytes(const pj_head_t *h)
-{
-    uint32_t n = 256u * pj_rank(h, 0, PJ_TPAGES);
-    return pj_bit(h, PJ_TPAGES - 1u) ? n - (PJ_TPAGES * 256u - BANK_TAIL_SIZE) : n;
-}
-/* logical offset -> stored offset (1) or a hole (0, zeros); *span: the bytes to its page's end */
-static int pj_where(const pj_head_t *h, uint32_t off, uint32_t *at, uint32_t *span)
-{
-    uint32_t tail = off >= BANK_ACTIVE_OFF, rel = tail ? off - BANK_ACTIVE_OFF : off, size = tail ? BANK_TAIL_SIZE : BANK_ACTIVE_OFF;
-    uint32_t page = rel / 256u, bit = tail ? page : 64u + page, end = (page + 1u) * 256u;
-    *span = (end < size ? end : size) - rel;
-    if (!pj_bit(h, bit)) return 0;
-    *at = (tail ? PJ_HEAD : PJ_HEAD + pj_tbytes(h)) + 256u * pj_rank(h, tail ? 0u : 64u, bit) + rel % 256u;
-    return 1;
-}
-/* the record's logical bytes, of a compact image (pj.on) or a raw one */
-static int pj_read(uint32_t obj, uint32_t copy, uint32_t off, void *dst, uint32_t n)
-{
-    if (!pj.on) return st_read_range(obj, copy, off, dst, n);
-    uint8_t *d = dst;
-    while (n) {
-        uint32_t at, span, k;
-        int here = pj_where(&pj.h, off, &at, &span);
-        k = n < span ? n : span;
-        if (here) { if (st_read_range(obj, copy, at, d, k)) return -1; }
-        else memset(d, 0, k);
-        d += k; off += k; n -= k;
-    }
-    return 0;
-}
+_Static_assert(sizeof(pj_head_t) == PJ_HEAD, "packed image head");
+static struct { pj_head_t h; uint8_t on; } pj __attribute__((section(".pool")));
+static int pj_read(uint32_t obj, uint32_t copy, uint32_t off, void *dst, uint32_t n) { return st_read_range(obj, copy, off, dst, n); }
 /* Packed images (HPJ2; every save writes one): the same record in two blocks, each as lz_unpack reads it (dsp.c: c <
  * 0x80: c + 1 bytes follow; else (c & 0x7F) + 3 bytes copied from d + 1 back, d in the next two bytes), or as it is
  * when packing does not make it smaller. Stored: the 32-byte head (pj_head_t: map[0] the record's first word, its FBK
  * magic; map[1] its last, the sum; map[2] and map[3] the blocks' stored bytes, | PZ_RAW: as it is), the bank tail
  * without its sum, then the FUN record. Each block is whole on its own: there is RAM for one at a time.
- * Compact images stay readable (pj_read); nothing writes them any more. */
+ */
 #define PZ_MAGIC 0x324A5048u                     /* HPJ2 */
 #define PZ_RAW 0x80000000u
 #define PZ_TAIL (BANK_TAIL_SIZE - 4u)            /* the tail block's bytes */
@@ -301,31 +255,6 @@ static int proj_stream_generate(st_stream_t *w,uint32_t obj)
     proj_source_hash=fnv(hash,&hash,4u);
     return pz_close(w,obj,&h,at);
 }
-/* The record of a copy stored compact or raw (the one proj_stream_load read last: pj tells where its bytes are)
- * -> the same record packed, staged in w: not a byte of the record itself changes, so its sum, its name and the
- * music are what they were. Both blocks are sized before anything is written: -5 when the pool has no room for the
- * new copy beside the old one (nothing erased then). */
-static int proj_stream_repack(st_stream_t *w,uint32_t obj,uint32_t copy)
-{
-    uint8_t *ram=proj_image_work();
-    pj_head_t h;memset(&h,0,sizeof h);h.magic=PZ_MAGIC;h.len=BANK_STORE_SIZE;
-    uint32_t at=PJ_HEAD,room=0;int rc;
-    wire_take();
-    if(pj_read(obj,copy,0,&h.map[0],4u)||pj_read(obj,copy,BANK_STORE_SIZE-4u,&h.map[1],4u)||
-       pj_read(obj,copy,BANK_ACTIVE_OFF,ram,PZ_TAIL))return -7;
-    h.map[2]=pz_size(ram,PZ_TAIL);
-    if(pj_read(obj,copy,8u,ram,sizeof(project_store_t)))return -7;
-    h.map[3]=pz_size(ram,sizeof(project_store_t));
-    if((rc=st_stream_begin_lazy(w,obj)))return rc;
-    for(uint32_t i=0;i<ST_LN;i++)room+=(w->avail[i/32u]>>(i%32u))&1u;
-    at+=h.map[2]&~PZ_RAW;                          /* (the FUN record is in RAM: it goes first, to its place) */
-    if(room*ST_LIN_PAYLOAD_MAX<at+(h.map[3]&~PZ_RAW))return -5;
-    if((rc=pz_store(w,&at,ram,sizeof(project_store_t),h.map[3])))return rc;
-    room=PJ_HEAD;
-    if(pj_read(obj,copy,BANK_ACTIVE_OFF,ram,PZ_TAIL))return -7;
-    if((rc=pz_store(w,&room,ram,PZ_TAIL,h.map[2])))return rc;
-    return pz_close(w,obj,&h,at);
-}
 #if !defined(FM1_IRQ_TARGET)
 /* (host: a stored copy's record whole, whichever way it is stored, into dst[BANK_STORE_SIZE]; 0) */
 static int pj_image(uint32_t obj,uint32_t copy,uint8_t *dst)
@@ -337,42 +266,35 @@ static int pj_image(uint32_t obj,uint32_t copy,uint8_t *dst)
         memcpy(dst,&h.map[0],4u);memcpy(dst+4u,&h.len,4u);memcpy(dst+BANK_STORE_SIZE-4u,&h.map[1],4u);
         return pz_block(&in,h.map[2],dst+BANK_ACTIVE_OFF,PZ_TAIL,0)||pz_block(&in,h.map[3],dst+8u,sizeof(project_store_t),0)?-1:0;
     }
-    pj.h=h;pj.on=h.magic==PJ_MAGIC;
-    rc=pj_read(obj,copy,0,dst,BANK_STORE_SIZE);
-    pj.h=keep;pj.on=on;
+    (void)keep;(void)on;
+    rc=st_read_range(obj,copy,0,dst,BANK_STORE_SIZE);   /* (a raw record) */
     return rc;
 }
 #endif
 static int proj_stream_load(uint32_t obj,uint32_t copy,uint32_t len)
 {
     project_t *q=&proj_scratch;uint32_t hash=2166136261u;
-    proj_source_hash=0;bank_wide=0;bank_p16=0;bank_patterns=0;bank_song64=0;bank_songfx=0;bank_sounds=0;bank_sound_bytes=0;
+    proj_source_hash=0;bank_patterns=0;bank_sounds=0;bank_sound_bytes=0;
     pj.on=0;
     if(len>PJ_HEAD&&len<=BANK_STORE_SIZE+PJ_HEAD&&!st_read_range(obj,copy,0,&pj.h,PJ_HEAD)&&pj.h.len==BANK_STORE_SIZE){
-        if(pj.h.magic==PJ_MAGIC)pj.on=1;
-        else if(pj.h.magic==PZ_MAGIC&&PJ_HEAD+(pj.h.map[2]&~PZ_RAW)+(pj.h.map[3]&~PZ_RAW)==len)pj.on=2;   /* (packed) */
+        if(pj.h.magic==PZ_MAGIC&&PJ_HEAD+(pj.h.map[2]&~PZ_RAW)+(pj.h.map[3]&~PZ_RAW)==len)pj.on=2;   /* (packed) */
         if(pj.on)len=BANK_STORE_SIZE;
     }
     if(bank_full(len)){
         uint32_t header[2]={pj.h.map[0],len};uint8_t *tail=proj_image_tail();
         pz_in_t in;memset(&in,0,sizeof in);in.obj=obj;in.copy=copy;in.at=PJ_HEAD;
-        if((pj.on!=2u&&pj_read(obj,copy,0,header,sizeof header))||(header[0]!=BANK_MAGIC&&header[0]!=BANKL_MAGIC&&header[0]!=BANKM_MAGIC&&header[0]!=BANKN_MAGIC&&header[0]!=BANKO_MAGIC&&header[0]!=BANKP_MAGIC&&header[0]!=BANKQ_MAGIC&&header[0]!=BANKR_MAGIC)||header[1]!=len)return 0;
-        uint32_t fbkr=header[0]==BANKR_MAGIC;
-        bank_patterns=(uint8_t)(header[0]==BANKQ_MAGIC);
-        bank_p16=(uint8_t)(header[0]==BANKP_MAGIC || fbkr || bank_patterns);
-        bank_sounds=(uint8_t)(header[0]==BANKO_MAGIC);
-        bank_songfx=(uint8_t)(header[0]==BANKN_MAGIC || bank_sounds || bank_p16);
-        bank_song64=(uint8_t)(header[0]==BANKM_MAGIC || bank_songfx);
-        bank_wide=(uint8_t)(header[0]!=BANK_MAGIC);
+        if((pj.on!=2u&&pj_read(obj,copy,0,header,sizeof header))||header[0]!=BANKS_MAGIC||header[1]!=len)return 0;   /* (2.0's only) */
+        uint32_t fbkr=1;
+        bank_sounds=0;
         if(pj.on==2u){                                  /* the tail first: its directory of timed notes, then again */
             if(pz_block(&in,pj.h.map[2],tail,PZ_TAIL,0))return 0;
             memcpy(tail+PZ_TAIL,&pj.h.map[1],4u);
             if(!bank_ext_read(tail,(int)fbkr))return 0;  /* (FBKR: its end block, the engine numbers it names) */
-            if(bank_wide)memcpy(proj_rec_ext,tail+BT(BL.rec),BL.recn);
+            memcpy(proj_rec_ext,tail+BT(BL.rec),BL.recn);
             if(pz_block(&in,pj.h.map[3],(uint8_t *)proj_image_store(),sizeof(project_store_t),0))return 0;
         }else{
             if(fbkr?pj_read(obj,copy,BANK_ACTIVE_OFF,tail,BANK_TAIL_SIZE)||!bank_ext_read(tail,1):!bank_ext_read(tail,0))return 0;
-            if(bank_wide&&pj_read(obj,copy,BL.rec,proj_rec_ext,BL.recn))return 0;
+            if(pj_read(obj,copy,BL.rec,proj_rec_ext,BL.recn))return 0;
             if(pj_read(obj,copy,8u,proj_image_store(),sizeof(project_store_t)))return 0;
         }
         hash=fnv(fnv(hash,header,sizeof header),proj_image_store(),sizeof(project_store_t));
@@ -387,34 +309,6 @@ static int proj_stream_load(uint32_t obj,uint32_t copy,uint32_t len)
         if(sum!=hash||!bank_tail_valid(tail))return 0;
         proj_source_hash=fnv(hash,&sum,4u);return 1;
     }
-    eng_remap_reset();                                  /* (a FUN record alone: its numbers as they are) */
-    if(len==sizeof(project_store_t)){
-        if(st_read_range(obj,copy,0,proj_image_store(),len))return 0;
-        return proj_import(q,proj_image_store(),(int)len);
-    }
-    if(len==sizeof *q){
-        if(st_read_range(obj,copy,0,q,len))return 0;
-        return proj_ok(q);
-    }
-    /* Prior raw snapshots: expand/convert each ten-byte note without ever
-     * holding the complete old and new layouts at once. */
-    if(len==sizeof *q+RECORD_MAX){
-        uint32_t sum,head[2];
-        if(st_read_range(obj,copy,0,head,sizeof head)||head[0]!=PROJ_MAGIC||head[1]!=len||
-           st_read_range(obj,copy,len-4u,&sum,4u)||proj_stream_read_hash(obj,copy,0,len-4u,&hash,0)||hash!=sum)return 0;
-        uint32_t at=__builtin_offsetof(project_t,recording),end=__builtin_offsetof(project_t,pattern);
-        if(st_read_range(obj,copy,0,q,at))return 0;
-        for(uint32_t i=0;i<RECORD_MAX;i++){
-            uint8_t r[10];if(st_read_range(obj,copy,at+i*10u,r,sizeof r))return 0;
-            recorded_note_t v={0};
-            if(r[5]){
-                if(r[4]>127u||r[5]>127u||(int8_t)r[8]<-24||(int8_t)r[8]>24||r[9]>=8u)return 0;
-                v=(recorded_note_t){.on=(uint16_t)(r[0]|r[1]<<8),.duration=(uint16_t)(r[2]|r[3]<<8),.note7=r[4],.vel=r[5],.owner=r[6],.step=r[7],.pitch=(int8_t)r[8],.length=r[9]&1u,.extended=r[9]>>1};
-            }
-            q->recording[i]=v;
-        }
-        if(st_read_range(obj,copy,at+RECORD_MAX*10u,(uint8_t *)q+end,sizeof *q-end))return 0;
-        q->size=sizeof *q;q->sum=proj_sum(q);return proj_ok(q);
-    }
+    /* (a FUN record alone, a raw snapshot: Melodee 1.x's; the web installer converts them) */
     return 0;
 }

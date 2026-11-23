@@ -288,7 +288,7 @@ static int take_selftest(void)
     persist_t prefs;
     for (uint32_t ch = 0; ch <= 16u; ch++) {
         settings_drumch = (uint8_t)ch; settings_export(&prefs);
-        assert(settings_legacy_valid(&prefs) && take_drum_channel(&prefs) == ch);
+        assert((prefs.magic == PERSIST_MAGIC && settings_owned(&prefs)) && take_drum_channel(&prefs) == ch);
     }
     take_spec_t bad = specs[0];
     bad.notes = 256; assert(!take_valid(&bad));
@@ -313,7 +313,7 @@ int main(int argc, char **argv)
         /* Live preferences (RAM snapshot) through the firmware's own layout. */
         static persist_t p;
         _Static_assert(sizeof p == 604u, "live preference layout");
-        if (fread(&p, 1, sizeof p, stdin) != sizeof p || !settings_legacy_valid(&p)) return 2;
+        if (fread(&p, 1, sizeof p, stdin) != sizeof p || !(p.magic == PERSIST_MAGIC && settings_owned(&p))) return 2;
         printf("%u\n", take_drum_channel(&p));
         return fflush(stdout) ? 2 : 0;
     }

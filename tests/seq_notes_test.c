@@ -91,7 +91,7 @@ static int loop_drums_and_playback(void)
     turn(EN_PRESET,100);bad+=check("zoom clamps at one step",ui.note_zoom==4);
     turn(EN_PRESET,-100);bad+=check("zoom clamps at sixteen steps",ui.note_zoom==0);
 
-    raw_begin();t=&trk[0];set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;
+    raw_begin();t=&trk[0];set_engine_of(t,ENGI_808);t->engine=t->eng_req;
     seq_advance(600);input_on(t,36,100);input_on(t,38,115);seq_advance(300);input_off(t,36);input_off(t,38);
     seq_advance(900);input_on(t,36,90);seq_advance(300);input_off(t,36);seq_stop();song.rec=0;
     go_page(GR_ROLL);cursor_set(0);frame();notes_cycle(2); frame();press(B_EDIT);
@@ -276,7 +276,7 @@ static int dense_selection_and_protection(void)
 
 static int drum_recording_layout(void)
 {
-    raw_begin();track_t *t=&trk[0];set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;
+    raw_begin();track_t *t=&trk[0];set_engine_of(t,ENGI_808);t->engine=t->eng_req;
     go_page(GR_ROLL);frame();seq_advance(600);input_on(t,36,100);seq_advance(100);input_off(t,36);frame();
     int bad=check("the first recorded drum hit keeps live lane-key mapping and the grid",grid_on()&&song.grid==1u);
     seq_advance(500);input_on(t,38,100);seq_advance(100);input_off(t,38);frame();
@@ -406,7 +406,7 @@ static int live_erase_scope_and_drums(void)
     seq_advance(1);bad+=check("the odd step's boundary erases its straight-played note",!recording[3].vel&&!step_on(&t->step[3]));
     erase_up();seq_stop();song.rec=0;
 
-    raw_begin();t=TSEL;set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;
+    raw_begin();t=TSEL;set_engine_of(t,ENGI_808);t->engine=t->eng_req;
     seq_advance(100);input_on(t,36,100);input_on(t,38,115);seq_advance(100);input_off(t,36);input_off(t,38);
     seq_advance(6144);input_on(t,42,90);seq_advance(100);input_off(t,42);seq_stop();song.rec=0;
     go_page(GR_ROLL);raw_replay();song.rec=1;frame();erase_down();seq_advance(1);frame();
@@ -425,7 +425,7 @@ static int erase_edit_hold_conflicts(void)
         raw_begin();track_t *t=TSEL;manual_hit(t,0,60);
         if(context==0)go_home();
         if(context==1)go_page(GR_STEPS);
-        if(context==2){set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;seq_stop();song.rec=0;go_page(GR_ROLL);}
+        if(context==2){set_engine_of(t,ENGI_808);t->engine=t->eng_req;seq_stop();song.rec=0;go_page(GR_ROLL);}
         frame();undo_clear();recording_undo_clear();step_t before=t->step[0];erase_down();frames(800);
         int normal=!layer_open()&&!seq_erase_active(t);
         seq_advance(6144);erase_up();
@@ -434,7 +434,7 @@ static int erase_edit_hold_conflicts(void)
     }
     for(uint32_t drum=0;drum<2;drum++) {
         raw_begin();track_t *t=TSEL;
-        if(drum){set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;}
+        if(drum){set_engine_of(t,ENGI_808);t->engine=t->eng_req;}
         manual_hit(t,0,60);manual_hit(t,1,64);go_page(GR_ROLL);frame();
         uint32_t engine=t->eng_req;erase_down();frames(500);seq_advance(1);
         int erase=seq_erase_active(t)&&!ui.ly&&!layer_open()&&!step_on(&t->step[0]);

@@ -694,7 +694,7 @@ static void ref_scene(int s)
     static const uint8_t PAT[4] = {0, 1, 0, 3};
     uint32_t k;
     song.playing = 0;
-    set_engine_of(&trk[0], ENGI_DRUM); apply_preset_to(&trk[0], preset_named(ENGI_DRUM, "909 KIT"));
+    set_engine_of(&trk[0], ENGI_909); apply_preset_to(&trk[0], preset_named(ENGI_909, "909 KIT"));
     set_engine_of(&trk[1], ENGI_PROPHET); apply_preset_to(&trk[1], 33);           /* Pickle Pincher */
     set_engine_of(&trk[2], ENGI_CZ); apply_preset_to(&trk[2], preset_named(ENGI_CZ, "ELEC.PIANO"));
     set_engine_of(&trk[3], ENGI_FM6); apply_preset_to(&trk[3], preset_named(ENGI_FM6, "BRASS SECT"));
@@ -777,7 +777,7 @@ static void ref_scene(int s)
     }
     case S_REF_ENV: case S_REF_LFO: case S_REF_EDIT_OSC: case S_REF_NOTES:
         /* (R5) track 2: SID SAW BASS (ANALOG ACID until 2.0); ENV: SUSTAIN just turned, LFO: RATE, DLY: FEEDBACK */
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF; trk[1].p[P_LD_FLT] = 30;
         if (s == S_REF_EDIT_OSC) { ui.home = 0; ui.page = (uint8_t)page_first(FAM_EDIT); page_entered(); }
         else if (s != S_REF_NOTES) go_title(s == S_REF_ENV ? "ENV" : s == S_REF_LFO ? "LFO" : "ENV");
@@ -823,7 +823,7 @@ static void ref_scene(int s)
     case S_REF_SHEET_HIT: case S_REF_GRID: {         /* (R6) the drum grid: SD at step 5 (accent, 75 %), its sheet */
         static const char *const G[4] = {"1000100010001000", "0000100000001000", "0000000000000001", "1010101010101010"};
         uint32_t l, i;
-        song.playing = 0; song.sel = 3; set_engine_of(&trk[3], ENGI_DRUM); trk[3].engine = ENGI_DRUM;
+        song.playing = 0; song.sel = 3; set_engine_of(&trk[3], ENGI_808); trk[3].engine = ENGI_808;
         track_defaults_steps(&trk[3]); trk[3].p[P_SLEN] = 32;
         for (l = 0; l < 4u; l++)
             for (i = 0; i < 16u; i++)
@@ -840,7 +840,7 @@ static void ref_scene(int s)
         static const uint8_t RES[16] = {7, 7, 7, 10, 10, 12, 12, 10, 10, 10, 7, 7, 10, 10, 7, 7};   /* (SID's RES: 0..15) */
         static const uint8_t DRV[16] = {10, 10, 20, 20, 30, 40, 40, 30, 40, 50, 50, 40, 30, 30, 20, 20};
         uint32_t i;
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF; trk[1].p[P_SLEN] = 16;
         motion_clear(&trk[1]);
         for (i = 0; i < 16u; i++) {
@@ -854,7 +854,7 @@ static void ref_scene(int s)
         break;
     }
     case S_REF_MOD: case S_REF_PICKER_MOD:           /* (R6) MOD: LFO > Cutoff, Mod wheel > PW (picked), Velocity > Level */
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF;
         trk[1].p[P_M1SRC] = MS_LFO; trk[1].p[P_M1DST] = MD_CUT; trk[1].p[P_M1AMT] = 40;
         trk[1].p[P_M2SRC] = MS_MODW; trk[1].p[P_M2DST] = MD_E1 + 3; trk[1].p[P_M2AMT] = -64;
@@ -865,7 +865,7 @@ static void ref_scene(int s)
         break;
     case S_REF_ARP: case S_REF_PATTERN: {   /* (R6) ARP Up 2 oct; PATTERN 32 steps; SLICER Gate */
         uint32_t i;
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF;
         if (s == S_REF_ARP) {
             trk[1].p[P_AMODE] = 1; trk[1].p[P_AOCT] = 2; go_title("ARP"); ui.hot_col = 0;
@@ -896,7 +896,7 @@ static void ref_scene(int s)
         break;
     case S_REF_PICKER_WAVE: case S_REF_PICKER_MODE:  /* (R6) a list knob turning: its picker, over its column and the
                                                       * next (SID's WAVE on KNOB 2; its filter MODE on KNOB 3) */
-        set_engine_of(&trk[1], 3); apply_preset_to(&trk[1], preset_named(3, "SAW BASS")); trk[1].engine = 3;
+        set_engine_of(&trk[1], ENGI_SID); apply_preset_to(&trk[1], preset_named(ENGI_SID, "SAW BASS")); trk[1].engine = ENGI_SID;
         song.playing = 0; trk[1].pattern_next = 0xFF;
         if (s == S_REF_PICKER_WAVE) { ui.home = 0; ui.page = (uint8_t)page_first(FAM_EDIT); page_entered(); pick_touch(1); }
         else { go_title("EDIT 2"); pick_touch(2); }
@@ -955,7 +955,7 @@ static void setup(int s)
         if(s==S_GLO_MIDI)ui.layer=LAYER_GLO;
         break;
     case S_MAP_DRUM_KIT: case S_MAP_DRUM_HIT: case S_MAP_DRUM_CATEGORY:
-        ui_power_on(); set_engine_of(TSEL, ENGI_DRUM); go_title("EDIT 1"); smap_open();
+        ui_power_on(); set_engine_of(TSEL, ENGI_808); go_title("EDIT 1"); smap_open();
         if (s != S_MAP_DRUM_KIT) smap_input(1, 0, 0);
         if (s == S_MAP_DRUM_CATEGORY) smap_input(0, 1, 0);
         break;
@@ -1061,7 +1061,7 @@ static void setup(int s)
     case S_NOTES_DRUM_ERASE: {
         song.sel=0; song.rec=0; song.playing=0;
         track_t *t=TSEL;
-        if(s==S_NOTES_DRUM||s==S_NOTES_DRUM_REC||s==S_NOTES_DRUM_ERASE){set_engine_of(t,ENGI_DRUM);t->engine=t->eng_req;}
+        if(s==S_NOTES_DRUM||s==S_NOTES_DRUM_REC||s==S_NOTES_DRUM_ERASE){set_engine_of(t,ENGI_808);t->engine=t->eng_req;}
         recording_reset();track_defaults_steps(t);t->p[P_SLEN]=16;t->p[P_SDIV]=2;t->p[P_SSWING]=24;
         for(uint32_t i=0;i<NSTEP;i++)step_clear(&t->step[i]);
         uint32_t count=s==S_NOTES_EMPTY||s==S_NOTES_CHORD||s==S_NOTES_SLIDE?0:s==S_NOTES_DENSE?RECORD_MAX:5;
@@ -1434,7 +1434,7 @@ static void setup(int s)
         break;
     }
     case S_CHORD_OFF: go_title("CHORD"); break;
-    case S_CHORD_KIT: eng(ENGI_DRUM); TSEL->p[P_CHRD] = CH_DIA3; go_title("CHORD"); break;
+    case S_CHORD_KIT: eng(ENGI_808); TSEL->p[P_CHRD] = CH_DIA3; go_title("CHORD"); break;
     case S_CHORD_AUTO:
     case S_CHORD_AUTO_SET:
     case S_CHORD_AUTO_MICRO: {
@@ -1550,14 +1550,14 @@ static void setup(int s)
     case S_MENU_COUNTIN: ui.menu=1;ui.menu_sel=MI_COUNTIN;settings_countin=2;break;
     case S_MENU_PREVIEW: ui.menu=1;ui.menu_sel=MI_PREVIEW;settings_preview=1;break;
     case S_DRUM_SOUND_808: case S_DRUM_SOUND_909: case S_DRUM_MIX_909: case S_DRUM_HIT_909: case S_DRUM_HIT_FREE: case S_DRUM_HIT_LONG:
-        drum(s==S_DRUM_SOUND_808?DK_808:DK_909);eng(ENGI_DRUM);TSEL->p[P_E0]=s==S_DRUM_SOUND_808?DK_808:DK_909;TSEL->engine=TSEL->eng_req;TSEL->preset=s==S_DRUM_SOUND_808?0:1;song.playing=0;
+        drum(s==S_DRUM_SOUND_808?DK_808:DK_909);eng(s==S_DRUM_SOUND_808?ENGI_808:ENGI_909);TSEL->p[P_E0]=s==S_DRUM_SOUND_808?DK_808:DK_909;TSEL->engine=TSEL->eng_req;TSEL->preset=0;song.playing=0;
         ui.pad=s==S_DRUM_SOUND_808?12:D9_SD;ui.lane=(uint8_t)drum_lane(pads_note(TSEL,ui.pad));ui.cursor=4;
         drum_patch_of(song.sel)->c[ui.pad][0]=-12;drum_patch_of(song.sel)->c[ui.pad][1]=31;drum_patch_of(song.sel)->c[ui.pad][2]=16;drum_patch_of(song.sel)->c[ui.pad][3]=40;
         if(s==S_DRUM_HIT_909 || s==S_DRUM_HIT_FREE || s==S_DRUM_HIT_LONG){recording_restore_note(TSEL,0,(recorded_note_t){.on=27000, .duration=16384, .note7=38, .vel=100, .owner=(uint8_t)recording_owner(TSEL), .step=4, .pitch=7, .length=s==S_DRUM_HIT_909});if(s==S_DRUM_HIT_LONG){recording[0].duration=65535;recording[0].owner|=224;recording[0].length=1;}ui.note_pick=1;ui.note_identity=recording[0];ui.note_generation=recording_generation;TSEL->step[4].flags|=SF_RECORDED;go_title("DRUM HIT");}
         else go_title(s==S_DRUM_MIX_909?"DRUM MIX":"DRUM SOUND");
         ui.hot_col=2;ui.hot_t=30;break;
     case S_DRUM_HIT_TOMS:                               /* KNOB 2 on TOM M: its hits filled, TOM L's and H's hollow, the lane MT */
-        drum(DK_909);eng(ENGI_DRUM);TSEL->p[P_E0]=DK_909;TSEL->engine=TSEL->eng_req;TSEL->preset=1;song.playing=0;
+        drum(DK_909);eng(ENGI_909);TSEL->p[P_E0]=DK_909;TSEL->engine=TSEL->eng_req;TSEL->preset=0;song.playing=0;
         TSEL->step[2].note[TSEL->step[2].n++]=41;TSEL->step[11].note[TSEL->step[11].n++]=50;
         ui.pad=D9_MT;ui.lane=DV_TOM;ui.cursor=7;go_title("DRUM HIT");ui.hot_col=1;ui.hot_t=30;break;
     case S_MENU_ADD: ui.menu=1;ui.menu_sel=MI_ADD;settings_chord_add=1;break;

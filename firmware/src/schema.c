@@ -25,7 +25,7 @@ static uint8_t sch_mem_done[NENGINES];
 static const uint8_t *sch_builtin(uint32_t e, uint32_t *len)
 {
     static uint8_t pool[NENGINES][12288];
-    if (!sch_mem_done[e] || (!sch_mem[e] && ENGINES[e] != &ENG_RETIRED)) {   /* (a host test may put a built-in back) */
+    if (!sch_mem_done[e] || (!sch_mem[e] && ENGINES[e] != &ENG_NONE)) {   /* (a host test may put a built-in back) */
         const mod_sch_src *s = sch_builtin_src(e);
         uint32_t n = s ? mod_sch_write(s, pool[e], sizeof pool[e]) : 0;
         sch_mem_done[e] = 1;
@@ -495,7 +495,6 @@ static void sch_info_sync(void)
 #endif
 static uint32_t patch_len(uint32_t e) { SCH_INFO(); return sch_info[e % NENGINES].plen; }
 static uint32_t patch_store_tag(uint32_t e) { SCH_INFO(); return sch_info[e % NENGINES].tag; }
-static uint32_t patch_mtag(uint32_t e) { SCH_INFO(); return sch_info[e % NENGINES].mtag; }
 /* Motion's slots of engine e (main loop): each one's highest value into mx (MO_NATIVE_N bytes: 0 not recorded) and the
  * bits it keeps 0 into mz; 0 ok */
 static int patch_motion_map(uint32_t e, uint8_t *mx, uint8_t *mz, uint32_t n)
@@ -650,7 +649,7 @@ static void msx_routes_sync(void)
     msx_nroute = 0;
     RING_PUBLISH();
     for (e = 0; e < NENGINES; e++) {
-        if (ENGINES[e] == &ENG_RETIRED || sch_head(e, &h) || sch_role(e, MOD3_R_SYSEX, 0, &id, &n, &l))
+        if (ENGINES[e] == &ENG_NONE || sch_head(e, &h) || sch_role(e, MOD3_R_SYSEX, 0, &id, &n, &l))
             continue;
         for (i = 0; i < n && m < MSX_ROUTES; i++) {
             if (sch_rd(e, h.wid + id + 4u * i, q, sizeof q) || !q[0] || q[0] > 3u)
@@ -692,7 +691,7 @@ static void patch_set(uint32_t k, uint32_t e, const uint8_t *src, uint32_t n, ui
     uint8_t *p = patch_of(k);
     uint32_t len = patch_len(e), i = k < NPART ? k : NPART;
     patch_keep[i] = 0;
-    if (src && n > len && !len && e < NENGINES && ENGINES[e] == &ENG_RETIRED && eng_map_own(e)) {
+    if (src && n > len && !len && e < NENGINES && ENGINES[e] == &ENG_NONE && eng_map_own(e)) {
         len = n < MOD3_PATCH_MAX ? n : MOD3_PATCH_MAX;   /* (a module not here: its bytes kept whole, patch_keep) */
         patch_keep[i] = (uint16_t)len;
     }

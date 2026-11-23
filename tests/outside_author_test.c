@@ -14,7 +14,8 @@
 #include "../firmware/src/module_store.c"
 
 extern const mod_desc_v3 mod_trio;               /* (the outside folder's object) */
-static const mod_desc_v3 *oa_desc(uint32_t e) { return e == 6u ? &mod_trio : 0; }
+static const mod_desc_v3 *oa_desc_id(uint32_t uid) { return uid == 0x2CF92788u ? &mod_trio : 0; }   /* (TRIO's ID's first 4 bytes) */
+static uint32_t oa_h;                            /* (TRIO's handle here) */
 static uint8_t file[2][MOD_FILE_MAX];
 static uint32_t file_n[2];
 static uint32_t load(const char *path, uint8_t *b)
@@ -41,7 +42,7 @@ static void phrase(uint32_t p, int32_t *out, uint32_t n)
     eng_state_reset();
     vage = 0;                                       /* (as tests/module_test.c phrase: the same dither, the same ages) */
     dith_r = DITH_SEED;
-    host_preset(&trk[0], 6, p);
+    host_preset(&trk[0], oa_h, p);
     for (uint32_t i = 0; i < n; i += CTL) {
         if (i == 0 || i == 128u * CTL || i == 640u * CTL)
             trk_note_on(&trk[0], 45u + (i / CTL) % 24u, 100);
@@ -77,25 +78,26 @@ int main(int argc, char **argv)
         return 1;
     }
     reset();
-    mod_host_desc = oa_desc;
+    mod_host_desc_id = oa_desc_id;
     mod_boot();
     ui.msg[0] = 0;
     int rc = put(3, file[0], file_n[0]);
-    bad += check("the outside folder's file installs (an upload into slot 3), its number its own (6: TRIO's ID), loaded",
-                 rc == MS_LOADED && mods[3].engine == 6u && mods[3].uid == 0xC273261A2CF92788ULL && eng_ok(6) &&
-                 !strcmp(eng_name(6), "TRIO"));
+    oa_h = mods[3].engine;
+    bad += check("the outside folder's file installs (an upload into slot 3), a handle of its own (the first free one), loaded",
+                 rc == MS_LOADED && oa_h == ENG_H_FREE0 && mods[3].uid == 0xC273261A2CF92788ULL && eng_ok(oa_h) &&
+                 !strcmp(eng_name(oa_h), "TRIO"));
     bad += check(".. Melodee's synth, one of Melodee's keys signing (the host's test key): no warning",
                  mods[3].sig == MOD_SIG_MELODEE && !ui.msg[0]);
     uint32_t same = 1, heard = 0;
     for (uint32_t p = 0; p < 5u; p++) {
         phrase(p, a, sizeof a / sizeof a[0]);
-        const engine_t *was = ENGINES[6];
-        uint8_t at = mod_at[6];
-        ENGINES[6] = &ENG_TRIO;                     /* (the firmware's own reference of the synth) */
-        mod_at[6] = 0;
+        const engine_t *was = ENGINES[oa_h];
+        uint8_t at = mod_at[oa_h];
+        ENGINES[oa_h] = &ENG_TRIO;                  /* (the firmware's own reference of the synth) */
+        mod_at[oa_h] = 0;
         phrase(p, b, sizeof b / sizeof b[0]);
-        ENGINES[6] = was;
-        mod_at[6] = at;
+        ENGINES[oa_h] = was;
+        mod_at[oa_h] = at;
         for (uint32_t i = 0; i < sizeof a / sizeof a[0]; i++) {
             if (same && a[i] != b[i]) printf("  preset %u: sample %u module %d reference %d\n", p, i, a[i], b[i]);
             same &= a[i] == b[i];
@@ -106,7 +108,7 @@ int main(int argc, char **argv)
     mod_unregister(3, 0);
     memset(&mods[3], 0, sizeof mods[3]);
     mod_boot();
-    bad += check("power-on: listed from its record, the same number", mods[3].state == MS_STORED && mods[3].engine == 6u);
+    bad += check("power-on: listed from its record, a handle again", mods[3].state == MS_STORED && mods[3].engine == ENG_H_FREE0);
     (void)mod_delete(3);
     ui.msg[0] = 0;
     rc = put(3, file[1], file_n[1]);

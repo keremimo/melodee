@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKUP_CMD, bkU32, bkR32, bkPack, bkUnpack, bkCrc } from "./fm1backup.js";
-import { MEL_CONST, MEL_MAX, recLayout, cmEncode, cmDecode, lzPack, lzUnpack, pjPacked, pjCompact, pjExpand, recInfo, recRemap,
+import { MEL_CONST, MEL_MAX, REC_BYTES, recLayout, fnv, cmEncode, cmDecode, lzPack, lzUnpack, pjPacked, pjCompact, pjExpand, recInfo, recRemap,
   melPack, melUnpack, melExport, melImport, melProjectId } from "./mel_file.js";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "../build/host/mel");
@@ -22,6 +22,7 @@ const read = (name) => new Uint8Array(readFileSync(join(DIR, name)));
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const u32 = (b, at) => (b[at] | b[at + 1] << 8 | b[at + 2] << 16 | b[at + 3] << 24) >>> 0;
 const put32 = (b, at, v) => { b[at] = v; b[at + 1] = v >>> 8; b[at + 2] = v >>> 16; b[at + 3] = v >>> 24; };
+const PIN_KIT2 = 0x497A5D33;                              // (the KIT2 coding's pin: MEL_PIN=1 prints it)
 
 // ------------------------------------------------------------------------------ the firmware's layout ---
 const fw = JSON.parse(readFileSync(join(DIR, "layout.json"), "utf8"));
@@ -30,7 +31,7 @@ ok(Object.keys(MEL_CONST).every((k) => MEL_CONST[k] === fw[k]) && melProjectId(3
 ok(Object.keys(fw.layout).every((k) => recLayout(fw.layout.np)[k] === fw.layout[k]), "where a record keeps its tracks, sounds and automation: the firmware's");
 
 // ------------------------------------------------------------------------------------------ the coder ---
-const projects = ["blank", "fun19", "fun20", "fun21", "sketch", "song", "big", "kits"];
+const projects = ["blank", "sketch", "song", "big", "kits"];
 const kitNames = ["909", "808", "cr78"], kit = Object.fromEntries(kitNames.map((n) => [n, read(`kit-${n}.bin`)]));
 const rec = Object.fromEntries([...projects, "kits-moved", "kits-p", "kits-p-moved"].map((n) => [n, read(`${n}.rec`)]));
 const SECTOR = 4056, sectors = (n) => Math.ceil(n / SECTOR);   // a pool record's payload a sector (storage.c ST_LIN_PAYLOAD_MAX)
@@ -67,13 +68,14 @@ ok(same(pjExpand(rec.song), rec.song) && says(() => pjExpand(rec.song.subarray(0
   let good = true;
   for (const d of [new Uint8Array(0), Uint8Array.of(7), noise.subarray(0, 5), noise, text, new Uint8Array(4000), rec.song, rec.big])
     for (const k of [false, true]) { const e = cmEncode(d, k); good &&= same(cmDecode(e, d.length, k), d); }
-  for (const n of [615, 616, 617, 623, 624, 625, 1000]) { const d = kit["909"].subarray(0, n), e = cmEncode(d, true); good &&= same(cmDecode(e, n, true), d); }
+  for (const n of [87, 88, 89, 159, 160, 161, 167, 168, 1000]) { const d = kit["909"].subarray(0, n), e = cmEncode(d, true); good &&= same(cmDecode(e, n, true), d); }
   for (const n of kitNames) good &&= same(cmDecode(cmEncode(kit[n], true), kit[n].length, true), kit[n]);
   ok(good, "the coder gives back every byte: nothing, one byte, noise, zeros, records, kits cut anywhere");
   // the coder is the file's format: these bytes may never change (a file written today must open in every later page)
-  const slices = Uint8Array.from({ length: 2000 }, (_, i) => (i < 616 ? i & 31 : (r() & r()) | (i & 7 ? 0 : 192)));   // (a kit's shape: its head, 4-bit slices)
+  const slices = Uint8Array.from({ length: 2000 }, (_, i) => (i < 160 ? i & 31 : (r() & r()) | (i & 7 ? 0 : 192)));   // (a kit's shape: its head,
+  for (let p = 0; p < 16; p++) put32(slices, 20 + 4 * p, p ? 0 : 2000 - 88);                                       // one pad's header, 4-bit slices)
   const pins = [bkCrc(cmEncode(text)), bkCrc(cmEncode(slices, true)), bkCrc(cmEncode(noise.subarray(0, 600)))];
-  ok(same(pins, [0x36C2230, 0x35750584, 0x438E034C]), "the coder writes the same bytes as when the format was set");
+  ok(same(pins, [0x36C2230, PIN_KIT2, 0x438E034C]), "the coder writes the same bytes as when the format was set (kits: KIT2's, version 3)");
   if (process.env.MEL_PIN) console.log("  pins:", pins.map((v) => "0x" + v.toString(16).toUpperCase()).join(", "));
   const e = cmEncode(rec.song);
   ok(says(() => cmDecode(e.subarray(0, e.length - 1), rec.song.length), /Damaged/) && says(() => cmDecode(Uint8Array.of(...e, 0), rec.song.length), /Damaged/) &&
@@ -84,9 +86,9 @@ ok(same(pjExpand(rec.song), rec.song) && says(() => pjExpand(rec.song.subarray(0
 const info = recInfo(rec.kits), moved = new Map([[10, 12], [13, 9], [16, 15]]);
 ok(same(info.kits, [10, 13, 16]) && info.refs.length === 7 && info.name === "KIT SONG" && info.np === fw.layout.np,
   "a project's kits: the drum tracks', a section's and a pattern's own sound's, automation's (7 places, 3 kits)");
-ok(recInfo(rec.song).kits.length === 0 && recInfo(rec.blank).kits.length === 0 && recInfo(rec.fun19).kits.length === 0, "the built-in kits (808, 909, ..) are no file's business");
-ok(same(recRemap(rec.kits, moved), rec["kits-moved"]), "kits renamed by the page == the firmware's record of the project with them renamed (FBKQ)");
-ok(same(recInfo(rec["kits-p"]).kits, [10, 13, 16]) && same(recRemap(rec["kits-p"], moved), rec["kits-p-moved"]), ".. without a pattern's own sound too (FBKP)");
+ok(recInfo(rec.song).kits.length === 0 && recInfo(rec.blank).kits.length === 0, "the built-in kits (808, 909, ..) are no file's business");
+ok(same(recRemap(rec.kits, moved), rec["kits-moved"]), "kits renamed by the page == the firmware's record of the project with them renamed");
+ok(same(recInfo(rec["kits-p"]).kits, [10, 13, 16]) && same(recRemap(rec["kits-p"], moved), rec["kits-p-moved"]), ".. without a pattern's own sound too");
 ok(same(recRemap(rec.kits, new Map()), rec.kits) && same(recRemap(recRemap(rec.kits, moved), new Map([[12, 10], [9, 13], [15, 16]])), rec.kits),
   "no change leaves every byte; renamed and back is the record again");
 ok(same(recInfo(recRemap(rec.kits, new Map([[10, 13], [13, 10]]))).kits, [10, 13, 16]) && !same(recRemap(rec.kits, new Map([[10, 13], [13, 10]])), rec.kits),
@@ -96,6 +98,10 @@ ok(same(recInfo(recRemap(rec.kits, new Map([[10, 13], [13, 10]]))).kits, [10, 13
   const old = Uint8Array.from(rec.kits); old[8] ^= 1; put32(old, old.length - 4, 0); // (a FUN magic of before)
   ok(says(() => recInfo(bad), /Not a Melodee project record/) && says(() => recInfo(rec.kits.subarray(0, 27000)), /Not a Melodee/) &&
      says(() => recRemap(rec.kits, new Map([[10, 5]])), /Invalid kit/), "a record whose sum is off, a short one, a rename to a built-in kit: refused");
+  // Melodee 1.x's records (FBKP / FBKQ / FBKR), their sums right: 2.0 refuses them (the installer converts them)
+  const v1 = (magic) => { const r = Uint8Array.from(rec.kits); put32(r, 0, magic); put32(r, REC_BYTES - 4, fnv(r, 0, REC_BYTES - 4)); return r; };
+  ok(u32(rec.kits, 0) === MEL_CONST.FBKS && u32(rec["kits-p"], 0) === MEL_CONST.FBKS &&
+     [0x504B4246, 0x514B4246, 0x524B4246].every((m) => says(() => recInfo(v1(m)), /from Melodee 1\.x/)), "2.0 records are FBKS; a 1.x record (FBKP / FBKQ / FBKR) is refused");
 }
 
 // ------------------------------------------------------------------------------------------- the file ---
@@ -119,9 +125,9 @@ const mel = melPack({ project: rec.kits, kits: kitsOf(kit["909"], kit["808"]) })
   for (let i = 48; i < mel.length; i += 997) flips &&= refused(Uint8Array.from(mel, (v, j) => (j === i ? v ^ 4 : v)));
   ok(flips, "one bit changed anywhere is refused");
   const k1 = 32 + 16 + u32(mel, 32 + 4);   // the first kit's section
-  ok(refused(with_((f) => { f[4] = 3; }), /newer editor/) && refused(with_((f) => { f[8] = 1; })) && refused(with_((f) => { f[20] = 2; })) &&
+  ok(refused(with_((f) => { f[4] = 4; }), /newer editor/) && refused(with_((f) => { f[4] = 2; }), /Melodee 1\.x/) && refused(with_((f) => { f[8] = 1; })) && refused(with_((f) => { f[20] = 2; })) &&
      refused(with_((f) => { f[20] = 0; })) && refused(with_((f) => { f[20] = 10; })) && refused(with_((f) => { put32(f, 16, 5); })),
-    "a later version, unknown flags, a wrong section count or total: refused");
+    "a later version, 1.x's version 2, unknown flags, a wrong section count or total: refused");
   ok(refused(with_((f) => { f[32] = 2; })) && refused(with_((f) => { f[33] = 2; })) && refused(with_((f) => { f[34] = 1; })) &&
      refused(with_((f) => { put32(f, 32 + 8, 27903); })) && refused(with_((f) => { put32(f, 32 + 4, 0x7fffffff); })) && refused(with_((f) => { f[32 + 12] ^= 1; })) &&
      refused(with_((f) => { f[k1] = 1; })) && refused(with_((f) => { f[k1 + 1] = 1; })) && refused(with_((f) => { f[k1 + 1] = 3; })) && refused(with_((f) => { f[k1 + 2] = 8; })) &&
@@ -130,7 +136,7 @@ const mel = melPack({ project: rec.kits, kits: kitsOf(kit["909"], kit["808"]) })
   // sections written here, any way wanted
   const file = (sections) => {
     const n = sections.reduce((a, s) => a + 16 + s.bytes.length, 32), f = new Uint8Array(n);
-    f.set([0x4D, 0x45, 0x4C, 0, 2, 0, 32, 0]); put32(f, 12, n); put32(f, 16, sections.reduce((a, s) => a + s.bytes.length, 0)); f[20] = sections.length;
+    f.set([0x4D, 0x45, 0x4C, 0, 3, 0, 32, 0]); put32(f, 12, n); put32(f, 16, sections.reduce((a, s) => a + s.bytes.length, 0)); f[20] = sections.length;
     let at = 32;
     for (const s of sections) { f[at] = s.type; f[at + 2] = s.arg || 0; put32(f, at + 4, s.bytes.length); put32(f, at + 8, s.bytes.length); put32(f, at + 12, bkCrc(s.bytes)); f.set(s.bytes, at + 16); at += 16 + s.bytes.length; }
     return seal(f);

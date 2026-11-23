@@ -91,6 +91,8 @@ static const struct { uint8_t tag, ver; const char *name, *cmds, *fields[8]; } T
     {0x55, 1, "shared library", "80", {"capacity_lo", "capacity_hi"}},
     {0x53, 1, "studio", "39-45, 47-53, 55-60", {"caps_command"}},
     {0x59, 1, "synths", "85-88", {"first_command"}},
+    {0x49, 1, "identity", "1, 37-38, 84", {"midi", "user_general", "user_fm", "user_cz", "user_p5"}},   /* (2.0: handles are
+                                                                    * this session's; 84 op 6 names their IDs) */
 };
 
 static uint32_t nfields(uint32_t k) { uint32_t n = 0; while (n < 8u && TAGS[k].fields[n]) n++; return n; }

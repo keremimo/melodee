@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // The .mel round trip of a project that plays an outside synth (tests/outside_j106_test.c, run_tests.sh outside_j106):
-// the device's stored project (DIR/j106.hpj: two parts of Saadet's JUNO-106, an FBKR record) exported by the web page
+// the device's stored project (DIR/j106.hpj: two parts of Saadet's JUNO-106, an FBKS record) exported by the web page
 // (web/mel_file.js melExport) from a simulated device, the file read back, imported (melImport) into another simulated
 // device's first free project; what the import sent is DIR/out-j106.bin, for outside_j106_test --mel.
 //   node tests/outside_j106_mel.mjs DIR
@@ -46,7 +46,7 @@ function device(objs) {                          // (web/test_mel.mjs's simulate
 }
 
 const stored = new Uint8Array(readFileSync(join(DIR, "j106.hpj"))), rec = pjExpand(stored);
-ok(u32(stored, 0) === MEL_CONST.PZ_MAGIC && u32(rec, 0) === MEL_CONST.FBKR, "the device's project of the JUNO-106: packed, an FBKR record");
+ok(u32(stored, 0) === MEL_CONST.PZ_MAGIC && u32(rec, 0) === MEL_CONST.FBKS, "the device's project of the JUNO-106: packed, an FBKS record");
 const source = device([[melProjectId(1), stored]]);
 const out = await melExport(source.request, melProjectId(1));
 const back = melUnpack(out.file);

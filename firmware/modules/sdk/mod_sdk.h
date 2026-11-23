@@ -10,7 +10,7 @@
  *     static void my_note_on(mod_part_v3 *t, mod_voice_v3 *v) { ... }
  *     static void my_render(mod_part_v3 *t, mod_voice_v3 *v, int32_t *out, uint32_t n, const mod_vmod_v3 *m) { ... }
  *     static const mod_engine_v3 MY = { .name = "MINE", ..., .note_on = my_note_on, .render = my_render };
- *     MOD3_EXPORT(my_module) = { MOD3_SDK_HEAD, .engine = 22, .name = "MINE", .npresets = 0, .eng = &MY };
+ *     MOD3_EXPORT(my_module) = { MOD3_SDK_HEAD, .engine = 0, .name = "MINE", .npresets = 0, .eng = &MY };
  * Host tests build the same file natively with MOD_HOSTED (no section, the descriptor by its name). */
 #pragma once
 #include <stdint.h>

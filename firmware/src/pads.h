@@ -20,10 +20,12 @@ static uint32_t note_hit_len;
 /* the lanes struck since the UI last looked, a bit per lane (pads.c pads_lane) and track: voice.c sets them as a part
  * with pads starts a note, Stage lights the lanes' names (ui_stage.c) */
 static volatile uint8_t pads_flash[NTRK];
-/* the data records' places (rec_store.c keeps them in the main loop; host 4 rec, rec_gen, rec_base): odd rec_gen while
- * they change */
-static mod_rec_v3 rec_tab[MOD3_NREC];
+/* the pad records' places (rec_store.c keeps them in the main loop; host 6 rec, rec_list, rec_gen, rec_base): odd
+ * rec_gen while they change; the kits' names as their name records hold them ("": none) */
+static mod_rec_v3 rec_tab[MOD3_NSMP];
+static uint8_t rec_list[MOD3_REC_LIST];
 static volatile uint32_t rec_gen;
+static char rec_nm[MOD3_NREC][8];
 #ifndef REC_BASE
 #ifdef FM1_IRQ_TARGET
 #include "fm1_xip.h"
@@ -40,11 +42,19 @@ static struct {
     int (*commit)(uint32_t slot);
     int (*del)(uint32_t slot);
     void (*recheck)(void);                       /* (a module came into SRAM: its stored records checked, listed) */
+    int (*take_begin)(uint32_t slot);            /* host 6: a take streamed into a pad record */
+    int (*take_write)(uint32_t off, const void *src, uint32_t n);
+    int (*take_end)(uint32_t slot, uint32_t len);
+    void (*take_abort)(void);
 } rec_hook;
 static int mod_h4_rec_begin(uint32_t slot, uint32_t len) { return rec_hook.begin ? rec_hook.begin(slot, len) : -1; }
 static int mod_h4_rec_write(const void *src, uint32_t n) { return rec_hook.write ? rec_hook.write(src, n) : -1; }
 static int mod_h4_rec_commit(uint32_t slot) { return rec_hook.commit ? rec_hook.commit(slot) : -1; }
 static int mod_h4_rec_delete(uint32_t slot) { return rec_hook.del ? rec_hook.del(slot) : -1; }
+static int mod_h6_take_begin(uint32_t slot) { return rec_hook.take_begin ? rec_hook.take_begin(slot) : -1; }
+static int mod_h6_take_write(uint32_t off, const void *src, uint32_t n) { return rec_hook.take_write ? rec_hook.take_write(off, src, n) : -1; }
+static int mod_h6_take_end(uint32_t slot, uint32_t len) { return rec_hook.take_end ? rec_hook.take_end(slot, len) : -1; }
+static void mod_h6_take_abort(void) { if (rec_hook.take_abort) rec_hook.take_abort(); }
 #ifdef FM1_IRQ_TARGET
 static void mod_h4_wdt(void) { fm1_wdt_feed(); }
 #else

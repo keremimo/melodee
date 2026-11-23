@@ -8,7 +8,7 @@
 #include "../firmware/modules/fm6/fm6_patch.h"
 #include "../firmware/modules/cz/cz_tone.h"
 #include "../firmware/modules/prophet/p5_patch.h"
-#include "../firmware/modules/drum/drum_patch.h"
+#include "../firmware/modules/kits/drum_patch.h"
 /* FM6: track k's voice unpacked (VCED: 155 bytes + 1), its functions; writes as the DX7 SysEx makes them (the FM6
  * module's fm6_sysex.c: sanitized, packed, the part's patch put) */
 static void fm6_voice_of(uint32_t k, uint8_t *v) { fm6_unpack(patch_of(k), v); }
@@ -112,7 +112,7 @@ static void p5_bank_defaults(p5_bank_t *b, uint32_t bank) { (void)bank; memset(b
 #define p5_bank_mask(bank) program_bank_mask(bank)
 #define p5_bank_valid(b, bank) program_bank_valid((const program_bank_t *)(const void *)(b), bank)
 #define DRUM_WIRE_BYTES MOD_SCH_KIT_PACKED
-static int drum_patch_valid(const drum_patch_t *p) { return patch_check(ENGI_DRUM, (const uint8_t *)p, 0, sizeof *p); }
+static int drum_patch_valid(const drum_patch_t *p) { return patch_check(ENGI_808, (const uint8_t *)p, 0, sizeof *p); }   /* (every kit's checks) */
 static void drum_patch_pack(uint8_t *b, const drum_patch_t *p)
 {
     patch_pack(MOD_SCH_STORE_KIT, b, (const uint8_t *)(const void *)p, MOD_SCH_KIT_PACKED);   /* (its schema's packing) */
@@ -190,11 +190,11 @@ static const param_desc_t *sch_pd(uint32_t e, uint32_t id)
     d[k] = (param_desc_t){l[k], p.fmt, p.min, p.max, p.def, 0, 0};
     return &d[k];
 }
-/* DRUM: every DRUM part's kit offsets 0 (Melodee 1.x's tests cleared drum_patch) */
+/* the kits: every kit part's offsets 0 (Melodee 1.x's tests cleared drum_patch) */
 static void drum_patches_zero(void)
 {
     for (uint32_t k = 0; k < NTRK; k++)
-        if (patch_eng_of(k) == ENGI_DRUM)
+        if (patch_eng_of(k) >= ENGI_808 && patch_eng_of(k) <= ENGI_SAMPLER)
             memset(patch_of(k), 0, sizeof(drum_patch_t));
 }
 #define PROJ_DRUM(a, k) ((drum_patch_t *)(void *)(a).drum[k])   /* (a project's kit offsets: bytes) */

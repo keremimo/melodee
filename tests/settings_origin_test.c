@@ -102,12 +102,12 @@ static int test_legacy_and_owned(void)
     static uint8_t blob[sizeof set_rec];
     int n = st_load(OBJ_SETTINGS, blob, sizeof blob);
     persist_t *p = (persist_t *)blob;
-    memset(p->favorites.factory[1] + 28, 0, 4);   /* pre-hotfix Melodee */
+    (void)p;                                       /* (as 2.0 saved them: owned) */
     uint32_t template_crc = st_crc32(blob + sizeof *p, (uint32_t)n - sizeof *p);
     st_save(OBJ_SETTINGS, blob, (uint32_t)n);
     uint32_t before = erases, crc = music_crc();
     persist_boot();
-    bad += check("legacy Melodee settings and template survive one ownership write", !template_old() && settings_owned(&persist_saved) && erases == before + 1 && template_used() && st_crc32(&tmpl, sizeof tmpl) == template_crc && music_crc() == crc && settings.palette == 2 && settings.zoom == 1 && settings_boot == 3 && settings_drumch == 0 && !settings_autosave && tuning_a4 == 432 && settings_hold == 3 && ua_off == 3 && ua_tracks == 1 && panel.dir[0] == -1 && favorites.factory[8][0] == 1 && settings_glo[1] == 17);
+    bad += check("Melodee settings and template survive a boot with no write", !template_old() && settings_owned(&persist_saved) && erases == before && template_used() && st_crc32(&tmpl, sizeof tmpl) == template_crc && music_crc() == crc && settings.palette == 2 && settings.zoom == 1 && settings_boot == 3 && settings_drumch == 0 && !settings_autosave && tuning_a4 == 432 && settings_hold == 3 && ua_off == 3 && ua_tracks == 1 && panel.dir[0] == -1 && favorites.factory[8][0] == 1 && settings_glo[1] == 17);
     before = erases; persist_boot();
     bad += check("owned Melodee settings retain deliberate USB OFF and need no rewrite", erases == before && ua_off == 3 && settings.palette == 2 && template_used());
     p = &persist_saved; p->ext.usb_off = 0xFFFFFFFFu; p->ext.boot = 99;
@@ -184,11 +184,10 @@ static int test_incompatible_projects(void)
 static int test_incompatible_templates(void)
 {
     int bad = 0; static uint8_t blob[sizeof set_rec], saved[sizeof set_rec];
-    for (uint32_t legacy = 0; legacy < 2u; legacy++) {
+    {   /* (owned 2.0 settings; 1.x's untagged ones: the web installer's) */
         fixture(); settings_init(); settings.palette = 2; template_save();
         int n = st_load(OBJ_SETTINGS, blob, sizeof blob);
         persist_t *p = (persist_t *)blob;
-        if (legacy) memset(p->favorites.factory[1] + 28, 0, 4);
         /* Correct TPL schema/trailer and outer CRC, but a fork's engine ID. */
         blob[sizeof *p + 2u*PROJ_GLOBALS + 2u] = 255;
         st_save(OBJ_SETTINGS, blob, (uint32_t)n); uint32_t before = erases;

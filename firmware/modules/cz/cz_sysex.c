@@ -44,7 +44,7 @@ static uint32_t cz_sx_frame(const uint8_t *raw, uint32_t ch, int native)
 }
 static void cz_sx_send(int tr, uint32_t ch, int native, int continuation)   /* part tr's tone (continuation: no header) */
 {
-    const uint8_t *raw = tr >= 0 ? MOD_HOST3_CALL(part_patch)((uint32_t)tr, ENGI_CZ) : 0;
+    const uint8_t *raw = tr >= 0 ? MOD_HOST3_CALL(part_patch)((uint32_t)tr, MOD_HANDLE(ENGI_CZ)) : 0;
     uint8_t zero[CZ_BYTES];
     uint32_t n;
     if (!raw) {
@@ -92,7 +92,7 @@ static int cz_sx_import(const uint8_t *b, uint32_t n)
     }
     if (!cz_patch_valid(data))
         return 0;
-    return MOD_HOST3_CALL(sx_stage)(ENGI_CZ, data, 1, CZ_BYTES);
+    return MOD_HOST3_CALL(sx_stage)(MOD_HANDLE(ENGI_CZ), data, 1, CZ_BYTES);
 }
 static uint32_t cz_sx_done(void) { cz_req_seen = cz_go_seen = 0; return MOD3_SXR_DONE; }
 static uint32_t cz_sysex(const uint8_t *f, uint32_t n, uint32_t ev)
@@ -112,7 +112,7 @@ static uint32_t cz_sysex(const uint8_t *f, uint32_t n, uint32_t ev)
         return ev == MOD3_SX_END ? cz_sx_done() : MOD3_SXR_MORE;
     cmd = f[5];
     ch = f[4];
-    tr = MOD_HOST3_CALL(sx_part)(ENGI_CZ, ch & 15u);
+    tr = MOD_HOST3_CALL(sx_part)(MOD_HANDLE(ENGI_CZ), ch & 15u);
     if (f[2] || f[3] || (ch & 0xf0) != 0x70)
         return cz_sx_done();
     if (tr < 0 && cmd != 0x20 && cmd != 0x21 && cmd != 0x30)

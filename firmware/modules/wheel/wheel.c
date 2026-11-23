@@ -285,7 +285,7 @@ MOD3_PRESETS = {
 };
 MOD3_EXPORT(mod_wheel) = {
     MOD3_SDK_HEAD,
-    .engine = 7,                                 /* WHEEL's number before it was retired */
+    .engine = 0,                                 /* (unused since Melodee 2.0) */
     .name = "WHEEL",
     .npresets = 5,                               /* (FULL ORGAN, JAZZ PERC, GOSPEL, SOFT FLUTE, ROCK DRIVE) */
     .eng = &WHEEL,

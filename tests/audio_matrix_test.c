@@ -5,7 +5,7 @@
  * spread and shared Chorus. Host elapsed time is not a device deadline. */
 #define AUDIO_MATRIX_INCLUDE 1
 #include "dual_core_test.c"
-static const uint8_t matrix_engines[6]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,3,ENGI_DRUM,ENGI_DRUM};
+static const uint8_t matrix_engines[6]={ENGI_PROPHET,ENGI_FM6,ENGI_CZ,ENGI_SID,ENGI_808,ENGI_909};
 static uint64_t matrix_hash;
 static void matrix_setup(const uint32_t cat[4],uint32_t variant)
 {
@@ -17,7 +17,7 @@ static void matrix_setup(const uint32_t cat[4],uint32_t variant)
     rng_state=0x12345678u;mod_seed=0x2545f491u;dith_r=DITH_SEED;vage=voice_kills=0;track_solo=0;
     lim_env=LIM_T;dc_l=dc_r=dce_l=dce_r=0;host_tracks_init();fm6_fn_reset();
     for(uint32_t p=0;p<NPART;p++){
-        uint32_t c=cat[p];host_preset(&trk[p],matrix_engines[c],c==0?3:c==1?4:c==3?8:c==5?1:0);
+        uint32_t c=cat[p];host_preset(&trk[p],matrix_engines[c],c==0?3:c==1?4:c==3?8:0);
         trk[p].p[P_VOICE]=V_POLY;trk[p].p[P_ALLOC]=0;trk[p].p[P_LEVEL]=40;
         if(c==0){uint8_t *b=p5_patch_of(&trk[p])->raw;b[P5_FILTER_REV]=variant&1u;b[P5_SYNC]=1;b[P5_POLY_FREQ]=b[P5_POLY_FILTER]=1;b[P5_POLY_B]=100;b[P5_SUSTAIN_AMP]=127;}
         if(c==1){uint8_t patch[FP_SIZE+1u];fm6_unpack(FM6_INIT,patch);patch[FP_ALG]=variant%32u;patch[FP_FB]=7;

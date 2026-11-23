@@ -152,9 +152,10 @@ enum {
  *                    note's lane), u16 maps (nmap records of 20
  *                    bytes), u16 par (npar records of 12 bytes), u16 words (MOD3_PW_COUNT strings, one after another),
  *                    u16 lane names (8 strings), u16 lane abbreviations (8), u8 rec0 (sel's value of the module's data
- *                    record 0, 0xFF none), u8 nrec (its records: their slots), u16 rname, u8 rnlen (a record's name:
- *                    rnlen ASCII bytes at rname of its payload, zeros after it), u8 rsec (a record's sectors, at most),
- *                    u16 rmin (a record's bytes, at least), u16 0
+ *                    record 0, 0xFF none), u8 nrec (its records: their slots, a kit each), u16 rname, u8 rnlen (a
+ *                    kit's name: rnlen ASCII bytes at rname of its name record, zeros after it), u8 rsec (a pad
+ *                    record's sectors at most, 0: as many as the store has), u16 rmin (a pad record's bytes, at
+ *                    least), u8 rpad (host 6: a kit's pad records, <= MOD3_RPAD), u8 0
  *   map (20 bytes)   npads (<= 16), flags (MOD3_PM_*), u16 names, u16 abbrs (npads strings each), u16 notes (npads
  *                    bytes: a pad's note), u16 mpc (16 bytes: the pad MPC pad k plays), u16 order (npads bytes: the
  *                    pads as a knob steps through them), u16 note_pad (128 bytes: the pad a note strikes), u16 lane
@@ -330,6 +331,7 @@ typedef struct {
     const char *const *words;                    /* MOD3_PW_COUNT */
     uint8_t rec0, nrec, rnlen, rsec;
     uint16_t rname, rmin;
+    uint8_t rpad;
 } mod_sch_pads_src;
 typedef struct { uint8_t width; int8_t bias; } mod_sch_pack_field;
 typedef struct { const mod_sch_pack_field *field; uint8_t nfield, count, stride; } mod_sch_pack_src;
@@ -623,6 +625,7 @@ static int mod_sch_pput(const mod_sch_src *s, uint8_t *b, uint32_t o, uint8_t *s
     b[26] = p->rnlen;
     b[27] = p->rsec;
     mod_sch_w16(b + 28, p->rmin);
+    b[30] = p->rpad;
     for (m = 0; m < p->nmap; m++) {
         const mod_sch_padmap_src *g = &p->map[m];
         uint8_t *r = b + maps + m * MOD_SCH_PDMAP;

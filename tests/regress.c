@@ -189,7 +189,7 @@ static void phrase(track_t *t, uint32_t base)
 enum { J_PRESET, J_MODE, J_DRUMS, J_SONG, J_CPU, J_CHECK, J_SLICER };
 typedef struct {
     char name[64];
-    uint8_t kind, e, pi, arg, cpu_notes;
+    uint8_t kind, e, pi, arg, cpu_notes, empty;  /* empty: a kit with no take recorded here (SAMPLER's): silent */
     const uint8_t (*parts)[3];                 /* J_CPU mixes */
     int (*check)(char *msg, uint32_t n);       /* J_CHECK */
     res_t r;
@@ -266,7 +266,7 @@ static void job_song(const job_t *j)
     song.g[G_BPM] = 120;
     host_power_on_sound(t1, 0);
     host_power_on_sound(t2, 1);
-    host_preset(t3, 3, 0);
+    host_preset(t3, ENGI_SID, 0);
     host_808_kit(td);
     for (i = 0; i < 16u; i++) {
         uint8_t n = ACID[i];
@@ -463,11 +463,11 @@ static void midi_pkt(uint32_t st, uint32_t d1, uint32_t d2)   /* as usb.c: the q
  * was retired), VOICE (retired: SID), 808 DRUM) play random notes on and off for
  * 6 s, up to 8 held each; after every block: at most 8 part voices active, none still fading (a stolen voice
  * fades within its one block), the VOICE part at most 4; then all off: every voice free */
-#define VCAP_E (MELODEE_LEGACY_EXTRAS ? 5u : 3u)
-#define VCAP (MELODEE_LEGACY_EXTRAS ? 4u : NVOICE)
+#define VCAP_E ENGI_SID
+#define VCAP NVOICE
 static int chk_budget(char *msg, uint32_t n)
 {
-    static const uint8_t E[NPART][2] = {{HOST_SYNTH, 4}, {ENGI_FM6, 1}, {VCAP_E, 1}, {4, 4}};
+    static const uint8_t E[NPART][2] = {{HOST_SYNTH, 4}, {ENGI_FM6, 1}, {VCAP_E, 1}, {ENG_H_NONE, 4}};   /* (4: 1.x's reserved number, silent: none now) */
     uint8_t held[NPART][128] = {{0}};
     uint32_t p, k, worst = 0, vworst = 0, fading = 0, kills0 = voice_kills;
     host_tracks_init();
@@ -579,8 +579,6 @@ static int chk_cap_mode_budget(char *msg, uint32_t n)
         trk[0].p[P_VOICE] = MODE[round];
         if (round == 2u) {
             /* A lower cap must not protect old upper slots while the lower extras fade. */
-            if (MELODEE_LEGACY_EXTRAS)                  /* (VOICE's cap of 4: retired) */
-                host_preset(&trk[0], 5, 0);
             trk[0].p[P_VOICE] = V_UNISON;
             for (i = 1; i < trk_nvoice(&trk[0]); i++)
                 voice_kill(&trk[0].v[i]);
@@ -806,37 +804,6 @@ static int chk_keep_mono(char *m, uint32_t n) { return chk_keep(m, n, V_MONO); }
 static int chk_keep_legato(char *m, uint32_t n) { return chk_keep(m, n, V_LEGATO); }
 static int chk_keep_unison(char *m, uint32_t n) { return chk_keep(m, n, V_UNISON); }
 
-/* the VOICE engine's cap: 8 keys in POLY and in UNISON (alone: the budget does not limit it) */
-static int chk_voice_cap(char *msg, uint32_t n)
-{
-    uint32_t mode, k, i, most[2] = {0, 0};
-    for (mode = 0; mode < 2u; mode++) {
-        track_t *t = &trk[0];
-        host_tracks_init();
-        host_preset(t, 5, 0);
-        t->p[P_VOICE] = mode ? V_UNISON : V_POLY;
-        t->p[P_AMODE] = 0;
-        for (k = 0; k < 8u; k++)
-            trk_note_on(t, 60u + 2u * k, 100);
-        for (k = 0; k < FS / 2u / CTL; k++) {
-            uint32_t a = 0;
-            blk();
-            for (i = 0; i < NVOICE; i++)
-                a += t->v[i].active;
-            most[mode] = a > most[mode] ? a : most[mode];
-        }
-        for (k = 0; k < 8u; k++)
-            trk_note_off(t, 60u + 2u * k);
-        for (k = 0; k < 4u * FS / CTL && !parts_free(); k++)
-            blk();
-        if (!parts_free())
-            most[mode] = 99;
-    }
-    snprintf(msg, n, "VOICE engine, 8 keys: at most %u voices in POLY, %u in UNISON (cap 4); freed after release",
-             most[0], most[1]);
-    return most[0] == 4u && most[1] == 4u;
-}
-
 /* no hanging notes: 6 s of random MIDI note-ons / offs on channels 1..4 (the parts), 5, 10 and 16 (the
  * selected track), and keys, while the selected track changes; the parts in random voice modes,
  * some with ARP, SUS 127 (a hanging note keeps sounding). A channel's note-off goes to the same channel
@@ -970,7 +937,7 @@ int main(int argc, char **argv)
     uint32_t jobs_at_once = getenv("JOBS") ? (uint32_t)atoi(getenv("JOBS")) : 8u;
     static const char *const MN[4] = {"POLY", "MONO", "LEGATO", "UNISON"};
     static const char *const SN[6] = {"dry", "chorus", "delay", "reverb", "all", "dist"};
-    static const uint8_t MODE_E[3][2] = {{HOST_SYNTH, 0}, {ENGI_FM6, 1}, {5, 0}};   /* engine, preset */
+    static const uint8_t MODE_E[3][2] = {{HOST_SYNTH, 0}, {ENGI_FM6, 1}, {ENG_H_NONE, 0}};   /* engine, preset (none: 1.x's retired VOICE, skipped) */
     static const uint8_t SEND_E[2][2] = {{HOST_SYNTH, 4}, {ENGI_FM6, 0}};
     static uint8_t cpu_parts[MAXJ][NPART][3];
     static kv_t gold[MAXJ], cpu[MAXJ];
@@ -979,7 +946,7 @@ int main(int argc, char **argv)
     double heavy[NENGINES] = {0}, heavy_ns[NENGINES] = {0}, idle_base;
     uint32_t heavy_p[NENGINES] = {0};
     uint64_t t_start = now_ns();
-    char name[64], s[64];
+    char name[64], s[64], en[24];
     if (jobs_at_once < 1u || jobs_at_once > 64u)
         jobs_at_once = 8;
 
@@ -989,10 +956,14 @@ int main(int argc, char **argv)
         for (pi = 0; e != ENGI_MIDI && pi < ENGINES[e]->npresets; pi++) {
             job_t *j;
             slug(s, eng_preset(ENGINES[e], pi)->name, sizeof s);
-            snprintf(name, sizeof name, "preset/%s/%02u_%s", ENGINES[e]->name, pi, s);
+            slug(en, ENGINES[e]->name, sizeof en);   /* (a synth's name with a space: SID KIT, FM KIT) */
+            snprintf(name, sizeof name, "preset/%s/%02u_%s", en, pi, s);
             j = add(J_PRESET, name);
             j->e = (uint8_t)e;
             j->pi = (uint8_t)pi;
+            host_tracks_init();                        /* (SAMPLER's kits: their takes, none on the host) */
+            host_preset(&trk[0], e, pi);
+            j->empty = pads_flag(&trk[0], MOD3_PD_RECORD) && pads_rec(&trk[0]) >= 0 && !rec_tab[pads_rec(&trk[0])].n;
         }
     add(J_DRUMS, "drums/808_kit");
     for (i = 0; i < 3u; i++)
@@ -1023,8 +994,6 @@ int main(int argc, char **argv)
     add(J_CHECK, "voices: MONO keeps its note")->check = chk_keep_mono;
     add(J_CHECK, "voices: LEGATO keeps its note")->check = chk_keep_legato;
     add(J_CHECK, "voices: UNISON keeps its note")->check = chk_keep_unison;
-    if (MELODEE_LEGACY_EXTRAS)
-        add(J_CHECK, "voices: VOICE engine cap")->check = chk_voice_cap;
     add(J_CHECK, "routing: no hanging notes")->check = chk_hang;
     run_jobs(J, nj, jobs_at_once);
 
@@ -1034,7 +1003,8 @@ int main(int argc, char **argv)
         for (pi = 0; e != ENGI_MIDI && pi < ENGINES[e]->npresets; pi++) {
             job_t *j;
             slug(s, eng_preset(ENGINES[e], pi)->name, sizeof s);
-            snprintf(name, sizeof name, "cpu/%s/%02u_%s", ENGINES[e]->name, pi, s);
+            slug(en, ENGINES[e]->name, sizeof en);   /* (a synth's name with a space: SID KIT, FM KIT) */
+            snprintf(name, sizeof name, "cpu/%s/%02u_%s", en, pi, s);
             j = add(J_CPU, name);
             memset(cpu_parts[ncpu], 0, sizeof cpu_parts[ncpu]);
             cpu_parts[ncpu][0][0] = (uint8_t)e;
@@ -1093,8 +1063,10 @@ int main(int argc, char **argv)
             snprintf(why + strlen(why), sizeof why - strlen(why), " %u samples >= %d;", r->near, LIM_NEAR);
         if (fabs(r->dc) > LIM_DC)
             snprintf(why + strlen(why), sizeof why - strlen(why), " DC %.1f (limit %d);", r->dc, LIM_DC);
-        if (r->peak < LIM_PEAK_MIN)
+        if (r->peak < LIM_PEAK_MIN && !j->empty)
             snprintf(why + strlen(why), sizeof why - strlen(why), " peak %d (min %d);", r->peak, LIM_PEAK_MIN);
+        if (j->empty && r->peak)
+            snprintf(why + strlen(why), sizeof why - strlen(why), " an empty kit sounds: peak %d;", r->peak);
         if (r->free_s < 0)
             snprintf(why + strlen(why), sizeof why - strlen(why), " voices not free %d s after the note-offs;", FREE_CAP_S);
         if (abs(r->tail_dc) > LIM_TAIL_DC)

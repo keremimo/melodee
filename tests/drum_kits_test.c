@@ -22,7 +22,7 @@ static void kit(uint32_t preset)                 /* part 1 on a DRUM preset, not
     for (uint32_t p = 0; p < NPART; p++)
         memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, preset);
+    host_kit_preset(&trk[0], preset);
 }
 static uint32_t voices_on(void)
 {
@@ -114,10 +114,11 @@ int main(int argc, char **argv)
     static int32_t a[FS * 2], b[FS * 2];
     static const uint32_t KITS[2] = {P_CR78, P_FM};
     uint32_t s, k, i, j;
-    check("KIT 7 is CR78, 8 FM: factory kits CR78 KIT and FM KIT", ENG_DRUM.edit[0].max == DK_KIT_MAX &&
-          !strcmp(N_DRUM_KIT[DK_CR78], "CR78") && !strcmp(N_DRUM_KIT[DK_FM], "FM") && ENG_DRUM.npresets == 6u &&
-          !strcmp(ENG_DRUM.presets[P_CR78].name, "CR78 KIT") && ENG_DRUM.presets[P_CR78].e[0] == DK_CR78 &&
-          !strcmp(ENG_DRUM.presets[P_FM].name, "FM KIT") && ENG_DRUM.presets[P_FM].e[0] == DK_FM);
+    check("KIT 7 is CR78, 8 FM: factory kits CR78 KIT and FM KIT", ENG_KITCR.edit[0].min == DK_CR78 &&
+          ENG_KITFM.edit[0].min == DK_FM && !strcmp(N_DRUM_KIT[DK_CR78], "CR78") && !strcmp(N_DRUM_KIT[DK_FM], "FM") &&
+          ENG_KITCR.npresets == 1u && ENG_KITFM.npresets == 1u &&
+          !strcmp(ENG_KITCR.presets[0].name, "CR78 KIT") && ENG_KITCR.presets[0].e[0] == DK_CR78 &&
+          !strcmp(ENG_KITFM.presets[0].name, "FM KIT") && ENG_KITFM.presets[0].e[0] == DK_FM);
     {   /* the names: CR78's own percussion where the 808 has drums the box had not */
         kit(P_CR78);
         check("CR78 names: TAMB on the clap lane, CONGA BONGL BONGH, HATS on KICK's knob",
@@ -254,7 +255,7 @@ int main(int argc, char **argv)
             trk_note_on(&trk[0], STEP_LANE_NOTE[i], 110);
         run(0, 2);
         before = voices_on();
-        trk[0].p[P_E0] = (int16_t)ENG_DRUM.presets[KITS[j]].e[0];
+        trk[0].p[P_E0] = (int16_t)ENGINES[kit_preset_engine(KITS[j])]->presets[kit_preset_index(KITS[j])].e[0];   /* (the kits' one implementation, host) */
         run(0, 2);
         after = voices_on();
         trk_note_on(&trk[0], 38, 110);

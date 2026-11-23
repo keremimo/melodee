@@ -81,7 +81,7 @@ static void reset(void)
     chain_defaults(&chain_config);
     pattern_init();
     memset(proj_slot, 0, sizeof proj_slot);
-    up_cache_reset(); native_cache_reset();
+    up_cache_reset();
     memset(&persist_saved, 0, sizeof persist_saved);
     memset(&settings, 0, sizeof settings);
     memset(&ui, 0, sizeof ui);
@@ -225,34 +225,15 @@ static int full_pattern_archive(void)
 }
 static int native_archive(void)
 {
-    reset();up_boot();int ok=1;static up_disk_bank_t saved[UP_BANKS];uint8_t fm[FM6_PACKED];fm6_factory(3,fm);
+    reset();up_boot();int ok=1;static uint8_t saved[UP_BANKS][sizeof(up_disk_bank_t)+8u+8u];uint8_t fm[FM6_PACKED];fm6_factory(3,fm);
     for(uint32_t b=0;b<UP_BANKS;b++)ok &= !native_put(ENGI_FM6,b*UP_PER_BANK,fm);
-    for(uint32_t id=6;id<ED_BK_N;id++){
+    for(uint32_t id=6;id<ED_BK_N;id++){                 /* (2.0: a bank's synths' IDs after its records: FM6's) */
         uint32_t b=ed_bk_preset_bank(id),len;if(b>=UP_BANKS)continue;
-        const uint8_t *raw=ed_bk_object(id,&len);ok &= len==sizeof(up_disk_bank_t);memcpy(&saved[b],raw,sizeof(up_disk_bank_t));
-        ok &= !put_all(id,0,0,0);ok &= !put_all(id,&saved[b],sizeof saved[b],st_crc32(&saved[b],sizeof saved[b]));
+        const uint8_t *raw=ed_bk_object(id,&len);ok &= len==sizeof saved[b];memcpy(saved[b],raw,sizeof saved[b]);
+        ok &= !put_all(id,0,0,0);ok &= !put_all(id,saved[b],sizeof saved[b],st_crc32(saved[b],sizeof saved[b]));
     }
     up_boot();for(uint32_t b=0;b<UP_BANKS;b++)ok &= native_used(ENGI_FM6,b*UP_PER_BANK)&&!memcmp(native_raw(ENGI_FM6,b*UP_PER_BANK),fm,sizeof fm);
     return check("all 22 shared bank objects archive and restore native voices exactly",ok);
-}
-static int prophet_archive(void)
-{
-    reset();up_boot();int bad=0,ok=1;static p5_bank_t saved[5],readback;
-    for(uint32_t b=0;b<5;b++){
-        p5_bank_defaults(&saved[b],b);saved[b].used=p5_bank_mask(b);saved[b].favorites=saved[b].used;
-        for(uint32_t j=0;j<26u;j++){p5_patch_init(&saved[b].patch[j]);saved[b].patch[j].raw[97]=255;saved[b].patch[j].raw[65]=(uint8_t)('A'+b);}
-        ok &= !put_all(23+b,&saved[b],sizeof saved[b],st_crc32(&saved[b],sizeof saved[b]));
-    }
-    up_boot();for(uint32_t k=0;k<128u;k++){p5_patch_t p;uint32_t dst=shared_p5_slot(k);ok &= !p5_user_get(dst,&p)&&p.raw[97]==255&&p.raw[65]=='A'+k/26u&&favorite_has(USER_GENERAL,dst);}
-    bad+=check("preceding Prophet archives convert all patches and stars into shared slots",ok);
-    uint32_t before=erases;readback=saved[4];readback.used|=1u<<24;
-    bad+=check("out-of-range Prophet slot masks are rejected before an erase",put_all(27,&readback,sizeof readback,st_crc32(&readback,sizeof readback))==2&&erases==before);
-    readback=saved[4];readback.patch[23].model=99;
-    bad+=check("invalid Prophet wire metadata is rejected before an erase",put_all(27,&readback,sizeof readback,st_crc32(&readback,sizeof readback))==2&&erases==before);
-    up_disk_bank_t disk;int n=st_load(OBJ_P5BANK0+4,&disk,sizeof disk);readback=saved[4];erase_error=1;
-    bad+=check("failed legacy backup commit keeps the previous shared bank",put_all(27,&readback,sizeof readback,st_crc32(&readback,sizeof readback))==4&&n==sizeof disk);erase_error=0;
-    up_disk_bank_t after;bad+=check("failed restore retains committed native bytes",st_load(OBJ_P5BANK0+4,&after,sizeof after)==sizeof after&&!memcmp(&after,&disk,sizeof after));
-    return bad;
 }
 static int expanded_recording_archive(void)
 {
@@ -360,20 +341,6 @@ int main(void)
     usb.resets++;
     bad += check("a USB reset after LIST: GET is stale (5)", get(2, 0, 16) == 5u);
 
-    /* settings */
-    {
-        static uint8_t old_settings[sizeof(persist_t)+sizeof(tmpl_fx_legacy_t)];
-        persist_t defaults={0};settings_export(&defaults);memcpy(old_settings,&defaults,sizeof defaults);
-        FILE *f=fopen("tests/fixtures/fx/tplf.bin","rb");
-        uint32_t n=f?(uint32_t)fread(old_settings+sizeof defaults,1,sizeof(tmpl_fx_legacy_t),f):0;
-        if(f)fclose(f);
-        bad+=check("previous TPLF settings archive restores through PUT and remains dry",
-            n==sizeof(tmpl_fx_legacy_t) && put_all(1,old_settings,sizeof old_settings,st_crc32(old_settings,sizeof old_settings))==0 &&
-            template_used() && tmpl.t[0].p[P_E0]==17 && !tmpl.t[0].p[P_FXTYPE]);
-        uint32_t before=erases;old_settings[sizeof defaults+__builtin_offsetof(tmpl_fx_legacy_t,cz)+2u]=255;
-        bad+=check("damaged previous template is refused before any flash erase",
-            put_all(1,old_settings,sizeof old_settings,st_crc32(old_settings,sizeof old_settings))==2 && erases==before);
-    }
     reset();
     memset(&ps, 0, sizeof ps);
     settings_export(&ps);
@@ -478,8 +445,12 @@ int main(void)
     trk[1].step[3] = (step_t){{64}, 1, ST_NOTE, 0, 96, 0, 0};
     project_capture(&proj_scratch);
     proj_pack(&st, &proj_scratch);
-    bad += check("a bare FUN16 record restores into slot 3 (flash and RAM) as a bank",
-                 put_all(4, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && project_used(2) &&
+    static uint8_t bk[BANK_STORE_SIZE];
+    bank_pack(bk, &proj_scratch, 1);
+    bad += check("a bare FUN record is refused (2): 2.0 restores whole project records only",
+                 put_all(4, &st, sizeof st, st_crc32(&st, sizeof st)) == 2u && !project_used(2));
+    bad += check("a project record restores into slot 3 (flash and RAM)",
+                 put_all(4, bk, sizeof bk, st_crc32(bk, sizeof bk)) == 0 && project_used(2) &&
                  !memcmp(&proj_slot[2], &st, sizeof st) && flash_image(OBJ_BANK0 + 2, bank_readback) == BANK_STORE_SIZE &&
                  bank_valid(bank_readback, BANK_STORE_SIZE));
     {   /* a record of an older format: refused before anything is written (archives of before 1.0.0: 1.2) */
@@ -490,27 +461,26 @@ int main(void)
                      put_all(5, old, sizeof old, st_crc32(old, sizeof old)) == 2u && !st_exists(OBJ_BANK0 + 3u));
     }
     {   /* Native voices now travel inside their shared record object. */
-        static up_disk_bank_t got;static uint8_t owned[4240];uint8_t pk[FM6_PACKED];
+        static uint8_t got[sizeof(up_disk_bank_t)+8u+8u];static uint8_t owned[4240];uint8_t pk[FM6_PACKED];
         bad+=check("retired bank id 8 refuses a payload",put_begin(8,3612,0)==1u);
         bad+=check("retired bank id 8 is listed empty",list(8,&len,&crc)==0&&!len);
         bad+=check("obsolete oversized owned-voice archive is refused",put_begin(19,sizeof owned,st_crc32(owned,sizeof owned))==1u);
         fm6_factory(5,pk);native_put(ENGI_FM6,383,pk);
-        const uint8_t *raw=ed_bk_object(28,&len);memcpy(&got,raw,sizeof got);
-        bad+=check("U384's shared bank lists with its compact CRC",list(28,&len,&crc)==0&&len==sizeof got&&crc==st_crc32(&got,sizeof got));
+        const uint8_t *raw=ed_bk_object(28,&len);memcpy(got,raw,sizeof got);   /* (its records, FM6's ID) */
+        bad+=check("U384's shared bank lists with its compact CRC",list(28,&len,&crc)==0&&len==sizeof got&&crc==st_crc32(got,sizeof got));
         native_put(ENGI_FM6,383,0);
-        bad+=check("highest shared voice restores through object 28",put_all(28,&got,sizeof got,st_crc32(&got,sizeof got))==0&&native_used(ENGI_FM6,383)&&!memcmp(native_raw(ENGI_FM6,383),pk,sizeof pk));
-        got.magic^=1u;bad+=check("damaged shared bank magic is refused",put_all(28,&got,sizeof got,st_crc32(&got,sizeof got))==2u);
+        bad+=check("highest shared voice restores through object 28",put_all(28,got,sizeof got,st_crc32(got,sizeof got))==0&&native_used(ENGI_FM6,383)&&!memcmp(native_raw(ENGI_FM6,383),pk,sizeof pk));
+        got[0]^=1u;bad+=check("damaged shared bank magic is refused",put_all(28,got,sizeof got,st_crc32(got,sizeof got))==2u);
     }
-    memcpy(&st, &proj_slot[2], sizeof st);
     erase_error = 1;
     proj_slot[2].raw[100] ^= 1;                          /* (marks the RAM copy, to see it is kept) */
     memcpy(&v6, &proj_slot[2], sizeof v6);
     bad += check("a flash error on commit (4) keeps the slot's RAM copy",
-                 put_all(4, &st, sizeof st, st_crc32(&st, sizeof st)) == 4u && !memcmp(&proj_slot[2], &v6, sizeof v6));
+                 put_all(4, bk, sizeof bk, st_crc32(bk, sizeof bk)) == 4u && !memcmp(&proj_slot[2], &v6, sizeof v6));
     erase_error = 0;
     bad += check("an empty project object clears the slot", put_all(4, 0, 0, st_crc32(0, 0)) == 0 && !project_used(2));
-    st.raw[200] ^= 1;                                    /* hash no longer matches */
-    bad += check("a project whose own hash fails is refused", put_all(4, &st, sizeof st, st_crc32(&st, sizeof st)) == 2u);
+    bk[200] ^= 1;                                        /* hash no longer matches */
+    bad += check("a project whose own hash fails is refused", put_all(4, bk, sizeof bk, st_crc32(bk, sizeof bk)) == 2u);
 
     /* the runtime */
     reset();
@@ -518,11 +488,11 @@ int main(void)
     trk[2].p[P_LEVEL] = 77;
     song.g[G_CLOCK] = 1;
     project_capture(&proj_scratch);
-    proj_pack(&st, &proj_scratch);
+    bank_pack(bk, &proj_scratch, 1);
     host_tracks_init();
     song.g[G_CLOCK] = 0;
     bad += check("the runtime object restores the tracks and CLK",
-                 put_all(0, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && trk[2].step[5].note[0] == 67u &&
+                 put_all(0, bk, sizeof bk, st_crc32(bk, sizeof bk)) == 0 && trk[2].step[5].note[0] == 67u &&
                  trk[2].p[P_LEVEL] == 77 && song.g[G_CLOCK] == 1);
     song.g[G_CLOCK] = 0;
 
@@ -534,7 +504,7 @@ int main(void)
         const uint32_t ids[] = {1u, 6u, 21u, 9u};
         int intact = 1;
         for (uint32_t k = 0; k < NELEM(objects); k++) intact &= st_save(objects[k], old, sizeof old) == 0;
-        up_cache_reset(); native_cache_reset(); persist_old = 1;
+        up_cache_reset(); persist_old = 1;
         for (uint32_t k = 0; k < NELEM(ids); k++) {
             intact &= list(ids[k], &len, &crc) == 0 && len == sizeof old && crc == st_crc32(old, sizeof old);
             const uint8_t *raw = ed_bk_object(ids[k], &len);
@@ -561,23 +531,7 @@ int main(void)
         b.nslot = 3;
         bad += check("a bank with the wrong slot count is refused", put_all(7, &b, sizeof b, st_crc32(&b, sizeof b)) == 2u);
     }
-    {   /* Melodee 1.x's CZ-1 banks (TONE banks: converted into user presets): a never-saved one is no object of the
-         * backup; a saved one is carried byte for byte */
-        static cz_bank_t cb, rb;
-        reset();
-        bad += check("CZ-1: a never-saved BANK A lists as length 0", list(9, &len, &crc) == 0 && len == 0);
-        cz_bank_empty(&cb, 0);
-        memcpy(cb.tone[3].raw, cz_fac(7), CZ_BYTES);
-        cb.used = 1u << 3;
-        bad += check("CZ-1: a saved BANK A restores and lists with its 2332 B",
-                     put_all(9, &cb, sizeof cb, st_crc32(&cb, sizeof cb)) == 0 && list(9, &len, &crc) == 0 &&
-                     len == sizeof cb && st_load(OBJ_CZBANK0, &rb, sizeof rb) == (int)sizeof rb && rb.used == 1u << 3);
-        bad += check("CZ-1: length 0 clears native presets while keeping factory tones separate",
-                     put_all(9, &cb, 0, st_crc32(&cb, 0)) == 0 && !up_used(144) &&
-                     list(9, &len, &crc) == 0 && len == 0);
-    }
     bad += native_archive();
-    bad += prophet_archive();
     bad += full_pattern_archive();
 #if MELODEE_AUDIO_PROFILE
     reset();

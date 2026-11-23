@@ -260,7 +260,7 @@ static int persistence(void)
     uint8_t patterns[CHAIN_ROWS][NTRK]; memcpy(patterns, chain_patterns, sizeof patterns);
     bad += check("64 sections with rests save successfully", !project_save(0));
     uint32_t magic; memcpy(&magic, proj_bank_slot[0], 4);
-    bad += check("extended songs save in the 16-pattern container", magic == BANKP_MAGIC);
+    bad += check("extended songs save in the 16-pattern container", magic == BANKS_MAGIC);
     pattern_init(); chain_defaults(&chain_config); project_load(0);
     bad += check("all 64 sections, per-track rests and repeats survive reload", !memcmp(&expected, &chain_config, sizeof expected) && !memcmp(patterns, chain_patterns, sizeof patterns));
     uint8_t *raw = proj_bank_slot[0]; uint32_t offset = BANKP_STEPS_OFF + 5u + 63u * (NTRK + 1u) + 2u;
@@ -268,7 +268,7 @@ static int persistence(void)
     bad += check("malformed extended assignments are rejected even with a valid checksum", !bank_valid(raw, BANK_STORE_SIZE));
     arrangement(2); bad += check("ordinary songs save too", !project_save(1));
     memcpy(&magic, proj_bank_slot[1], 4);
-    bad += check("ordinary songs save in the same container (FBKK only as a dense fallback)", magic == BANKP_MAGIC);
+    bad += check("ordinary songs save in the same container (FBKK only as a dense fallback)", magic == BANKS_MAGIC);
     return bad;
 }
 int main(void)

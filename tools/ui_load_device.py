@@ -88,7 +88,7 @@ def prepare(d, directory):
                        'G_MFXTYPE': 0, 'G_MFX2TYPE': 0,
                        'G_MFX3TYPE': 0}.items():
         global_value(d, key, value)
-    engines = (19, 12, 15, 10)
+    engines = (2, 3, 4, 6)                         # 2.0 handles: PROPHET FM6 CZ-1 DRUM (shipped.h ENGI_*)
     presets = (3, 4, 4, 0)  # Forever Keys, PAD, STRINGS 1, 808
     for track, (engine, preset) in enumerate(zip(engines, presets)):
         d.request(27, [track])

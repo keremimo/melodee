@@ -25,9 +25,9 @@ int main(void)
     project_load(0);
     bad += check("unreadable project load keeps its flash bytes", !strcmp(ui.msg, "OLD FORMAT") && same_object(OBJ_BANK0, old, sizeof old));
 
-    reset(); st_pair_save(OBJ_UPRESET0, old, sizeof old); up_cache_reset();
+    reset(); st_save(OBJ_UPRESET0, old, sizeof old); up_cache_reset();   /* (a bank 2.0 cannot read: 1.x's, or damaged) */
     bad += check("live access protects a wrong-shape bank until boot", up_old(0) && up_old(15) && !up_used(0) && same_object(OBJ_UPRESET0, old, sizeof old));
-    up_rec_t rec = {0}; rec.used = UP_USED; rec.ver = UP_VER; rec.engine = 9u; rec.np = P_COUNT; strcpy(rec.name, "NEW");
+    up_rec_t rec = {0}; rec.used = UP_USED; rec.ver = UP_VER; rec.engine = ENGI_SID; rec.np = P_COUNT; strcpy(rec.name, "NEW");
     for (uint32_t i = 0; i < P_COUNT; i++) rec.packed[i] = 64;
     uint32_t before = erases;
     bad += check("protocol cannot overwrite an old bank implicitly", up_put(0, &rec) == 2 && erases == before && same_object(OBJ_UPRESET0, old, sizeof old));
@@ -43,12 +43,18 @@ int main(void)
     reset(); up_bank_t bank = {0}; bank.magic = UP_BANK_MAGIC; bank.rsize = sizeof(up_rec_t); bank.nslot = UP_PER_BANK;
     bank.r[0] = rec; bank.r[0].ver = 1;
     up_disk_bank_t disk;memset(&disk,0,sizeof disk);disk.magic=UP_DISK_MAGIC;disk.rsize=sizeof(up_disk_rec_t);disk.nslot=UP_PER_BANK;memcpy(disk.r[0].head,&bank.r[0],160u);memcpy(disk.r[0].extra,bank.r[0].tone_extra,46u);
-    st_save(OBJ_UPRESET0,&disk,sizeof disk);up_cache_reset();
+    {   /* (as 2.0 writes a bank: its synths' IDs after the records, UP_IDS_MAGIC; the record's engine byte its place) */
+        static uint8_t withmap[sizeof disk + 8u + 8u];
+        disk.r[0].head[2] = 1u;
+        memcpy(withmap, &disk, sizeof disk); memcpy(withmap + sizeof disk, &(uint32_t){UP_IDS_MAGIC}, 4);
+        withmap[sizeof disk + 4u] = 1; mod_put64(withmap + sizeof disk + 8u, eng_map[ENGI_SID].uid);
+        st_save(OBJ_UPRESET0, withmap, sizeof withmap); up_cache_reset();
+    }
     bad += check("unknown record inside current bank stays occupied", up_old(0) && !up_used(0) && !up_old(1));
     up_put(1, &rec); up_cache_reset();
     bad += check("saving another slot retains unknown record bytes", !memcmp(up_rec(0), &bank.r[0], sizeof(up_rec_t)) && up_old(0));
 
-    reset(); st_save(OBJ_NATIVEFM0, old, sizeof old); st_save(OBJ_CZBANK0, old, sizeof old); native_cache_reset();
+    reset(); st_save(OBJ_NATIVEFM0, old, sizeof old); st_save(OBJ_CZBANK0, old, sizeof old); up_cache_reset();
     bad += check("live access protects unreadable FM or CZ banks", native_old(ENGI_FM6, 72) && native_old(ENGI_CZ, 144) && same_object(OBJ_NATIVEFM0, old, sizeof old) && same_object(OBJ_CZBANK0, old, sizeof old));
     before = erases;
     bad += check("native direct saves cannot erase old banks", native_put(ENGI_FM6, 72, FM6_INIT) == 2 && native_put(ENGI_CZ, 144, cz_patch_of(0)->raw) == 2 && erases == before);

@@ -19,7 +19,6 @@ enum { MS_EMPTY, MS_LOADED, MS_STORED, MS_BAD, MS_NORAM, MS_CLASH, MS_SKIPPED,
        MS_NEWER };                                 /* a module that needs a later host table than this firmware's */
 typedef struct {
     uint8_t state, engine;                          /* MS_*; its engine number here (eng_map.c: the device's map) */
-    uint8_t want;                                   /* the number its file asks for */
     char tag[4];                                    /* its four-letter tag (its IDNT chunk's), 0-padded */
     uint64_t uid;                                   /* who it is: its ID (its IDNT chunk's; mod_abi3.h mod_ident_v3) */
     uint16_t version;
@@ -132,9 +131,7 @@ _Static_assert(MOD3_SAME(voice_t, note, mod_voice_v3, note) && MOD3_SAME(voice_t
                MOD3_SAME(voice_t, age, mod_voice_v3, age) &&
                __builtin_offsetof(voice_t, s) == __builtin_offsetof(mod_voice_v3, s) &&
                sizeof(voice_t) >= sizeof(mod_voice_v3) && sizeof(voice_t) % 4u == 0, "voice_t begins with mod_voice_v3");
-#if !MELODEE_LEGACY_EXTRAS
 _Static_assert(MOD3_SAME(voice_t, s, mod_voice_v3, s) && MOD3_SAME(voice_t, rsv, mod_voice_v3, rsv), "voice_t s, rsv");
-#endif
 #define MOD3_SAME_E(f) MOD3_SAME(engine_t, f, mod_engine_v3, f)
 _Static_assert(MOD3_SAME_E(name) && MOD3_SAME_E(page_title) && MOD3_SAME_E(edit) && MOD3_SAME_E(presets) &&
                MOD3_SAME_E(npresets) && MOD3_SAME_E(knob) && MOD3_SAME_E(poly) && MOD3_SAME_E(sampled) &&
@@ -147,7 +144,7 @@ _Static_assert(MOD3_SAME_E(name) && MOD3_SAME_E(page_title) && MOD3_SAME_E(edit)
                MOD3_SAME_E(menv) && MOD3_SAME_E(join) && MOD3_SAME_E(reserve) && MOD3_SAME_E(caps) &&
                MOD3_SAME_E(bend_range) && MOD3_SAME_E(patch_changed) && MOD3_SAME_E(pget) && MOD3_SAME_E(pput) &&
                MOD3_SAME_E(pformat) && MOD3_SAME_E(pactive) && MOD3_SAME_E(draw) && MOD3_SAME_E(sysex) &&
-               MOD3_SAME_E(sysex_dump) && MOD3_SAME_E(rec_check) && MOD3_SAME_E(rec_take) && MOD3_SAME_E(rec_pad) &&
+               MOD3_SAME_E(sysex_dump) && MOD3_SAME_E(rec_check) && MOD3_SAME_E(rec_stream) && MOD3_SAME_E(rec_pad) &&
                sizeof(engine_t) == sizeof(mod_engine_v3),
                "engine_t is mod_engine_v3 (mod_abi3.h)");
 _Static_assert(P_COUNT == MOD3_P_COUNT && P_E0 == MOD3_P_E0 && NVOICE == MOD3_NVOICE && NPART == MOD3_NPART &&
@@ -257,6 +254,8 @@ static const mod_host_v3 MOD_HOST3 = {
     .rec_begin = mod_h4_rec_begin, .rec_write = mod_h4_rec_write, .rec_commit = mod_h4_rec_commit,
     .rec_delete = mod_h4_rec_delete, .wdt = mod_h4_wdt,
     .stereo = MOD3_CALL(int32_t *(*)(const mod_part_v3 *), mix_h_stereo),
+    .rec_list = rec_list, .take_begin = mod_h6_take_begin, .take_write = mod_h6_take_write, .take_end = mod_h6_take_end,
+    .take_abort = mod_h6_take_abort,
 };
 
 /* a stored module's engine while it is not in SRAM: its lists' names come from its file (eng_name), its sounds keep
@@ -267,8 +266,8 @@ static const engine_t ENG_MOD_IDLE = {
     .edit = {{"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}},
-    .note_on = slice_gone_note_on,
-    .render = slice_gone_render,
+    .note_on = eng_none_note_on,
+    .render = eng_none_render,
     .knob = {P_E4, P_E5, P_E6, P_REL},
 };
 static int mod_idle(uint32_t e) { return ENGINES[e] == &ENG_MOD_IDLE; }

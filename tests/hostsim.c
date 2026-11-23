@@ -186,10 +186,40 @@ static void host_power_on_sound(track_t *t, uint32_t k)
  * on the generic voice path (NPOLY voices, no cap of its own) as ANALOG was */
 #define HOST_SYNTH ENGI_CZ
 
-/* Explicit legacy fixture: hidden from factory browsing, still used by saved GM projects. */
+/* the 808's kit (its synth's first preset) */
 static void host_808_kit(track_t *t)
 {
-    host_preset(t, ENGI_DRUM, 0);
+    host_preset(t, ENGI_808, 0);
+}
+/* the kit synth that plays KIT value kit (drum_map.c's DK_*: 0..4 the 808, 5 the 909, 6 SID KIT, 7 CR78, 8 FM KIT, the
+ * user's KIT 1..8 from 9 SAMPLER's; any build, the kits built in or not) */
+#if MELODEE_DRUM_BUILTIN
+_Static_assert(DK_808 == 4 && DK_909 == 5 && DK_SID == 6 && DK_CR78 == 7 && DK_FM == 8 && DK_USER0 == 9, "the kits' KIT values");
+#endif
+static uint32_t kit_engine(int32_t kit)
+{
+    static const uint8_t E[9] = {ENGI_808, ENGI_808, ENGI_808, ENGI_808, ENGI_808, ENGI_909, ENGI_SIDKIT, ENGI_CR78, ENGI_FMKIT};
+    return kit >= 9 ? ENGI_SAMPLER : E[kit < 0 ? 0 : kit];
+}
+/* 1.x's DRUM preset k (0 808 KIT, 1 909 KIT, 2 SID KIT, 3 SID DIGI, 4 CR78 KIT, 5 FM KIT) as its kit synth's: engine, preset */
+static uint32_t kit_preset_engine(uint32_t k) { static const uint8_t E[6] = {ENGI_808, ENGI_909, ENGI_SIDKIT, ENGI_SIDKIT, ENGI_CR78, ENGI_FMKIT}; return E[k % 6u]; }
+static uint32_t kit_preset_index(uint32_t k) { return k == 3u ? 1u : 0u; }
+static void host_kit_preset(track_t *t, uint32_t k) { host_preset(t, kit_preset_engine(k), kit_preset_index(k)); }
+/* 1.x DRUM's preset 0 (the 808's values and patch) with KIT kit, on the kit synth that plays it (1.x: KIT moved on DRUM) */
+static void host_kit_values(track_t *t, int32_t kit)
+{
+    static int16_t p[P_COUNT];
+    static uint8_t pt[MOD3_PATCH_MAX];
+    uint32_t k = (uint32_t)(t - trk), e = kit_engine(kit);
+    host_preset(t, ENGI_808, 0);
+    memcpy(p, t->p, sizeof p);
+    memcpy(pt, patch_of(k), sizeof pt);
+    if (e != ENGI_808) {
+        host_preset(t, e, 0);
+        memcpy(t->p, p, sizeof p);
+        patch_set(k, e, pt, patch_len(e), MOD3_PATCH_NEW);
+    }
+    t->p[P_E0] = (int16_t)kit;
 }
 
 static void put_step(track_t *t, uint32_t i, uint32_t n, const uint8_t *notes, uint32_t time, uint32_t flags)
@@ -261,7 +291,7 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
     song.g[G_BPM] = 120;
     host_power_on_sound(t1, 0);
     host_power_on_sound(t2, 1);
-    host_preset(t3, 3, 0);
+    host_preset(t3, ENGI_SID, 0);
     host_808_kit(td);                   /* saved 808 DRUM sound */
     for (i = 0; i < 16u; i++) {
         uint8_t n = ACID[i];
@@ -519,7 +549,7 @@ static int xfade_test(const char *dir)
     /* switches: (a) in a release tail, (b) twice with a chord held, (c) with a note right after it */
     const uint32_t sw[4] = {11u * B, 23u * B, 29u * B + 7u * CTL, 33u * B};
     const uint32_t on[3] = {B, 15u * B, 25u * B}, sine[3] = {14u * B, 24u * B, 32u * B};
-    const uint8_t to[4] = {ENGI_FM6, 2, 3, 4};
+    const uint8_t to[4] = {ENGI_FM6, ENG_H_NONE, ENGI_SID, ENG_H_NONE};   /* (1.x: retired PHASE, SID, reserved 4) */
     char path[512];
     FILE *w;
     int32_t *L = calloc(frames, sizeof *L);

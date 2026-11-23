@@ -9,7 +9,7 @@
  *     #include "../mod_engine.h"
  *     #include "eng_x.c"
  *     static x_part_t *x_part(uint32_t part) { return mod_part_mem(part, sizeof(x_part_t)); }
- *     MOD3_ENGINE_EXPORT(mod_x) = {MOD3_ENGINE_HEAD, .engine = N, .name = "X", .npresets = .., .eng = &ENG_X};
+ *     MOD3_ENGINE_EXPORT(mod_x) = {MOD3_ENGINE_HEAD, .engine = 0, .name = "X", .npresets = .., .eng = &ENG_X};
  * tools/mod_build.py builds it with the image's flags (tools/build.py: beside the image, for its board); host tests
  * compile the same file natively (no section, the descriptor by its name).
  * The part's patch is the firmware's bytes, read through host patch() (core.h mod_patch); the engine's own headers
@@ -41,7 +41,8 @@ int memcmp(const void *a, const void *b, size_t n);
 #include "sdk/mod_abi3.h"
 #include "melodee_tables.h"
 #include "core.h"
-#include "shipped.h"                          /* (the shipped synths' engine numbers) */
+#define MOD_HANDLE(row) ((uint32_t)MOD3_SELF_ENGINE(mod_self))   /* the module's own handle on this device (bind's self) */
+#include "shipped.h"                          /* (the shipped synths' handles in a host build) */
 #include "dsp.c"
 #include "audio_batch.h"                         /* (the firmware's queue for CPU1: the host's) */
 #include "audio_worker.h"                        /* (CPU1's pairing: the host's) */
@@ -56,6 +57,7 @@ static int32_t (*mod_imp_input_octave)(const track_t *t);
 static const int32_t *mod_imp_note_pitch;      /* (host 4) */
 static const uint32_t *mod_imp_note_len;
 static const mod_rec_v3 *mod_imp_rec;
+static const uint8_t *mod_imp_rec_list;        /* (host 6) */
 static const volatile uint32_t *mod_imp_rec_gen;
 static const uint8_t *mod_imp_rec_base;
 #define voice_scale_pitch (*mod_imp_voice_scale_pitch)
@@ -107,6 +109,7 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
     mod_imp_rec = h->rec;
     mod_imp_rec_gen = h->rec_gen;
     mod_imp_rec_base = h->rec_base;
+    mod_imp_rec_list = h->version >= 6u && h->size >= MOD3_HOST_SIZE(6u) ? h->rec_list : 0;
     return 0;
 }
 #ifdef FM1_IRQ_TARGET
@@ -114,6 +117,9 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 #else
 #define MOD3_ENGINE_EXPORT(sym) const mod_desc_v3 sym      /* (host tests: the descriptor by its name) */
 #endif
-#define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_HOST_MIN, \
+#ifndef MOD3_ENGINE_HOST
+#define MOD3_ENGINE_HOST MOD3_HOST_MIN           /* (a module that needs a later host says so first: SAMPLER's 6) */
+#endif
+#define MOD3_ENGINE_HEAD .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_ENGINE_HOST, \
     .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = mod_engine_bind
 

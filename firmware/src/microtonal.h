@@ -12,9 +12,10 @@ static const micro_scale_t *micro_scale(const track_t *t)
     int32_t s = t->p[P_SCALE];
     return s >= (int32_t)SCALE_LEGACY && s < (int32_t)SCALE_MICRO_END ? &MICRO_SCALE[s - SCALE_LEGACY] : 0;
 }
+static int pads_eng(uint32_t e);                  /* (pads.c: a synth that plays pads, a kit: no scale, no tuning) */
 static int micro_active(const track_t *t)
 {
-    return t->p[P_QUANT] != Q_OFF && t->eng_req != 10u && micro_scale(t) != 0;
+    return t->p[P_QUANT] != Q_OFF && !pads_eng(t->eng_req) && micro_scale(t) != 0;
 }
 static int32_t micro_floor(int32_t n, int32_t d)
 {
@@ -61,7 +62,7 @@ static int scale_retired(uint32_t s) { return s < SCALE_TOTAL && ((SCALE_RETIRED
  * keeps its colour; just and maqam tunings on ROOT + TRN. A microtonal scale tunes itself. */
 static int tune_active(const track_t *t)
 {
-    return t->p[P_TUNING] > 0 && t->p[P_TUNING] < (int32_t)TUNING_COUNT && t->eng_req != 10u && !micro_scale(t);
+    return t->p[P_TUNING] > 0 && t->p[P_TUNING] < (int32_t)TUNING_COUNT && !pads_eng(t->eng_req) && !micro_scale(t);
 }
 static int32_t tune_off(const track_t *t, int32_t note)   /* how far from equal, hundredths of a cent */
 {

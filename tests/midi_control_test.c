@@ -389,7 +389,7 @@ static int drum_channel_test(void)
     midi_test_reset();
     settings_drumch = 10;
     set_engine_of(&trk[3], HOST_SYNTH);
-    set_engine_of(&trk[2], ENGI_DRUM);
+    set_engine_of(&trk[2], ENGI_808);
     song.g[G_ROUTE] = 0;
     queued(0x99, 36, 100, 1);
     bad += check("DRUM 10 cannot bypass CH1-4", !midi_owners[2] && !midi_track(9));
@@ -405,7 +405,7 @@ static int drum_channel_test(void)
     bad += check("SEL without a DRUM track uses selection", midi_track(9) == &trk[1]);
     song.g[G_ROUTE] = 3;
     bad += check("range without a DRUM track uses its normal channel offset", midi_track(9) == &trk[1]);
-    set_engine_of(&trk[3], ENGI_DRUM);
+    set_engine_of(&trk[3], ENGI_808);
     settings_drumch = 2; song.g[G_ROUTE] = 0;
     bad += check("DRUM 2 overrides track 2 inside CH1-4, channel 10 stays filtered",
                  midi_track(1) == &trk[3] && !midi_track(9) && midi_track(0) == &trk[0]);
@@ -418,7 +418,7 @@ static int drum_retrigger_accounting(void)
 {
     midi_test_reset();track_t *t=&trk[0];int32_t out[CTL*2];int bad=0;
     int16_t previous_budget=settings_budget;settings_budget=32;
-    set_engine_of(t,ENGI_DRUM);apply_preset_to(t,0);t->engine=t->eng_req;t->p[P_VOICE]=V_POLY;song.g[G_ROUTE]=0;settings_drumch=0;
+    set_engine_of(t,ENGI_808);apply_preset_to(t,0);t->engine=t->eng_req;t->p[P_VOICE]=V_POLY;song.g[G_ROUTE]=0;settings_drumch=0;
     midi_note_event(0,36,110);midi_note_event(0,38,110);mix_block_q15(out,CTL);
     capacity_steals=0;
     for(uint32_t repeat=0;repeat<100;repeat++){

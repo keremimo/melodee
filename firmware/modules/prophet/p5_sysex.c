@@ -31,19 +31,19 @@ static uint32_t p5_sysex(const uint8_t *f, uint32_t n, uint32_t ev)
     n -= 2u;
     if (body[2] == 2u || body[2] == 3u) {
         if (n + 2u <= sizeof frame && p5_patch_decode(&patch, f, n + 2u))
-            (void)MOD_HOST3_CALL(sx_stage)(ENGI_PROPHET, (const uint8_t *)&patch, 1, sizeof patch);
+            (void)MOD_HOST3_CALL(sx_stage)(MOD_HANDLE(ENGI_PROPHET), (const uint8_t *)&patch, 1, sizeof patch);
         else if (n + 2u <= sizeof frame)
             MOD_HOST3_CALL(message)("INVALID PROPHET");
     } else if (body[2] == 6u && n == 3u) {       /* the edit buffer: the selected part's program */
-        int tr = MOD_HOST3_CALL(sx_part)(ENGI_PROPHET, MOD3_SX_SEL);
-        const uint8_t *p = MOD_HOST3_CALL(part_patch)((uint32_t)tr, ENGI_PROPHET);
+        int tr = MOD_HOST3_CALL(sx_part)(MOD_HANDLE(ENGI_PROPHET), MOD3_SX_SEL);
+        const uint8_t *p = MOD_HOST3_CALL(part_patch)((uint32_t)tr, MOD_HANDLE(ENGI_PROPHET));
         uint32_t m = p ? p5_sysex_dump(p, MOD3_DUMP_PART, 0, frame, sizeof frame) : 0;
         if (m)
             (void)MOD_HOST3_CALL(sx_send)(frame, m);
     } else if (body[2] == 5u && n == 5u) {       /* a stored program: its user slot's */
         uint32_t slot = body[3] * 40u + body[4];
         uint8_t raw[MOD3_PATCH_MAX];
-        if (body[3] <= 9u && body[4] <= 39u && MOD_HOST3_CALL(slot_get)(ENGI_PROPHET, slot, raw) >= sizeof patch) {
+        if (body[3] <= 9u && body[4] <= 39u && MOD_HOST3_CALL(slot_get)(MOD_HANDLE(ENGI_PROPHET), slot, raw) >= sizeof patch) {
             memcpy(&patch, raw, sizeof patch);
             patch.model = body[1];
             patch.command = 2;

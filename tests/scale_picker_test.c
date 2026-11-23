@@ -40,7 +40,7 @@ static void project_scale_test(void)
     for (uint32_t k = 0; k < NPART; k++) assert(trk[k].p[P_ROOT] == 9);
     btn_up(B_SCL); frame();
 
-    set_engine_of(&trk[3], ENGI_DRUM);
+    set_engine_of(&trk[3], ENGI_808);
     song.sel = 3;                                  /* shared settings can be edited on drums too */
     go_title("SCL");
     edit_param(0, -4);
@@ -60,7 +60,7 @@ static void project_scale_test(void)
         trk[3].p[P_QUANT] = (int16_t)mode;
         scale_share(&trk[3]);
         for (uint32_t key = 0; key < 27u; key++)
-            assert(kb_map(&trk[3], key) == (uint32_t)ENGINES[ENGI_DRUM]->keys(&trk[3], key));
+            assert(kb_map(&trk[3], key) == (uint32_t)ENGINES[ENGI_808]->keys(&trk[3], key));
         if (mode != Q_MPC)
             for (uint32_t note = 0; note < 128u; note++) assert(midi_map(&trk[3], note) == note);
         else assert(midi_map(&trk[3], 21) == 38u);    /* MPC drum pads retain their mapping */

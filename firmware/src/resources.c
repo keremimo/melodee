@@ -15,7 +15,8 @@ enum { RES_ENGINE0, RES_NOTE_HISTORY = RES_ENGINE0 + NPART, RES_FX0,
        RES_USB_TRACKS,
 #endif
 #if MELODEE_USB_AUDIO && MELODEE_RECORDS
-       RES_KIT_TAKE,                                  /* a take while Record kit's sheet is open (rec_ui.c) */
+       RES_KIT_TAKE,                                  /* a take while Record kit's sheet is open (rec_ui.c): its ring */
+       RES_KIT_STAGE,                                 /* .. the take encoded, until it is written (rec_store.c) */
 #endif
        RES_PUNCH,
 #if MELODEE_MODULES
@@ -126,18 +127,13 @@ static __attribute__((noinline)) void *resource_allocate_impl(uint32_t id, uint3
 }
 static void *resource_allocate(uint32_t id,uint32_t bytes)
 {return resource_allocate_impl(id,bytes,0,0);}
-#if MELODEE_MODULES
-/* code the CPU runs (a synth module): the SRAM banks, never the cache RAM nor the retained words */
-#define RESOURCE_CODE_SKIP (1u<<RESOURCE_CACHE_BANK|1u<<1)
-static void *resource_allocate_code(uint32_t id,uint32_t bytes)
-{return resource_allocate_impl(id,bytes,0,RESOURCE_CODE_SKIP);}
-/* the largest block a synth module could take now (GLO > SYNTHS): the widest gap between the live blocks of the
- * banks code may run in */
-static uint32_t resource_code_room(void)
+/* the largest block an allocation could take now: the widest gap between the live blocks of the banks it may use
+ * (skip: banks it may not) */
+static __attribute__((unused)) uint32_t resource_room(uint32_t skip)
 {
     uint32_t best = 0;
     for (uint32_t bank = 0; bank < RESOURCE_BANKS; bank++) {
-        if (RESOURCE_CODE_SKIP >> bank & 1u) continue;
+        if ((bank == RESOURCE_CACHE_BANK && !RESOURCE_CACHE_AVAILABLE) || (skip >> bank & 1u)) continue;
         uintptr_t lo = (uintptr_t)resource_banks[bank].start, hi = (uintptr_t)resource_banks[bank].end;
         for (uint32_t j = 0; j <= RES_COUNT; j++) {   /* a gap begins at the bank's start or a block's end */
             uintptr_t at = j == RES_COUNT ? lo : (uintptr_t)resource[j].ptr + resource[j].size, end = hi;
@@ -152,6 +148,13 @@ static uint32_t resource_code_room(void)
     }
     return best;
 }
+#if MELODEE_MODULES
+/* code the CPU runs (a synth module): the SRAM banks, never the cache RAM nor the retained words */
+#define RESOURCE_CODE_SKIP (1u<<RESOURCE_CACHE_BANK|1u<<1)
+static void *resource_allocate_code(uint32_t id,uint32_t bytes)
+{return resource_allocate_impl(id,bytes,0,RESOURCE_CODE_SKIP);}
+/* the largest block a synth module could take now (GLO > SYNTHS) */
+static uint32_t resource_code_room(void) { return resource_room(RESOURCE_CODE_SKIP); }
 #endif
 /* History alone opts into preserving resize. No other live handle moves;
  * failure preserves the original allocation and all its bytes. */

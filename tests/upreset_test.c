@@ -30,10 +30,10 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 #include "../firmware/modules/sdk/mod_schema.h"
 static uint32_t patch_store_tag(uint32_t e)
 {
-    return e == ENGI_FM6 ? MOD_SCH_STORE_VOICE : e == ENGI_PROPHET ? MOD_SCH_STORE_PROGRAM : e == 15u ? MOD_SCH_STORE_TONE :
-           e == ENGI_DRUM ? MOD_SCH_STORE_KIT : MOD_SCH_STORE_NONE;
+    return e == ENGI_FM6 ? MOD_SCH_STORE_VOICE : e == ENGI_PROPHET ? MOD_SCH_STORE_PROGRAM : e == ENGI_CZ ? MOD_SCH_STORE_TONE :
+           e >= ENGI_808 && e <= ENGI_SAMPLER ? MOD_SCH_STORE_KIT : MOD_SCH_STORE_NONE;
 }
-static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == 15u ? 144u : e == ENGI_DRUM ? 64u : 0u; }
+static uint32_t patch_len(uint32_t e) { return e == ENGI_FM6 ? 145u : e == ENGI_PROPHET ? 138u : e == ENGI_CZ ? 144u : e >= ENGI_808 && e <= ENGI_SAMPLER ? 64u : 0u; }
 static uint32_t patch_sound_len(uint32_t e) { return e == ENGI_FM6 ? 128u : patch_len(e); }
 /* DRUM's KIT patch as its schema packs and checks it (drum_schema.h MOD3_R_PACK, its MOD3_R_CHECK records): per pad TUNE
  * in 6 bits (+ 24), DECAY and the third in 7 (+ 64), the cut in 7; TUNE -24..24, the others in their bytes' range */
@@ -136,9 +136,9 @@ int main(void)
         bad += check("fork record hidden without changing its saved bytes", !up_used(0) && !memcmp(up_rec(0), &old, sizeof old));
     }
 
-    n = put_frame(a, 5, 2, "Bass One", -40);
+    n = put_frame(a, 5, ENGI_SID, "Bass One", -40);
     bad += check("UP_PUT frame < 640 bytes", 5u + n + 1u < 640u);
-    bad += check("UP_PUT parses", up_parse(a, n, &r, &slot) == 0 && slot == 5u && r.engine == 2u &&
+    bad += check("UP_PUT parses", up_parse(a, n, &r, &slot) == 0 && slot == 5u && r.engine == ENGI_SID &&
                                       up_valid(&r) && !memcmp(r.name, "Bass One", 8) && !r.name[8]);
     ok = 1;
     for (i = 0; i < P_COUNT; i++)
@@ -162,14 +162,13 @@ int main(void)
     bad += check("UP_PUT past last slot -> args", up_parse(a, n, &r, &slot) == 1);
     n = put_frame(a, 0, NENGINES, "X", 0);
     bad += check("UP_PUT bad engine -> args", up_parse(a, n, &r, &slot) == 1);
-    n = put_frame(a, 3, ENGI_DIGITAL, "OLD FM", 0);   /* (DIGITAL, retired: a record keeps it, it loads silent) */
-    bad += check("UP_PUT engine 1 (DIGITAL): kept as it is", up_parse(a, n, &r, &slot) == 0 && slot == 3u &&
-                                                        r.engine == ENGI_DIGITAL && up_valid(&r));
-    n = put_frame(a, 0, 0, "", 0);
+    n = put_frame(a, 3, ENG_H_NONE, "NONE", 0);      /* (handle 0: no synth, never a record's) */
+    bad += check("UP_PUT handle 0 (none): no record", up_parse(a, n, &r, &slot) != 0 || !up_valid(&r));
+    n = put_frame(a, 0, ENGI_SID, "", 0);
     bad += check("UP_PUT empty name -> args", up_parse(a, n, &r, &slot) == 1);
-    n = put_frame(a, 0, 0, "THIRTEEN CHRS", 0);
+    n = put_frame(a, 0, ENGI_SID, "THIRTEEN CHRS", 0);
     bad += check("UP_PUT 13-char name -> args", up_parse(a, n, &r, &slot) == 1);
-    n = put_frame(a, 0, 0, "TWELVE CHARS", 0);
+    n = put_frame(a, 0, ENGI_SID, "TWELVE CHARS", 0);
     bad += check("UP_PUT 12-char name ok", up_parse(a, n, &r, &slot) == 0 && !memcmp(r.name, "TWELVE CHARS", 12));
     {
         char nm[13];
@@ -180,14 +179,14 @@ int main(void)
     }
 
     /* bank round trip through storage.c */
-    n = put_frame(a, 17, 3, "Keys", 7);
+    n = put_frame(a, 17, ENGI_SID, "Keys", 7);
     up_parse(a, n, &r, &slot);
     up_cache_bank(1)->magic = UP_BANK_MAGIC;
     up_cache_bank(1)->rsize = sizeof(up_rec_t);
     up_cache_bank(1)->nslot = UP_PER_BANK;
     *up_rec(17) = r;
     bad += check("legacy wire bank fits one object", sizeof(up_bank_t) <= ST_PAYLOAD_MAX);
-    bad += check("bank save", st_pair_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))) == 0);
+    bad += check("bank save", st_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))) == 0);
     up_cache_reset();
     len = st_load(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
     up_bank_check(1, len);
@@ -197,9 +196,6 @@ int main(void)
     len = st_load(OBJ_UPRESET0, up_cache_bank(0), sizeof (*up_cache_bank(0)));
     up_bank_check(0, len);
     bad += check("bank 0 never written -> empty", len < 0 && !up_used(0) && up_cache_bank(0)->magic == 0);
-    bad += check("banks in 0xDC000..0xDFFFF", st_sector(OBJ_UPRESET0, 0) == 0xDC000u &&
-                                                   st_sector(OBJ_UPRESET0 + 1, 1) == 0xDF000u &&
-                                                   st_sector(OBJ_PROJECT0 + 3, 1) + 4096u <= 0xA0000u);
     up_cache_bank(1)->rsize = 190;                                 /* another record layout */
     up_bank_check(1, (int)sizeof (*up_cache_bank(1)));
     bad += check("bank with another record size -> empty", !up_used(17));
@@ -215,7 +211,7 @@ int main(void)
     /* a drum grid by UP_PUT: kind 1, then bit 7 of each step's hits (bit 0) and accents (bit 1) */
     {
         uint8_t g[640];
-        uint32_t k, m = put_frame(g, 9, ENGI_DRUM, "My Beat", 0), at = m - 32u;
+        uint32_t k, m = put_frame(g, 9, ENGI_808, "My Beat", 0), at = m - 32u;
         for (k = 0; k < 16u; k++) {
             g[at + 2u * k] = (uint8_t)(k % 4u ? 0x08u : 0x09u);    /* HAT CL, the kick on the beats */
             g[at + 2u * k + 1u] = (uint8_t)(k == 0u ? 0x7Fu : 0u);  /* step 1: every lane's accent (one too many) */
@@ -226,7 +222,7 @@ int main(void)
         ok = up_parse(g, m, &got, &slot) == 0 && slot == 9u && got.ver == UP_VER_GRID && up_valid(&got) &&
              got.note[0] == 0x09u && got.flags[0] == 0x09u && got.note[1] == 0x08u && !got.flags[1] &&
              got.note[2] == 0x88u && got.flags[2] == 0x80u && got.note[5] == 0x08u && !got.flags[5] &&
-             got.engine == ENGI_DRUM && !up_pat_empty(&got);
+             got.engine == ENGI_808 && !up_pat_empty(&got);
         bad += check("UP_PUT kind 1: a grid record, accents only on hits", ok);
         g[m - 17u] = 0;                                     /* kind 0: the notes and flags as before */
         ok = up_parse(g, m, &got, &slot) == 0 && got.ver == UP_VER && got.note[2] == 0x08u && got.flags[0] == 4u;   /* (flags 0x7F: a tie) */
@@ -246,7 +242,7 @@ int main(void)
         }
         up_parse(g, m, &got, &slot);
         *up_rec(20) = got;
-        st_pair_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
+        st_save(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1)));
         up_cache_reset();
         up_bank_check(1, st_load(OBJ_UPRESET0 + 1, up_cache_bank(1), sizeof (*up_cache_bank(1))));
         bad += check("a grid record: bank round trip", up_used(20) && !memcmp(up_rec(20), &got, sizeof got));
@@ -295,32 +291,20 @@ int main(void)
     for (i = 0; i < 8u; i++)
         ok &= v[P_E0 + i] == (int16_t)(50 + 49 + i);
     bad += check("old record (np 57): SLICER kept, matrix defaults, E0..E7 kept", ok);
-    /* records of versions 4 (packed bytes) and 5 (a drum grid) saved before the chord keys (P_COUNT 89, P_E0
-     * 81) and before the FM operator ENVs (69, P_E0 61): their engine values land on today's E0..E7 (83..90),
-     * the chord keys take their defaults (OFF, CLOSE), the operator parameters too for 69 */
+    /* records of versions 4 and 5 saved by Melodee 1.x with fewer parameters (89, 69): refused (2.0 reads today's
+     * P_COUNT only; the web installer converts them) */
     {
         static const uint8_t VERS[2] = {UP_VER, UP_VER_GRID}, NPS[2] = {89, 69};
-        uint32_t a, b;
         ok = 1;
-        for (a = 0; a < 2u; a++)
-            for (b = 0; b < 2u; b++) {
-                uint32_t np = NPS[b];
+        for (uint32_t a = 0; a < 2u; a++)
+            for (uint32_t b = 0; b < 2u; b++) {
                 up_rec_t o;
                 memset(&o, 0, sizeof o);
-                o.used = UP_USED; o.ver = VERS[a]; o.engine = 1; o.np = (uint8_t)np;
+                o.used = UP_USED; o.ver = VERS[a]; o.engine = 1; o.np = NPS[b];
                 memcpy(o.name, "OLD", 3);
-                for (i = 0; i < np; i++)
-                    up_set_value(&o, i, (int16_t)(i % 100u - 30));
-                ok &= up_valid(&o);
-                up_params(&o, v, def);
-                for (i = 0; i < np - 8u; i++)
-                    ok &= v[i] == (int16_t)(i % 100u - 30);
-                for (i = np - 8u; i < P_E0; i++)
-                    ok &= v[i] == mapped_value(i, def[i]);
-                for (i = 0; i < 8u; i++)
-                    ok &= v[P_E0 + i] == (int16_t)((np - 8u + i) % 100u - 30);
+                ok &= !up_valid(&o);
             }
-        bad += check("v4 / v5 records of 89 and 69 parameters: E0..E7 at 83..90, the chord keys their defaults", ok);
+        bad += check("1.x records of 89 and 69 parameters: refused", ok);
     }
     r.ver = UP_VER;
     r.np = P_COUNT;

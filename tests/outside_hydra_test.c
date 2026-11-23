@@ -12,7 +12,7 @@
  *                                          from its schema (the macros' names, the module's dim hints and labels, a
  *                                          macro destination set and given back), its native SysEx (in: offered for a
  *                                          user slot and heard on the selected part; out: the part's patch), a project
- *                                          of it saved and loaded (FBKR), on another device where it has another
+ *                                          of it saved and loaded (FBKS), on another device where it has another
  *                                          number. DIR: the project and its render. OUTSIDE_HYDRA_RENDER=DIR also writes
  *                                          every preset's phrase (int32 per sample: a comparison with Saadet's) */
 #define BACKUP_TEST_NO_MAIN
@@ -195,7 +195,7 @@ static void col_text(const page_t *pg, uint32_t c, char *val, const char **label
 #define OH_N (1400u * CTL)                          /* (about a second) */
 static int32_t snd_a[2u * OH_N], snd_b[2u * OH_N];
 
-/* the device the project goes to: HYDRA alone, number 23 */
+/* the device the project goes to: HYDRA alone, the first free handle */
 static uint32_t fresh_device(void)
 {
     for (uint32_t k = 0; k < NMOD; k++) (void)mod_delete(k);
@@ -216,8 +216,8 @@ static int run(void)
     /* ---- installed: the number through the engine map */
     install_other(0);
     boot();
-    bad += check("another outside synth (acme/OTHER) asked for 23 first and has it", mods[0].engine == 23u &&
-                 !strcmp(eng_name(23), "OTHER"));
+    bad += check("another outside synth (acme/OTHER) installed first: the first free handle", mods[0].engine == ENG_H_FREE0 &&
+                 !strcmp(eng_name(ENG_H_FREE0), "OTHER"));
     ui.msg[0] = 0;
     int rc = put(3, file, file_n);
     uint32_t e = mods[3].engine, idnt = 0;
@@ -225,10 +225,10 @@ static int run(void)
     for (uint32_t at = MOD3_HEAD + ((mod_file3_t *)(void *)file)->image + 4u * ((mod_file3_t *)(void *)file)->nrel;
          at + 8u <= file_n && !uid; at += 8u + ((file[at + 4] | (uint32_t)file[at + 5] << 8) + 3u & ~3u))
         if (mod_le32(file + at) == MOD3_IDNT_TAG && (idnt = at + 8u)) uid = mod_le64(file + idnt);   /* (its ID: IDNT's) */
-    bad += check("HYDRA installs as an upload (slot 3), its code in SRAM; it asked for 23 too: another free number",
-                 rc == MS_LOADED && e != 23u && e >= 22u && eng_ok(e) && !strcmp(eng_name(e), "HYDRA") && mod_at[e] == 4u);
+    bad += check("HYDRA installs as an upload (slot 3), its code in SRAM, on another free handle (what its file asks for "
+                 "means nothing)", rc == MS_LOADED && e != ENG_H_FREE0 && e >= ENG_H_FREE0 && eng_ok(e) && !strcmp(eng_name(e), "HYDRA") && mod_at[e] == 4u);
     bad += check(".. who it is: its ID (its author's key and hydra), in the device's engine map", mods[3].uid == uid &&
-                 eng_map[e].uid == uid && eng_map[23].uid == other_uid);
+                 eng_map[e].uid == uid && eng_map[ENG_H_FREE0].uid == other_uid);
     bad += check(".. signed by its author's key: no warning", mods[3].sig == MOD_SIG_AUTHOR && !ui.msg[0]);
     eng_map_service(1);
     boot();
@@ -455,7 +455,7 @@ static int run(void)
     play(snd_a, OH_N, 2);
     bad += check("two parts of it (VOX CHOIR with E2 at 30, WARP BASS edited: CUTOFF 90, MS LP) play",
                  energy(snd_a, 2u * OH_N) > 1000u);
-    bad += check("the project saves as FBKR (an outside synth's patch: its end block)",
+    bad += check("the project saves as FBKS (its synths' entries, an outside synth's patch: its end block)",
                  !project_save_as(1, "HYDRA SONG") && proj_meta[1].used);
     {
         st_hdr_t h;
@@ -467,7 +467,7 @@ static int run(void)
             if (!st_read_range(st_proj_obj(1), (uint32_t)copy, 0, big, n)) save_file("hydra.hpj", big, n);
             if (!pj_image(st_proj_obj(1), (uint32_t)copy, raw)) memcpy(&m, raw, 4);
         }
-        bad += check(".. stored as the firmware keeps a project", n > 0 && m == BANKR_MAGIC);
+        bad += check(".. stored as the firmware keeps a project", n > 0 && m == BANKS_MAGIC);
         save_file("hydra-render.bin", snd_a, sizeof snd_a);
     }
     host_tracks_init();
@@ -482,8 +482,8 @@ static int run(void)
     project_load(1);
     serve();
     play(snd_b, OH_N, 2);
-    bad += check("another device (HYDRA alone: number 23): the project's parts play it there, the same samples",
-                 e2 == 23u && trk[0].eng_req == 23u && trk[1].eng_req == 23u && !memcmp(patch_of(1), p1, sizeof p1) &&
+    bad += check("another device (HYDRA alone: the first free handle): the project's parts play it there, the same samples",
+                 e2 == ENG_H_FREE0 && trk[0].eng_req == ENG_H_FREE0 && trk[1].eng_req == ENG_H_FREE0 && !memcmp(patch_of(1), p1, sizeof p1) &&
                  !memcmp(snd_a, snd_b, sizeof snd_a));
     return bad;
 }

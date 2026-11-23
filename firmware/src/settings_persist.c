@@ -22,7 +22,8 @@ typedef struct {
                                                                                                 * 17 OFF; lights: 0 MID,
                                                                                                 * else level + 1 */
 } persist_t;
-#define PERSIST_MAGIC 0x50455235u
+#define PERSIST_MAGIC 0x50455236u                  /* "PER6": Melodee 2.0 (the stars by synth ID: favorites.c) */
+#define PERSIST_MAGIC_1X 0x50455235u               /* "PER5": 1.x's, never read here (the web installer converts it) */
 _Static_assert(sizeof(((persist_t *)0)->ext) == 32u, "ext: 8 words, new fields take spare ones");
 _Static_assert(sizeof(persist_t) == 604u, "the record's layout: new settings take spare bytes (favorites.c)");
 
@@ -61,31 +62,6 @@ static int settings_owned(const persist_t *p)
 {
     return !memcmp(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
 }
-/* Legacy Melodee has no owner tag. Require its tagged palette and complete
- * schema, then check the optional template in project.c before accepting it. */
-#ifndef MELODEE_LEGACY_STORE                   /* (fm1_cc.h; host builds of this file alone: on) */
-#if BOARD_SMK37
-#define MELODEE_LEGACY_STORE 0
-#else
-#define MELODEE_LEGACY_STORE 1
-#endif
-#endif
-static int settings_legacy_valid(const persist_t *p)
-{
-#if !MELODEE_LEGACY_STORE
-    (void)p;
-    return 0;
-#else
-    uint32_t work = p->ext.usb_off, points = (work >> 8) & 255u;
-    int usb_ok = work <= 3u || ((work & 0xFFFF00FCu) == WORK_BUDGET_TAG && points >= 8u && points <= 32u);
-    return p->magic == PERSIST_MAGIC && palette_stored_ok(p->palette) &&
-        p->panel.magic == PANEL_MAGIC && p->lowcut <= 2u && (p->zoom & 0xFFu) <= 1u &&
-        (p->zoom <= 0xFFu || (p->zoom & 0xFFFF0000u) == RECORD_PREF_TAG) &&
-        hold_stored_ok(p->bold) && p->favorites.filter <= 1u && usb_ok &&
-        p->ext.boot <= PROJ_SLOTS && p->ext.drumch <= 17u && p->ext.lights <= LIGHTS_N;
-#endif
-}
-
 /* Normalize in place; 1 = read, 0 = invalid. */
 static int settings_import(persist_t *p, int n)
 {

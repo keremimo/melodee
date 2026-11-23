@@ -9,6 +9,8 @@ typedef struct {
     uint32_t avail[ST_LW];              /* lazy: the linear sectors still free to take */
     int error;
     uint8_t lazy;                       /* st_stream_begin_lazy: the length is known only at st_stream_end */
+    uint8_t nlist;                      /* lazy: its sectors so far, list[] their linear indices (the header holds 8) */
+    uint8_t list[ST_REC_MAX];
 } st_stream_t;
 static int st_stream_begin(st_stream_t *w,uint32_t obj,uint32_t len)
 {
@@ -28,6 +30,7 @@ static int st_stream_begin(st_stream_t *w,uint32_t obj,uint32_t len)
  * st_stream_end programs the staged header, its address map is the header in RAM. */
 static int st_stream_begin_lazy(st_stream_t *w,uint32_t obj)
 {
+    _Static_assert(ST_REC_MAX < 256u, "st_stream_t.nlist");
     uint32_t used[ST_LW];
     memset(w,0,sizeof *w);w->error=-1;
 #if defined(MELODEE_AUDIO_PROFILE) && MELODEE_AUDIO_PROFILE
@@ -44,31 +47,52 @@ static int st_stream_begin_lazy(st_stream_t *w,uint32_t obj)
 }
 static uint32_t st_stream_sectors(const st_stream_t *w)
 {
-    uint8_t idx[ST_PROJECT_SECTORS];
-    return st_rec_sectors(&w->head,idx);
+    uint8_t idx[ST_REC_MAX];
+    return w->lazy?w->nlist:st_rec_sectors(&w->head,idx);
+}
+/* a lazy image's payload byte off: its flash address, *span the bytes up to the guard or the sector's end (its list in
+ * RAM: the index blocks are written at st_stream_end) */
+static uint32_t st_stream_address(const st_stream_t *w,uint32_t off,uint32_t *span)
+{
+    uint32_t k=off/ST_LIN_PAYLOAD_MAX,b=off%ST_LIN_PAYLOAD_MAX;
+    if(k>=w->nlist){*span=0;return 0;}
+    uint32_t at=st_lin_at(w->list[k]);
+    if(b<ST_RUN0){*span=ST_RUN0-b;return at+ST_POOL_PAYLOAD_OFF+b;}
+    *span=ST_LIN_PAYLOAD_MAX-b;
+    return at+ST_GUARD_OFF+ST_GUARD_LEN+(b-ST_RUN0);
 }
 /* sectors taken for the image's first end bytes */
 static int st_stream_room(st_stream_t *w,uint32_t end)
 {
-    uint32_t need=(end+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX,have=st_stream_sectors(w);
-    if(need>ST_PROJECT_SECTORS)return w->error=-5;
+    uint32_t need=(end+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX,have=w->nlist;
+    if(need>st_max_sectors(w->obj))return w->error=-5;
     while(have<need){
         uint32_t m=0,i=0;
         for(;m<ST_LN;m++){i=st_order(w->obj,m);if((w->avail[i/32u]>>(i%32u))&1u)break;}
         if(m==ST_LN)return w->error=-5;                /* STORAGE FULL */
         w->avail[i/32u]&=~(1u<<(i%32u));
-        st_list_put(&w->head,have,i);
+        if(have<8u)st_list_put(&w->head,have,i);
+        w->list[have]=(uint8_t)i;
         if(!have)w->head.slot=(uint16_t)(ST_LIN_C0+i);
         int rc=st_erase(st_lin_at(i));if(rc)return w->error=rc;
-        have++;
+        w->nlist=(uint8_t)++have;
     }
     return 0;
+}
+/* a lazy image's room: the free sectors it may take, in bytes (its own count at most) */
+static uint32_t st_stream_free(const st_stream_t *w)
+{
+    uint32_t n=0;
+    for(uint32_t i=0;i<ST_LN;i++)n+=(w->avail[i/32u]>>(i%32u))&1u;
+    n+=w->nlist;
+    if(n>st_max_sectors(w->obj))n=st_max_sectors(w->obj);
+    return n*ST_LIN_PAYLOAD_MAX;
 }
 static int st_stream_read(st_stream_t *w,uint32_t off,void *dst,uint32_t n)
 {
     uint8_t *d=dst;
     while(n){
-        uint32_t span,at=st_pool_address(&w->head,off,&span),k=n<span?n:span;
+        uint32_t span,at=w->lazy?st_stream_address(w,off,&span):st_pool_address(&w->head,off,&span),k=n<span?n:span;
         if(!k||st_fetch(at,d,k))return -7;
         d+=k;off+=k;n-=k;
     }
@@ -81,11 +105,11 @@ static int st_stream_write_at(st_stream_t *w,uint32_t off,const void *data,uint3
     if(w->generation!=st_stream_generation)return w->error=-6;
     if(w->error)return w->error;
     st_stream_activity++;
-    if(w->lazy){if(off>ST_PROJECT_MAX||n>ST_PROJECT_MAX-off||st_stream_room(w,off+n))return w->error?w->error:(w->error=-1);}
+    if(w->lazy){uint32_t cap=st_capacity(w->obj);if(off>cap||n>cap-off||st_stream_room(w,off+n))return w->error?w->error:(w->error=-1);}
     else if(off>w->head.len||n>w->head.len-off)return w->error=-1;
     const uint8_t *p=data;
     while(n){
-        uint32_t span,at=w->lazy?st_pool_address(&w->head,off,&span):st_address_at(w->obj,w->head.slot,off,&span,ST_PAYLOAD_OFF);
+        uint32_t span,at=w->lazy?st_stream_address(w,off,&span):st_address_at(w->obj,w->head.slot,off,&span,ST_PAYLOAD_OFF);
         if(!span)return w->error=-1;
         uint32_t k=256u-(at&255u);if(k>span)k=span;if(k>n)k=n;
         int rc=st_prog(at,p,k);if(rc)return w->error=rc;
@@ -107,7 +131,8 @@ static int st_stream_end(st_stream_t *w,uint32_t len)
     if(!w->lazy||!len||st_stream_room(w,len))return w->error?w->error:(w->error=-1);
     w->head.len=len;
     if(st_stream_sectors(w)!=(len+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX)return w->error=-1;
-    int rc=st_prog(st_sector(w->obj,w->head.slot),&w->head,sizeof w->head);
+    int rc=st_lix_write(w->list,w->nlist);
+    if(!rc)rc=st_prog(st_sector(w->obj,w->head.slot),&w->head,sizeof w->head);
     return rc?(w->error=rc):0;
 }
 /* Generated images may write disjoint pieces out of order. The caller seals

@@ -53,15 +53,27 @@ def installer_module(name, exports):
     return f"\nconst {{{names}}} = (() => {{\n{source}\nreturn {{{names}}};\n}})();\n"
 
 
+def converter_module():
+    """web/convert/convert.mjs (Melodee 1.x's records -> 2.0's, in WebAssembly) in a scope of its own, with the module
+    linker it imports (web/core/mod_link.mjs: its installModules is not fm1mods.js's)"""
+    link = strip_module((HERE / "core" / "mod_link.mjs").read_text(encoding="utf-8"))
+    conv = strip_module((HERE / "convert" / "convert.mjs").read_text(encoding="utf-8"))
+    names = "legacyConverter, convertBundle, legacyIds, readBackupV1"
+    return (f"\nconst {{{names}}} = (() => {{\nconst {{installModules}} = (() => {{\n{link}\nreturn {{installModules}};\n}})();\n"
+            f"{conv}\nreturn {{{names}}};\n}})();\n")
+
+
 def installer_libraries():
     lib = "\n".join(strip_module((HERE / name).read_text(encoding="utf-8"))
                     for name in ("fm1pkg.js", "fm1ota.js", "fm1backup.js", "fm1res.js", "fm1mods.js"))
+    lib += converter_module()
     for source, exports in (
         ("progress.js", ["progressModel", "remaining", "afterFailure", "describeDevice", "planFor"]),
         ("keepalive.js", ["hold", "busyElsewhere"]),
         ("transfer.js", ["SteadyUpdater"]),
         ("session.js", ["createInstallSession"]),
         ("leave.js", ["setupLeaving"]),
+        ("conversion.js", ["prepareConversion", "writeConverted"]),
         ("fakefm1.js", ["fakeAccess"]),
     ):
         lib += installer_module(source, exports)
@@ -200,9 +212,10 @@ def publish_manual(src, dest, version=None, preserve_nightly=False):
 def publish_resources(source, published):
     """the build's resource region (build/melodee-res.bin beside the package) as <package>-res.bin and its synth
     modules (build/melodee-mods.bin) as <package>-mods.bin: the installer writes them after the firmware (fm1res.js,
-    fm1mods.js)"""
+    fm1mods.js); a 2.0 build's converter for Melodee 1.x's records (build/melodee-convert.bin: web/convert/build.sh) as
+    <package>-convert.bin (install/conversion.js)"""
     source = Path(source)
-    for kind in ("res", "mods"):
+    for kind in ("res", "mods", "convert"):
         target = published.with_name(f"{published.stem}-{kind}.bin")
         for res in (source.with_name(f"{source.stem}-{kind}.bin"), source.with_name(f"melodee-{kind}.bin")):
             if res.exists():
@@ -214,6 +227,11 @@ def publish_resources(source, published):
 def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=None):
     pkg, out = Path(pkg), Path(out)
     raw, product = check_package(pkg)
+    major = re.match(r"(\d+)\.", version)
+    if major and int(major.group(1)) >= 2 and not any(p.exists() for p in (pkg.with_name(f"{pkg.stem}-convert.bin"),
+                                                                           pkg.with_name("melodee-convert.bin"))):
+        # (without it the installer would put 2.0 on an FM-1 whose projects and sounds 2.0 cannot read)
+        raise SystemExit("A 2.x package needs its converter beside it (build/melodee-convert.bin: web/convert/build.sh)")
     if nightly is None:
         nightly = published(out, "nightly")
     nightly_files, nightly_meta = channel(nightly, "nightly", "melodee-nightly", "nightly") if nightly else ({}, None)
@@ -294,8 +312,19 @@ def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=
             if (HERE / f).exists():
                 shutil.copy(HERE / f, ed / f)
         (ed / "install").mkdir(exist_ok=True)
-        for f in ("transfer.js", "keepalive.js", "progress.js", "fakefm1.js", "installer.css"):
+        for f in ("transfer.js", "keepalive.js", "progress.js", "fakefm1.js", "installer.css", "conversion.js"):
             shutil.copy(HERE / "install" / f, ed / "install" / f)
+        # Melodee 1.x's files opened on 2.0 (Restore, Open project file): the converter's page code and, beside the
+        # page, this package's converter files (none for a 1.x package: a 1.x file there is refused as before)
+        for sub, names in (("convert", ("convert.mjs", "mel_legacy.mjs")), ("core", ("mod_link.mjs",))):
+            (ed / sub).mkdir(exist_ok=True)
+            for f in names:
+                shutil.copy(HERE / sub / f, ed / sub / f)
+        conv = next((c for c in (pkg.with_name(f"{pkg.stem}-convert.bin"), pkg.with_name("melodee-convert.bin")) if c.exists()), None)
+        if conv:
+            shutil.copy(conv, ed / "melodee-convert.bin")
+        else:
+            (ed / "melodee-convert.bin").unlink(missing_ok=True)
         (out / "index.html").write_text(
             '<!doctype html><meta charset="utf-8"><title>Melodee</title>'
             '<meta http-equiv="refresh" content="0; url=webapp/installer/">'

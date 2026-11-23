@@ -69,7 +69,7 @@ static void mapping(void)
     t->p[P_SCALE] = scale_id("BP-ET"); t->p[P_QUANT] = Q_SNAP; song.octave = 1;
     assert(kb_map(t, 7) == 73 && micro_pitch(t, 73) == 600000 + micro_scale(t)->pitch[13]);
     song.octave = 0;
-    t->eng_req = 10; t->p[P_QUANT] = Q_ALL;
+    t->eng_req = ENGI_808; t->p[P_QUANT] = Q_ALL;
     assert(!micro_active(t) && midi_map(t, 38) == 38);
     puts("microtonal: every catalogue degree, negative periods, ROOT/TRN, layouts, bypass and drums ok");
 }
@@ -259,7 +259,7 @@ static void names(void)
     t->p[P_ROOT] = 0;
     t->p[P_SCALE] = (int16_t)scale_id("24EDO"); t->p[P_QUANT] = Q_OFF;
     assert(!strcmp(name_of(61), "C#4"));                  /* QNT OFF: the plain twelve */
-    t->p[P_QUANT] = Q_ALL; t->eng_req = 10;
+    t->p[P_QUANT] = Q_ALL; t->eng_req = ENGI_808;
     assert(!strcmp(name_of(61), "C#4"));                  /* a kit's */
     t->eng_req = 0; t->p[P_SCALE] = 1;
     assert(!strcmp(name_of(64), "E4"));

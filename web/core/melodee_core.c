@@ -21,7 +21,7 @@
  * return (mix.c master_samples), both before punch, the limiter and the DC blocker, so they do not sum to the
  * master exactly.
  *
- * CORE_MODULES (web/core/build.sh builds it so): the five synths as the device plays them, synth modules
+ * CORE_MODULES (web/core/build.sh builds it so): the shipped synths as the device plays them, synth modules
  * (eng_module.c, module_store.c in the pool) bound to the same ABI 3 host table. The module files (build/modules/
  * <name>.mmod, the device's) go into the pool as an installer puts them (core_mod_install); their code is the
  * module's own source built for this core: in WebAssembly a side module the page links into the core's memory and
@@ -220,7 +220,7 @@ static void core_mix_block_taps(int32_t *out, uint32_t n, int32_t tap[TAPS][2u *
     fx_bus_select();fx_send_on=(uint8_t)fx_bus_active();if(fx_send_on){memset(fx_send_l,0,n*sizeof *fx_send_l);memset(fx_send_r,0,n*sizeof *fx_send_r);
         if(fx_bus_separate){memset(fx_send_extra_l,0,sizeof fx_send_extra_l);memset(fx_send_extra_r,0,sizeof fx_send_extra_r);}}
     uint32_t nt=trk_parts();
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
     mix_prepare_batch(n,nt);
 #endif
     memset(tap, 0, TAPS * 2u * CTL * sizeof tap[0][0]);
@@ -229,7 +229,7 @@ static void core_mix_block_taps(int32_t *out, uint32_t n, int32_t tap[TAPS][2u *
         mix_part(&trk[i],n);
         for (uint32_t j = 0; j < n; j++) { tap[i][2u * j] = mix_l[j] - tap_pre_l[j]; tap[i][2u * j + 1u] = mix_r[j] - tap_pre_r[j]; }
     }
-#if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
+#if MELODEE_BATCH_AUDIO
     batch_ready=0;part_buf=part_storage;spread_buf=spread_storage;
 #endif
     fx_bus_start(n);
@@ -552,19 +552,19 @@ EXPORT(core_load_record) uint32_t core_load_record(const uint8_t *p, uint32_t n,
     song.g[G_SLOT] = (int16_t)(slot + 1u);
     return 0;
 }
-/* a data record (a user kit: KIT1, as DRUM's drum_enc.c / melodee_kit.wasm write it) into record slot u (0..7: KIT
- * 9..16), as the editor's BACKUP PUT of ids 92..99 commits it; n 0 empties the slot. 0 = done, 1 = not a record its
- * synth could play (or no such slot), 2 = the flash refused it */
+/* a kit's blob (KIT2: SAMPLER's drk_box_t head, then its pad records, as the editor's BACKUP GET of ids 92..99 gives
+ * it and melodee_kit.wasm makes it) into kit u (0..7: KIT 9..16), as the editor's BACKUP PUT commits it; n 0 empties
+ * the kit. 0 = done, 1 = not a kit its synth could play (or no such kit), 2 = the flash refused it */
 EXPORT(core_load_kit) uint32_t core_load_kit(const uint8_t *p, uint32_t n, uint32_t u)
 {
     st_stream_t w;
     int rc;
     if (u >= ST_NREC) return 1;
     if (!n) return rec_delete(u) ? 2u : 0u;
-    if (!rec_len_ok(n)) return 1;
-    if (rec_put_begin(&w, u, n) || rec_put_write(&w, p, n)) return 2;
-    rc = rec_put_commit(&w, u);
-    return rc == -2 ? 1u : rc ? 2u : 0u;
+    if (rec_box_put_begin(&w, u, n)) return 1;
+    rc = rec_box_put_write(p, n);
+    if (!rc) rc = rec_box_put_end();
+    return rc == -2 || rc == -1 ? 1u : rc ? 2u : 0u;
 }
 
 /* SONG from row (as SONG's PLAY): the internal clock, no loop, so it ends. 0 = started, else chain_prepare_from's */
@@ -754,17 +754,18 @@ static int render_main(const char *rec, uint32_t secs, const char *out)
     return 0;
 }
 #ifdef CORE_MODULES
-extern const mod_desc_v3 mod_sid, mod_drum, mod_cz, mod_fm6, mod_p5;   /* (the module objects, linked beside) */
-/* the five synths: their objects named, the device's files (CORE_MODULES_DIR, else build/modules) in the pool of a new
+extern const mod_desc_v3 mod_sid, mod_808, mod_909, mod_sidkit, mod_cr78, mod_fmkit, mod_sampler, mod_cz, mod_fm6, mod_p5;   /* (the module objects, linked beside) */
+/* the shipped synths: their objects named, the device's files (CORE_MODULES_DIR, else build/modules) in the pool of a new
  * device, then booted again (an installed FM-1's power-on), as web/core/core_check.mjs does in WebAssembly */
 static int boot_modules(void)
 {
-    static const char *const stem[] = {"sid", "drum", "cz", "fm6", "prophet"};
-    static const mod_desc_v3 *const desc[] = {&mod_sid, &mod_drum, &mod_cz, &mod_fm6, &mod_p5};
+    static const char *const stem[] = {"sid", "808", "909", "sidkit", "cr78", "fmkit", "sampler", "cz", "fm6", "prophet"};
+    static const mod_desc_v3 *const desc[] = {&mod_sid, &mod_808, &mod_909, &mod_sidkit, &mod_cr78, &mod_fmkit, &mod_sampler,
+                                               &mod_cz, &mod_fm6, &mod_p5};
     const char *dir = getenv("CORE_MODULES_DIR");
     core_boot(0);
     core_poll(100);
-    for (uint32_t i = 0; i < 5u; i++) {
+    for (uint32_t i = 0; i < sizeof stem / sizeof *stem; i++) {
         char path[512];
         snprintf(path, sizeof path, "%s/%s.mmod", dir ? dir : "build/modules", stem[i]);
         FILE *f = fopen(path, "rb");

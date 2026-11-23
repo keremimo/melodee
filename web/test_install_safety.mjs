@@ -149,16 +149,21 @@ const digest = createHash('sha256').update(firmware).digest('hex');
 const region = new Uint8Array(32 + 3000).map((_,i) => (i * 13 + 5) & 255);
 new DataView(region.buffer).setUint32(0,0x3153524d,true);new DataView(region.buffer).setUint32(4,3000,true);
 // the build's synth modules (fm1mods.js): ABI 3 .mmod files (60-byte heads, the fake firmware's legacy key), one after another
-const fakeModule = (engine, name, n, key = 0x13572468, seed = 1) => {
-  const b = new Uint8Array(60 + n).map((_, i) => (i * 29 + seed) & 255), v = new DataView(b.buffer);
-  v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 3, true); b[6] = engine; b[7] = 0; v.setUint32(8, b.length, true);
+// (then its IDNT chunk: Melodee 2.0 knows a synth by its ID alone, here made from its name; the engine byte means nothing)
+const fakeModule = (engine, name, n, key = 0x13572468, seed = 1, uid = null) => {   /* uid: its ID (else from its name) */
+  const b = new Uint8Array(60 + n + 104).map((_, i) => i < 60 + n ? (i * 29 + seed) & 255 : 0), v = new DataView(b.buffer);
+  v.setUint32(0, 0x31444D4D, true); v.setUint16(4, 3, true); b[6] = engine; b[7] = 1; v.setUint32(8, b.length, true);
+  v.setUint32(12, n, true); v.setUint32(20, 0, true);
   v.setUint32(28, 0x1000 * seed + engine, true); b.fill(0, 32, 48); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); });
   v.setUint32(52, key, true);
+  v.setUint32(60 + n, 0x544E4449, true); v.setUint32(64 + n, 96, true);
+  v.setBigUint64(68 + n, uid ?? 0x5000n + BigInt([...name].reduce((t, c) => t + c.charCodeAt(0), 0)), true); b[76 + n] = 2;
   return b;
 };
 const joinBytes = (...xs) => { const o = new Uint8Array(xs.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of xs) { o.set(x, at); at += x.length; } return o; };
 const mods = joinBytes(fakeModule(10, 'DRUM', 3000), fakeModule(3, 'SID', 900));
-const serve = url => url.includes('-res.bin') ? {ok:true,status:200,arrayBuffer:async()=>region.slice().buffer}
+const serve = url => url.includes('-convert.bin') ? {ok:false,status:404}   /* (no converter: web/test_install_convert.mjs) */
+  : url.includes('-res.bin') ? {ok:true,status:200,arrayBuffer:async()=>region.slice().buffer}
   : url.includes('-mods.bin') ? {ok:true,status:200,arrayBuffer:async()=>mods.slice().buffer}
   : {ok:true,status:200,arrayBuffer:async()=>firmware.slice().buffer};
 for (const valid of [false,true]) {
@@ -197,9 +202,12 @@ for (const valid of [false,true]) {
     assert(simulated.device.log.includes('resources installed'),win.document.getElementById('log').textContent);
     assert(simulated.device.log.includes('module DRUM installed in slot 1') && simulated.device.log.includes('module SID installed in slot 2'),
            win.document.getElementById('log').textContent);
-    assert.match(win.document.getElementById('endtips').textContent,/the SID and DRUM synths are installed/);
+    assert.match(win.document.getElementById('endtips').textContent,/factory sounds and synths are installed/);
     assert(!win.document.querySelector('#phases [data-ph="setup"]').hidden);
-  }else assert(!win.document.getElementById('pagefail').hidden);
+  }else{   /* (the page's fetch and SHA-256 finish when they do: a loaded machine takes longer than 30 ms) */
+    for(const until=Date.now()+5000;win.document.getElementById('pagefail').hidden && Date.now()<until;)await new Promise(r=>nativeSet(r,10));
+    assert(!win.document.getElementById('pagefail').hidden);
+  }
   page.window.close();
 }
 console.log('Published bundle: starts with actual firmware; checksum mismatch blocks Install; cancellation sends no MIDI; complete controller install verifies the returned identity and writes the resource region');
@@ -287,6 +295,25 @@ console.log('Resource region: refused write shows Finish setup and retries alone
 }
 console.log('Synth modules: written into the pool slots, current ones left, older ones replaced in place, room / build / slots refused');
 
+// A slot holding 1.x's DRUM by its ID (2.0 retired it: its kits are synths of their own): Find reports it, the update
+// empties it and writes the kit synth; a module only named DRUM is not it.
+{
+  const sim=fakeAccess({images:{firmware:logicalImage(firmware)},identity:productOf(firmware),after:productOf(firmware),loader:MELODEE_LOADER,timers:clock});
+  const input=sim.access.inputs.values().next().value,output=sim.access.outputs.values().next().value;
+  const link=new BackupConnection(input,output),rq=(r,o)=>link.request(r,o),slot=sim.device.mods.slot;
+  const kit=joinBytes(fakeModule(5,'808',500));
+  assert.equal(await installModules(rq,kit),'written');
+  slot[3].bytes=fakeModule(10,'DRUM',2000,0x13572468,2,0x241AACC57D998FFEn);slot[3].state=1;   /* DRUM's real ID */
+  slot[5].bytes=fakeModule(10,'DRUM',2000,0x13572468,3);slot[5].state=1;                      /* a DRUM by name only */
+  assert.equal(await modulesMissing(rq,kit),true,'a retired synth in a slot: the update has work');
+  assert.equal(await installModules(rq,kit),'written','a slot holding DRUM\'s ID is emptied by the update');
+  assert(!slot[3].bytes && slot[3].state===0 && slot[5].bytes && slot[0].bytes,'only the retired ID\'s slot emptied');
+  assert.equal(await modulesMissing(rq,kit),false);
+  assert.equal(await installModules(rq,kit),'current');
+  link.close();
+}
+console.log('Synth modules: a slot holding a retired synth (DRUM\'s ID) emptied by the update, a name alone kept');
+
 // Saadet's optional last stage, with the real pinned boot package.
 const bootRaw=new Uint8Array(readFileSync(new URL('m-bootloader/fm1-uboot.fwsc',import.meta.url)));
 const bootDigest=createHash('sha256').update(bootRaw).digest('hex');
@@ -308,7 +335,7 @@ for(const scenario of ['update+boot','boot-only','refused','bad-boot-hash','wron
  win.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
  win.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
  win.TextEncoder=TextEncoder;Object.defineProperty(win.crypto,'subtle',{value:webcrypto.subtle});
- win.fetch=async url=>/-(res|mods)\.bin/.test(url)?{ok:false,status:404}:({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
+ win.fetch=async url=>/-(res|mods|convert)\.bin/.test(url)?{ok:false,status:404}:({ok:true,arrayBuffer:async()=>url.includes('boot')?bootRaw.slice().buffer:releaseRaw.slice().buffer});
  win.navigator.requestMIDIAccess=async()=>model.access;
  const metadata={version:'1.4.5',product:PRODUCT,pkg:{dual:'test.fwsc'},sha256:{dual:createHash('sha256').update(releaseRaw).digest('hex')},
   boot:{version:'1.2',pkg:'boot.fwsc',sha256:scenario==='bad-boot-hash'?'0'.repeat(64):bootDigest}};

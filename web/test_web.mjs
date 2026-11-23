@@ -39,6 +39,14 @@ const E = vm.runInNewContext(proto + `
 /* the synths' schemas, byte for byte as the firmware's SCHEMA sends them (tests/descdump.c -> build/host/desc.json) */
 const DESC_JSON = join(HERE, "../build/host/desc.json");
 const SCHEMAS = existsSync(DESC_JSON) ? JSON.parse(readFileSync(DESC_JSON, "utf8")).SCHEMAS || null : null;
+/* the firmware's synths by handle (desc.json's ENG: the schemas' keys) */
+const FW_NAMES = SCHEMAS ? (JSON.parse(readFileSync(DESC_JSON, "utf8")).ENG || []).map((e) => e.name) : [];
+const KIT_NAMES = ["808", "909", "SID KIT", "CR78", "FM KIT", "SAMPLER"];   /* (2.0: DRUM's kits, synths of their own) */
+/* Melodee 2.0: engine numbers are a session's handles (0 none, 1 the MIDI Track, the shipped synths, then modules), never
+   stored: the checks look them up by name, in INFO where they have one (H), else in the mock's own table (HN) */
+const engineHandles = (info) => (name) => info.engines.indexOf(name);
+const MOCK_NAMES = (() => { const m = E.makeMockDevice({ auto: false }); m.stop(); return m.tables.ENG.map((e) => e.name); })();
+const HN = (name) => MOCK_NAMES.indexOf(name);
 
 ok(["FM-1", "FM-1 MIDI 1", "Melodee", "Felucca"].every(name => E.isDevicePort({name})) &&
    !E.isDevicePort({name:"Other MIDI"}) && !E.isDevicePort(null),
@@ -47,34 +55,35 @@ ok(["FM-1", "FM-1 MIDI 1", "Melodee", "Felucca"].every(name => E.isDevicePort({n
 {
   const mock=E.makeMockDevice({shared:true}),input=[...mock.access.inputs.values()][0],output=[...mock.access.outputs.values()][0];
   const link=new E.Link(d=>output.send(d),{timeout:500});input.onmidimessage=e=>link.receive(e.data);const rq=(r,o)=>link.request(r,o),info=E.parse[E.CMD.INFO](await rq(E.req.info()));
+  const H=engineHandles(info),P5=H("PROPHET"),CZ=H("CZ-1"),DR=H("808");
   ok(info.shared?.total===384,"shared: one 384-slot capability replaces the engine pools");
   let all=await E.bank.list(rq,info);ok(all.total===384&&all.slots.at(-1).slot===383,"shared: pagination reaches slot U384 without wrapping");
   const raw=Array.from({length:138},(_,i)=>(i*37)&255);
-  await E.bank.put(rq,383,{engine:19,name:"TWENTY CHAR PROGRAM",native:raw},info);
-  let got=await E.bank.get(rq,info,383);ok(got.used&&got.engine===19&&eq(got.native,raw)&&got.name==="TWENTY CHAR PROGRAM","shared: highest slot preserves a synth's whole patch and its name");
-  const cz=Array.from({length:144},(_,i)=>(255-i)&255);await E.bank.put(rq,383,{engine:15,name:"CZ IN SAME SLOT",native:cz},info);
-  got=await E.bank.get(rq,info,383);ok(got.engine===15&&eq(got.native,cz),"shared: CZ replaces Prophet at the same absolute slot");
+  await E.bank.put(rq,383,{engine:P5,name:"TWENTY CHAR PROGRAM",native:raw},info);
+  let got=await E.bank.get(rq,info,383);ok(got.used&&got.engine===P5&&eq(got.native,raw)&&got.name==="TWENTY CHAR PROGRAM","shared: highest slot preserves a synth's whole patch and its name");
+  const cz=Array.from({length:144},(_,i)=>(255-i)&255);await E.bank.put(rq,383,{engine:CZ,name:"CZ IN SAME SLOT",native:cz},info);
+  got=await E.bank.get(rq,info,383);ok(got.engine===CZ&&eq(got.native,cz),"shared: CZ replaces Prophet at the same absolute slot");
   await E.bank.load(rq,383,info,2);const status=E.parse[E.CMD.TRACK](await rq(E.req.track()));ok(mock.state.tracks[2].user===384,"shared: load preserves the full slot identity on any track");
   await E.bank.erase(rq,383,info);ok(!(await E.bank.get(rq,info,383)).used,"shared: erasing U384 clears the shared slot");
   const opaque=cz.slice();opaque[128]=0;opaque[143]=255;
-  await E.bank.put(rq,381,{engine:15,name:"OPAQUE",native:opaque},info);const exact=await E.bank.get(rq,info,381);
+  await E.bank.put(rq,381,{engine:CZ,name:"OPAQUE",native:opaque},info);const exact=await E.bank.get(rq,info,381);
   ok(eq(exact.native,opaque),"shared: incoming native name/control bytes remain byte-exact");
-  const drum=Array(54).fill(0);await E.bank.put(rq,382,{engine:10,name:"DRUM PATCH",drum,p:Array(info.pcount).fill(0)},info);
+  const drum=Array(54).fill(0);await E.bank.put(rq,382,{engine:DR,name:"DRUM PATCH",drum,p:Array(info.pcount).fill(0)},info);
   const kit=await E.bank.get(rq,info,382);ok(eq(kit.drum,drum),"shared: drum patches survive bank export and import");
-  let writes=0;try{await E.bank.put(async()=>{writes++;},383,{engine:19,native:[1,2,256]},info);}catch{}ok(!writes,"shared: malformed native voices fail before sending a write");
-  const named={state:{caps:8,filter:0},slots:await E.bank.list(rq,info),favorites:[]};const names=info.engines.map(()=>[]);names[15]=["CZ FACTORY"];
-  const grouped=E.devicePresetRows(info,names,named),factoryAt=grouped.findIndex(r=>!r.user&&r.engine===15),czAt=grouped.findIndex(r=>r.user&&r.actualEngine===15);
+  let writes=0;try{await E.bank.put(async()=>{writes++;},383,{engine:P5,native:[1,2,256]},info);}catch{}ok(!writes,"shared: malformed native voices fail before sending a write");
+  const named={state:{caps:8,filter:0},slots:await E.bank.list(rq,info),favorites:[]};const names=info.engines.map(()=>[]);names[CZ]=["CZ FACTORY"];
+  const grouped=E.devicePresetRows(info,names,named),factoryAt=grouped.findIndex(r=>!r.user&&r.engine===CZ),czAt=grouped.findIndex(r=>r.user&&r.actualEngine===CZ);
   ok(factoryAt>=0&&czAt===factoryAt+1,"shared: tone picker groups user slots under their actual engine");
   const factoryNames=mock.tables.ENG.map(engine=>engine.presets.map(preset=>preset.name));
-  ok(info.engines[21] === "MIDI Track", "shared: eight-byte INFO name restores MIDI Track's UI identity");
+  ok(info.midi === 1 && info.engines[info.midi] === "MIDI Track", "shared: eight-byte INFO name restores MIDI Track's UI identity (its handle from INFO's 0x49 tag)");
   const wireInfo = {...info, engines: info.engines.map((name) => name.slice(0, 8))};
   const prefs=await E.readDevicePreferences(rq,wireInfo,factoryNames);
-  ok(prefs.slots.total===384 && prefs.favorites[info.namespace.general].length===384 && prefs.favorites[19].length===factoryNames[19].length,
+  ok(prefs.slots.total===384 && prefs.favorites[info.namespace.general].length===384 && prefs.favorites[P5].length===factoryNames[P5].length,
      "shared: 1.5 startup reads the complete factory and shared-slot favorites");
-  const midi=E.devicePresetRows(info,factoryNames,prefs).find(row=>row.engine===21);
-  ok(midi && midi.canFavorite===false && !prefs.favorites[21],
+  const midi=E.devicePresetRows(info,factoryNames,prefs).find(row=>row.engine===info.midi);
+  ok(midi && midi.canFavorite===false && !prefs.favorites[info.midi],
      "shared: MIDI Track remains loadable without unsupported favorites");
-  ok(E.devicePresetRows(info,factoryNames,prefs).filter(row=>row.engine!==21).every(row=>row.canFavorite),
+  ok(E.devicePresetRows(info,factoryNames,prefs).filter(row=>row.engine!==info.midi).every(row=>row.canFavorite),
      "shared: factory sounds and saved slots retain their star controls");
   link.close();
 }
@@ -125,18 +134,18 @@ await prophetBackupTests();
   else {
     E.SYNTH.cache.clear();
     for (const [e, b] of Object.entries(SCHEMAS)) E.SYNTH.cache.set(+e, { key: 0, schema: E.SYNTH.parse(b) });
-    const engines = Array(20).fill("-"); engines[12] = "FM6"; engines[15] = "CZ-1"; engines[19] = "PROPHET";
+    const engines = MOCK_NAMES;
     const ctx = { keys: Array.from({ length: 92 }, (_, i) => `P${i}`), pe0: 84, engines };
     const file = readFileSync(join(HERE, "../assets/cz1-factory/cz1-factory.syx")), frames = E.SYNTH.frames(file);
     const cz = E.readSysexLibrary(file, "factory.syx", ctx);
-    ok(cz.length === frames.length && cz.length >= 64 && cz.every((p) => p.engine === 15 && p.engineName === "CZ-1"),
+    ok(cz.length === frames.length && cz.length >= 64 && cz.every((p) => p.engine === HN("CZ-1") && p.engineName === "CZ-1"),
        "Library SysEx: a real Casio factory bank imports offline (the schemas' patterns)");
-    ok(cz.every((p, i) => { const j = E.readLibraryFile(E.libraryFile("patch", [p], ctx), ctx).patches[0]; return j.engine === 15 && eq(j.sysex, frames[i]); }),
+    ok(cz.every((p, i) => { const j = E.readLibraryFile(E.libraryFile("patch", [p], ctx), ctx).patches[0]; return j.engine === HN("CZ-1") && eq(j.sysex, frames[i]); }),
        "Library SysEx: every frame survives JSON export/reimport byte for byte");
     const p5 = E.readSysexLibrary(readFileSync(join(HERE, "../assets/prophet5-factory/prophet5-v1.03.syx")), "prophet.syx", ctx);
-    ok(p5.length === 200 && p5.every((p) => p.engine === 19), "Library SysEx: the real Prophet factory library: 200 PROPHET programs");
+    ok(p5.length === 200 && p5.every((p) => p.engine === HN("PROPHET")), "Library SysEx: the real Prophet factory library: 200 PROPHET programs");
     const dx = [0xF0, 0x43, 0x00, 0x09, 0x20, 0x00, ...Array(4096).fill(0), 0, 0xF7];
-    ok(E.readSysexLibrary(dx, "bank.syx", ctx)[0].engine === 12, "Library SysEx: a Yamaha 32-voice bank belongs to FM6");
+    ok(E.readSysexLibrary(dx, "bank.syx", ctx)[0].engine === HN("FM6"), "Library SysEx: a Yamaha 32-voice bank belongs to FM6");
     const unknown = E.readSysexLibrary([0xF0, 0x7D, 0, 0xF7], "x.syx", ctx)[0];
     let cutOff = 0; try { E.readSysexLibrary([0xF0, 0x43, 0, 9], "cut.syx", ctx); } catch { cutOff++; }
     ok(unknown.engineName === "" && cutOff === 1, "Library SysEx: an unknown synth's frame kept unassigned, a cut file refused");
@@ -150,10 +159,11 @@ async function editorMock() {
   const link = new E.Link((d) => out.send(d), { timeout: 300 });
   inp.onmidimessage = (e) => link.receive(e.data);
   const rq = async (r, o) => link.request(r, o);
-  const info = E.parse[E.CMD.INFO](await rq(E.req.info()));
-  ok(info.nengines === 48 && info.engines[20] === "-" && info.engines[21] === "MIDI Track" && info.engines.slice(22).every((n) => n === "-") && info.engines[14] === "-" && info.engines[1] === "-" && info.engines[12] === "FM6" && info.engines[13] === "-"
- && info.engines[2] === "-" && info.engines[5] === "-" && info.engines[6] === "-" && info.engines[7] === "-" && info.engines[8] === "-" && info.engines[9] === "-" && info.engines[10] === "DRUM" && info.engines[11] === "-" && info.pcount === 124 && info.pe0 === 116 && info.engines[4] === "-",
-    "editor: INFO");
+  const info = E.parse[E.CMD.INFO](await rq(E.req.info())), H = engineHandles(info);
+  ok(info.nengines === 30 && info.engines.slice(0, 12).join() === "-,MIDI Track,PROPHET,FM6,CZ-1,SID,808,909,SID KIT,CR78,FM KIT,SAMPLER" && info.engines.slice(12).every((n) => n === "-") &&
+     info.midi === 1 && info.namespace.general === 0x40 && info.namespace.fm === 0x41 && info.namespace.cz === 0x42 && info.namespace.p5 === 0x43 &&
+     info.pcount === 124 && info.pe0 === 116 && info.v2 === true,
+    "editor: INFO (2.0 handles: 0 none, 1 MIDI Track, the shipped synths; the 0x49 tag's MIDI handle and user kinds)");
   let descs = 0;
   for (let i = 0; i < info.pcount; i++) if (E.parse[E.CMD.DESC](await rq(E.req.desc(0, i))).label) descs++;
   ok(descs === info.pcount-7, "editor: DESC for every parameter");
@@ -177,7 +187,7 @@ async function editorMock() {
     await rq(E.req.set(0, 53, 12));
     await rq(E.req.set(0, 54, -30));
     const on = E.parse[E.CMD.DUMP](await rq(E.req.dump()), info);
-    await rq(E.req.preset(3, 2));
+    await rq(E.req.preset(H("SID"), 2));
     const off = E.parse[E.CMD.DUMP](await rq(E.req.dump()), info);
     ok(on.p[52] === 1 && on.p[53] === 12 && on.p[54] === -30 && off.p.slice(49, 61).every((v) => v === 0),
       "editor: a factory preset turns every matrix slot off");
@@ -191,7 +201,7 @@ async function editorMock() {
       "editor: the chord keys 81, 82 over DESC");
     for (const mode of [10, 11]) {
       await rq(E.req.set(0, 81, mode));
-      await rq(E.req.preset(3, 3));
+      await rq(E.req.preset(H("SID"), 3));
       ok(E.parse[E.CMD.DUMP](await rq(E.req.dump()), info).p[81] === mode,
         `editor: appended ${mode === 10 ? "AUTO" : "AUTO2"} chord mode can be selected and survives a sound load`);
     }
@@ -204,7 +214,7 @@ async function editorMock() {
     await rq(E.req.set(0, 115, 2));
     await rq(E.req.set(0, 81, 2));
     await rq(E.req.set(0, 82, 4));
-    await rq(E.req.preset(3, 3));
+    await rq(E.req.preset(H("SID"), 3));
     const kept = E.parse[E.CMD.DUMP](await rq(E.req.dump()), info);
     ok(kept.p[81] === 2 && kept.p[82] === 4 && kept.preset === 3, "editor: a factory preset keeps CHRD and VOIC (the track's)");
     ok(kept.p[114] === 4 && kept.p[115] === 2, "editor: sound loads preserve strum and stroke");
@@ -215,6 +225,7 @@ async function editorMock() {
   const baseInfo = [116,101,115,116,0, 0, 69, 27, 64, 61, 4];
   const untagged = E.parse[E.CMD.INFO]([...baseInfo, 15]);
   ok(!untagged.chainRows && !untagged.uiCaps, "editor: an untagged PR capability cannot masquerade as SONG or preferences");
+  ok(untagged.v2 === false, "editor: firmware without INFO's 0x49 tag is Melodee 1.x (its files and records 1.x's)");
   const oldSong = E.parse[E.CMD.INFO]([...baseInfo, 16]);
   ok(oldSong.chainRows === 16 && !oldSong.uiCaps, "editor: existing SONG firmware remains compatible without preference probes");
   const tagged = E.parse[E.CMD.INFO]([...baseInfo, 16, 0x55, 1, 11]);
@@ -223,7 +234,7 @@ async function editorMock() {
   ok(pending.rc === 4 && pending.on && pending.engine === 0, "editor: queued favorite response is applied while waiting for STOP");
   const names = [];
   for (let e = 0; e < info.nengines; e++) names.push(E.parse[E.CMD.NAMES](await rq(E.req.names(e))).names);
-  const cut = E.parse[E.CMD.NAMES]([15, 4, 65, 0, 66, 0, 67]);   /* 0.11: CZ-1's names overran the 600-byte reply */
+  const cut = E.parse[E.CMD.NAMES]([H("CZ-1"), 4, 65, 0, 66, 0, 67]);   /* 0.11: CZ-1's names overran the 600-byte reply */
   ok(cut.names.join() === "A,B,PRESET 3,PRESET 4" && !cut.titles.length, "editor: a NAMES reply cut short keeps its whole names");
   let prefs = await E.readDevicePreferences(rq, info, names);
   ok(info.uiCaps === 121 && prefs.palettes.length === 8 && prefs.palettes[0] === "MONO" && prefs.palettes.includes("HI-CON"),
@@ -241,13 +252,13 @@ async function editorMock() {
   ok(E.parse[E.CMD.UI_SET](await rq(E.req.uiSet(0, 8))).rc === 1, "editor: out-of-range palette refused");
   ok(E.parse[E.CMD.UI_SET](await rq(E.req.uiSet(1, 1))).rc === 2, "editor: the retired font weight answers not supported");
   ok(E.parse[E.CMD.FAV_SET](await rq(E.req.favSet(info.namespace.general, 31, true))).rc === 1, "editor: empty user slot cannot be favorited");
-  await rq(E.req.favSet(19, 0, true));
+  await rq(E.req.favSet(H("PROPHET"), 0, true));
   await rq(E.req.uiSet(3, 1));
   prefs = await E.readDevicePreferences(rq, info, names, prefs);
-  ok(E.devicePresetRows(info, names, prefs).length === 1 && prefs.favorites[19][0], "editor: favorites filter follows device state");
-  m.state.favorites[19][0] = false; m.state.favorites[3][0] = true;
+  ok(E.devicePresetRows(info, names, prefs).length === 1 && prefs.favorites[H("PROPHET")][0], "editor: favorites filter follows device state");
+  m.state.favorites[H("PROPHET")][0] = false; m.state.favorites[H("SID")][0] = true;
   prefs = await E.readDevicePreferences(rq, info, names, prefs);
-  ok(!prefs.favorites[19][0] && prefs.favorites[3][0], "editor: panel-side favorite changes refresh");
+  ok(!prefs.favorites[H("PROPHET")][0] && prefs.favorites[H("SID")][0], "editor: panel-side favorite changes refresh");
   await rq(E.req.upStore(31, "FAVORITE"));
   await rq(E.req.favSet(info.namespace.general, 31, true));
   prefs = await E.readDevicePreferences(rq, info, names, prefs);
@@ -258,17 +269,17 @@ async function editorMock() {
   await rq(E.req.upErase(31));
   prefs = await E.readDevicePreferences(rq, info, names, prefs);
   ok(!prefs.favorites[info.namespace.general][31] && !E.devicePresetRows(info, names, prefs).some((r) => r.user), "editor: erased slot disappears and loses star");
-  {   /* the lists in the device's order: FM6 second, MIDI Track last, "-" never; the numbers stay */
+  {   /* the lists in the device's order: FM6 second, MIDI Track last, "-" never; the handles stay */
     const shown = E.engineOrder(info.engines).map((i) => info.engines[i]);
-    ok(shown.join() === "PROPHET,FM6,CZ-1,SID,DRUM,MIDI Track" &&
-       E.engineOrder(info.engines)[1] === 12 && E.engineOrder(info.engines).at(-1) === 21,
+    ok(shown.join() === "PROPHET,FM6,CZ-1,SID,808,909,SID KIT,CR78,FM KIT,SAMPLER,MIDI Track" &&
+       E.engineOrder(info.engines)[1] === H("FM6") && E.engineOrder(info.engines).at(-1) === info.midi,
        "editor: engines listed FM6 second, MIDI Track last (indices kept)");
-    ok(E.engineOrder(["ANALOG", "X", "-", "DRUM", "FM6"]).join() === "0,4,3,1", "editor: an unknown engine follows the known ones");
-    m.state.favorites[10][0] = m.state.favorites[12][0] = true;
+    ok(E.engineOrder(["X", "-", "808", "FM6"]).join() === "3,2,0", "editor: an unknown engine follows the known ones");
+    m.state.favorites[H("808")][0] = m.state.favorites[H("FM6")][0] = true;
     await rq(E.req.uiSet(3, 0));
     prefs = await E.readDevicePreferences(rq, info, names, prefs);
     const rows = E.devicePresetRows(info, names, prefs).filter((r) => !r.user), eng = [...new Set(rows.map((r) => r.engine))];
-    ok(eng[0] === 19 && eng[1] === 12 && eng[eng.length - 1] === 21, "editor: device presets in the device's engine order");
+    ok(eng[0] === H("PROPHET") && eng[1] === H("FM6") && eng[eng.length - 1] === info.midi, "editor: device presets in the device's engine order");
   }
   const none = await E.readDevicePreferences(() => { throw new Error("unexpected request"); }, { uiCaps: 0 }, []);
   ok(none === null, "editor: old firmware receives no unsupported preference requests");
@@ -348,16 +359,17 @@ async function editorMock() {
 
 async function editorSamplePresets() {
  const {rq,done}=attachMock();const info=E.parse[E.CMD.INFO](await rq(E.req.info()));
- ok([4,6,7,8,9,13,14].every(i=>info.engines[i]==="-" && !E.engineOrder(info.engines).includes(i)),"editor: SAMPLE, GRAIN and SLICE removed; other engine IDs kept");done();
+ ok(!info.engines.some(n=>["SAMPLE","GRAIN","SLICE"].includes(n)) && E.engineOrder(info.engines).every(i=>info.engines[i]!=="-"),
+    "editor: SAMPLE, GRAIN and SLICE have no handle; no empty handle listed");done();
 }
 
 async function editorMidiTrack() {
   const {m,rq,done} = attachMock();
   const C=E.CMD, info=E.parse[C.INFO](await rq(E.req.info()));
-  await rq(E.req.track(2)); await rq(E.req.set(1,20,21));
+  await rq(E.req.track(2)); await rq(E.req.set(1,20,info.midi));
   let dump=E.parse[C.TRACK_DUMP](await rq(E.req.trackDump(2)), info);
-  ok(dump.engine===21 && dump.p[info.pe0]===3, "MIDI Track: editor defaults output channel to track number");
-  const names=E.parse[C.NAMES](await rq(E.req.names(21)));
+  ok(dump.engine===info.midi && dump.p[info.pe0]===3, "MIDI Track: editor defaults output channel to track number");
+  const names=E.parse[C.NAMES](await rq(E.req.names(info.midi)));
   ok(names.names.length===1 && names.names[0]==="MIDI Track", "MIDI Track: one clearly named factory preset");
   await rq(E.req.set(0,info.pe0,16)); await rq(E.req.set(0,info.pe0+1,1));
   const level=dump.p[0],pan=dump.p[39];
@@ -369,7 +381,7 @@ async function editorMidiTrack() {
     "MIDI Track: editor disables audio controls and FX while retaining mute");
   await rq(E.req.project(1,0)); await rq(E.req.set(0,info.pe0,1)); await rq(E.req.project(0,0));
   dump=E.parse[C.TRACK_DUMP](await rq(E.req.trackDump(2)), info);
-  ok(dump.engine===21 && dump.p[info.pe0]===16 && dump.p[info.pe0+1]===1, "MIDI Track: editor project round-trip retains routing");
+  ok(dump.engine===info.midi && dump.p[info.pe0]===16 && dump.p[info.pe0+1]===1, "MIDI Track: editor project round-trip retains routing");
   done();
 }
 
@@ -377,13 +389,16 @@ async function editorMidiTrack() {
    parameter descriptors, engines (titles, EDIT, presets), power-on sounds */
 function mockTables() {
   {
-    const m0 = E.makeMockDevice({ auto: false }), ph = m0.tables.ENG[9], dr = m0.tables.ENG[10];
+    const m0 = E.makeMockDevice({ auto: false }), dr = m0.tables.ENG.find((e) => e.name === "808");
     m0.stop();
-    ok([2,5,6,7,9,11].every((i) => m0.tables.ENG[i].name === "-" && !m0.tables.ENG[i].presets.length),
-       "editor: PHASE, VOICE, TRIO, WHEEL, PHYS and NOISE retired with their original IDs reserved");
-    ok(dr.name === "DRUM" && dr.edit.map((d) => d.label).join() === "KIT,TUNE,TONE,DECY,SNAP,ACC,KICK,DRV" &&
-       dr.edit[0].names.join() === "808,909,SID,CR78,FM,KIT 1,KIT 2,KIT 3,KIT 4,KIT 5,KIT 6,KIT 7,KIT 8" && dr.edit[0].min === 4 && dr.edit[0].max === 16 && dr.presets.length === 6 && dr.presets[0].name === "808 KIT" && dr.presets[2].name === "SID KIT" && dr.presets[3].name === "SID DIGI" && dr.presets[4].name === "CR78 KIT" && dr.presets[5].name === "FM KIT",
-       "editor: DRUM engine 10 (KIT TUNE TONE DECY SNAP ACC KICK DRV, KIT 808), 808, 909, SID, CR78, FM kits, user kits 1..8");
+    ok(!m0.tables.ENG.some((e) => ["PHASE", "VOICE", "TRIO", "WHEEL", "PHYS", "NOISE"].includes(e.name)) &&
+       m0.tables.ENG.filter((e) => e.name === "-").every((e) => !e.presets.length),
+       "editor: PHASE, VOICE, TRIO, WHEEL, PHYS and NOISE retired (no handle); a free handle has no presets");
+    const kits = ["808", "909", "SID KIT", "CR78", "FM KIT", "SAMPLER"].map((n) => m0.tables.ENG.find((e) => e.name === n));
+    ok(dr.name === "808" && dr.edit.map((d) => d.label).join() === "KIT,TUNE,TONE,DECY,SNAP,ACC,KICK,DRV" &&
+       kits.every((k) => k && k.edit[0].label === "KIT") && kits.map((k) => k.edit[0].min + ".." + k.edit[0].max).join() === "4..4,5..5,6..6,7..7,8..8,9..16" &&
+       kits.map((k) => k.presets.map((p) => p.name).join("+")).join() === "808 KIT,909 KIT,SID KIT+SID DIGI,CR78 KIT,FM KIT,KIT 1+KIT 2+KIT 3+KIT 4+KIT 5+KIT 6+KIT 7+KIT 8",
+       "editor: the kits, synths of their own (KIT TUNE TONE DECY SNAP ACC KICK DRV): 808, 909, SID KIT, CR78, FM KIT, SAMPLER (KIT 1..8)");
   }
   const dj = join(HERE, "../build/host/desc.json");
   if (!existsSync(dj)) { console.log("editor: mock tables == firmware (no build/host/desc.json)        skip"); return; }
@@ -450,8 +465,8 @@ const emptyStep = { n: 0, notes: [0, 0, 0, 0], time: 2, flags: 0, vel: 0 };
 async function trackEffects() {
   const {rq,done}=attachMock({});
   try {
-    const info=E.parse[E.CMD.INFO](await rq(E.req.info()));
-    await rq(E.req.preset(12,0));
+    const info=E.parse[E.CMD.INFO](await rq(E.req.info())),H=engineHandles(info);
+    await rq(E.req.preset(H("FM6"),0));
     const fx=[10,80,30,71,11,95,55,65,10,105,88,99];
     for(let i=0;i<fx.length;i++)await rq(E.req.set(0,96+i,fx[i]));
     for(let i=0;i<3;i++)await rq(E.req.set(0,111+i,i?-20-i:24));
@@ -461,7 +476,7 @@ async function trackEffects() {
     await E.bank.store(rq,30,"DRY PATCH");
     const stored=await E.bank.get(rq,info,30);
     ok(eq(stored.p.slice(96,108),cap.p.slice(96,108)),"FX: device preset store uses dry insert defaults");
-    await rq(E.req.preset(3,1));await E.bank.load(rq,30);await E.auditionPatch(rq,info,cap);
+    await rq(E.req.preset(H("SID"),1));await E.bank.load(rq,30);await E.auditionPatch(rq,info,cap);
     const dump=E.parse[E.CMD.DUMP](await rq(E.req.dump()),info);
     ok(eq(dump.p.slice(96,108),fx),"FX: factory, user and librarian sound loads preserve all three track slots");
     ok(eq(dump.p.slice(111,114),[24,-21,-22]),"FX: sound loads preserve TONE");
@@ -498,7 +513,7 @@ async function trackEffects() {
 async function editorLibrarian() {
   const { m, rq, done } = attachMock({});
   const C = E.CMD;
-  const info = E.parse[C.INFO](await rq(E.req.info()));
+  const info = E.parse[C.INFO](await rq(E.req.info())), H = engineHandles(info);
   const pdesc = [];
   for (let i = 0; i < info.pcount; i++) pdesc.push(E.parse[C.DESC](await rq(E.req.desc(0, i))));
   const keys = E.paramKeys(pdesc, info.pe0, info.pcount);
@@ -508,13 +523,13 @@ async function editorLibrarian() {
   ok(b.total === 64 && b.slots.length === 64 && b.slots[1].used && b.slots[1].name === "GLASS BELL" && !b.slots[3].used
     && b.slots[63].slot === 63, "librarian: UP_LIST, 64 slots in 4 frames");
 
-  await rq(E.req.preset(3, 6));                  /* SID SAW BASS on the ACID steps (the power-on Prophet: its own slots) */
+  await rq(E.req.preset(H("SID"), 6));           /* SID SAW BASS on the ACID steps (the power-on Prophet: its own slots) */
   const cap = (await E.capturePatch(rq, info, "acid test")).patch;
-  ok(cap.engine === 3 && cap.p.length === info.pcount && cap.pattern && cap.pattern[0][0] === 45 && cap.pattern[0][1] === 1,
+  ok(cap.engine === H("SID") && cap.p.length === info.pcount && cap.pattern && cap.pattern[0][0] === 45 && cap.pattern[0][1] === 1,
     "librarian: capture = DUMP + first 16 steps");
   let rc = await E.bank.put(rq, 10, cap);
   const g = await E.bank.get(rq, info, 10);
-  ok(rc === 0 && g.used && g.name === "acid test" && g.engine === 3 && eq(g.p, cap.p) && js(g.pattern) === js(cap.pattern),
+  ok(rc === 0 && g.used && g.name === "acid test" && g.engine === H("SID") && eq(g.p, cap.p) && js(g.pattern) === js(cap.pattern),
     "librarian: UP_PUT -> UP_GET round trip");
   const bad = E.parse[C.UP_PUT](await rq(E.req.upPut(64, cap), { timeout: 2500, retries: 0 }));
   ok(bad.rc === 1, "librarian: UP_PUT to a slot past the bank -> rc 1");
@@ -527,14 +542,14 @@ async function editorLibrarian() {
   ok(rc === 0 && g2.name === "STORED" && g2.engine === d1.engine && eq(g2.p, d1.p) && g2.p[1] === 33, "librarian: UP_STORE keeps the current sound");
 
   /* another engine, an empty sequencer, then UP_LOAD brings the sound back, not the stored pattern */
-  await rq(E.req.preset(2, 0));
+  await rq(E.req.preset(H("FM6"), 0));
   for (let i = 0; i < info.nstep; i++) await rq(E.req.stepSet(i, emptyStep));
   await rq(E.req.set(0, 17, 3));                 /* the track's own: ARP MODE */
   rc = await E.bank.load(rq, 10);
   const d2 = E.parse[C.DUMP](await rq(E.req.dump()), info);
   const st = [];
   for (let i = 0; i < 16; i++) st.push(E.parse[C.STEP_GET](await rq(E.req.stepGet(i))));
-  ok(rc === 0 && d2.engine === 3 && eq(d2.p.filter((_, i) => i !== 17), cap.p.filter((_, i) => i !== 17)) && d2.p[17] === 3
+  ok(rc === 0 && d2.engine === H("SID") && eq(d2.p.filter((_, i) => i !== 17), cap.p.filter((_, i) => i !== 17)) && d2.p[17] === 3
     && st.every((x) => !x.n) && cap.pattern, "librarian: UP_LOAD applies the sound only (steps and the track's ARP stay)");
   await rq(E.req.set(0, 17, 0));
   for (let i = 0; i < 16; i++) await rq(E.req.stepSet(i, E.stepsFromPattern(cap.pattern)[i]));   /* (for the captures below) */
@@ -566,7 +581,7 @@ async function editorLibrarian() {
   await E.auditionPatch(rq, info, bell, { gEng: 20 });
   const s20 = E.parse[C.STEP_GET](await rq(E.req.stepGet(20)));
   const d4 = E.parse[C.DUMP](await rq(E.req.dump()), info);
-  ok(d4.engine === bell.engine && bell.engine === 12 && s20.notes[0] === 50 && d4.p[29] === 24 && eq(d4.p.filter((_, i) => !own.has(i)), bell.p.filter((_, i) => !own.has(i))),
+  ok(d4.engine === bell.engine && bell.engine === H("FM6") && s20.notes[0] === 50 && d4.p[29] === 24 && eq(d4.p.filter((_, i) => !own.has(i)), bell.p.filter((_, i) => !own.has(i))),
     "librarian: a second audition keeps the sequence too");
   await rq(E.req.set(0, 29, 16));
   await rq(E.req.set(0, 17, 0));
@@ -586,7 +601,7 @@ async function editorLibrarian() {
   const ctx = { keys, engines: info.engines, firmware: info.version, pe0: info.pe0 };
   const pts = [cap, { ...bass, engineName: info.engines[bass.engine], tags: ["bass", "device"] }];
   const file = JSON.parse(JSON.stringify(E.libraryFile("library", pts, ctx)));
-  ok(file.format === "felucca-library" && file.version === 1 && file.pCount === info.pcount && file.paramLabels.length === info.pcount && file.paramLabels[81] === "CHRD" && file.paramLabels[82] === "VOIC" && file.paramLabels[83] === "DEG" && file.paramLabels.slice(92, 96).join() === "SYNC,TRIG,POL,SPRD" && file.engines.length === 48,
+  ok(file.format === "felucca-library" && file.version === 1 && file.pCount === info.pcount && file.paramLabels.length === info.pcount && file.paramLabels[81] === "CHRD" && file.paramLabels[82] === "VOIC" && file.paramLabels[83] === "DEG" && file.paramLabels.slice(92, 96).join() === "SYNC,TRIG,POL,SPRD" && file.engines.length === info.nengines,
     "library file: versioned, with P_COUNT, labels and engines");
   const back = E.readLibraryFile(file, ctx);
   const oldKeys = keys.slice(); oldKeys[8] = "FX";
@@ -645,8 +660,9 @@ async function editorLibrarian() {
     const good = (q) => q.length === info.pcount && eq(q.slice(0, 83), cap.p.slice(0, 83)) && q.slice(83, info.pe0).every((v) => v === null) && eq(q.slice(info.pe0), cap.p.slice(info.pe0));
     ok(keys91[83] === "E0" && good(lp) && good(nk), "library file: Felucca 1.0 files (91 parameters) map the engine's 8 to E0..E7, DEG unset");
   }
+  /* (a 1.x file: its engine number 3 was SID's then; the name says which synth) */
   const old = E.readLibraryFile({ format: "felucca-patch", version: 1, engine: 3, preset: 6, engineName: "SID", presetName: "SAW BASS", p: d2.p, steps: E.stepsFromPattern(cap.pattern) }, ctx);
-  ok(old.patches.length === 1 && eq(old.patches[0].p, d2.p) && js(old.patches[0].pattern) === js(cap.pattern), "library file: reads the old \"Save to file\" format");
+  ok(old.patches.length === 1 && old.patches[0].engine === H("SID") && eq(old.patches[0].p, d2.p) && js(old.patches[0].pattern) === js(cap.pattern), "library file: reads the old \"Save to file\" format (the synth by its name)");
   let threw = false;
   try { E.readLibraryFile({ format: "something" }, ctx); } catch (e) { threw = true; }
   ok(threw, "library file: unknown format -> error");
@@ -669,7 +685,7 @@ async function editorGrid() {
   const w = E.parse[C.TRACK_STEP](await rq(E.req.trackStep(2, 4, { n: 0, notes: [0, 0, 0, 0], time: 0, flags: 0, vel: 0, hit: 0x12, acc: 0x02 })));
   ok(w.hit === 0x12 && w.acc === 0x02 && E.parse[C.TRACK_STEP]([2, 4, 0, 0, 0, 0, 0, 0, 0, 0]).hit === 0,
     "grid: TRACK_STEP carries the hits (an older firmware's reply: none)");
-  await rq(E.req.preset(10, 0));                   /* the selected track a DRUM kit, its 16 steps a grid */
+  await rq(E.req.preset(engineHandles(info)("808"), 0));   /* the selected track the 808 kit, its 16 steps a grid */
   for (let i = 0; i < 16; i++) {
     await rq(E.req.stepSet(i, { n: i === 2 ? 1 : 0, notes: [i === 2 ? 49 : 0, 0, 0, 0], time: i % 4 === 0 || i === 2 ? 0 : 2, flags: 0,
       vel: 0, hit: i % 4 === 0 ? 1 | (i === 0 ? 128 : 0) : 0, acc: i === 0 ? 128 : 0 }));
@@ -722,7 +738,7 @@ async function editorLive() {
   ok(s7.index === 7 && r && E.parse[C.RELOAD](r.a).preset === rl.preset && sc && E.parse[C.STEP_CHANGED](sc.a).index === 3,
     "live: RELOAD and STEP_CHANGED routed");
   const nr = ev.pushes.filter((f) => f.cmd === C.RELOAD).length;
-  await rq(E.req.preset(1, 2));
+  await rq(E.req.preset(engineHandles(info)("FM6"), 2));
   await rq(E.req.stepSet(9, { n: 1, notes: [62, 0, 0, 0], time: 0, flags: 0, vel: 90 }));
   await sleep(10);
   ok(ev.pushes.filter((f) => f.cmd === C.RELOAD).length === nr + 1 && !ev.pushes.some((f) => f.cmd === C.STEP_CHANGED && f.a[0] === 9),
@@ -782,10 +798,10 @@ async function preferenceReplies() {
 async function editorTracks() {
   const C = E.CMD;
   const { m, rq, ev, done } = attachMock({ watchMs: 1000 });
-  const info = E.parse[C.INFO](await rq(E.req.info()));
+  const info = E.parse[C.INFO](await rq(E.req.info())), H = engineHandles(info);
   const tr = E.parse[C.TRACK](await rq(E.req.track()));
-  ok(info.ntrk === 4 && tr.sel === 0 && tr.ntrk === 4 && tr.tracks[0].engine === 19 && tr.tracks[1].engine === 12
-    && tr.tracks[3].engine === 10 && tr.tracks[3].preset === 0, "tracks: INFO NTRK, TRACK lists 4 parts (track 4: DRUM KIT)");
+  ok(info.ntrk === 4 && tr.sel === 0 && tr.ntrk === 4 && tr.tracks[0].engine === H("PROPHET") && tr.tracks[1].engine === H("FM6")
+    && tr.tracks[3].engine === H("808") && tr.tracks[3].preset === 0, "tracks: INFO NTRK, TRACK lists 4 parts (track 4: the 808 KIT)");
   /* the v1 commands follow the selected track */
   const d0 = E.parse[C.DUMP](await rq(E.req.dump()), info);
   const t1 = E.parse[C.TRACK](await rq(E.req.track(1)));
@@ -793,7 +809,7 @@ async function editorTracks() {
   await rq(E.req.set(0, 1, 77));
   const td0 = E.parse[C.TRACK_DUMP](await rq(E.req.trackDump(0)), info);
   const td1 = E.parse[C.TRACK_DUMP](await rq(E.req.trackDump(1)), info);
-  ok(t1.sel === 1 && d1.engine === 12 && d0.engine === 19 && td1.p[1] === 77 && td0.p[1] === d0.p[1] && td0.p[1] !== 77,
+  ok(t1.sel === 1 && d1.engine === H("FM6") && d0.engine === H("PROPHET") && td1.p[1] === 77 && td0.p[1] === d0.p[1] && td0.p[1] !== 77,
     "tracks: TRACK selects; DUMP / SET act on it, TRACK_DUMP reads any track");
   /* steps of a track that is not selected */
   const w = E.parse[C.TRACK_STEP](await rq(E.req.trackStep(2, 5, { n: 2, notes: [60, 67, 0, 0], time: 0, flags: 1, vel: 99 })));
@@ -813,7 +829,7 @@ async function editorTracks() {
   const us = E.parse[C.UP_STORE](await rq(E.req.upStore(20, "X"), { timeout: 2500, retries: 0 }));
   const ul = E.parse[C.UP_LOAD](await rq(E.req.upLoad(1), { timeout: 2500, retries: 0 }));
   const dl = E.parse[C.DUMP](await rq(E.req.dump()), info);
-  ok(dd.engine === 10 && us.rc === 0 && ul.rc === 0 && dl.engine === 12, "tracks: track 4 selected -> DUMP engine DRUM, UP_STORE / UP_LOAD rc 0");
+  ok(dd.engine === H("808") && us.rc === 0 && ul.rc === 0 && dl.engine === H("FM6"), "tracks: track 4 selected -> DUMP engine 808, UP_STORE / UP_LOAD rc 0");
   /* pushes carry the selected track */
   await rq(E.req.track(0));
   ok(await E.startWatch(rq), "tracks: WATCH on");
@@ -846,7 +862,7 @@ async function editorMixer() {
   const info = E.parse[C.INFO](await rq(E.req.info()));
   const PAN = 39, MUTE = 40;
   const m0 = await E.mixer.read(rq, info, { pan: PAN });
-  ok(m0.ntrk === 4 && m0.tracks.length === 4 && m0.tracks[1].pan === -24 && m0.tracks[2].pan === 20 && m0.tracks[3].engine === 10
+  ok(m0.ntrk === 4 && m0.tracks.length === 4 && m0.tracks[1].pan === -24 && m0.tracks[2].pan === 20 && m0.tracks[3].engine === engineHandles(info)("808")
     && m0.tracks.every((x) => Number.isInteger(x.level) && (x.mute === 0 || x.mute === 1)), "mixer: read = TRACK + pan of every track (TRACK_DUMP)");
   /* level / mute of tracks that are not selected (clamped) */
   const a = await E.mixer.setMix(rq, 2, 70, 1);
@@ -948,6 +964,8 @@ async function editorTrackParam() {
    firmware's schemas: no synth's own code in the editor */
 async function synthTests() {
   if (!SCHEMAS) { console.log("synths (no build/host/desc.json)".padEnd(64) + " skip"); return; }
+  const FM = HN("FM6"), CZ = HN("CZ-1"), P5 = HN("PROPHET"), SID = HN("SID");   /* (the schemas: by handle) */
+  const KITS = KIT_NAMES.map((n) => FW_NAMES.indexOf(n));                         /* (the kit synths: the firmware's handles) */
   const schemas = Object.fromEntries(Object.entries(SCHEMAS).map(([e, b]) => [e, Uint8Array.from(b)]));
   const parsed = new Map(Object.entries(schemas).map(([e, b]) => [+e, E.SYNTH.parse(b)]));
   const bad = [];
@@ -960,19 +978,20 @@ async function synthTests() {
       if (!eq(b, s.def)) bad.push(`${e}: ${p.id}`);
     }
   }
-  ok(parsed.size === 5 && !bad.length, `synths: schemas ${[...parsed.keys()].join(" ")} parse, every field reads and writes back${bad.length ? " (" + bad.slice(0, 3) + ")" : ""}`);
-  {   /* a kit synth's pads and stored packing, from its schema alone (DRUM: 1.x's KIT wire, 54 bytes) */
-    const kit = [...parsed].filter(([, s]) => s.pads).map(([e]) => e), d = parsed.get(10);
+  ok(parsed.size === 4 + KITS.length && KITS.every((e) => parsed.has(e)) && !bad.length, `synths: schemas ${[...parsed.keys()].join(" ")} parse, every field reads and writes back${bad.length ? " (" + bad.slice(0, 3) + ")" : ""}`);
+  {   /* a kit synth's pads and stored packing, from its schema alone (each kit's: 1.x's KIT wire, 54 bytes) */
+    const kit = [...parsed].filter(([, s]) => s.pads).map(([e]) => e), d = parsed.get(KITS[0]);
     const zero = (() => { const r = new Array(E.SYNTH.packedLen(d)).fill(0); let pos = 0;   /* (every offset 0: TUNE 24, the others 64) */
       const put = (v, w) => { for (let i = 0; i < w; i++, pos++) if ((v >> i) & 1) r[pos >> 3] |= 1 << (pos & 7); };
       for (let g = 0; g < 16; g++) { put(24, 6); put(64, 7); put(64, 7); put(0, 7); } return r; })();
     const far = zero.slice(); far[0] = (far[0] & ~63) | 49;  /* (TUNE +25: past its range) */
-    ok(kit.length === 1 && kit[0] === 10 && d.pads.lanes.join() === "KICK,SNARE,CLAP,HATCL,HATOP,TOM,RIM,BELL" &&
-       E.SYNTH.packedLen(d) === 54 && E.SYNTH.packedOk(d, zero) && E.SYNTH.unpack(d, zero).every((v) => v === 0) &&
-       !E.SYNTH.packedOk(d, far) && !E.SYNTH.packedOk(parsed.get(3), zero),
-       "synths: a kit's pads and its stored packing read from its schema (DRUM's: 54 bytes, its checks; SID: none)");
+    const each = KITS.every((e) => { const k = parsed.get(e);
+      return k && k.pads.lanes.join() === "KICK,SNARE,CLAP,HATCL,HATOP,TOM,RIM,BELL" && E.SYNTH.packedLen(k) === 54 &&
+             E.SYNTH.packedOk(k, zero) && E.SYNTH.unpack(k, zero).every((v) => v === 0) && !E.SYNTH.packedOk(k, far); });
+    ok(d && kit.length === KITS.length && KITS.every((e) => kit.includes(e)) && each && !E.SYNTH.packedOk(parsed.get(SID), zero),
+       "synths: each kit synth's pads and stored packing read from its schema (808 .. SAMPLER: 54 bytes, its checks; SID: none)");
   }
-  const shown = [12, 15, 19].map((e) => [...E.SYNTH.sections(parsed.get(e))].length);
+  const shown = [FM, CZ, P5].map((e) => [...E.SYNTH.sections(parsed.get(e))].length);
   ok(shown.every((n) => n > 1), `synths: FM6, CZ-1 and PROPHET pages from their schemas (${shown} sections)`);
 
   E.SYNTH.cache.clear();
@@ -981,48 +1000,49 @@ async function synthTests() {
   ok(info.synths, "synths: INFO's 0x59 tag (the synths' commands)");
   let n = 0;
   const rqc = (r, o) => { n++; return rq(r, o); };
-  const fm = await E.synthSchema(rqc, 12), pages = n, again = await E.synthSchema(rqc, 12);
-  ok(!!fm && fm === again && pages === 1 + Math.ceil(schemas[12].length / 840) && n === pages + 1 && fm.title === parsed.get(12).title,
+  const fm = await E.synthSchema(rqc, FM), pages = n, again = await E.synthSchema(rqc, FM);
+  ok(!!fm && fm === again && pages === 1 + Math.ceil(schemas[FM].length / 840) && n === pages + 1 && fm.title === parsed.get(FM).title,
      `synths: a schema's key, then its bytes in ${pages - 1} pages; again: the key only (the cache)`);
-  E.SYNTH.cache.set(15, { key: (schemas[15][48] | schemas[15][49] << 8 | schemas[15][50] << 16 | schemas[15][51] << 24) >>> 0, schema: parsed.get(15) });
+  E.SYNTH.cache.set(CZ, { key: (schemas[CZ][48] | schemas[CZ][49] << 8 | schemas[CZ][50] << 16 | schemas[CZ][51] << 24) >>> 0, schema: parsed.get(CZ) });
   n = 0;
-  ok(await E.synthSchema(rqc, 15) === parsed.get(15) && n === 1, "synths: a schema seeded by its key (Studio's bundle): one request");
-  ok(await E.synthSchema(rq, 0) === null, "synths: an engine without a schema has none");
+  ok(await E.synthSchema(rqc, CZ) === parsed.get(CZ) && n === 1, "synths: a schema seeded by its key (Studio's bundle): one request");
+  ok(await E.synthSchema(rq, 0) === null && await E.synthSchema(rq, info.midi) === null, "synths: no synth (handle 0) and the MIDI Track have no schema");
 
-  const part = 1, p5s = await E.synthSchema(rq, 19), czs = await E.synthSchema(rq, 15);   /* (the CZ-1's values are its module's: CALL) */
+  const part = 1, p5s = await E.synthSchema(rq, P5), czs = await E.synthSchema(rq, CZ);   /* (the CZ-1's values are its module's: CALL) */
   const p = [...p5s.params.values()].find((q) => q.kind === 0 && q.max > q.min && !(q.flags & 4) && E.SYNTH.get(q, p5s.def, null) !== q.max);
-  const put = E.parse[E.CMD.PATCH](await rq(E.req.patch(1, 0, 19, part, p5s.def)));
+  const put = E.parse[E.CMD.PATCH](await rq(E.req.patch(1, 0, P5, part, p5s.def)));
   const set = E.parse[E.CMD.PARAM](await rq(E.req.paramSet(part, p.id, p.max)));
   const get = E.parse[E.CMD.PARAM](await rq(E.req.paramGet(part, [p.id], true)));
   const got = E.parse[E.CMD.PATCH](await rq(E.req.patch(0, 0, 127, part)));
-  ok(!put.rc && m.state.tracks[part].engine === 19 && set.value === p.max && get.engine === 19 && get.values[0] === p.max &&
-     got.engine === 19 && E.SYNTH.get(p, got.bytes, null) === p.max, `synths: PATCH puts a part's patch, PARAM sets and reads ${p.label || p.name} by id`);
+  ok(!put.rc && m.state.tracks[part].engine === P5 && set.value === p.max && get.engine === P5 && get.values[0] === p.max &&
+     got.engine === P5 && E.SYNTH.get(p, got.bytes, null) === p.max, `synths: PATCH puts a part's patch, PARAM sets and reads ${p.label || p.name} by id`);
   await rq(E.req.track(part));
   const cap = (await E.capturePatch(rq, info, "CAP")).patch;
-  ok(cap.engine === 19 && eq(cap.native, E.SYNTH.sound(p5s, got.bytes)), "synths: library capture keeps the part's sound");
+  ok(cap.engine === P5 && eq(cap.native, E.SYNTH.sound(p5s, got.bytes)), "synths: library capture keeps the part's sound");
   const voice = E.SYNTH.sound(fm, fm.def);
   voice[0] = 99;
-  await E.auditionPatch(rq, info, { engine: 12, native: voice, p: [] }, { track: part });
-  const back = E.parse[E.CMD.PATCH](await rq(E.req.patch(0, 0, 12, part)));
+  await E.auditionPatch(rq, info, { engine: FM, native: voice, p: [] }, { track: part });
+  const back = E.parse[E.CMD.PATCH](await rq(E.req.patch(0, 0, FM, part)));
   ok(voice.length === fm.head.sound && voice.length < fm.head.patch && back.bytes.length === fm.head.patch && eq(back.bytes.slice(0, voice.length), voice),
      "synths: audition puts a slot's sound onto the part's whole patch");
-  await E.bank.put(rq, 383, { engine: 12, name: "WHOLE", native: back.bytes }, info);
+  await E.bank.put(rq, 383, { engine: FM, name: "WHOLE", native: back.bytes }, info);
   ok(eq((await E.bank.get(rq, info, 383)).native, voice), "synths: a user slot keeps a whole patch's sound");
   const dump = E.parse[E.CMD.PATCH](await rq(E.req.patch(3, 0, 127, part)));
   ok(!dump.rc && dump.frame[0] === 0xF0 && dump.frame.at(-1) === 0xF7, "synths: PATCH DUMP: the part's patch as its synth's SysEx");
-  ok(E.req.patchBank(12, 1008, [383, 5])[1].join() === [4, 1, 12, 1008 & 127, 1008 >> 7, 383 & 127, 383 >> 7, 5, 0].join() &&
-     E.parse[E.CMD.PATCH]([4, 1, 12, 0, 0, 0, 4102 & 127, 4102 >> 7, 3, 0, 0x43, 0, 9]).bytes.join() === "67,0,9" &&
-     (await E.bankDump(rq, 12, [383])) === null, "synths: PATCH BANK: its request, a piece's reply, null where the synth has no bank dump");
+  ok(E.req.patchBank(FM, 1008, [383, 5])[1].join() === [4, 1, FM, 1008 & 127, 1008 >> 7, 383 & 127, 383 >> 7, 5, 0].join() &&
+     E.parse[E.CMD.PATCH]([4, 1, FM, 0, 0, 0, 4102 & 127, 4102 >> 7, 3, 0, 0x43, 0, 9]).bytes.join() === "67,0,9" &&
+     (await E.bankDump(rq, FM, [383])) === null, "synths: PATCH BANK: its request, a piece's reply, null where the synth has no bank dump");
   const frame = [0xF0, ...fm.sysex[0], 0, 0x7F, 0xF7];
   const sx = await E.sendSysex(rq, frame, 384), unk = await E.sendSysex(rq, [0xF0, 0x7D, 1, 0xF7], 384);
   const into = await E.sendSysex(rq, [...frame, ...frame], 300);
-  ok(sx[0].engine === 12 && unk[0].engine === -1 && into.length === 2 && m.state.bank[300]?.engine === 12 && m.state.bank[301]?.engine === 12,
+  ok(sx[0].engine === FM && unk[0].engine === -1 && into.length === 2 && m.state.bank[300]?.engine === FM && m.state.bank[301]?.engine === FM,
      "synths: SysEx files go to the synth their patterns name, kept from the slot asked for");
   const ctx = { keys: Array.from({ length: info.pcount }, (_, i) => `P${i}`), pe0: info.pe0, engines: info.engines };
   const lib = E.readLibraryFile(E.libraryFile("patch", [cap, { ...cap, native: null, sysex: frame }], ctx), ctx).patches;
   ok(eq(lib[0].native, cap.native) && !lib[1].native && eq(lib[1].sysex, frame), "synths: library files keep a synth's sound and its SysEx");
+  /* (a 1.x file: its engine number 15 was the CZ-1's then; the name says which synth) */
   const old = E.readLibraryFile({ format: "felucca-patch", engine: 15, engineName: "CZ-1", p: Array(info.pcount).fill(0), cz: czs.def }, ctx).patches[0];
-  ok(eq(old.native, czs.def), "synths: Melodee 1.x sound files (p5 / cz / fm6) read as the synth's bytes");
+  ok(old.engine === CZ && eq(old.native, czs.def), "synths: Melodee 1.x sound files (p5 / cz / fm6) read as the synth's bytes");
   E.SYNTH.cache.clear();
   done();
 }
@@ -1074,46 +1094,53 @@ async function editorModules() {
   const link = new E.Link((d) => [...m.access.outputs.values()][0].send(d), { timeout: 200 });
   [...m.access.inputs.values()][0].onmidimessage = (e) => link.receive(e.data);
   const rq = (r, o) => link.request(r, o);
-  const file = (engine, name, n, abi = 3) => {
-    const b = new Uint8Array(60 + n), v = new DataView(b.buffer);
+  /* (uid: an IDNT chunk naming it, mod_abi3.h: Melodee 2.0 knows a synth by its ID alone) */
+  const file = (engine, name, n, abi = 3, uid = 0n) => {
+    const b = new Uint8Array(60 + n + (uid ? 104 : 0)), v = new DataView(b.buffer);
     v.setUint32(0, 0x31444D4D, true); v.setUint16(4, abi, true); b[6] = engine; v.setUint32(8, b.length, true);
     v.setUint32(12, n, true); [...name].forEach((c, i) => { b[32 + i] = c.charCodeAt(0); }); v.setUint16(48, 2, true); b[50] = 5;
     v.setUint32(52, 0, true); v.setUint16(56, 1, true);
-    for (let i = 60; i < b.length; i++) b[i] = (i * 37) & 255;
+    for (let i = 60; i < 60 + n; i++) b[i] = (i * 37) & 255;
+    if (uid) { b[7] |= 1; v.setUint32(60 + n, 0x544E4449, true); v.setUint32(64 + n, 96, true); v.setBigUint64(68 + n, uid, true); b[76 + n] = 2; }
     return b;
   };
   let bad = 0; try { E.MODS.head(new Uint8Array(60)); } catch (e) { bad++; }
   try { E.MODS.head(file(3, "SID", 500, 2)); } catch (e) { bad++; }     /* (a native ABI 2 file: an older firmware's) */
-  const f = file(6, "TRIO", 992), h = E.MODS.head(f);
-  ok(bad === 2 && h.engine === 6 && h.name === "TRIO" && h.version === 2 && h.npresets === 5 && h.total === 1052 && h.key === 0 && h.host === 1,
+  const f = file(6, "TRIO", 992, 3, 0x7106n), h = E.MODS.head(f);
+  ok(bad === 2 && h.engine === 6 && h.name === "TRIO" && h.version === 2 && h.npresets === 5 && h.total === 1156 && h.key === 0 && h.host === 1,
      "modules: an ABI 3 .mmod head read, a foreign file and an older firmware's refused");
-  const built = join(HERE, "..", "build", "modules", "trio.mmod");   /* (tools/mod_build.py: the C head's layout) */
+  /* (tools/mod_build.py: the C head's layout; its engine byte means nothing since 2.0, the device gives a handle) */
+  const built = join(HERE, "..", "build", "modules", "trio.mmod");
   if (existsSync(built)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(built)));
-    ok(t.name === "TRIO" && t.engine === 6 && t.version === 1 && t.npresets === 5 && t.key === 0 && t.host === 4,
+    ok(t.name === "TRIO" && t.version === 1 && t.npresets === 5 && t.key === 0 && t.host === 4,
        "modules: the built TRIO file's head reads as the firmware's (an SDK module: no key, host table 4)");
   }
   const sid = join(HERE, "..", "build", "modules", "sid.mmod");     /* an engine-source module (modules/sdk/mod_engine.h) */
   if (existsSync(sid)) {
     const t = E.MODS.head(new Uint8Array(readFileSync(sid)));
-    ok(t.name === "SID" && t.engine === 3 && t.key === 0 && t.host === 4 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (no key, host table 4)");
+    ok(t.name === "SID" && t.key === 0 && t.host === 4 && t.npresets === 32, "modules: the built SID file's head reads as the firmware's (no key, host table 4)");
   }
-  const drum = join(HERE, "..", "build", "modules", "drum.mmod");   /* (its pads and kits: the host table's since host 4) */
-  if (existsSync(drum)) {
-    const t = E.MODS.head(new Uint8Array(readFileSync(drum)));
-    ok(t.name === "DRUM" && t.engine === 10 && t.key === 0 && t.host === 4 && t.npresets === 6, "modules: the built DRUM file's head reads as the firmware's (no key: its pads in its schema, its kits the host's data records)");
+  /* the kit synths (2.0: DRUM's kits, each a module; their pads and SAMPLER's kits: the host table's since host 4) */
+  const kits = [["808", "808", 1], ["909", "909", 1], ["sidkit", "SID KIT", 2], ["cr78", "CR78", 1], ["fmkit", "FM KIT", 1], ["sampler", "SAMPLER", 8]];
+  const kitFiles = kits.map(([stem]) => join(HERE, "..", "build", "modules", stem + ".mmod"));
+  if (kitFiles.every((f) => existsSync(f))) {
+    const heads = kitFiles.map((f) => E.MODS.head(new Uint8Array(readFileSync(f))));
+    ok(heads.every((t, i) => t.name === kits[i][1] && t.key === 0 && t.host === (kits[i][0] === "sampler" ? 6 : 4) && t.npresets === kits[i][2]) &&
+       !existsSync(join(HERE, "..", "build", "modules", "drum.mmod")),
+       "modules: the built kit synths' files (808, 909, SID KIT, CR78, FM KIT, SAMPLER) read as the firmware's (no key: their pads in their schemas, SAMPLER's kits the host's pad records, host table 6); no DRUM file");
   }
   let list = await E.MODS.list(rq);
   ok(!list.rc && !list.skipped && list.slots.length === 8 && list.slots.every((x) => !x.len), "modules: eight empty slots listed");
   const r = await E.MODS.upload(rq, f, null);
   list = await E.MODS.list(rq);
-  ok(!r.rc && r.slot === 0 && r.engine === 6 && list.slots[0].len === 1052 && list.slots[0].name === "TRIO" && list.slots[0].state === 1,
-     "modules: upload in pieces, committed, listed with its name and size");
-  const again = await E.MODS.upload(rq, file(22, "J106", 500), null);
-  const clash = await E.MODS.upload(rq, file(22, "J106 B", 400), 2);
-  ok(!again.rc && again.slot === 1 && clash.rc === 6, "modules: the next empty slot; a number another slot has refused");
-  const replaced = await E.MODS.upload(rq, file(6, "TRIO", 800), null);
-  ok(!replaced.rc && replaced.slot === 0, "modules: the same engine again replaces its slot");
+  ok(!r.rc && r.slot === 0 && r.engine === 12 && list.slots[0].len === 1156 && list.slots[0].name === "TRIO" && list.slots[0].state === 1,
+     "modules: upload in pieces, committed, listed with its name and size, the first free handle (12: past the manifest's)");
+  const again = await E.MODS.upload(rq, file(22, "J106", 500, 3, 0x7106106n), null);
+  const clash = await E.MODS.upload(rq, file(22, "J106 B", 400, 3, 0x7106106n), 2);
+  ok(!again.rc && again.slot === 1 && again.engine === 13 && clash.rc === 6, "modules: the next empty slot; a synth (its ID) another slot has refused");
+  const replaced = await E.MODS.upload(rq, file(6, "TRIO", 800, 3, 0x7106n), null);
+  ok(!replaced.rc && replaced.slot === 0, "modules: the same synth (its ID) again replaces its slot");
   ok(!(await E.MODS.remove(rq, 1)) && !(await E.MODS.list(rq)).slots[1].len, "modules: delete empties the slot");
   link.close(); m.stop();
 }

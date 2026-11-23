@@ -38,7 +38,6 @@ static void midi_tracks_stream(void)
     }
     recording_reindex(); chain_config.count=2; chain_patterns[1][NTRK-1u]=7;
     project_capture(&proj_scratch); assert(bank_pack(oracle,&proj_scratch,1));
-    assert(bank_wide);
     uint32_t hash; project_capture(&proj_scratch);
     assert(proj_image_hash(1,&hash)&&hash==proj_hash(oracle,sizeof oracle));
     assert(!save_slot(0,0)); assert(!project_dirty());
@@ -133,7 +132,7 @@ static void song_sounds_stream(int patterns)
     chain_config.sound[1][0] = chain_config.sound[2][1] = (uint8_t)id;
     if (patterns) pattern_sound[1][15] = (uint8_t)id;
     project_capture(&proj_scratch); assert(bank_pack(oracle, &proj_scratch, 1));
-    assert(*(uint32_t *)oracle == (patterns ? BANKQ_MAGIC : BANKP_MAGIC));
+    assert(*(uint32_t *)oracle == BANKS_MAGIC);
     assert(proj_image_capture(1)); st_stream_t w;
     assert(!proj_stream_generate(&w, OBJ_BANK0)); assert(!st_stream_publish(&w));
     assert(!ps_saved(OBJ_BANK0, actual) && !memcmp(oracle, actual, sizeof actual));
@@ -185,6 +184,7 @@ static uint32_t test_image(const uint8_t *rec,int rawtail,int rawfun)
 }
 static void head_set(uint32_t word,uint32_t v){memcpy(img+8u+4u*word,&v,4);}
 static uint32_t head_get(uint32_t word){uint32_t v;memcpy(&v,img+8u+4u*word,4);return v;}
+#define PJ_MAGIC 0x314A5048u                     /* HPJ1: Melodee 1.x's compact image (2.0 refuses it) */
 /* rec as a compact image (HPJ1, what firmware before the packed images wrote) in img: its length */
 static uint32_t test_compact(const uint8_t *rec)
 {
@@ -238,8 +238,11 @@ static void packed_images(void)
     n=test_compact(rec);
     printf("Project stream: a save stores %u bytes in %u sectors (the compact image before: %u in %u)\n",packed,stored_sectors(OBJ_BANK0),n,(n+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX);
     assert(packed<n&&stored_sectors(OBJ_BANK0)<(n+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX);
-    /* a compact image (firmware before this) still loads, and its next save is packed */
-    assert(!put_img(3,n)&&stored_len(OBJ_BANK0+1u)==n&&!ps_saved(OBJ_BANK0+1u,actual)&&!memcmp(actual,rec,sizeof rec));
+    /* a compact image (HPJ1, Melodee 1.x's) is refused, nothing written; a raw record loads, its next save is packed */
+    assert(put_img(3,n)==2u&&!stored_len(OBJ_BANK0+1u));
+    assert(!put_all(3,rec,sizeof rec,st_crc32(rec,sizeof rec))&&stored_len(OBJ_BANK0+1u)==BANK_STORE_SIZE&&
+           !ps_saved(OBJ_BANK0+1u,actual)&&!memcmp(actual,rec,sizeof rec));
+    n=BANK_STORE_SIZE;
     /* (the music of a load, captured again: the same whichever way the record was stored; SLOT aside, which it keeps) */
     static uint8_t music[BANK_STORE_SIZE];
     project_new_blank();open_slot(0);song.g[G_SLOT]=slot0;project_capture(&proj_scratch);assert(bank_pack(music,&proj_scratch,1));
@@ -274,55 +277,21 @@ static void packed_images(void)
     }
 #undef REFUSED
     assert(!ps_saved(OBJ_BANK0+2u,actual)&&!memcmp(actual,rec,sizeof rec));
-    puts("Project stream: packed images: blocks at every length, another hand's and compact images loaded, damaged ones refused");
+    puts("Project stream: packed images: blocks at every length, another hand's and raw records loaded, 1.x compact and damaged ones refused");
 }
 static uint32_t stored_magic(uint32_t obj){st_hdr_t h;uint32_t m=0;int c=st_current(obj,&h);if(c>=0)st_read_range(obj,(uint32_t)c,0,&m,4);return m;}
 static void power_on(void){memset(proj_meta,0,sizeof proj_meta);memset(proj_saved_hash,0,sizeof proj_saved_hash);proj_boot_scan();}
-/* the boot's pass over projects stored by firmware before the packed form */
-static void boot_repack(void)
+/* power-on with a 1.x compact project in slot 1: OLD FORMAT, kept byte for byte, never rewritten */
+static void boot_old(void)
 {
-    static uint8_t one[BANK_STORE_SIZE],two[BANK_STORE_SIZE],junk[ST_PROJECT_MAX];
-    uint32_t n,was,hash;st_hdr_t h2,h;
-    workload(64,0,0,1,2);project_capture(&proj_scratch);assert(bank_pack(two,&proj_scratch,1));
+    static uint8_t one[BANK_STORE_SIZE];
+    uint32_t n,was;
     workload(256,1,1,0,0);project_capture(&proj_scratch);assert(bank_pack(one,&proj_scratch,1));
-    for(uint32_t i=0;i<sizeof junk;i++)junk[i]=(uint8_t)(i*7u+3u);
-    /* project 1 compact, 2 raw, 3 packed already, 4 a record nothing reads */
-    reset();n=test_compact(one);assert(!put_img(2,n)&&stored_magic(OBJ_BANK0)==PJ_MAGIC);
-    uint32_t compact_sectors=stored_sectors(OBJ_BANK0);
-    assert(!put_all(3,two,sizeof two,st_crc32(two,sizeof two))&&stored_len(OBJ_BANK0+1u)==BANK_STORE_SIZE);
-    n=test_image(one,0,0);assert(!put_img(4,n)&&st_current(OBJ_BANK0+2u,&h2)>=0);
-    assert(!st_save(OBJ_BANK0+3u,junk,5000u));
-    assert(proj_read_slot(0)==BANK_STORE_SIZE);hash=proj_source_hash;
+    reset();n=test_compact(one);assert(!st_save(OBJ_BANK0,img,n));
     was=erases;power_on();
-    assert(stored_magic(OBJ_BANK0)==PZ_MAGIC&&stored_magic(OBJ_BANK0+1u)==PZ_MAGIC&&erases>was);
-    assert(stored_sectors(OBJ_BANK0)<compact_sectors&&stored_sectors(OBJ_BANK0+1u)<=2u);
-    assert(!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));          /* (not a byte of the records) */
-    assert(!ps_saved(OBJ_BANK0+1u,actual)&&!memcmp(actual,two,sizeof two));
-    assert(st_current(OBJ_BANK0+2u,&h)>=0&&!memcmp(&h,&h2,sizeof h));             /* the packed one: as it was */
-    assert(stored_len(OBJ_BANK0+3u)==5000u&&proj_meta[3].old&&!proj_meta[3].used);
-    assert(proj_meta[0].used&&proj_meta[1].used&&proj_meta[2].used&&proj_saved_hash[0]==hash);
-    assert(proj_read_slot(0)==BANK_STORE_SIZE&&proj_source_hash==hash&&pj.on==2u);
-    printf("Project stream: at boot a compact project went from %u sectors to %u, a raw one from 7 to %u\n",compact_sectors,stored_sectors(OBJ_BANK0),stored_sectors(OBJ_BANK0+1u));
-    was=erases;power_on();assert(erases==was);                                    /* the next boot: nothing to do */
-    /* a cut before the new copy is published, an erase that fails: the old copy is the project still, and the next boot packs it */
-    reset();n=test_compact(one);assert(!put_img(2,n));
-    {st_stream_t w;int copy=st_current(OBJ_BANK0,&h);assert(proj_read_slot(0)==BANK_STORE_SIZE&&!proj_stream_repack(&w,OBJ_BANK0,(uint32_t)copy));}
-    assert(stored_magic(OBJ_BANK0)==PJ_MAGIC&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
-    erase_error=1;power_on();erase_error=0;
-    assert(stored_magic(OBJ_BANK0)==PJ_MAGIC&&proj_meta[0].used&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
-    power_on();assert(stored_magic(OBJ_BANK0)==PZ_MAGIC&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
-    /* a pool with no room for the new copy beside the old one: nothing is erased, the project stays; room comes, it is packed */
-    reset();n=test_compact(one);assert(!put_img(2,n));
-    uint32_t filler=4;
-    for(int free;(free=st_project_free())>0;filler++){
-        assert(filler<PROJ_SLOTS);
-        assert(!st_save(st_proj_obj(filler),junk,((uint32_t)free<7u?(uint32_t)free:7u)*ST_LIN_PAYLOAD_MAX-100u));
-    }
-    was=erases;power_on();
-    assert(erases==was&&stored_magic(OBJ_BANK0)==PJ_MAGIC&&proj_meta[0].used&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
-    assert(!st_project_delete(st_proj_obj(filler-1u)));
-    power_on();assert(stored_magic(OBJ_BANK0)==PZ_MAGIC&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,one,sizeof one));
-    puts("Project stream: boot pass: compact and raw projects packed with every byte kept, once; a cut, a failed erase and a full pool leave them");
+    assert(erases==was&&stored_magic(OBJ_BANK0)==PJ_MAGIC&&stored_len(OBJ_BANK0)==n&&proj_meta[0].old&&!proj_meta[0].used);
+    power_on();assert(erases==was&&stored_magic(OBJ_BANK0)==PJ_MAGIC);
+    puts("Project stream: boot: a 1.x compact project is OLD FORMAT, kept as it is, never rewritten");
 }
 static void workload(uint32_t count,uint32_t spread,uint32_t tail,uint32_t quant,uint32_t engine)
 {
@@ -381,7 +350,7 @@ int main(void)
     }
     for(uint32_t i=0;i<RECORD_MAX;i++)if(recording[i].vel)assert(recorded_owner(&recording[i])<3u*NPAT);
     assert(proj_image_capture(1));assert(proj_ok(&proj_scratch));
-    /* Earlier raw snapshots use ten-byte notes, not the FUN wire codec. */
+    /* An earlier raw snapshot (ten-byte notes): refused, kept */
     static uint8_t legacy[sizeof(project_t)+RECORD_MAX];
     workload(RECORD_MAX,1,1,0,0);project_capture(&proj_scratch);
     static project_t expected;expected=proj_scratch;
@@ -394,12 +363,10 @@ int main(void)
     }
     memcpy(legacy+at+RECORD_MAX*10u,(const uint8_t *)&expected+end,sizeof expected-end);
     uint32_t len=sizeof legacy,sum;memcpy(legacy+4,&len,4);sum=proj_hash(legacy,len-4u);memcpy(legacy+len-4u,&sum,4);
-    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(proj_read_slot(3)==len);
-    assert(!memcmp(&expected,&proj_scratch,sizeof expected));
-    legacy[at+8u]=25;sum=proj_hash(legacy,len-4u);memcpy(legacy+len-4u,&sum,4);
-    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(!proj_read_slot(3)&&proj_meta[3].old);
+    /* (Melodee 1.x's: 2.0 never reads it, the slot keeps it as OLD FORMAT until replaced) */
+    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(!proj_read_slot(3)&&proj_meta[3].old&&stored_len(OBJ_BANK0+3u)==len);
     packed_images();
-    boot_repack();
+    boot_old();
     midi_tracks_stream();
     extended_songs_stream(0);
     extended_songs_stream(1);

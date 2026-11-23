@@ -852,26 +852,6 @@ static void draw_cards(void)
         draw_column(3, "MUTE", t->p[P_MUTE] ? "ON" : "OFF", "", t->p[P_MUTE] ? T_ACCENT : VAL(3u), -1, ICON_AUTO);
         return;
     }
-#if MELODEE_SLICE
-    if (cur_page()->graph == GR_SLICES) {                /* SLICE POS, then SPLIT JOIN (ui_slice.c) */
-        uint32_t n = slice_count(), j = slice_sel(), src, div, ok = slice_src(&src, &div) && src;
-        char u[8];
-        if (j < n) {
-            fmt_int(val, (int32_t)j + 1);
-            str_cpy(u, "/", 8);
-            fmt_int(u + 1, (int32_t)n);
-        } else {
-            str_cpy(val, n ? "END" : "--", sizeof val);
-            u[0] = 0;
-        }
-        draw_column(0, "SLICE", val, u, VAL(0u), -1, ICON_SLICE);
-        slice_time(val, slice_mark(j));
-        draw_column(1, "POS", val, "S", ok ? VAL(1u) : T_DIM, -1, ICON_AUTO);
-        draw_act_column(2, "SPLIT", ok ? T_THEME : T_DIM, ICON_AUTO);
-        draw_act_column(3, "JOIN", ok ? T_THEME : T_DIM, ICON_AUTO);
-        return;
-    }
-#endif
     if (cur_page()->graph == GR_MOD) {                   /* the route's SRC, the route, its DST AMT */
         const track_t *t = TSEL;
         uint32_t id = P_M1SRC + 3u * mod_ui_slot;
