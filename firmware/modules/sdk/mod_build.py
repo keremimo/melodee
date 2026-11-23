@@ -219,7 +219,7 @@ def unpack_image(b, size):
 def toolchain():
     tc = Path(os.environ.get("JIELI_TOOLCHAIN", Path.home() / ".jieli" / "toolchain")).resolve()
     if not (tc / "pi32v2" / "bin" / "clang").exists():
-        raise SystemExit(f"mod_build: no JieLi toolchain in {tc} (tools/get_toolchain.sh)")
+        raise SystemExit(f"mod_build: no JieLi toolchain in {tc} (sh {SDK / 'get_toolchain.sh'})")
     return tc
 
 

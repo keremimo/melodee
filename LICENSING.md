@@ -38,8 +38,9 @@ source under the same licence. That includes devices that ship with modified Mel
 ## The synth module SDK (MPL-2.0)
 
 The SDK that synth modules are built with, `firmware/modules/sdk/` (the module contract `mod_abi3.h`, the helpers
-`mod_sdk.h` and `mod_schema.h`, `mod_rt.c`, `module.ld`, the builder and signing scripts, the example), is licensed
-under the Mozilla Public License 2.0 (`MPL-2.0`, `LICENSES/MPL-2.0.txt`). MPL-2.0 is per file: changes to these files
+`mod_sdk.h` and `mod_schema.h`, `mod_rt.c`, `module.ld`, the builder, signing and toolchain scripts, the example), is
+licensed under the Mozilla Public License 2.0 (`MPL-2.0`, `LICENSES/MPL-2.0.txt`, and the folder's own `LICENSE`, as
+`tools/sdk_publish.sh` publishes it in a repository of its own). MPL-2.0 is per file: changes to these files
 stay under it, while a synth built with them may carry any licence of its author's choosing, open or closed. The
 retained Felucca portions in `mod_sdk.h` are Leo Kuroshita's, who agreed to their relicensing under MPL-2.0. The
 GPL-3.0-only firmware includes the contract's headers under MPL-2.0's GPL compatibility (section 3.3).
