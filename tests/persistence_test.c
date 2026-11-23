@@ -63,16 +63,14 @@ enum { ED_UI_STATE = 34, ED_UI_SET, ED_UI_PALETTES, ED_FAV_GET, ED_FAV_SET };
 static void ed_b(uint32_t n) { (void)n; }
 static void ed_v(int32_t n) { (void)n; }
 static int32_t ed_rv(const uint8_t *a) { return (int32_t)(a[0] | (uint32_t)a[1] << 7) - 8192; }
-static void ed_str(const char *s, uint32_t n) { (void)s; (void)n; }
 #include "../firmware/src/editor_preferences.c"
 
-/* slot 1's current record as the loader reads it (a compact image expanded) */
+/* slot 1's current record as the loader reads it (a packed or compact image expanded) */
 static int flash_image(uint8_t *dst)
 {
     st_hdr_t h; int copy = st_current(OBJ_BANK0, &h);
     if (copy < 0) return -1;
-    pj.on = !st_read_range(OBJ_BANK0, (uint32_t)copy, 0, &pj.h, PJ_HEAD) && pj.h.magic == PJ_MAGIC;
-    return pj_read(OBJ_BANK0, (uint32_t)copy, 0, dst, BANK_STORE_SIZE) ? -1 : (int)BANK_STORE_SIZE;
+    return pj_image(OBJ_BANK0, (uint32_t)copy, dst) ? -1 : (int)BANK_STORE_SIZE;
 }
 
 static int check(const char *what, int ok)
@@ -89,11 +87,12 @@ static void reset(void)
     memset(&chain, 0, sizeof chain);
     chain_defaults(&chain_config);
     memset(proj_slot, 0, sizeof proj_slot);
-    up_cache_reset(); native_cache_reset();
+    up_cache_reset();
     memset(&persist_saved, 0, sizeof persist_saved);
     memset(&settings, 0, sizeof settings);
     memset(&ui, 0, sizeof ui);
     memset(&favorites, 0, sizeof favorites);
+    memset(mlearn_row, 0, sizeof mlearn_row);
     panel = PANEL_DEFAULT;
     host_tracks_init();
     fm1_ms = 0;
@@ -110,29 +109,18 @@ static void reset(void)
     irq_start_race = irq_races = 0;
 }
 
-static int cz_bank_persistence(void)
-{
-    int bad=0;reset();cz_bank_t bank;uint8_t raw[CZ_BYTES];
-    for(uint32_t k=0;k<8;k++){cz_bank_empty(&bank,k);bank.used=1;cz_patch_init(bank.tone[0].raw);bank.tone[0].raw[128]=(uint8_t)('A'+k);bad+=check("dedicated CZ bank writes its own A/B object",!st_save(OBJ_CZBANK0+k,&bank,sizeof bank));}
-    cz_bank_boot();for(uint32_t k=0;k<8;k++)bad+=check("CZ banks survive cache reset and boot",!cz_bank_get(k,0,raw)&&raw[128]=='A'+k);
-    bank=*cz_bank_load(1);bank.tone[0].raw[128]='X';fail_after=2;
-    bad+=check("interrupted CZ bank write reports failure",st_save(OBJ_CZBANK0+1,&bank,sizeof bank)!=0);
-    fail_after=-1;cz_bank_boot();
-    bad+=check("torn CZ bank write keeps previous committed tone",!cz_bank_get(1,0,raw)&&raw[128]=='B');
-    bad+=check("CZ bank writes leave neighbouring project objects untouched",st_sector(OBJ_BANK0+3,1)+5u*ST_SECTOR==st_sector(OBJ_CZBANK0,0));
-    return bad;
-}
 #ifndef PERSISTENCE_TEST_NO_MAIN
 static int staged_import_persistence(void)
 {
-    int bad=0;reset();memset(&sx_import,0,sizeof sx_import);fm6_rx_ready=0;
+    int bad=0;reset();memset(&sx_import,0,sizeof sx_import);msx.ready=0;
+    uint8_t *fm6_rx=proj_wire_u.raw;                    /* (a DX7 bank as the synths' SysEx collector holds it: sysex_rx.c) */
     fail_after=100000;native_put(ENGI_FM6,4,FM6_INIT);uint32_t writes=100000u-(uint32_t)fail_after;
     reset();for(uint32_t i=0;i<32;i++){memcpy(fm6_rx+6+i*FM6_PACKED,FM6_INIT,FM6_PACKED);fm6_rx[6+i*FM6_PACKED+118]=(uint8_t)('A'+i%26);}
-    sysex_stage(ENGI_FM6,fm6_rx+6,32,FM6_PACKED);ui.uslot=4;fail_after=(int)writes;sysex_choose();if(ui.confirm==CF_IMPORT){ui.confirm=0;preset_old_allow(1);sysex_commit();preset_old_allow(0);}
-    bad+=check("partial SysEx write retains only unsaved tones for retry",sx_import.count==18&&sx_import.first==18&&sx_import.data==fm6_rx+6+14u*FM6_PACKED&&fm6_rx_ready==2&&native_used(ENGI_FM6,4)&&!native_used(ENGI_FM6,18));
-    native_cache_reset();bad+=check("committed import prefix survives cache reset and torn next slot",native_used(ENGI_FM6,4)&&native_raw(ENGI_FM6,4)[118]=='A'&&!native_used(ENGI_FM6,18));
+    msx_serving=1;sysex_stage(ENGI_FM6,fm6_rx+6,32,FM6_PACKED);msx_serving=0;ui.uslot=4;fail_after=(int)writes;sysex_choose();if(ui.confirm==CF_IMPORT){ui.confirm=0;preset_old_allow(1);sysex_commit();preset_old_allow(0);}
+    bad+=check("partial SysEx write retains only unsaved tones for retry",sx_import.count==18&&sx_import.first==18&&sx_import.data==fm6_rx+6+14u*FM6_PACKED&&msx.ready==2&&native_used(ENGI_FM6,4)&&!native_used(ENGI_FM6,18));
+    up_cache_reset();bad+=check("committed import prefix survives cache reset and torn next slot",native_used(ENGI_FM6,4)&&native_raw(ENGI_FM6,4)[118]=='A'&&!native_used(ENGI_FM6,18));
     fail_after=-1;sysex_choose();
-    bad+=check("retry starts after committed prefix and unlocks the receive buffer",!sx_import.count&&!fm6_rx_ready&&native_used(ENGI_FM6,35)&&native_raw(ENGI_FM6,5)[118]=='B'&&native_raw(ENGI_FM6,4)[118]=='A');
+    bad+=check("retry starts after committed prefix and unlocks the receive buffer",!sx_import.count&&!msx.ready&&native_used(ENGI_FM6,35)&&native_raw(ENGI_FM6,5)[118]=='B'&&native_raw(ENGI_FM6,4)[118]=='A');
     return bad;
 }
 int main(void)
@@ -178,6 +166,7 @@ int main(void)
     persist_saved.bold = 1;                       /* (an earlier firmware's font weight: kept as saved) */
     favorites.factory[8][0] = 1;
     favorites.user = 1u << 31;
+    mlearn_row[3] = 21; mlearn_row[28] = 'M'; mlearn_row[29] = 'L'; mlearn_row[30] = 1;   /* (MIDI LEARN: KNOB 1 = CC 21) */
     song.playing = 1;
     settings_save();
     bad += check("playing: settings queued, no erase, runtime kept", persist_pending && !erases &&
@@ -197,6 +186,7 @@ int main(void)
                   st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p && p.palette == palette_to_stored(2) &&
                   p.lowcut == 0u && p.zoom == 1u && p.bold == 1u &&
                   p.favorites.factory[8][0] == 1 && p.favorites.user == (1u << 31) &&
+                  !memcmp(p.favorites.factory[MLEARN_ROW], mlearn_row, sizeof mlearn_row) && mlearn_row[3] == 21 &&
                   !memcmp(&p.panel, &panel, sizeof panel));
     settings_save();
     bad += check("unchanged settings do not erase", !persist_pending && erases == 1u);
@@ -229,7 +219,7 @@ int main(void)
                   !memcmp(got + 8u, &old, sizeof old));
     project_save(0);
     bad += check("successful project save publishes new RAM", !strcmp(ui.msg, "SAVED") &&
-                  proj_import(&proj_scratch, &proj_slot[0], sizeof proj_slot[0]) &&
+                  proj_import_same(&proj_scratch, &proj_slot[0], sizeof proj_slot[0]) &&
                   proj_scratch.t[0].step[0].note[0] == 72u && proj_ok(&proj_scratch));
     before = erases;
     transport_req = 1;
@@ -295,6 +285,7 @@ int main(void)
     memset(&r, 0, sizeof r);
     r.used = UP_USED;
     r.ver = UP_VER;
+    r.engine = ENGI_SID;                             /* (2.0: a record names a synth; none is no record) */
     r.np = P_COUNT;
     memcpy(r.name, "First", 6);
     erase_error = 1;
@@ -346,7 +337,6 @@ int main(void)
     settings_save();
     bad += check("PLAY consumed before the settings snapshot defers the write",
                   irq_races == 3u && song.playing && !transport_req && persist_pending && erases == before);
-    bad += cz_bank_persistence();
     bad += staged_import_persistence();
     printf("%s\n", bad ? "PERSISTENCE TEST FAILED" : "persistence test passed");
     return bad != 0;

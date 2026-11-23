@@ -129,10 +129,11 @@ static void trace(int audio_only)
     }
     /* Frozen shared-only PCM/allocation bytes captured from 753adbf before insert removal,
      * re-captured for the full-precision wet return and dithered MASTER (#100)
-     * and the limiter at -2 dBFS (#108).
+     * and the limiter at -2 dBFS (#108), and the master knee in place of the full tanh, and the 24-bit bus
+     * (Q15 << MIX_FRAC from the track level to the output).
      * State layout is intentionally omitted; all routed audio and delay
      * contents still participate, including stereo-to-mono transitions. */
-    if(audio_only)assert(hash==0x0f9186b24ee44d73ull);
+    if(audio_only)assert(hash==0x4cc2be246886b262ull);
     printf("%016llx\n",(unsigned long long)hash);
 }
 static volatile uint32_t checksum;

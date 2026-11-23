@@ -17,10 +17,18 @@ FUNCTION = re.compile(r'^define ([^\n]+?)@([\w.]+)\(([^\n]*)\)([^\n]*)\{\n(.*?)^
 REFERENCE = re.compile(r'@([\w.]+)')
 CALL = re.compile(r'\bcall\b[^\n@]*@([\w.]+)\(')
 ROOTS = {'fm1_alnk0_irq', 'audio_block', 'mix_block', 'ua_audio', 'click_render',
-         'p5_worker_kernel', 'fm6_worker_kernel', 'audio_batch_worker', 'audio_batch_parallel', 'p5_batch_kernel', 'fm6_batch_kernel', 'engine_batch_kernel', 'fm1_timer5_irq'}
+         'p5_worker_kernel', 'fm6_worker_kernel', 'audio_batch_worker', 'audio_batch_parallel', 'p5_batch_kernel', 'fm6_batch_kernel', 'engine_batch_kernel', 'fm1_timer5_irq',
+         'mod_part_mem', 'voice_scale_pitch', 'trk_nvoice', 'audio_batch_push', 'audio_batch_push_cost',
+         'audio_worker_submit', 'audio_worker_join', 'audio_profile_add', 'mod_h_pitch_inc', 'mod_h_octave',
+         'mod_h_no_submit', 'mod_h_no_join', 'mod_h_no_profile',
+         'patch_play', 'mix_h_stereo'}   # (the host table's calls a synth module makes from the audio: eng_module.c
+                         # MOD_HOST3; patch: the part's patch, patch.c; stereo: host 5's, mix.c)
 CALLBACKS = {'note_on', 'render', 'amp', 'block', 'done', 'alloc', 'legato',
-             'mono_key', 'post', 'units', 'cap', 'keys', 'desc'}
-COLD_CALLBACKS = {'preset_make'}
+             'mono_key', 'post', 'units', 'cap', 'keys', 'desc',
+             'state', 'env_q15', 'chord', 'reuse', 'batch', 'render_p', 'menv', 'join', 'reserve', 'bend_range',
+             'patch_changed', 'pget', 'pput'}   # (Motion plays a synth's parameters from the sequencer's tick)
+COLD_CALLBACKS = {'preset_make', 'pformat', 'pactive', 'draw', 'sysex', 'sysex_dump',   # (the pages', SysEx: the main loop's;
+                  'rec_check', 'rec_stream', 'rec_pad'}                                   # a synth's data records too)
 
 
 def engine_roots(src):
@@ -91,7 +99,8 @@ def call_arguments(line, begin):
     raise ValueError('Unterminated LLVM memory intrinsic')
 
 
-def relocate(ir, roots):
+def relocate(ir, roots, required_root="fm1_alnk0_irq", low=()):   # fm1-base (platform/tools/ir_pass.py): its render's
+    # root, and the resident functions it puts in the low SRAM's DSP section rather than the pool's (its arena)
     functions = {m[2]: m for m in FUNCTION.finditer(ir)}
     selected = set()
     pending = list(roots)
@@ -106,14 +115,18 @@ def relocate(ir, roots):
         # Backend lowering can turn these intrinsics into libc calls after
         # this pass. Their implementation must join an audio caller's closure.
         pending.extend(re.findall(r'@llvm\.(memcpy|memset)\.', functions[name][5]))
-    if 'fm1_alnk0_irq' not in selected:
+    if required_root not in selected:
         raise ValueError('Audio ISR is missing from the optimized module')
 
     sections = {name: (re.search(r'\bsection "([^"]+)"', m[4]) or [None, ''])[1]
                 for name, m in functions.items()}
+    missing = set(low) - selected
+    if missing:
+        raise ValueError(f'Low-SRAM audio functions not resident: {", ".join(sorted(missing))}')
     for name in selected:
         if not sections[name]:
-            sections[name] = '.audio_libc' if name in {'memcpy', 'memset'} else '.audio_text'
+            sections[name] = ('.audio_libc' if name in {'memcpy', 'memset'} else
+                              '.dsp_text' if name in low else '.audio_text')
         elif sections[name] not in ('.audio_text', '.audio_libc', '.dsp_text', '.ram_text'):
             raise ValueError(f'Unexpected audio section for {name}: {sections[name]}')
     far = {}

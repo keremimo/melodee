@@ -17,6 +17,18 @@
 #define FM1_T4_PRD (*(volatile uint32_t *)0x10808u)
 #define FM1_TICKS_PER_US 24u
 
+/* TIMER5's system tick (fm1_timer.h: input scan, USB / UART polls). FM-1: 5 kHz, a matrix column every 200 us
+ * (a scan frame 2.2 ms), half the ISR load of 10 kHz. SMK-37: 10 kHz, its keybed's velocity is the time between
+ * two contacts as the scan sees them, and its 16-column frame (1.6 ms) is already the coarsest that takes */
+#ifndef FM1_TICK_HZ
+#if defined(BOARD_SMK37) && BOARD_SMK37
+#define FM1_TICK_HZ 10000u
+#else
+#define FM1_TICK_HZ 5000u
+#endif
+#endif
+#define FM1_TICK_US (1000000u / FM1_TICK_HZ)
+
 /* Start TIMER4 unless it already runs, so time stays continuous across
  * RAM-run jumps. */
 static inline void fm1_time_init(void)

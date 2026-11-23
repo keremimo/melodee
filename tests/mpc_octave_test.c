@@ -11,7 +11,7 @@ static void setup_mpc(void)
     ui_power_on();
     midi_hint = 0;
     for (uint32_t k = 0; k < NPART; k++) {
-        set_engine_of(&trk[k], 3);
+        set_engine_of(&trk[k], ENGI_SID);
         trk[k].p[P_QUANT] = Q_MPC; trk[k].p[P_SCALE] = 1;
         trk[k].p[P_ROOT] = trk[k].p[P_TRANS] = 0;
         trk[k].p[P_MPCDEG] = 1; trk[k].p[P_CHRD] = 0;
@@ -194,11 +194,11 @@ static void drum_pads(void)
         {36, 38, 39, 37, 42, 46, 56, 49, 41, 45, 50, 70, 64, 61, 60, 75},
         {36, 38, 39, 37, 42, 46, 51, 49, 41, 45, 50, 51, 36, 38, 42, 46},
     };
-    for (uint32_t kit = DK_808; kit <= DK_FM; kit++) {
+    for (uint32_t kit = DK_808; kit <= (uint32_t)DK_KIT_MAX; kit++) {
         setup_mpc();
         for (uint32_t k = 0; k < NPART; k++) {
             track_t *t = &trk[k];
-            set_engine_of(t, ENGI_DRUM); t->p[P_E0] = (int16_t)kit;
+            set_engine_of(t, kit_engine((int32_t)kit)); t->p[P_E0] = (int16_t)kit;
             t->p[P_QUANT] = Q_MPC; t->p[P_SCALE] = 2; t->p[P_ROOT] = 11;
             t->p[P_TRANS] = 24; t->p[P_MPCDEG] = 7;
             for (int32_t oct = -3; oct <= 3; oct++) {
@@ -206,12 +206,17 @@ static void drum_pads(void)
                 for (uint32_t n = 0; n < 128u; n++) {
                     uint32_t want = KB_SILENT;
                     for (uint32_t p = 0; p < 16u; p++)
-                        if (n == MPC_PAD_NOTES[k][p]) want = notes[kit == DK_909][p];
+                        if (n == MPC_PAD_NOTES[k][p]) want = kit >= DK_USER0 ? 60u + p : notes[kit == DK_909][p];   /* (SAMPLER: C4 ..) */
                     assert(midi_map(t, n) == want);
                 }
-                /* Native keys retain their chromatic drum map and bank octave. */
-                for (uint32_t key = 0; key < 27u; key++)
-                    assert(kb_map(t, key) == (uint32_t)clamp(29 + 12 * oct + (int32_t)key, 0, 127));
+                /* Native keys retain their chromatic drum map and bank octave; a user kit: C4 .. D#5 (keys 7 .. 22) are
+                 * pads 1..16 on their own notes, the rest silent, at any octave. */
+                for (uint32_t key = 0; key < 27u; key++) {
+                    uint32_t want = (uint32_t)clamp(29 + 12 * oct + (int32_t)key, 0, 127);
+                    if (kit >= DK_USER0)
+                        want = key >= 7u && key <= 22u ? 53u + key : KB_SILENT;
+                    assert(kb_map(t, key) == want);
+                }
             }
             for (uint32_t q = Q_OFF; q < Q_MPC; q++) {
                 t->p[P_QUANT] = (int16_t)q;
@@ -220,21 +225,21 @@ static void drum_pads(void)
         }
     }
     for (uint32_t source = 1; source <= 2u; source++)
-        for (uint32_t kit = DK_808; kit <= DK_FM; kit++) {
+        for (uint32_t kit = DK_808; kit <= (uint32_t)DK_KIT_MAX; kit++) {
             setup_mpc(); song.g[G_MIDI] = (int16_t)(source - 1u); ui.msg_t = 0;
             for (uint32_t k = 0; k < NPART; k++) {
-                track_t *t = &trk[k]; set_engine_of(t, ENGI_DRUM); t->p[P_E0] = (int16_t)kit;
+                track_t *t = &trk[k]; set_engine_of(t, kit_engine((int32_t)kit)); t->p[P_E0] = (int16_t)kit;
                 t->p[P_QUANT] = Q_MPC; t->mpc_octave = 3;
                 for (uint32_t p = 0; p < 16u; p++) {
                     seq_stop(); memset(t->step, 0, sizeof t->step); song.rec = (uint8_t)(1u << k);
-                    uint32_t src = MPC_PAD_NOTES[k][p], want = notes[kit == DK_909][p];
+                    uint32_t src = MPC_PAD_NOTES[k][p], want = kit >= DK_USER0 ? 60u + p : notes[kit == DK_909][p];
                     if (source == 1u) midi_in_event(0x09u | 0x90u << 8 | src << 16 | 100u << 24);
                     else { um_byte(0x90); um_byte((uint8_t)src); um_byte(100); }
                     events_block(CTL); frame();
                     assert(song.sel == k && !ui.msg_t && mn_get(0, src) == k + 1u && midi_owners[k] == 1u);
                     assert(song.playing && midi_note_held(t, want));
                     uint32_t lane = drum_lane(want);
-                    if (want == DRUM_LANE_NOTE[lane]) assert(t->step[0].hit & (1u << lane));
+                    if (want == STEP_LANE_NOTE[lane]) assert(t->step[0].hit & (1u << lane));
                     else assert(t->step[0].n == 1u && t->step[0].note[0] == want);
                     if (source == 1u) midi_in_event(0x08u | 0x80u << 8 | src << 16);
                     else { um_byte(0x80); um_byte((uint8_t)src); um_byte(0); }
@@ -244,10 +249,10 @@ static void drum_pads(void)
             }
         }
     /* Duplicated 909 hits retain separate pad ownership across a kit/octave change. */
-    setup_mpc(); set_engine_of(&trk[0], ENGI_DRUM); trk[0].p[P_QUANT] = Q_MPC; trk[0].p[P_E0] = DK_909;
+    setup_mpc(); set_engine_of(&trk[0], ENGI_909); trk[0].p[P_QUANT] = Q_MPC; trk[0].p[P_E0] = DK_909;
     int32_t out[2u * CTL];
-    for (uint32_t b = 0; b < 8u; b++) mix_block(out, CTL); /* finish the normal engine switch */
-    assert(trk[0].engine == ENGI_DRUM && !trk[0].xf_on);
+    for (uint32_t b = 0; b < 8u; b++) mix_block_q15(out, CTL); /* finish the normal engine switch */
+    assert(trk[0].engine == ENGI_909 && !trk[0].xf_on);
     midi_event(0x90, 0, MPC_PAD_NOTES[0][0], 100);
     midi_event(0x90, 0, MPC_PAD_NOTES[0][12], 119);
     assert(midi_owners[0] == 2u && midi_note_held(&trk[0], 36));

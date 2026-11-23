@@ -36,7 +36,12 @@ static inline __attribute__((always_inline)) uint32_t fm1_aw_ticks(void) { retur
 #define AW_TICKS() fm1_aw_ticks()
 #define AW_TIMEOUT_TICKS (10000u * FM1_TICKS_PER_US)
 #define AW_HOLD() fm1_core1_stop()
+#if MELODEE_CORE1_FALLBACK
+static void fm1_core1_retired(void);           /* main.c: fm1_core1_bar_set, unless a synth module's own fault */
+#define AW_RETIRED() fm1_core1_retired()
+#else
 #define AW_RETIRED() fm1_core1_bar_set()
+#endif
 #define AW_FAULTS() fm1_core1_fault.count
 #define AW_FAILURE() fm1_core1_failure()
 #if MELODEE_CORE1_TEST

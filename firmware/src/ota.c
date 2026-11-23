@@ -6,11 +6,12 @@
 /* M-UPGRADE entry: "step 1 lite".
  *
  * The updater talks SysEx (F0 pack7(00 59 cmd len24 body chk) F7):
- *   cmd 0x11  handshake -> we answer our package identity (MELODEE_ID)
+ *   cmd 0x11  handshake -> we answer our package identity (MELODEE_ID): the name, '_' and three digits to the
+ *             plain one, the whole identity to the one with the body 01 (ota_handshake)
  *   F0 22 24 35 7F F7  upgrade -> ota_session(): pull parts of the package
  *     with cmd 0x30 read requests, check them, stage the package's update
- *     loader at 0xE0000 (outside Melodee's store), ask 0xE0000000 ("success"),
- *     then write the UPDATA_PARM record (flash 0xE4F00 + RAM 0x01C7FD88) and
+ *     loader at 0xE0000 (outside Melodee's store; SMK: 0xBB000), ask 0xE0000000 ("success"),
+ *     then write the UPDATA_PARM record (flash 0xE4F00, SMK 0xBFF00, + RAM 0x01C7FD88) and
  *     reset. The SPL runs the loader, which installs the package.
  * Nothing is committed before the host's "success"; any failure erases the
  * staging area and Melodee carries on.
@@ -25,9 +26,25 @@
  *   ota_show(step, code)       progress / result for the screen
  *   ota_commit(parm)           write RAM record + reset (never returns on hardware)
  */
+#if BOARD_SMK37
+/* SMK-37: the last 5 sectors of the stock VM (0xBB000..0xBFFFF, FL_OTA in fm1_flash_map.h), below BTIF /
+ * USRTRIM 0xC0000..0xC1FFF; the update loader may drop records only below 0xC0000 (ldr_core.c). The boot stub
+ * reads the staged loader there (firmware/stub/stub_core.h STUB_LDR_OFF) */
+#define OTA_AREA 0x000BB000u                     /* staged loader, 5 x 4 KiB */
+#define OTA_AREA_LEN 0x5000u
+#define OTA_RES (OTA_AREA + OTA_AREA_LEN - 0x100u)  /* 0xBFF00 = 4K boundary - 256: SPL scan */
+#ifndef SMK_MODEL
+#define SMK_MODEL "SMK-37 Pro"                   /* (fm1_cc.h) */
+#endif
+#define OTA_PARM_ID "ota-" SMK_MODEL "_016"       /* the stock app's parm identity (Pro 18 B, Elite 20 B) */
+_Static_assert(OTA_AREA + OTA_AREA_LEN <= 0xC0000u && OTA_AREA >= 0x9D000u, "SMK: OTA area outside the VM");
+_Static_assert(sizeof OTA_PARM_ID - 1u <= 20u, "SMK: the parm identity ends before +0x1C");
+#else
 #define OTA_AREA 0x000E0000u                     /* staged loader, 5 x 4 KiB */
 #define OTA_AREA_LEN 0x5000u
 #define OTA_RES (OTA_AREA + OTA_AREA_LEN - 0x100u)  /* 0xE4F00 = 4K boundary - 256: SPL scan */
+#define OTA_PARM_ID "ota-FM-1_015"
+#endif
 #define OTA_LDR_HCRC 0xEBAAu                     /* official update loader (usb_hid_ota.bin) */
 #define OTA_LDR_DCRC 0x5881u
 #define OTA_LDR_LEN 0x4DE1u
@@ -137,14 +154,32 @@ static int ota_send_msg(uint32_t cmd, const uint8_t *body, uint32_t n)   /* n <=
     return ota_wire_send(ota_wire, w);
 }
 
-static void ota_reply_identity(void)
+/* The plain handshake gets the name, '_' and three digits at most, as M-VAVE's own firmware answers it: M-UPGRADE
+ * 3.11 refuses an identity with more, so a release's "FM-1_91070" answers "FM-1_910" (the development build's
+ * "FM-1_900" is whole already). The handshake with the one-byte body 01 (tools/fm1_install.py HS_FULL, web/fm1ota.js;
+ * firmware built on fm1-base takes it too) gets the whole identity: the installers ask it after a plain answer of
+ * three digits that is not stock's 0dd, and take it when it starts with that answer. */
+static void ota_reply_identity(uint32_t full)
 {
     static const char ID[] = MELODEE_ID;         /* == the package marker string */
     uint8_t id[27];
-    uint32_t i;
+    uint32_t i, n = sizeof ID - 1u, u = 0;
+    while (u < n && ID[u] != '_')
+        u++;
+    if (!full && u + 4u < n)
+        n = u + 4u;
     for (i = 0; i < sizeof id; i++)
-        id[i] = i < sizeof ID - 1u ? (uint8_t)ID[i] : 0;
+        id[i] = i < n ? (uint8_t)ID[i] : 0;
     ota_send_msg(0x11, id, sizeof id);
+}
+
+/* the decoded frame (ota_take's d bytes) is a handshake: answered, 1 */
+static int ota_handshake(uint32_t d)
+{
+    if (ota_dec[2] != 0x11 || (d != 7u && (d != 8u || ota_dec[6] != 1u)))
+        return 0;
+    ota_reply_identity(d == 8u);
+    return 1;
 }
 
 /* decode the pending frame; returns its decoded length (0 = not ours) */
@@ -169,8 +204,8 @@ static uint32_t ota_take(void)
 static void ota_service(void)
 {
     uint32_t d = ota_take();
-    if (d == 7u && ota_dec[2] == 0x11)
-        ota_reply_identity();
+    if (d)
+        (void)ota_handshake(d);
 }
 
 /* one read request (3 tries x 5 s); data -> dst */
@@ -195,10 +230,8 @@ static int ota_read(uint32_t addr, uint8_t *dst, uint32_t len)
             d = ota_take();
             if (!d)
                 continue;
-            if (d == 7u && ota_dec[2] == 0x11) {
-                ota_reply_identity();
+            if (ota_handshake(d))
                 continue;
-            }
             if (d == len + 15u && ota_dec[2] == 0x30 && ota_rd24(ota_dec + 3) == len + 8u &&
                 ota_rd32(ota_dec + 7) == addr && ota_rd24(ota_dec + 11) == len) {
                 for (i = 0; i < len; i++)
@@ -266,6 +299,43 @@ static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *o
     return 0;
 }
 
+#if BOARD_SMK37
+/* SMK-37: the board check, before anything is erased. The FM-1's official package has the same head (0x0-0x3FFF)
+ * and the same official update loader as the SMK-37's, so the head check alone lets it through; its loader then
+ * writes the FM-1's flash layout: the factory calibration (BTIF / USRTRIM 0xC0000-0xC1FFF) is erased and the
+ * FM-1's USR image overwrites the SMK's (0xF4000). So a package must be laid out for the SMK-37:
+ *   -15  flash.bin is not the SMK app area, 0x9D000 bytes (the FM-1's is 0x93000), either loader
+ *   -16  official loader: the package's region table (app offset 0x60, flash 0x4060-0x411F: VM, PRCT, BTIF,
+ *        USRTRIM, USRFLASH, USR) is not this keyboard's. Both are SFC-enciphered at the same offset with the same
+ *        chip key, so equal bytes mean an equal table, and any other key differs.
+ *   -17  official loader: a USR image (UFW entry 50) for another place than 0xF4000 / 0xA000
+ * The screen shows FAILED -15 / -16 / -17; the staging area is not touched. pk, dv: 0xC0 bytes of scratch each */
+#define OTA_SMK_FL_LEN 0x9D000u                  /* ldr_core.c LDR_APP_HI, fm1pkg_make.py FLASH_SIZE */
+#define OTA_RT_OFF 0x4060u                       /* the region table in flash.bin and in this flash */
+#define OTA_RT_LEN 0xC0u
+#define OTA_E_FL_LEN (-15)
+#define OTA_E_USR (-17)
+static int ota_board_check(const uint8_t *hdr, uint32_t fl_off, uint32_t fl_len, uint32_t official, uint8_t *pk,
+                           uint8_t *dv)
+{
+    uint32_t i, nent = ota_rd16(hdr + 8);           /* hdr: entries deciphered by ota_ufw */
+    if (fl_len != OTA_SMK_FL_LEN)
+        return OTA_E_FL_LEN;
+    if (!official)
+        return 0;                                   /* our loader: the app area only (ldr_core.c) */
+    if (ota_read(fl_off + OTA_RT_OFF, pk, OTA_RT_LEN) || ota_fread(OTA_RT_OFF, dv, OTA_RT_LEN))
+        return -4;
+    if (!ota_memeq(pk, dv, OTA_RT_LEN))
+        return -16;
+    for (i = 0; i < nent && i < 11u; i++) {
+        const uint8_t *e = hdr + 0x40 + i * 0x50u;
+        if (ota_rd16(e) == 50u && (ota_rd32(e + 0x1C) != 0xF4000u || ota_rd32(e + 0x20) != 0xA000u))
+            return OTA_E_USR;
+    }
+    return 0;
+}
+#endif
+
 static int ota_stage(void)                       /* steps 1..6; 0 = host said success */
 {
     uint8_t *hdr = OTA_SCRATCH, *b = hdr + 0x400, *mine = b + 512;
@@ -277,7 +347,8 @@ static int ota_stage(void)                       /* steps 1..6; 0 = host said su
     if ((rc = ota_ufw(hdr, &fl_off, &fl_len, &ota_off, &ota_len)) != 0)
         return rc;
     /* Any partition installs here: the package's own loader decides (ldr_core.c: this Melodee's moves the
-     * Prophet banks up before its app area, 0x93000, is written; an older one's ends at 0x89000). */
+     * Prophet banks up before its app area, 0x93000, is written; an older one's ends at 0x89000). SMK-37: only its
+     * own app area (ota_board_check) */
     (void)fl_len;
     if (!ota_off)
         return -3;
@@ -299,6 +370,10 @@ static int ota_stage(void)                       /* steps 1..6; 0 = host said su
     boot = !fl_off && !fl_len && len == 0x4250u;
     if ((!fl_off && !boot) || (!official && !own && !boot))
         return -7;
+#if BOARD_SMK37
+    if ((rc = ota_board_check(hdr, fl_off, fl_len, official, b, mine)) != 0)
+        return rc;                                  /* another board's package (a boot installer too): nothing staged, nothing erased */
+#endif
     if (official && !boot) {            /* the official loader writes the head: it must equal ours */
         ota_show(2, 0);
         for (i = 0; i < 0x4000u; i += 512u) {
@@ -376,6 +451,9 @@ static int ota_session(void)
     ota_deadline = ota_now_ms() + 120000u;          /* step 1 normally takes ~5 s; a stalled host gives up after 2 min */
     rc = ota_stage();
     if (rc) {
+#if BOARD_SMK37
+        if (rc > OTA_E_FL_LEN || rc < OTA_E_USR)   /* (refused by the board check: nothing to erase) */
+#endif
         ota_unstage();
         ota_show(9, rc);
         return rc;
@@ -390,8 +468,8 @@ static int ota_session(void)
     ota_wr16(parm + 2, 0x5A0Du);
     ota_wr16(parm + 4, 0x5A01u);
     ota_wr16(parm + 6, 0x5441u);
-    for (i = 0; i < 12u; i++)
-        parm[8 + i] = (uint8_t)"ota-FM-1_015"[i];    /* the loader's own USB identity */
+    for (i = 0; i < sizeof OTA_PARM_ID - 1u; i++)    /* FM-1 12 B, SMK 18 B; zero up to +0x27 */
+        parm[8 + i] = (uint8_t)OTA_PARM_ID[i];    /* the loader's own USB identity */
     ota_wr32(parm + 72, OTA_AREA);
     ota_wr16(parm, ota_crc16(parm + 2, 78, 0));
 #if MELODEE_OTA_DRYRUN

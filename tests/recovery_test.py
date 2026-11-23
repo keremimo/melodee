@@ -77,6 +77,7 @@ class FakeROM(R.Link):
     def __init__(self, nor, key=0x980F):
         self.nor = bytearray(nor)
         self.key = key
+        self.flash_id = 0x856014
         self.erases = []
         self.programs = 0
         self.fail_program = None
@@ -104,7 +105,7 @@ class FakeROM(R.Link):
         if cmd == 0xFC0A:
             data = bytearray(14)
             data[0] = 3
-            data[2:6] = (0x856014).to_bytes(4, "little")
+            data[2:6] = self.flash_id.to_bytes(4, "little")
             return bytes(data)
         address = struct.unpack_from(">I", args)[0]
         if cmd == 0xFD05:
@@ -221,6 +222,25 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotIn(0xFD05, self.link.calls)
         self.assertEqual(self.link.erases, [])
 
+    def test_ucun_flash_restores_like_puya(self):
+        self.link.flash_id = 0xB36014
+        result = R.recover(self.link, self.package, bytes(512), self.output, True)
+        self.assertEqual(self.link.erases, [R.APP_LO + R.SECTOR])
+        self.assertTrue(result["full_flash_verified"])
+
+    def test_unknown_flash_refused_before_flash_access(self):
+        # One field off an accepted ID: capacity, memory type, manufacturer, unused top byte.
+        for flash_id in (0xB36015, 0xB36114, 0xB46014, 0x856015, 0x01B36014):
+            with self.subTest(flash_id=hex(flash_id)):
+                self.link.flash_id = flash_id
+                output = self.folder / hex(flash_id)
+                output.mkdir()
+                with self.assertRaisesRegex(R.RecoveryError, "refusing recovery"):
+                    R.recover(self.link, self.package, bytes(512), output, True)
+                self.assertFalse((output / "full-flash-before.bin").exists())
+        self.assertNotIn(0xFD05, self.link.calls)
+        self.assertEqual(self.link.erases, [])
+
     def test_backup_failure_prevents_erasure(self):
         original = R.durable_write
         def fail(path, data):
@@ -274,6 +294,21 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.link.nor[0x89000:0x89020], self.package.flash[0x89000:0x89020])
         self.assertEqual(self.link.nor[R.APP_HI:], self.before[R.APP_HI:])
         self.assertEqual((self.output / "full-flash-before.bin").read_bytes()[0x89000:0x89020], h)
+
+    def test_smk_package_restores_its_app_area_tail(self):
+        """an SMK-37 package: its app area runs to 0x9D000, the tail from 0x93000 (smkx.c) is restored with it"""
+        smk_hi = P.BOARDS["smk37"][0]
+        flash = bytearray(self.package.flash) + b"\xff" * (smk_hi - len(self.package.flash))
+        flash[R.APP_HI:R.APP_HI + R.SECTOR] = b"\xa5" * R.SECTOR      # (the tail as stored: encrypted)
+        self.path.write_bytes(P.ufw(bytes(flash), b"FELUCCA-LOADER-1", "SMK-37 Pro_900"))
+        package = R.Package(self.path, "SMK-37 Pro", smk_hi)
+        result = R.recover(self.link, package, bytes(512), self.output, True)
+        self.assertEqual(self.link.erases[-10:], list(range(R.APP_HI, smk_hi, R.SECTOR)))
+        self.assertEqual(self.link.nor[R.APP_LO:smk_hi], package.flash[R.APP_LO:])
+        self.assertEqual(self.link.nor[smk_hi:], self.before[smk_hi:])
+        self.assertTrue(result["full_flash_verified"] and result["saved_data_unchanged"])
+        with self.assertRaisesRegex(R.RecoveryError, "outside"):
+            self.link.write_sector(smk_hi, bytes(R.SECTOR), smk_hi)
 
     def test_write_boundary_guard(self):
         for address in (0, R.APP_LO - R.SECTOR, R.APP_LO + 1, R.APP_HI, 0xFC000):

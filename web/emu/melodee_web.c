@@ -121,8 +121,9 @@ static void tick(void)
         mix_block(o, CTL);
         for (i = 0; i < CTL; i++) {
             uint32_t r = (ring_w++ % RING) * 2u;
-            ring[r] = (float)o[2u * i] / 65536.0f;       /* Q15, 6 dB down as audio.c sends it to the codec */
-            ring[r + 1u] = (float)o[2u * i + 1u] / 65536.0f;
+            ring[r] = (float)o[2u * i] / (65536.0f * MIX_ONE);   /* the bus (Q15 << MIX_FRAC), 6 dB down as audio.c
+                                                                  * sends it to the codec */
+            ring[r + 1u] = (float)o[2u * i + 1u] / (65536.0f * MIX_ONE);
         }
     }
 }

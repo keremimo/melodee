@@ -11,7 +11,7 @@
  *
  *   fm1_input_init();
  *   polled:  for (;;) { fm1_input_scan(); ... }
- *   IRQ:     call fm1_input_tick() from a ~10 kHz timer ISR; it advances one
+ *   IRQ:     call fm1_input_tick() from the FM1_TICK_HZ (5 kHz) timer ISR; it advances one
  *            column per call (stock-style pipeline: rows are sampled one tick
  *            after the column was latched, the LEDs stay lit in between), debounces
  *            that column's keys at once and the encoders every FM1_NCOL ticks
@@ -22,7 +22,7 @@
  * fm1_input_scan() runs one full frame (11 columns, ~0.6 ms) and calls
  * FM1_INPUT_IDLE() while it waits.
  * Keys/buttons: asymmetric debounce. A press counts after FM1_DEB_PRESS frames closed in a row
- * (1.1-2.2 ms from the contact with the TIMER5 scan): the matrix has diodes and no ghosting, so a closed sample is a
+ * (2.2-4.4 ms from the contact with the 5 kHz TIMER5 scan): the matrix has diodes and no ghosting, so a closed sample is a
  * closed key; two in a row keep one stray sample from playing a note. A release needs
  * FM1_DEB_RELEASE frames open in a row (~9 ms): a contact bouncing open on the way down, or
  * chattering on the way up, never ends the note early or plays it twice. A key still bouncing
@@ -62,14 +62,15 @@
 #ifndef FM1_LED_US
 #define FM1_LED_US 40u           /* LED on-time per column (brightness vs scan rate) */
 #endif
-#define FM1_DEB_PRESS 2u          /* frames closed in a row: a press (a frame = 11 ticks, ~1.1 ms) */
-#define FM1_DEB_RELEASE 8u        /* frames open in a row: a release (~9 ms) */
+#define FM1_DEB_PRESS 2u          /* frames closed in a row: a press (a frame = 11 ticks, 2.2 ms at 5 kHz) */
+#define FM1_DEB_RELEASE (FM1_TICK_HZ / 1250u)   /* frames open in a row: a release (~9 ms: 4 at 5 kHz, 8 at 10) */
 #define FM1_INPUT_LAT 1           /* the press latency stats below (seq.c, console `inp`) */
 #define FM1_SETTLE_US 10u
-#define FM1_REST_FRAMES 900u      /* ~1 s still off the detent state: that is the detent (power-on) */
+#define FM1_REST_FRAMES (FM1_TICK_HZ * 9u / 100u)   /* ~1 s still off the detent state: that is the detent (power-on) */
 #define FM1_NCOL 11u
 #define FM1_NKEY 41u              /* ids: 0..13 buttons, 14..40 note keys */
 #define FM1_NENC 7u
+#define FM1_NBTN 14u              /* buttons: ids 0..13 */
 
 
 
@@ -87,12 +88,14 @@ static const uint8_t FM1_ENC[FM1_NENC][4] = {
     {0, 0, 1, 0}, {2, 0, 3, 0}, {8, 1, 9, 1}, {8, 0, 9, 0}, {6, 0, 7, 0}, {4, 0, 5, 0}, {0, 5, 1, 5},
 };
 enum { FM1_BTN_OCT_DOWN = 0, FM1_BTN_OCT_UP = 1 };
+#define FM1_OCT_BOTH (1u << FM1_BTN_OCT_DOWN | 1u << FM1_BTN_OCT_UP)
 
 
 static volatile struct {
     uint32_t notes;              /* debounced: bit n = note key n (0 = F3 .. 26 = G5) */
     uint32_t buttons;            /* debounced: bit i = button i (0..13) */
     uint32_t pressed, released;  /* button edges since the last fm1_input_edges() */
+    uint32_t remote, remote_tap; /* MIDI LEARN: buttons a controller holds; pressed, not yet seen down by the debounce */
     uint32_t notes_pressed;      /* note-key press edges since the last fm1_input_note_edges() */
     uint8_t raw[FM1_NCOL];       /* last frame, packed rows, 1 = closed */
     uint8_t cnt[FM1_NKEY];       /* frames in a row against the debounced state */
@@ -242,6 +245,11 @@ static void fm1__key(uint32_t id, uint32_t closed)
     volatile uint8_t *c = &fm1_in.cnt[id];
     uint32_t note = id >= 14u, bit = note ? 1u << (id - 14u) : 1u << id;
     uint32_t on = ((note ? fm1_in.notes : fm1_in.buttons) & bit) != 0u;
+    if (!note && ((fm1_in.remote | fm1_in.remote_tap) & bit)) {   /* a button a controller presses: closed */
+        if (on)
+            fm1_in.remote_tap &= ~bit;
+        closed = 1;
+    }
     if (closed == on) {                            /* agrees with the state: start over */
         *c = 0;
         return;
@@ -306,7 +314,7 @@ static void fm1__frame(void)
         volatile int8_t *sub = &fm1_in.enc_sub[e];
         /* no two-frame filter (as fm1-x0x): a state had to be seen on two frames running (~2.2 ms) to count, so a
          * fast turn, whose states last less than that, lost its detents and the knob slowed down or stopped. A frame
-         * (~1.1 ms) is longer than a contact bounce, and a step still needs >= 2 net transitions on the detent */
+         * (2.2 ms at 5 kHz) is longer than a contact bounce, and a step still needs >= 2 net transitions on the detent */
         if (cur != fm1_in.enc_last[e]) {
             fm1_in.enc_last[e] = (uint8_t)cur;
             fm1_in.enc_still[e] = 0;

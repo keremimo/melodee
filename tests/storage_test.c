@@ -51,7 +51,7 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
 /* every committed copy of obj damaged, wherever it lives (fixed pair or pool): its payload (head 0) or header */
 static void corrupt_all(uint32_t obj, int head)
 {
-    for (uint32_t c = 0; c < ST_SMALL_U0 + ST_U_N; c++) {
+    for (uint32_t c = 0; c < ST_LIN_C0 + ST_LN; c++) {
         st_hdr_t h;
         if (st_head(obj, c, &h)) continue;
         nor[st_sector(obj, c) + (head ? 8u : st_payload_off_header(obj, &h) + 10u)] ^= 0x01;
@@ -84,12 +84,12 @@ static int project_pool_test(void)
     for(uint32_t i=0;i<sizeof old;i++)old[i]=(uint8_t)(i*37u);
     for(uint32_t i=0;i<sizeof next;i++)next[i]=(uint8_t)(i*113u+7u);
     memset(nor,0xFF,sizeof nor);
-    for(uint32_t k=0;k<4u;k++){
-        legacy_project(k,0,old,sizeof old,4u);legacy_project(k,1,old,sizeof old,5u);
+    for(uint32_t k=0;k<4u;k++){                         /* (four projects as 2.0 keeps them: list records) */
+        ok &= !st_save(OBJ_BANK0+k,old,sizeof old);
         ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof old&&!memcmp(back,old,sizeof old);
     }
     memcpy(snapshot,nor,sizeof nor);
-    bad+=check("all four legacy A/B projects remain readable",ok);
+    bad+=check("all four projects read back",ok);
     for(uint32_t cut=0;cut<170u;cut++){
         memcpy(nor,snapshot,sizeof nor);fail_after=(int)cut;
         int rc=st_save(OBJ_BANK0,next,sizeof next);fail_after=-1;
@@ -97,7 +97,7 @@ static int project_pool_test(void)
         for(uint32_t k=1;k<4u;k++)ok &= st_load(OBJ_BANK0+k,back,sizeof back)==sizeof old&&!memcmp(back,old,sizeof old);
         if(!rc)break;
     }
-    bad+=check("migration survives every page cutoff without changing other slots",ok);
+    bad+=check("a save over one survives every page cutoff without changing other slots",ok);
     memcpy(nor,snapshot,sizeof nor);ok=1;
     for(uint32_t round=0;round<4u;round++)for(uint32_t k=0;k<4u;k++){
         next[0]=(uint8_t)(round*4u+k);
@@ -117,10 +117,11 @@ static int project_pool_test(void)
     ok=1;
     uint32_t live[ST_UW]={0};
     for(uint32_t k=0;k<4u;k++){st_hdr_t h;int c=st_current(OBJ_BANK0+k,&h);st_project_used(live,OBJ_BANK0+k,(uint32_t)c,&h);}
-    for(uint32_t i=0;i<ST_POOL_SECTORS;i++)if((live[i/32u]>>(i%32u))&1u)for(uint32_t j=3840u;j<4096u;j++)ok &= nor[st_sector(OBJ_BANK0,i+2u)+j]==0xFFu;
-    /* The original A0000..C7FFF and EA000..F9FFF regions are the only mutation windows. */
-    for(uint32_t i=0;i<sizeof nor;i++)if(!((i>=0xA0000u&&i<0xC8000u)||(i>=0xEA000u&&i<0xFA000u)))ok &= nor[i]==0xFFu;
-    bad+=check("SPL scan tails and all non-project regions stay erased",ok);
+    for(uint32_t i=0;i<ST_LN;i++)if((live[i/32u]>>(i%32u))&1u)for(uint32_t j=ST_GUARD_OFF;j<ST_GUARD_OFF+ST_GUARD_LEN;j++)ok &= nor[st_lin_at(i)+j]==0xFFu;
+    /* the data flash's free places only: never below it, OTA staging, the settings, the resource region, key_mac.
+     * (The legacy fixtures' sectors were in the data flash; nothing outside it was ever written.) */
+    for(uint32_t i=0;i<sizeof nor;i++)if(i<0x93000u||(i>=0xE0000u&&i<0xE5000u)||(i>=0xFC000u&&i<0xFE000u)||(i>=0xCB000u&&i<0xE0000u)||i>=0xFF000u)ok &= nor[i]==0xFFu;
+    bad+=check("loader scan guards erased, nothing outside the free places",ok);
     uint32_t calls=io_calls;
     bad+=check("pool overflow rejected before flash access",st_save(OBJ_BANK0,next,sizeof next+1u)<0&&io_calls==calls);
     ok=!st_save(OBJ_BANK0,0,0)&&!st_exists(OBJ_BANK0);
@@ -135,13 +136,96 @@ static int project_pool_test(void)
     st_hdr_t h;int copy=st_current(OBJ_BANK0+1,&h);h.seq=0xFFFFFFFFu;h.hcrc=st_crc32(&h,sizeof h-4u);
     memcpy(nor+st_sector(OBJ_BANK0+1,(uint32_t)copy),&h,sizeof h);
     bad+=check("pool sequence wraps safely",!st_save(OBJ_BANK0+1,next,sizeof next)&&st_load(OBJ_BANK0+1,back,sizeof back)==sizeof next&&!memcmp(back,next,sizeof next));
-    /* A project record's sectors are read by its own tag (a list of pool indices), never as another object's tags */
+    /* A project record's sectors are read by its own tag (a list of indices), never as another object's tags */
     memset(nor,0xFF,sizeof nor);
-    h=(st_hdr_t){ST_MAGIC,OBJ_BANK0,3u,1u,ST_PROJECT_MAX,0u,{0u,0u},0u};
-    st_list_init(&h);for(uint32_t k=0;k<ST_PROJECT_SECTORS;k++)st_list_put(&h,k,1u+k);
+    h=(st_hdr_t){ST_MAGIC,OBJ_BANK0,3u,1u,8u*ST_POOL_PAYLOAD_MAX,0u,{0u,0u},0u};
+    h.rsv[0]=0xFFFFFFFFu;h.rsv[1]=ST_LIST_TAG|0x00FFFFFFu;for(uint32_t k=0;k<ST_PROJECT_SECTORS;k++)st_list_put(&h,k,1u+k);
     h.hcrc=st_crc32(&h,sizeof h-4u);memcpy(nor+0xA1000u,&h,sizeof h);
-    bad+=check("project sector lists are read by their own tag",!st_head(OBJ_BANK0,3u,&h)&&st_payload_off_header(OBJ_BANK0,&h)==32u);
+    ok=!st_head(OBJ_BANK0,3u,&h)&&st_payload_off_header(OBJ_BANK0,&h)==32u;
+    h=(st_hdr_t){ST_MAGIC,OBJ_BANK0,(uint16_t)(ST_LIN_C0+14u),1u,ST_PROJECT_MAX,0u,{0u,0u},0u};
+    st_list_init(&h);for(uint32_t k=0;k<ST_PROJECT_SECTORS;k++)st_list_put(&h,k,14u+k);
+    h.hcrc=st_crc32(&h,sizeof h-4u);memset(nor+0xA1000u,0xFF,32);memcpy(nor+0xA1000u,&h,sizeof h);
+    ok&=st_lin_at(14u)==0xA1000u&&!st_head(OBJ_BANK0,ST_LIN_C0+14u,&h)&&st_head(OBJ_BANK0,16u,&h);
+    bad+=check("project sector lists are read by their own tag",ok);
 
+    return bad;
+}
+
+/* ---- the bridge (2026-11): list records, the resource window; 1.x's forms never read ---- */
+/* an old-form preset bank: a copy in the former pool (ST_SMALL_U0 + pool index), payload at 32 (CMP2) */
+static void old_bank(uint32_t obj, uint32_t idx, const uint8_t *d, uint32_t len, uint32_t seq)
+{
+    uint32_t at = st_pool_at(idx);
+    memset(nor + at, 0xFF, 4096); memcpy(nor + at + 32, d, len);
+    st_hdr_t h = {ST_MAGIC, (uint16_t)obj, (uint16_t)(ST_SMALL_U0 + idx), seq, len, st_crc32(d, len), {ST_COMPACT_TAG, 0xFFFFFFFFu}, 0};
+    h.hcrc = st_crc32(&h, sizeof h - 4u); memcpy(nor + at, &h, sizeof h);
+}
+/* an 0xA8 record: old pool indices, 3,808-byte sectors */
+static void old_list(uint32_t obj, const uint8_t *idx, uint32_t n, const uint8_t *d, uint32_t len, uint32_t seq)
+{
+    st_hdr_t h; memset(&h, 0xFF, sizeof h);
+    h.magic = ST_MAGIC; h.type = (uint16_t)obj; h.slot = (uint16_t)(idx[0] + 2u); h.seq = seq; h.len = len; h.crc = st_crc32(d, len);
+    h.rsv[1] = ST_LIST_TAG | 0x00FFFFFFu;
+    for (uint32_t k = 0; k < n; k++) { st_list_put(&h, k, idx[k]); memset(nor + st_pool_at(idx[k]), 0xFF, 4096); }
+    for (uint32_t i = 0; i < len; i++) nor[st_pool_at(idx[i / 3808u]) + 32u + i % 3808u] = d[i];
+    h.hcrc = st_crc32(&h, sizeof h - 4u); memcpy(nor + st_pool_at(idx[0]), &h, sizeof h);
+}
+static uint8_t bd[6][30000];
+static int bridge_same(uint32_t obj, const uint8_t *d, uint32_t len)
+{
+    static uint8_t back[ST_PROJECT_MAX];
+    return st_load(obj, back, sizeof back) == (int)len && !memcmp(back, d, len);
+}
+#define B_KIT (ST_RFILE0 + 0u)
+#define B_P6 (ST_PFILE0 + 6u)
+static void bridge_fixture(void)                   /* one of every old form */
+{
+    static const uint8_t L6[3] = {20, 21, 22}, LK[7] = {30, 31, 32, 33, 34, 35, 36};
+    memset(nor, 0xFF, sizeof nor);
+    legacy_project(0, 0, bd[0], 27904u, 3u); legacy_project(0, 1, bd[1], 27904u, 4u);   /* A/B with extensions */
+    old_list(B_P6, L6, 3, bd[2], 10000u, 2u);
+    old_bank(OBJ_CZBANK0, 60u, bd[3], 2332u, 5u);                                       /* (0x97000) */
+    st_pair_save(OBJ_CZBANK0 + 1u, bd[4], 2332u);                                       /* a fixed pair */
+    old_list(B_KIT, LK, 7, bd[5], 26656u, 1u);
+}
+static int bridge_test(void)
+{
+    int bad = 0, ok;
+    uint8_t buf[256], idx[ST_PROJECT_SECTORS];
+    st_hdr_t h;
+    for (uint32_t k = 0; k < 6u; k++) for (uint32_t i = 0; i < sizeof bd[k]; i++) bd[k][i] = (uint8_t)(i * 31u + k * 7u + 1u);
+    memset(nor, 0xFF, sizeof nor); st_res_end = FL_RES_HI;
+    ok = !st_save(ST_PFILE0 + 5u, bd[0], 3u * ST_LIN_PAYLOAD_MAX);
+    int c = st_current(ST_PFILE0 + 5u, &h);
+    ok &= c >= (int)ST_LIN_C0 && st_rec_sectors(&h, idx) == 3u && bridge_same(ST_PFILE0 + 5u, bd[0], 3u * ST_LIN_PAYLOAD_MAX);
+    for (uint32_t k = 0; ok && k < 3u; k++) {
+        for (uint32_t j = ST_GUARD_OFF; j < ST_GUARD_OFF + ST_GUARD_LEN; j++) ok &= nor[st_lin_at(idx[k]) + j] == 0xFFu;
+        ok &= nor[st_lin_at(idx[k]) + 32u] == bd[0][k * ST_LIN_PAYLOAD_MAX] &&
+              nor[st_lin_at(idx[k]) + 0xF08u] == bd[0][k * ST_LIN_PAYLOAD_MAX + ST_RUN0] &&
+              nor[st_lin_at(idx[k]) + 0xFFFu] == bd[0][(k + 1u) * ST_LIN_PAYLOAD_MAX - 1u];
+    }
+    bad += check("list records: 4,056 bytes a sector around an erased guard", ok);
+    bad += check("allocation from the top, never the settings pair",
+                 st_lin_at(idx[0]) == 0xFE000u && st_lin_at(idx[1]) == 0xFB000u && st_lin_at(idx[2]) == 0xFA000u);
+    memset(nor, 0xFF, sizeof nor);
+    int whole = st_project_free();
+    st_res_end = FL_RES_LO + 15u * ST_SECTOR;
+    int trimmed = st_project_free();
+    ok = whole == 80 && trimmed == 86;
+    for (uint32_t s = 0; s < 28u && !st_save(ST_PFILE0 + 4u + s, bd[0], 4u * ST_LIN_PAYLOAD_MAX); s++) ;
+    ok &= st_project_free() < 4;
+    for (uint32_t i = FL_RES_LO; i < st_res_end; i++) ok &= nor[i] == 0xFFu;
+    for (uint32_t i = 0xE0000u; i < 0xE5000u; i++) ok &= nor[i] == 0xFFu;
+    for (uint32_t i = st_res_end; i < FL_RES_HI; i += ST_SECTOR) ok &= nor[i + 32u] != 0xFFu;   /* (payload from 32) */
+    bad += check("resource window: the pool takes the region's tail only", ok);
+    st_res_end = FL_RES_HI;
+
+    /* Melodee 1.x's store forms (fixed pairs with extensions, 0xA8 lists, bank copies in the former pool): never read
+     * since 2.0 (the web installer converts them before the update) */
+    bridge_fixture();
+    bad += check("1.x store forms: not read (a project's A/B pair, an 0xA8 list, a former-pool bank copy, a kit)",
+                 !st_exists(OBJ_BANK0) && !st_exists(B_P6) && !st_exists(OBJ_CZBANK0) && !st_exists(B_KIT) &&
+                 st_current(OBJ_BANK0, &h) < 0 && st_current(B_KIT, &h) < 0);
     return bad;
 }
 
@@ -276,6 +360,7 @@ int main(void)
         bad += check("oversized save rejected", st_save(T_OBJ, a, ST_PAYLOAD_MAX + 1u) < 0);
     }
     bad += project_pool_test();
+    bad += bridge_test();
     printf("%s\n", bad ? "STORAGE TEST FAILED" : "storage test passed");
     bad += check("CZ banks have disjoint A/B sectors outside project and preset data",
         st_sector(OBJ_CZBANK0,0)==0xC8000u && st_sector(OBJ_CZBANK0+7,1)+ST_SECTOR==0xD8000u &&

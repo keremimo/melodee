@@ -47,7 +47,7 @@ static uint32_t seq_starts(uint32_t *at, uint32_t n)
     transport_req = 1;
     for (f = 0; got < n && f < 20u * FS; f += CTL) {
         int32_t o[2 * CTL];
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         if (trk[0].seq_idx != last) {
             last = trk[0].seq_idx;
             at[got++] = f;
@@ -56,7 +56,7 @@ static uint32_t seq_starts(uint32_t *at, uint32_t n)
     transport_req = 2;
     {
         int32_t o[2 * CTL];
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
     }
     return got;
 }

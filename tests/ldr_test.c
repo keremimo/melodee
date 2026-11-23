@@ -5,7 +5,11 @@
  * host serves a package over the SysEx protocol, the "device" flash starts as
  * another package's flash.bin (as if that firmware were installed). NEW's res.bin, when it has one, goes to the
  * resource region after the app (ldr_res).
- *   ldr_test OLD.fwsc NEW.fwsc */
+ *   ldr_test OLD.fwsc NEW.fwsc
+ * -DBOARD_SMK37=1: the SMK-37's places, on SMK-layout packages (PRCT 0x9D000, the staging at 0xBB000, the resource
+ * region in the VM), and every protected range (head, BTIF / USRTRIM, USR, key_mac) and Melodee's SMK store untouched;
+ * NEW carries an app area tail (0x93000.., firmware/src/smkx.c): written before the commit marker, a cut there leaves
+ * no marker. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +17,22 @@
 
 #define MELODEE_ID "ota-FM-1_900"
 #define MELODEE_OTA_DRYRUN 0
+#ifndef BOARD_SMK37
+#define BOARD_SMK37 0
+#endif
+#if BOARD_SMK37
+#define T_APP_HI 0x9D000u                /* the end of the app area the loader writes (ldr_core.c LDR_APP_HI) */
+#define T_REC_HI 0xC0000u                /* .. and of its record window (LDR_REC_HI) */
+#define T_OTA 0xBB000u                   /* the staging area (ota.c OTA_AREA) */
+#define T_RES_LO 0x9F000u                /* the resource region (LDR_RES_LO .. HI) */
+#define T_RES_HI 0xAF000u
+#else
+#define T_APP_HI 0x93000u
+#define T_REC_HI 0xFC000u
+#define T_OTA 0xE0000u
+#define T_RES_LO 0xCB000u
+#define T_RES_HI 0xE0000u
+#endif
 
 static uint8_t nor[0x100000], *logical;
 static size_t logical_len;
@@ -83,7 +103,7 @@ static void ota_commit(const uint8_t *parm) { (void)parm; }
 static int ldr_fread(uint32_t off, void *p, uint32_t n) { memcpy(p, nor + off, n); return 0; }
 static int ldr_erase(uint32_t off)
 {
-    if (off < 0x4000u || off >= 0xFC000u || (off & 0xFFFu)) bad_range++;
+    if (off < 0x4000u || off >= T_REC_HI || (off & 0xFFFu)) bad_range++;
     if (off < 0x4000u) { printf("ERASE IN THE HEAD %#x\n", off); exit(1); }
     erases++;
     if (marker_erase_stuck && off == 0x91000u) return 0;
@@ -92,14 +112,22 @@ static int ldr_erase(uint32_t off)
 }
 static uint32_t prog_fail_after;                    /* a write that fails (the power gone): after this many */
 static int res_prog_fail;                           /* writes into the resource region past its first sector fail */
+static int tail_prog_fail;                          /* writes into the app area tail (SMK 0x93000..) fail */
+static uint32_t prog_seq, tail_seq, mark_seq;       /* the last write into the tail, the marker's page: their order */
 static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     const uint8_t *s = p;
     uint32_t i;
     if (prog_fail_after && !--prog_fail_after) return -1;
-    if (res_prog_fail && off >= 0xCC000u && off < 0xE0000u) return -1;
+    if (res_prog_fail && off >= T_RES_LO + 0x1000u && off < T_RES_HI) return -1;
+    prog_seq++;
+    if (off >= 0x93000u && off < T_APP_HI) {
+        if (tail_prog_fail) return -1;
+        tail_seq = prog_seq;
+    }
+    if (off <= 0x91FE0u && off + n > 0x91FE0u) mark_seq = prog_seq;
     /* Programming is restricted to the application and the resource region. */
-    if (off < 0x4000u || (off + n > 0x93000u && (off < 0xCB000u || off + n > 0xE0000u)) || ((off & 0xFFu) + n) > 256u)
+    if (off < 0x4000u || (off + n > T_APP_HI && (off < T_RES_LO || off + n > T_RES_HI)) || ((off & 0xFFu) + n) > 256u)
         bad_range++;
     for (i = 0; i < n; i++) nor[off + i] &= s[i];
     return 0;
@@ -141,11 +169,11 @@ static uint32_t entry_off(const uint8_t *lg, uint32_t type, uint32_t *size)   /*
 static uint32_t flash_off(const uint8_t *lg) { return entry_off(lg, 0, 0); }   /* flash.bin */
 
 static uint32_t res_off, res_size;                  /* NEW's res.bin in the logical image */
-static int res_installed(void)                      /* the region == res.bin, the rest of it blank */
+static int res_installed(void)                      /* the region == res.bin, the rest of its window blank */
 {
-    uint32_t i;
+    uint32_t i, hi = ldr_res_window(logical + res_off);
     if (memcmp(nor + LDR_RES_LO, logical + res_off, res_size)) return 0;
-    for (i = LDR_RES_LO + res_size; i < LDR_RES_HI; i++)
+    for (i = LDR_RES_LO + res_size; i < hi; i++)
         if (nor[i] != 0xFFu) return 0;
     return 1;
 }
@@ -155,8 +183,39 @@ static void st_record(uint32_t at, uint32_t magic)   /* a valid 32-byte commit r
     ota_wr32(nor + at, magic);
     ota_wr32(nor + at + 28, ldr_crc32(nor + at, 28));
 }
+static void res_head(uint32_t window)               /* an installed region's commit record with its window (rsv[0]) */
+{
+    memset(nor + LDR_RES_LO, 0x22, 32);
+    ota_wr32(nor + LDR_RES_LO, LDR_RES_MAGIC);
+    ota_wr32(nor + LDR_RES_LO + 12u, window);
+    ota_wr32(nor + LDR_RES_LO + 28u, ldr_crc32(nor + LDR_RES_LO, 28));
+}
 
 static int check(const char *what, int ok) { printf("%-56s %s\n", what, ok ? "ok" : "FAIL"); return ok ? 0 : 1; }
+
+#if BOARD_SMK37
+/* the SMK's protected ranges and Melodee's store (store A 0x9D000..0xBAFFF, B 0xC2000..0xE9FFF, the stock marker's
+ * sector, C 0xEB000..0xF3FFF), each sector a pattern with an erased tail (as storage.c writes them); none of it may
+ * change, but the update record in the staging area's last sector */
+static uint8_t keep[0x100000];
+static void protect_fill(void)
+{
+    uint32_t s, i;
+    for (s = T_APP_HI; s < 0x100000u; s += 0x1000u)
+        if ((s < T_OTA || s >= T_OTA + 0x5000u) && (s < T_RES_LO || s >= T_RES_HI))
+            for (i = 0; i < 0x1000u; i++)
+                nor[s + i] = i >= 0xF00u ? 0xFFu : (uint8_t)(s >> 12 ^ i * 7u);
+    memcpy(keep, nor, sizeof keep);
+}
+static int protect_ok(void)
+{
+    uint32_t s;
+    for (s = T_APP_HI; s < 0x100000u; s += 0x1000u)
+        if ((s < T_OTA || s >= T_OTA + 0x5000u) && (s < T_RES_LO || s >= T_RES_HI) && memcmp(nor + s, keep + s, 0x1000u))
+            return 0;
+    return 1;
+}
+#endif
 
 int main(int argc, char **argv)
 {
@@ -169,10 +228,13 @@ int main(int argc, char **argv)
     logical = load_logical(argv[2], &logical_len);
     ofo = flash_off(old);
     nfo = flash_off(logical);
-    /* device: OLD installed, plus a valid update record at 0xE4F00 */
+    /* device: OLD installed, plus a valid update record at the staging area's end - 256 (FM-1 0xE4F00) */
     memset(nor, 0xFF, sizeof nor);
     memcpy(nor, old + ofo, LDR_APP_HI);
     memcpy(head, nor, sizeof head);
+#if BOARD_SMK37
+    protect_fill();
+#endif
     {
         uint8_t first[512];
         uint32_t key;
@@ -185,8 +247,32 @@ int main(int argc, char **argv)
         uint8_t r[112] = {0};
         r[2] = 0x0D; r[3] = 0x5A; r[4] = 0x01; r[5] = 0x5A; r[6] = 0x41; r[7] = 0x54;
         ota_wr16(r, ota_crc16(r + 2, 78, 0));
-        memcpy(nor + 0xE4F00, r, sizeof r);
+        memcpy(nor + T_OTA + 0x4F00u, r, sizeof r);
     }
+#if BOARD_SMK37
+    prog_fail_after = 2u * 16u + 5u;                   /* power gone while programming the application */
+    rc = ldr_session();
+    bad += check("interrupted app write leaves the head and the store intact", rc == -10 &&
+                 !memcmp(nor,head,sizeof head) && protect_ok());
+    bad += check("interrupted update retains the flash resume record", nor[T_OTA + 0x4F06u]==0x41u);
+    prog_fail_after = 0;
+    tail_seq = mark_seq = 0;
+    rc = ldr_session();
+    {   /* the app area tail (0x93000..0x9CFFF): NEW's, written before the commit marker's page */
+        uint32_t i, any = 0;
+        for (i = 0x93000u; i < T_APP_HI; i++) any |= logical[nfo + i] != 0xFFu;
+        bad += check("SMK tail: the new package carries one", any != 0);
+        bad += check("SMK tail: == the package's, before the commit marker", rc == 0 && tail_seq && mark_seq > tail_seq &&
+                     !memcmp(nor + 0x93000u, logical + nfo + 0x93000u, T_APP_HI - 0x93000u));
+        memcpy(nor + 0x4000u, old + ofo + 0x4000u, LDR_APP_HI - 0x4000u);   /* OLD again, the store as it was */
+        tail_prog_fail = 1;                            /* the power gone while the tail is written */
+        rc = ldr_session();
+        tail_prog_fail = 0;
+        for (i = 0x91000u; i < 0x92000u && nor[i] == 0xFFu; i++);
+        bad += check("SMK tail: a cut there leaves no commit marker", rc == -10 && i == 0x92000u && protect_ok());
+        rc = ldr_session();
+    }
+#else
     /* Musical extension sectors lie above the staged loader and retain erased
      * scan tails. Installing firmware must preserve every byte of them. */
     static uint8_t extensions[0x10000];
@@ -217,12 +303,13 @@ int main(int argc, char **argv)
                  !memcmp(nor+0x93000,current_banks,sizeof current_banks) &&
                  memcmp(nor+0x89000,prophet_banks,sizeof prophet_banks));
     bad += check("project extensions survive firmware installation",!memcmp(nor+0xEA000u,extensions,sizeof extensions));
+#endif
     printf("  rc %d, %u requests, %u sector erases\n", rc, requests, erases);
     bad += check("install completes", rc == 0);
     bad += check("app area == the new package's flash.bin", !memcmp(nor + 0x4000, logical + nfo + 0x4000, LDR_APP_HI - 0x4000));
     bad += check("flash head [0, 0x4000) untouched", !memcmp(nor, head, sizeof head));
     bad += check("finish asked (0xF0000000)", f0_asked >= 1);
-    bad += check("update record cleared (RAM + flash)", record_cleared && nor[0xE4F06] == 0xFF);
+    bad += check("update record cleared (RAM + flash)", record_cleared && nor[T_OTA + 0x4F06u] == 0xFF);
     bad += check("no write outside the allowed windows", bad_range == 0);
     res_off = entry_off(logical, LDR_RES_TYPE, &res_size);
     bad += check("the package carries res.bin, whole sectors", res_off && res_size && !(res_size & 0xFFFu));
@@ -264,6 +351,35 @@ int main(int argc, char **argv)
                      !memcmp(nor + 0x4000, logical + nfo + 0x4000, LDR_APP_HI - 0x4000));
         rc = ldr_session();
         bad += check(".. the next install writes it", rc == 0 && res_installed());
+        /* the windows (bridge): the store may hold records in the region above the installed header's window */
+        uint32_t pw = (ldr_res_window(logical + res_off) - LDR_RES_LO) >> 12;
+        bad += check("the package's header carries its window (FL_RES_RESERVE)", pw == LDR_RES_FLOOR);
+        if (pw < LDR_RES_N) {
+            uint32_t above = LDR_RES_LO + pw * 0x1000u;
+            memset(nor + LDR_RES_LO, 0x5A, LDR_RES_HI - LDR_RES_LO);
+            res_head(pw); st_record(above, LDR_ST_MAGIC);
+            static uint8_t tail[LDR_RES_HI - LDR_RES_LO];
+            memcpy(tail, nor + above, LDR_RES_HI - above);
+            rc = ldr_session();
+            bad += check("installed window: written inside it, a pool record above it kept",
+                         rc == 0 && res_installed() && !memcmp(tail, nor + above, LDR_RES_HI - above));
+            memset(nor + LDR_RES_LO, 0x5A, LDR_RES_HI - LDR_RES_LO);
+            res_head(0); memcpy(tail, nor + above, LDR_RES_HI - above);
+            rc = ldr_session();
+            bad += check("a header from before the bridge (0): written, blanked only to the package's window",
+                         rc == 0 && res_installed() && !memcmp(tail, nor + above, LDR_RES_HI - above));
+            memset(nor + LDR_RES_LO, 0xFF, LDR_RES_HI - LDR_RES_LO);
+            st_record(above + 0x1000u, LDR_ST_MAGIC); memcpy(tail, nor + above, LDR_RES_HI - above);
+            rc = ldr_session();
+            bad += check("no header: written below the floor, a record above it kept",
+                         rc == 0 && res_installed() && !memcmp(tail, nor + above, LDR_RES_HI - above));
+            memset(nor + LDR_RES_LO, 0x5A, LDR_RES_HI - LDR_RES_LO);
+            res_head(pw - 1u); memcpy(banks, nor + LDR_RES_LO, sizeof banks);
+            erases = 0;
+            rc = ldr_session();
+            bad += check("a package wider than the installed window: the region left to its app",
+                         rc == 0 && !erases && !memcmp(banks, nor + LDR_RES_LO, sizeof banks));
+        }
     }
     /* a package for another chip key is refused before any erase */
     {
@@ -297,7 +413,7 @@ int main(int argc, char **argv)
             bad += check("invalid stub marker refused before any erase",rc==-15 && !erases);
         }
         memcpy(logical+nfo+LDR_MARK_OFF,saved,sizeof saved);
-        static uint8_t before[0x8F000];
+        static uint8_t before[T_APP_HI - 0x4000u];
         memcpy(nor+LDR_APP_LO,logical+nfo+LDR_APP_LO,sizeof before);
         nor[0x5000]^=1u;
         memcpy(before,nor+LDR_APP_LO,sizeof before);
@@ -306,14 +422,21 @@ int main(int argc, char **argv)
         bad += check("marker must erase before changing any body byte",rc==-12 && !memcmp(before,nor+LDR_APP_LO,sizeof before));
         marker_erase_stuck=0;
     }
-    {   /* A valid UFW entry with an older, smaller flash partition (0x89000). */
+    {   /* A valid UFW entry with an older, smaller flash partition (0x89000; SMK: the FM-1's 0x93000). */
         uint8_t saved[0x400];memcpy(saved,logical,sizeof saved);uint8_t *h=logical;
         uint8_t header[64];memcpy(header,h,64);ota_jl_enc(header,64);uint32_t count=ota_rd16(header+8);
-        for(uint32_t k=0;k<count;k++){uint8_t *e=h+0x40+k*0x50u;ota_jl_enc(e,0x50);if(ota_rd16(e)==0)ota_wr32(e+12,0x89000u);ota_jl_enc(e,0x50);}
+        for(uint32_t k=0;k<count;k++){uint8_t *e=h+0x40+k*0x50u;ota_jl_enc(e,0x50);if(ota_rd16(e)==0)ota_wr32(e+12,BOARD_SMK37?0x93000u:0x89000u);ota_jl_enc(e,0x50);}
         ota_wr16(header+2,ota_crc16(h+0x40,count*0x50u,0));ota_wr16(header,ota_crc16(header+2,62,0));ota_jl_enc(header,64);memcpy(h,header,64);
+#if BOARD_SMK37
+        erases=0;rc=ldr_session();bad+=check("another partition refused before erasing anything",rc==-3&&!erases&&protect_ok());
+#else
         erases=0;rc=ldr_session();bad+=check("older smaller partition refused before erasing anything",rc==-3&&!erases&&!memcmp(nor+0x93000,current_banks,sizeof current_banks));
+#endif
         memcpy(logical,saved,sizeof saved);
     }
+#if BOARD_SMK37
+    bad += check("protected ranges and the store untouched (BTIF, USRTRIM, USR, key_mac)", protect_ok());
+#endif
     printf("%s\n", bad ? "LOADER TEST FAILED" : "loader test passed");
     return bad != 0;
 }

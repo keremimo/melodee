@@ -96,7 +96,7 @@ static int mpc_test(void)
     scale_reset();
     t->p[P_SCALE] = 1; t->p[P_ROOT] = 2; t->p[P_QUANT] = Q_MPC; t->p[P_MPCDEG] = 1;   /* D major */
     for (uint32_t k = 0; k < 4u; k++) {
-        set_engine_of(&trk[k], 3);
+        set_engine_of(&trk[k], ENGI_SID);
         trk[k].p[P_QUANT] = Q_MPC; trk[k].p[P_SCALE] = 1; trk[k].p[P_MPCDEG] = 1;
         for (note = 0; note < 128u; note++) {
             int pad = -1;
@@ -116,7 +116,7 @@ static int mpc_test(void)
     t->mpc_octave = 1;
     bad += check("MPC: the octave buttons shift the pads", midi_map(t, 101) == 74u);
     t->mpc_octave = 0;
-    set_engine_of(&trk[3], ENGI_DRUM);
+    set_engine_of(&trk[3], ENGI_808);
     trk[3].p[P_QUANT] = Q_MPC;
     bad += check("MPC: a DRUM track maps Bank H to drum sounds, outside Bank H silent",
                  midi_map(&trk[3], 21) == 38u && midi_map(&trk[3], 36) == KB_SILENT);
@@ -130,7 +130,7 @@ static void mpc_setup(void)
     scale_reset();
     for (uint32_t k = 0; k < 4u; k++) {
         track_t *t = &trk[k];
-        set_engine_of(t, 3);
+        set_engine_of(t, ENGI_SID);
         t->p[P_QUANT] = Q_MPC; t->p[P_SCALE] = 1; t->p[P_MPCDEG] = 1;
         t->p[P_ROOT] = (int16_t)(k * 2u); t->p[P_TRANS] = 0;
         t->p[P_CHRD] = 0; t->p[P_AMODE] = 0; t->p[P_VOICE] = V_POLY;
@@ -200,7 +200,7 @@ static int mpc_route_test(void)
     for (uint32_t k = 0; k < 4u; k++) ok &= !nsounding(&trk[k]) && !midi_owners[k];
     bad += check("MPC: All Notes Off releases every bank owned by the channel", ok);
     mpc_setup();
-    set_engine_of(&trk[3], ENGI_DRUM); settings_drumch = 10;
+    set_engine_of(&trk[3], ENGI_808); settings_drumch = 10;
     midi(0x99, 101, 100);
     bad += check("MPC: bank E overrides the DRUM channel and still reaches track 1", mn_get(9, 101) == 1u && sounding(&trk[0], 60));
     midi(0x89, 101, 0);
@@ -264,7 +264,7 @@ static int share_test(void)
     uint32_t k, ok = 1;
     scale_reset();
     ui.home = 0;
-    for (k = 0; k < NPAGES && PAGES[k].graph != GR_SCALE_PICKER; k++) {}
+    for (k = 0; k < NPAGES && PG(k).graph != GR_SCALE_PICKER; k++) {}
     ui.page = (uint8_t)k;                             /* SCALES: outside the SCL cycle, opened from its row */
     edit_param(1, 3);                                 /* SCL */
     edit_param(3, 1);                                 /* QNT */

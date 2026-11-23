@@ -5,70 +5,64 @@
  * sounds at power-on. */
 #include "dsp.c"
 #include "audio_batch.h"
-#if MELODEE_PROPHET
-#include "eng_prophet_test.c"
+#include "../modules/shipped.h" /* the synths Melodee makes: the default engine map, their names before their files */
+#include "module_presets.h"     /* a synth module's factory presets, in its file (module_store.c reads them) */
+#include "module_schema.h"      /* .. its patch and parameters (schema.c reads them) */
+#include "patch.c"              /* the parts' patches: their engines' bytes */
+#include "sysex_rx.c"           /* the synths' SysEx in: their schemas' patterns, collected for their modules */
+static int preset_patch(uint32_t e, uint32_t k, void *dst, uint32_t n);   /* (below: factory preset k's patch) */
+#if MELODEE_HOST_ENGINES
+#define HOST_STAGE 1
+#include "../modules/host/host_engines.c"   /* host builds: the synths Melodee ships, built in as their reference
+                                             * (the device's image has none: eng_module.c plays their modules) */
 #endif
-#include "eng_phase.c"
-#include "eng_cz.c"
-#include "eng_sid.c"
-#if MELODEE_LEGACY_EXTRAS
-#include "eng_formant.c"
+#if MELODEE_HOST_ENGINES
+#undef HOST_STAGE
+#define HOST_STAGE 2
+#include "../modules/host/host_engines.c"
 #endif
-#include "eng_trio.c"
-#include "eng_wheel.c"
-#include "eng_phys.c"           /* PHYS: DaisySP physical models (phys_dsp.c, MIT) */
-#include "eng_drum.c"           /* DRUM: synthesized 808 circuits (drum_808.c), the 909, a C64's SID (drum_sid.c), CR78, FM */
-#if MELODEE_LEGACY_EXTRAS
-#include "eng_noise.c"
+#include "pads.h"               /* a synth's pads and data records: the firmware's side (pads.c, rec_store.c) */
+#if MELODEE_HOST_ENGINES
+#undef HOST_STAGE
+#define HOST_STAGE 3
+#include "../modules/host/host_engines.c"
 #endif
-#include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c) */
+#if MELODEE_HOST_ENGINES
+#undef HOST_STAGE
+#define HOST_STAGE 4
+#include "../modules/host/host_engines.c"
+#endif
 #include "eng_midi.c"
-#if MELODEE_SLICE
-#include "eng_slice.c"
-#else
-static void slice_gone_note_on(struct track *t, voice_t *v) { (void)t; (void)v; }
-static void slice_gone_render(struct track *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
+static void eng_none_note_on(struct track *t, voice_t *v) { (void)t; (void)v; }
+static void eng_none_render(struct track *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
     (void)t; (void)v; (void)out; (void)n; (void)m;
 }
-static const engine_t ENG_RETIRED = {         /* 13 without MELODEE_SLICE: reserved, never offered (eng_ok) */
+static const engine_t ENG_NONE = {             /* a handle no synth here plays (none, a synth not on this device): silent */
     .name = "-",
     .page_title = {"-", "-"},
     .edit = {{"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0},
              {"-", F_INT, 0, 0, 0, 0, 0}, {"-", F_INT, 0, 0, 0, 0, 0}},
-    .note_on = slice_gone_note_on,
-    .render = slice_gone_render,
+    .note_on = eng_none_note_on,
+    .render = eng_none_render,
     .knob = {P_E4, P_E5, P_E6, P_REL},
 };
-#endif
 
 /* Each track owns only its selected engine's working state. Simple engines
  * use voice_t alone. State is released after the old engine's switch fade. */
 #include "resources.c"
+#if MELODEE_MODULES
+static uint8_t mod_at[NENGINES];                    /* engine -> its module's slot + 1, 0: none (eng_module.c) */
+#endif
+static int mod_idle(uint32_t e);                    /* e: a stored module not in SRAM (eng_module.c) */
+static const engine_t *eng_of(uint32_t e);
 static uint32_t eng_state_size(uint32_t e)
 {
+    const engine_t *g = eng_of(e);
+    if (g->state)                                   /* (the engine's own: a synth module's) */
+        return g->state(0);
     switch (e) {
-#if MELODEE_PROPHET
-    case ENGI_PROPHET: return sizeof(p5_part_t);
-#if MELODEE_PROPHET_PROTOTYPE
-    case 0: return sizeof(p5_part_t);
-#endif
-#endif
-#if MELODEE_LEGACY_EXTRAS
-    case ENGI_PHYS: return sizeof(phys_slot_t) * PHYS_POLY;
-    case 7: return sizeof(drw_part_t);
-#endif
-#if MELODEE_LEGACY_EXTRAS
-    case 2:                                         /* (PHASE: CZ-1's core) */
-#endif
-    case ENGI_CZ: return sizeof(cz_part_t);
-    case 3: return sizeof(sid_part_t);              /* SID (eng_sid.c) */
-    case ENGI_DRUM: return sizeof(drum909_part_t);
-    case ENGI_FM6: return sizeof(fm6_part_t);
-#if MELODEE_SLICE
-    case ENGI_SLICE: return sizeof(slc_rb_t);
-#endif
     default: return 0;
     }
 }
@@ -79,159 +73,156 @@ static void eng_state_clear(uint32_t part)
 static void eng_state_reset(void) { for (uint32_t k = 0; k < NPART; k++) eng_state_clear(k); }
 static int eng_state_prepare(const track_t *t)
 {
-    uint32_t size = t->engine==ENGI_DRUM?drum_bytes(t):eng_state_size(t->engine);
+    const engine_t *g = eng_of(t->engine);
+    uint32_t size = g->state ? g->state(t) : eng_state_size(t->engine);
     return !size || resource_get(RES_ENGINE0 + (uint32_t)(t - trk), size) != 0;
 }
-static phys_slot_t *phys_slots(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(phys_slot_t) * PHYS_POLY); }
-static drum909_part_t *drum909_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drum909_part_t)); }
-static drum_lane_t *drum_kit_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drum_lane_t) * DV_NLANE); }
-static dsk_part_t *dsk_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(dsk_part_t)); }
-static dlk_part_t *dlk_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(dlk_part_t)); }
-static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + (uint32_t)(t - trk), sizeof(drw_part_t)); }
-static fm6_part_t *fm6_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(fm6_part_t)); }
-static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(cz_part_t)); }
-static sid_part_t *sid_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(sid_part_t)); }
-#if MELODEE_PROPHET
-static p5_part_t *p5_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(p5_part_t)); }
-#endif
-#if MELODEE_SLICE
-static int16_t (*slc_rbuf(uint32_t part))[SLC_RB] { return resource_get(RES_ENGINE0 + part % NPART, sizeof(slc_rb_t)); }
+#if MELODEE_HOST_ENGINES
+#undef HOST_STAGE
+#define HOST_STAGE 5
+#include "../modules/host/host_engines.c"   /* (the built-in engines' part memory, table places, list order, names) */
 #endif
 
-/* the editor protocol, user presets and projects store these indices: append, never reorder */
+/* the engines by handle (core.h: RAM only, the stores name synths by ID: eng_map.c). A loaded synth module takes its
+ * handle's entry (eng_module.c mod_register), so the table is in RAM with modules */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
+#if MELODEE_MODULES
+static const engine_t *ENGINES[NENGINES] = {
+#else
 static const engine_t *const ENGINES[NENGINES] = {
-#if MELODEE_PROPHET_PROTOTYPE
-    &ENG_P5_TEST,                /* test firmware only: RAM patches, NEVER persist */
-#else
-    &ENG_RETIRED,                /* 0: retired ANALOG; stored ID reserved */
 #endif
-    &ENG_RETIRED,                /* 1: retired DIGITAL; stored ID reserved */
-#if MELODEE_LEGACY_EXTRAS
-    &ENG_PHASE,                  /* 2 */
-#else
-    &ENG_RETIRED,                /* 2: retired PHASE; stored ID reserved (its core: CZ-1's) */
+    [0 ... NENGINES - 1] = &ENG_NONE,        /* retired and reserved numbers (0 ANALOG, 1 DIGITAL, 4 SAMPLE, 8 GRAIN, 14
+                                                 * OBXF; 16..18, 20: user-preset namespaces; 13: SLICE), and every synth
+                                                 * module's number while none is loaded: stored IDs kept, silent */
+    [ENGI_MIDI] = &ENG_MIDI,                    /* 21: USB MIDI Track */
+#if MELODEE_HOST_ENGINES
+    HOST_ENGINES                                /* (host builds: the shipped synths at their numbers) */
 #endif
-    &ENG_SID,                    /* 3: SID replaces LOFI without reusing a stored ID */
-    &ENG_RETIRED,                /* 4: retired SAMPLE; reserved to preserve stored indices */
-#if MELODEE_LEGACY_EXTRAS
-    &ENG_FORMANT,                /* 5 VOICE (eng_formant.c: "voice" is a sounding note in voice.c) */
-#else
-    &ENG_RETIRED,                /* 5: retired VOICE; stored ID reserved */
-#endif
-#if MELODEE_LEGACY_EXTRAS
-    &ENG_TRIO,
-#else
-    &ENG_RETIRED,                /* 6: retired TRIO; stored ID reserved */
-#endif
-#if MELODEE_LEGACY_EXTRAS
-    &ENG_WHEEL,
-#else
-    &ENG_RETIRED,                /* 7: retired WHEEL; stored ID reserved */
-#endif
-    &ENG_RETIRED,                /* 8: retired GRAIN; stored index reserved */
-#if MELODEE_LEGACY_EXTRAS
-    &ENG_PHYS,
-#else
-    &ENG_RETIRED,                /* 9: retired PHYS; stored ID reserved */
-#endif
-    &ENG_DRUM,                   /* 10 (ENGI_DRUM) */
-#if MELODEE_LEGACY_EXTRAS
-    &ENG_NOISE,                  /* 11 */
-#else
-    &ENG_RETIRED,                /* 11: retired NOISE; stored ID reserved */
-#endif
-    &ENG_FM6,                    /* 12 (ENGI_FM6) */
-#if MELODEE_SLICE
-    &ENG_SLICE,                  /* 13 (ENGI_SLICE) */
-#else
-    &ENG_RETIRED,             /* 13: reserved (MELODEE_SLICE=0 builds without SLICE) */
-#endif
-    &ENG_RETIRED,                /* 14: retired OBXF; stored index reserved */
-    &ENG_CZ,                     /* 15: native Casio CZ-1 */
-    &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, /* 16..18 reserved */
-    &ENG_P5_TEST,                /* 19: Prophet (ANALOG's ID 0 stays reserved) */
-    &ENG_RETIRED,                /* 20: Prophet user-preset namespace */
-    &ENG_MIDI,                   /* 21: USB MIDI Track */
 };
+#pragma clang diagnostic pop
 
+#if MELODEE_HOST_ENGINES
+#undef HOST_STAGE
+#define HOST_STAGE 6
+#include "../modules/host/host_engines.c"   /* (sch_builtin_src, preset_builtin_patch: their schemas, their makers) */
+#endif
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
 static inline uint32_t eng_idx(uint32_t e) { return e < NENGINES ? e : 0u; }
+static const engine_t *eng_of(uint32_t e) { return ENGINES[eng_idx(e)]; }
 
-/* preset k (< npresets) of e: its row, or one made on demand (Prophet, CZ-1: their names live in the native data).
- * Made presets take turns in two slots: two can be held at once (main loop only) */
-static const preset_t *eng_preset(const engine_t *e, uint32_t k)
-{
-    static preset_t made[2];
-    static char made_name[2][21];
-    static uint8_t turn;
-    if (e->presets)
-        return &e->presets[k];
-    turn ^= 1u;
-    memset(&made[turn], 0, sizeof made[turn]);
-    made_name[turn][0] = 0;
-    made[turn].name = made_name[turn];
-    e->preset_make(k, &made[turn], made_name[turn]);
-    return &made[turn];
-}
+#include "presets.c"            /* the factory presets: fetched, named, their patches put on a part (a synth
+                                 * module's from its file) */
 
-/* the order the engines are shown in (PRESETS browsing and its ENG knob, the editor's list):
- * engine indices, never a retired one. The indices stay as they are (the
- * stores and the protocol hold them); only this table orders them */
-static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
-    ENGI_PROPHET,                /* Prophet replaces ANALOG in new-sound browsing */
-    12,                          /* FM6 */
-#if MELODEE_LEGACY_EXTRAS
-    2, ENGI_CZ, 3, 5,             /* PHASE CZ-1 SID VOICE */
-    6, 7, 9,
-    11,                          /* NOISE */
+/* the order the engines are shown in (PRESETS browsing and its ENG knob, the editor's list): handles, never none */
+#if MELODEE_MODULES
+static uint8_t eng_nshown = NENG_SHOWN;             /* the built-in engines, then the loaded modules (mod_register) */
+static uint8_t ENGINE_ORDER[NENG_SHOWN_MAX] = {
 #else
-    ENGI_CZ, 3,                   /* CZ-1 SID */
+#define eng_nshown NENG_SHOWN
+static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
 #endif
-#if MELODEE_SLICE
-    13,                          /* SLICE */
+#if MELODEE_HOST_ENGINES
+    HOST_ORDER                                      /* (host builds: the built-in engines in their manifest order) */
 #endif
-    10,                          /* DRUM */
     ENGI_MIDI,
 };
-
-/* Retired synth records (ANALOG and DIGITAL since 2.0 too) retain their stored identity and render silence.
- * Never relabel retired records FM6. */
-static int eng_extra_retired(uint32_t e)
+/* the manifest's rows (../modules/shipped.h): the synths Melodee makes, row k at handle ENG_H_SHIP0 + k */
+typedef struct { uint8_t wclass, store, ns, flags; uint64_t uid; const char *name, *tag; } ship_t;
+#define SHIP_ROW(u, nm, tg, wc, st, ns, f) {wc, st, ns, f, u, nm, tg},
+static const ship_t SHIP[] = {SHIP_ROWS(SHIP_ROW)};
+#undef SHIP_ROW
+#define NSHIP (sizeof SHIP / sizeof SHIP[0])
+static const uint64_t SHIP_RETIRED[] = {SHIP_RETIRED_IDS};
+_Static_assert(ENG_H_SHIP0 + NSHIP <= NENGINES, "the shipped synths' handles: their rows' places (tests/identity_test.c "
+               "holds shipped.h's ENGI_* to them)");
+static const ship_t *ship_of(uint32_t e)            /* handle e's row, 0: none */
 {
-#if !MELODEE_PROPHET_PROTOTYPE
-    if (e == ENGI_ANALOG) return 1;
+    return e >= ENG_H_SHIP0 && e - ENG_H_SHIP0 < NSHIP ? &SHIP[e - ENG_H_SHIP0] : 0;
+}
+static uint32_t ship_flag(uint32_t f)               /* the first row with flag f: its handle (NENGINES: none) */
+{
+    for (uint32_t k = 0; k < NSHIP; k++)
+        if (SHIP[k].flags & f)
+            return ENG_H_SHIP0 + k;
+    return NENGINES;
+}
+static uint32_t ship_store(uint32_t store)          /* the synth Melodee 1.x kept in store format store (NENGINES: none) */
+{
+    for (uint32_t k = 0; k < NSHIP; k++)
+        if (store && SHIP[k].store == store)
+            return ENG_H_SHIP0 + k;
+    return NENGINES;
+}
+/* where an engine that comes as a module goes among them (eng_module_main.c mod_order_add): the shipped synths in the
+ * manifest's order, the MIDI Track after them, any other after them all */
+static uint32_t eng_order_rank(uint32_t e)
+{
+    const ship_t *r = ship_of(e);
+    return r ? (uint32_t)(r - SHIP) : e == ENGI_MIDI ? (uint32_t)NSHIP : 255u;
+}
+
+/* e names no synth this device plays: none, or a synth whose module is not here (its sounds keep their bytes, silent).
+ * A stored module not in SRAM is not silent: picking it loads it (mod_want) */
+static int eng_silent(uint32_t e)
+{
+    if (e == ENGI_MIDI || HOST_BUILTIN(e))
+        return 0;
+#if MELODEE_MODULES
+    return !(e < NENGINES && mod_at[e]);
+#else
+    return 1;
 #endif
-    return e == ENGI_DIGITAL || (!MELODEE_LEGACY_EXTRAS && (e == 2u || e == 5u || e == 6u || e == 7u || e == 9u || e == 11u));
 }
 /* the engines one can pick, in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 static int eng_ok(uint32_t e)
 {
-    return e < NENGINES && e != USER_NATIVE_P5 && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != 14u && (MELODEE_SLICE || e != ENGI_SLICE);
+#if MELODEE_MODULES
+    if (e < NENGINES && mod_idle(e))
+        return 1;                                   /* picking it loads it (mod_want) */
+#endif
+    return e < NENGINES && !eng_silent(e);
 }
-static uint32_t eng_sound_idx(uint32_t e)
-{
-    return eng_extra_retired(e) || eng_ok(e) ? e : ENGI_FM6;
-}
-static uint32_t eng_vis(uint32_t n) { return ENGINE_ORDER[n % NENG_SHOWN]; }
+/* the handle for a sound: its own (a synth not here keeps its sound, silent) */
+static uint32_t eng_sound_idx(uint32_t e) { return e < NENGINES ? e : ENG_H_NONE; }
+static uint32_t eng_vis(uint32_t n) { return ENGINE_ORDER[n % eng_nshown]; }
 static uint32_t eng_rank(uint32_t e)
 {
     uint32_t n;
-    if (!eng_ok(e))
-        e = ENGI_FM6;                            /* (a retired or reserved engine: FM6's place) */
-    for (n = 0; n < NENG_SHOWN && ENGINE_ORDER[n] != e; n++)
+    for (n = 0; n < eng_nshown && ENGINE_ORDER[n] != e; n++)
         ;
-    return n < NENG_SHOWN ? n : 0u;
+    return n < eng_nshown ? n : 0u;                 /* (a synth one cannot pick: the first engine's place) */
 }
 static uint32_t eng_step(uint32_t e, int32_t dir)
 {
-    return eng_vis((eng_rank(e % NENGINES) + (dir > 0 ? 1u : NENG_SHOWN - 1u)) % NENG_SHOWN);
+    return eng_vis((eng_rank(e % NENGINES) + (dir > 0 ? 1u : eng_nshown - 1u)) % eng_nshown);
 }
 
-/* the parts at power-on and in a new song (engine, preset; the steps empty): poly, bass, lead, drums. IT'S A
- * PROPHET 5, FM6 SOLID BASS, CZ-1 SYNTH.LEAD 1, 808 KIT (until 2026-10-16: PROPHET FUNK BASS II, FM6 PAD, SID INIT
- * SID, 808 KIT) */
-static const uint8_t TRK_DEF[NPART][2] = {{ENGI_PROPHET, 1}, {ENGI_FM6, 10}, {ENGI_CZ, 52}, {ENGI_DRUM, 0}};
+/* the parts at power-on and in a new song (engine, preset; the steps empty): the manifest's (../modules/shipped.h) */
+static const uint8_t TRK_DEF[NPART][2] = SHIP_PARTS;
 /* track k's power-on engine and preset: TRK_DEF's, a MIDI-only track the MIDI Track's */
 static uint32_t trk_def_engine(uint32_t k) { return k < NPART ? TRK_DEF[k][0] : ENGI_MIDI; }
 static uint32_t trk_def_preset(uint32_t k) { return k < NPART ? TRK_DEF[k][1] : 0u; }
+#if MELODEE_MODULES
+#include "eng_module.c"         /* synth modules: engines loaded into SRAM (module_store.c keeps them) */
+#include "eng_module_main.c"    /* (their lists, loading, registration: main loop) */
+#include "eng_map.c"            /* the device's engine map: number <-> UID, the stores' entries */
+#include "schema.c"             /* a synth's schema (its file's or built in), the patches by it */
+#include "pads.c"               /* a synth's pads (its schema's MOD3_R_PADS) */
+#define SHIPPED_OK() mod_shipped_ok()  /* the synth modules the image needs are on the device (else: setup) */
+#else
+#define SHIPPED_OK() 1
+static int mod_idle(uint32_t e) { (void)e; return 0; }
+static uint32_t mod_le32(const uint8_t *b) { return b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24; }
+#define MOD_MAIN(e, x) (x)
+#define MOD_MAIN_V(e, x) x
+static uint32_t mod_running_uid(void) { return 0; }
+#include "eng_map.c"
+#include "schema.c"
+#include "pads.c"
+static const char *eng_name(uint32_t e) { return ENGINES[e % NENGINES]->name; }
+static uint32_t eng_npresets(uint32_t e) { return ENGINES[e % NENGINES]->npresets; }
+static void mod_want(uint32_t e) { (void)e; }
+static int mod_waiting(uint32_t e) { (void)e; return 0; }
+#endif

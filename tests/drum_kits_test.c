@@ -22,7 +22,7 @@ static void kit(uint32_t preset)                 /* part 1 on a DRUM preset, not
     for (uint32_t p = 0; p < NPART; p++)
         memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, preset);
+    host_kit_preset(&trk[0], preset);
 }
 static uint32_t voices_on(void)
 {
@@ -101,7 +101,7 @@ static void demo(const char *dir, const char *name, uint32_t preset, int metal)
             if (s >= 32u && q == 7) trk_note_on(&trk[0], 56, 90);
             if (s >= 32u && q == 15) trk_note_on(&trk[0], 75, 90);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (uint32_t i = 0; i < CTL; i++)
             wav_put(f, o[2 * i], o[2 * i + 1]);
     }
@@ -114,18 +114,19 @@ int main(int argc, char **argv)
     static int32_t a[FS * 2], b[FS * 2];
     static const uint32_t KITS[2] = {P_CR78, P_FM};
     uint32_t s, k, i, j;
-    check("KIT 7 is CR78, 8 FM: factory kits CR78 KIT and FM KIT", ENG_DRUM.edit[0].max == DK_FM &&
-          !strcmp(N_DRUM_KIT[DK_CR78], "CR78") && !strcmp(N_DRUM_KIT[DK_FM], "FM") && ENG_DRUM.npresets == 6u &&
-          !strcmp(ENG_DRUM.presets[P_CR78].name, "CR78 KIT") && ENG_DRUM.presets[P_CR78].e[0] == DK_CR78 &&
-          !strcmp(ENG_DRUM.presets[P_FM].name, "FM KIT") && ENG_DRUM.presets[P_FM].e[0] == DK_FM);
+    check("KIT 7 is CR78, 8 FM: factory kits CR78 KIT and FM KIT", ENG_KITCR.edit[0].min == DK_CR78 &&
+          ENG_KITFM.edit[0].min == DK_FM && !strcmp(N_DRUM_KIT[DK_CR78], "CR78") && !strcmp(N_DRUM_KIT[DK_FM], "FM") &&
+          ENG_KITCR.npresets == 1u && ENG_KITFM.npresets == 1u &&
+          !strcmp(ENG_KITCR.presets[0].name, "CR78 KIT") && ENG_KITCR.presets[0].e[0] == DK_CR78 &&
+          !strcmp(ENG_KITFM.presets[0].name, "FM KIT") && ENG_KITFM.presets[0].e[0] == DK_FM);
     {   /* the names: CR78's own percussion where the 808 has drums the box had not */
         kit(P_CR78);
         check("CR78 names: TAMB on the clap lane, CONGA BONGL BONGH, HATS on KICK's knob",
-              !strcmp(drum_sound_name(&trk[0], D9_CP), "TAMB") && !strcmp(drum_lane_name(&trk[0], DV_CLAP), "TAMB") &&
-              !strcmp(drum_sound_name(&trk[0], 11), "CONGA") && !strcmp(drum_sound_name(&trk[0], 13), "BONGH") &&
+              !strcmp(pads_name(&trk[0], D9_CP), "TAMB") && !strcmp(lane_name(&trk[0], DV_CLAP), "TAMB") &&
+              !strcmp(pads_name(&trk[0], 11), "CONGA") && !strcmp(pads_name(&trk[0], 13), "BONGH") &&
               drum_desc(&trk[0], 6) == &DRUM_CR_HATS && drum_cap(&trk[0]) == 1u);
         kit(P_FM);
-        check("FM names: the 808's; one voice", !strcmp(drum_sound_name(&trk[0], D9_CP), "CLAP") &&
+        check("FM names: the 808's; one voice", !strcmp(pads_name(&trk[0], D9_CP), "CLAP") &&
               drum_desc(&trk[0], 6) == 0 && drum_cap(&trk[0]) == 1u);
     }
     for (j = 0; j < 2u; j++) {   /* every drum alone: sounds, bounded, deterministic, over */
@@ -140,8 +141,8 @@ int main(int argc, char **argv)
                 for (uint32_t r = 0; r < 2u; r++) {
                     kit(KITS[j]);
                     trk[0].p[P_E6] = (int16_t)metal;
-                    note = drum_sound_note(&trk[0], s);
-                    mapped &= drum_sound_of(&trk[0], note) == s;
+                    note = pads_note(&trk[0], s);
+                    mapped &= pads_pad_of(&trk[0], note) == s;
                     trk_note_on(&trk[0], note, 127);
                     pk[s] = run(a, FS / CTL);
                     for (i = 0; i < FS / CTL * CTL; i++)
@@ -155,7 +156,7 @@ int main(int argc, char **argv)
             printf("DRUM KITS:   %s%s peaks alone:", KIT_NAME[KITS[j]], metal ? " METAL" : "");
             for (s = 0; s < 16u; s++)
                 if (!metal || s == D9_CH || s == D9_OH)
-                    printf(" %s %d", drum_sound_name(&trk[0], s), (int)pk[s]);
+                    printf(" %s %d", pads_name(&trk[0], s), (int)pk[s]);
             printf("\n");
             char msg[96];
             snprintf(msg, sizeof msg, "%s%s: every drum alone sounds, bounded, deterministic, then its voice ends",
@@ -167,7 +168,7 @@ int main(int argc, char **argv)
         uint32_t lanes = 0;
         kit(KITS[j]);
         for (i = 0; i < 8u; i++)
-            trk_note_on(&trk[0], DRUM_LANE_NOTE[i], 110);
+            trk_note_on(&trk[0], STEP_LANE_NOTE[i], 110);
         run(0, 2);
         for (k = 0; k < DV_NLANE; k++)
             lanes += dlk_part(0)->ch[k].on;
@@ -243,18 +244,18 @@ int main(int argc, char **argv)
         run(a, 140);
         full = rms(a + 130 * CTL, 10 * CTL);
         kit(KITS[j]);
-        drum_event_length = FS / 20u;
+        note_hit_len = FS / 20u;
         trk_note_on(&trk[0], 46, 110);
-        drum_event_length = 0;
+        note_hit_len = 0;
         run(a, 140);
         cut = rms(a + 130 * CTL, 10 * CTL);
         printf("DRUM KITS:   %s: open hat after 100 ms: rms %.0f, recorded 50 ms long %.0f\n", KIT_NAME[KITS[j]], full, cut);
         kit(P_808);
         for (i = 0; i < 8u; i++)
-            trk_note_on(&trk[0], DRUM_LANE_NOTE[i], 110);
+            trk_note_on(&trk[0], STEP_LANE_NOTE[i], 110);
         run(0, 2);
         before = voices_on();
-        trk[0].p[P_E0] = (int16_t)ENG_DRUM.presets[KITS[j]].e[0];
+        trk[0].p[P_E0] = (int16_t)ENGINES[kit_preset_engine(KITS[j])]->presets[kit_preset_index(KITS[j])].e[0];   /* (the kits' one implementation, host) */
         run(0, 2);
         after = voices_on();
         trk_note_on(&trk[0], 38, 110);
@@ -337,10 +338,10 @@ int main(int argc, char **argv)
                     trk[0].p[P_E0 + k] = corner & 1u ? 127 : 0;
                 trk[0].p[P_E5] = 127; trk[0].p[P_E7] = 127; trk[0].p[P_E6] = (int16_t)(corner >> 1);
                 for (s = 0; s < 16u; s++)
-                    trk_note_on(&trk[0], drum_sound_note(&trk[0], s), 127);
+                    trk_note_on(&trk[0], pads_note(&trk[0], s), 127);
                 for (i = 0; i < FS / CTL; i++) {
                     int32_t o[2 * CTL];
-                    mix_block(o, CTL);
+                    mix_block_q15(o, CTL);
                     for (k = 0; k < 2u * CTL; k++)
                         pk = abs(o[k]) > pk ? abs(o[k]) : pk;
                 }

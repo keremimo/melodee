@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Reference: Melodee master_samples at 79436ad, before the dry-pass removal,
- * with MASTER moved to the finished output.
+ * with MASTER moved to the finished output, on the bus (Q15 << MIX_FRAC: the return and MASTER keep its low bits).
  * Compare output, mix, limiter/DC state and the return ramp independently. */
 #define main hostsim_main
 #include "hostsim.c"
@@ -29,12 +29,12 @@ static __attribute__((noinline)) void reference(int32_t *out,uint32_t n)
         if(gain!=target)gain+=clamp(target-gain,-128,128);
         int32_t l=mix_l[i],r=mix_r[i];
         if(fx_bus_result){uint32_t ret=(uint32_t)gain*2u;
-            l+=fx_scale(fx_left[i],ret);
-            r+=fx_scale(fx_right[i],ret);}
+            l+=mix_fx_return(fx_left[i],ret);
+            r+=mix_fx_return(fx_right[i],ret);}
         mix_l[i]=l;mix_r[i]=r;
     }
     punch_process(mix_l,mix_r,n);
-    for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);if(song.master_q12==4096){out[2u*i]=l;out[2u*i+1u]=r;continue;}out[2u*i]=dith_cut(l*(int32_t)song.master_q12,12,i+5u);out[2u*i+1u]=dith_cut(r*(int32_t)song.master_q12,12,i+5u);}
+    for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);if(song.master_q12==4096){out[2u*i]=l;out[2u*i+1u]=r;continue;}out[2u*i]=(int32_t)(((int64_t)l*song.master_q12+2048)>>12);out[2u*i+1u]=(int32_t)(((int64_t)r*song.master_q12+2048)>>12);}
     fx_bus_mix=gain;
 }
 
@@ -44,11 +44,11 @@ static void setup(uint32_t wet,uint32_t gain,uint32_t target)
 {
     punch_reset();song.master_q12=4096;
     fx_bus_result=(int)wet;fx_bus_mix=(int32_t)gain;fx_bus_target=(int32_t)target;
-    lim_env=18000+(int32_t)(random_u()%100000u);
-    dc_l=(int32_t)(random_u()%100000u)-50000;dc_r=-dc_l;
+    lim_env=(18000+(int32_t)(random_u()%100000u))*MIX_ONE;
+    dc_l=((int32_t)(random_u()%100000u)-50000)*MIX_ONE;dc_r=-dc_l;
     dce_l=(int32_t)(random_u()%4096u);dce_r=4095-dce_l;
     for(uint32_t i=0;i<CTL;i++){
-        mix_l[i]=(int32_t)(random_u()%400001u)-200000;mix_r[i]=-mix_l[i];
+        mix_l[i]=((int32_t)(random_u()%400001u)-200000)*MIX_ONE+(int32_t)(random_u()%MIX_ONE);mix_r[i]=-mix_l[i];
         fx_left[i]=(int32_t)(random_u()%131073u)-65536;fx_right[i]=-fx_left[i];
     }
 }
@@ -117,7 +117,7 @@ static void volume(void)
             for(uint32_t k=0;k<1536;k++){
                 if(k==512 && fx>=0)punch.req=(int8_t)fx; /* include pre-gesture history for REVERSE */
                 for(uint32_t i=0;i<CTL;i++){
-                    mix_l[i]=6000+((k*CTL+i)&32u?8000:-8000);
+                    mix_l[i]=(6000+((k*CTL+i)&32u?8000:-8000))*MIX_ONE;
                     mix_r[i]=mix_l[i]/2;
                 }
                 master_samples(out,CTL);
@@ -134,9 +134,9 @@ static void volume(void)
         }
         for(uint32_t g=0;g<NELEM(levels);g++){
             volume_render(fx,levels[g],out);
-            for(uint32_t i=0;i<NELEM(unity);i++){       /* (MASTER's cut is dithered, #100: +-1 LSB, silence exact) */
-                int32_t want=(unity[i]*(int32_t)levels[g]+2048)>>12;
-                assert(unity[i]&&levels[g]?out[i]>=want-1&&out[i]<=want+1:!out[i]);
+            for(uint32_t i=0;i<NELEM(unity);i++){       /* (MASTER's cut on the bus: rounded, silence exact) */
+                int32_t want=(int32_t)(((int64_t)unity[i]*levels[g]+2048)>>12);
+                assert(unity[i]&&levels[g]?out[i]==want:!out[i]);
             }
         }
     }
@@ -155,7 +155,7 @@ static void benchmark(void)
             for(uint32_t k=0;k<200000;k++){
                 /* The real mixer starts each block afresh; wet returns must
                  * not accumulate indefinitely in this repeated-call bench. */
-                for(uint32_t i=0;i<CTL;i++){mix_l[i]=8000+(int32_t)i*31;mix_r[i]=-mix_l[i];}
+                for(uint32_t i=0;i<CTL;i++){mix_l[i]=(8000+(int32_t)i*31)*MIX_ONE;mix_r[i]=-mix_l[i];}
                 run(out,CTL);checksum+=(uint32_t)out[k%CTL];
             }
             cost[fast]=(double)(instructions()-start)/(200000u*CTL);

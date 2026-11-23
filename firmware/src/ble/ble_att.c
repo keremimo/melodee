@@ -75,14 +75,15 @@ static struct {
     struct ble_midi_dec dec;
     uint8_t buf[BLE_ATT_MTU_MAX];        /* responses and notifications */
     uint8_t dyn[2];                      /* a RAM value read out */
-} batt;
+} att_st_b[BLE_LINKS] BLE_STATE_MEMORY;
+#define att_st (att_st_b[ble_ll_link()])           /* the running link's (ble_ll.h ble_ll_link) */
 
 BLE_API void ble_att_reset(void)
 {
-    batt.mtu = 23;
-    batt.ccc_sc = batt.ccc_midi = batt.sc_due = batt.ind_wait = 0;
-    ble_midi_enc_reset(&batt.enc);
-    ble_midi_dec_reset(&batt.dec);
+    att_st.mtu = 23;
+    att_st.ccc_sc = att_st.ccc_midi = att_st.sc_due = att_st.ind_wait = 0;
+    ble_midi_enc_reset(&att_st.enc);
+    ble_midi_dec_reset(&att_st.dec);
 }
 
 BLE_API int ble_midi_ready(void)
@@ -91,17 +92,26 @@ BLE_API int ble_midi_ready(void)
     if (ble_ll_central())
         return ble_gattc_midi() != 0;           /* as central: the peripheral's notifications are on */
 #endif
-    return ble_ll_connected() && (batt.ccc_midi & 1u);
+    return ble_ll_connected() && (att_st.ccc_midi & 1u);
+}
+
+/* BLE_LINKS 2: link n's own (the computer's BLE_LINK_PERIPH, the device's BLE_LINK_CENTRAL); one link: ble_midi_ready() */
+BLE_API int ble_midi_ready_link(uint8_t link)
+{
+    uint8_t was = ll_enter(link);
+    int r = ble_midi_ready();
+    ll_leave(was);
+    return r;
 }
 
 BLE_API void ble_att_set_mtu(uint16_t client_mtu)
 {
-    batt.mtu = (uint16_t)ble_min(client_mtu < 23u ? 23u : client_mtu, BLE_ATT_MTU_MAX);
+    att_st.mtu = (uint16_t)ble_min(client_mtu < 23u ? 23u : client_mtu, BLE_ATT_MTU_MAX);
 }
 
-BLE_API uint16_t ble_att_mtu(void) { return batt.mtu; }
+BLE_API uint16_t ble_att_mtu(void) { return att_st.mtu; }
 
-static void att_send(uint16_t n) { ble_ll_send(L2CAP_CID_ATT, batt.buf, n); }
+static void att_send(uint16_t n) { ble_ll_send(L2CAP_CID_ATT, att_st.buf, n); }
 
 /* BLE_MIDI_NEED_ENC: the MIDI I/O value and its CCCD only over an encrypted link */
 static int att_need_enc(uint16_t h)
@@ -111,10 +121,10 @@ static int att_need_enc(uint16_t h)
 
 static void att_error(uint8_t op, uint16_t h, uint8_t err)
 {
-    batt.buf[0] = 0x01;
-    batt.buf[1] = op;
-    ble_wr16(batt.buf + 2, h);
-    batt.buf[4] = err;
+    att_st.buf[0] = 0x01;
+    att_st.buf[1] = op;
+    ble_wr16(att_st.buf + 2, h);
+    att_st.buf[4] = err;
     att_send(5);
 }
 
@@ -126,9 +136,9 @@ static uint8_t att_len(uint16_t h, const uint8_t **v)   /* an attribute's value 
     }
     if (h == H_NAME)
         return ble_gap_name(v);
-    batt.dyn[0] = h == H_SC_CCC ? batt.ccc_sc : batt.ccc_midi;
-    batt.dyn[1] = 0;
-    *v = batt.dyn;
+    att_st.dyn[0] = h == H_SC_CCC ? att_st.ccc_sc : att_st.ccc_midi;
+    att_st.dyn[1] = 0;
+    *v = att_st.dyn;
     return 2;
 }
 
@@ -172,20 +182,20 @@ static void att_find_info(const uint8_t *p)
     uint16_t s, e, h, k = 2;
     if (!att_range(p, &s, &e))
         return;
-    batt.buf[0] = 0x05;
+    att_st.buf[0] = 0x05;
     for (h = s; h <= e && h <= H_LAST; h++) {
         uint8_t fmt = ATT_DB[h].flags & A_128 ? 2u : 1u, ul = fmt == 2u ? 16u : 2u;
         if (k == 2u)
-            batt.buf[1] = fmt;
-        else if (batt.buf[1] != fmt)
+            att_st.buf[1] = fmt;
+        else if (att_st.buf[1] != fmt)
             break;
-        if (k + 2u + ul > batt.mtu)
+        if (k + 2u + ul > att_st.mtu)
             break;
-        ble_wr16(batt.buf + k, h);
+        ble_wr16(att_st.buf + k, h);
         if (fmt == 2u)
-            ble_cpy(batt.buf + k + 2u, ATT_UUID_MIDI_IO, 16);
+            ble_cpy(att_st.buf + k + 2u, ATT_UUID_MIDI_IO, 16);
         else
-            ble_wr16(batt.buf + k + 2u, ATT_DB[h].type);
+            ble_wr16(att_st.buf + k + 2u, ATT_DB[h].type);
         k = (uint16_t)(k + 2u + ul);
     }
     if (k == 2u)
@@ -199,8 +209,8 @@ static void att_find_by_type(const uint8_t *p, uint16_t n)
     uint16_t s, e, h, k = 1, type = ble_rd16(p + 5);
     if (!att_range(p, &s, &e))
         return;
-    batt.buf[0] = 0x07;
-    for (h = s; h <= e && h <= H_LAST && k + 4u <= batt.mtu; h++) {
+    att_st.buf[0] = 0x07;
+    for (h = s; h <= e && h <= H_LAST && k + 4u <= att_st.mtu; h++) {
         const uint8_t *v;
         uint8_t vl;
         if ((ATT_DB[h].flags & A_128) || ATT_DB[h].type != type)
@@ -208,8 +218,8 @@ static void att_find_by_type(const uint8_t *p, uint16_t n)
         vl = att_len(h, &v);
         if (vl != n - 7u || !ble_eq(v, p + 7, vl))
             continue;
-        ble_wr16(batt.buf + k, h);
-        ble_wr16(batt.buf + k + 2u, (ATT_DB[h].flags & A_SVC) ? att_group_end(h) : h);
+        ble_wr16(att_st.buf + k, h);
+        ble_wr16(att_st.buf + k + 2u, (ATT_DB[h].flags & A_SVC) ? att_group_end(h) : h);
         k = (uint16_t)(k + 4u);
     }
     if (k == 1u)
@@ -233,7 +243,7 @@ static void att_read_by(const uint8_t *p, uint16_t n)
         att_error(p[0], s, ATT_ERR_GROUP);
         return;
     }
-    batt.buf[0] = (uint8_t)(p[0] + 1u);
+    att_st.buf[0] = (uint8_t)(p[0] + 1u);
     for (h = s; h <= e && h <= H_LAST; h++) {
         const uint8_t *v;
         uint32_t vl, el;
@@ -246,17 +256,17 @@ static void att_read_by(const uint8_t *p, uint16_t n)
                 break;
             return;
         }
-        vl = ble_min(att_len(h, &v), (uint32_t)batt.mtu - 2u - (grp ? 4u : 2u));
+        vl = ble_min(att_len(h, &v), (uint32_t)att_st.mtu - 2u - (grp ? 4u : 2u));
         vl = ble_min(vl, 251u);
         el = (grp ? 4u : 2u) + vl;
         if (k == 2u)
-            batt.buf[1] = (uint8_t)el;
-        else if (batt.buf[1] != el || k + el > batt.mtu)
+            att_st.buf[1] = (uint8_t)el;
+        else if (att_st.buf[1] != el || k + el > att_st.mtu)
             break;
-        ble_wr16(batt.buf + k, h);
+        ble_wr16(att_st.buf + k, h);
         if (grp)
-            ble_wr16(batt.buf + k + 2u, att_group_end(h));
-        ble_cpy(batt.buf + k + el - vl, v, vl);
+            ble_wr16(att_st.buf + k + 2u, att_group_end(h));
+        ble_cpy(att_st.buf + k + el - vl, v, vl);
         k = (uint16_t)(k + el);
     }
     if (k == 2u)
@@ -291,9 +301,9 @@ static void att_read(const uint8_t *p, uint16_t n)
         att_error(p[0], h, ATT_ERR_OFFSET);
         return;
     }
-    vl = ble_min(vl - off, (uint32_t)batt.mtu - 1u);
-    batt.buf[0] = (uint8_t)(p[0] + 1u);
-    ble_cpy(batt.buf + 1, v + off, vl);
+    vl = ble_min(vl - off, (uint32_t)att_st.mtu - 1u);
+    att_st.buf[0] = (uint8_t)(p[0] + 1u);
+    ble_cpy(att_st.buf + 1, v + off, vl);
     att_send((uint16_t)(1u + vl));
 }
 
@@ -312,12 +322,12 @@ BLE_API void ble_att_midi_packet(const uint8_t *v, uint16_t n)
     for (i = 0; i < 12u; i++)
         ble_dg.mi_raw[r][i] = i < n ? v[i] : 0u;
     ble_dg.mi_raw_len[r] = (uint8_t)(n > 255u ? 255u : n);
-    if (ble_midi_dec(&batt.dec, v, n, att_midi_in, &last))
+    if (ble_midi_dec(&att_st.dec, v, n, att_midi_in, &last))
         ble_dg.mi_pkts++;
     else
         ble_dg.mi_bad_hdr++;
 #else
-    (void)ble_midi_dec(&batt.dec, v, n, att_midi_in, &last);
+    (void)ble_midi_dec(&att_st.dec, v, n, att_midi_in, &last);
 #endif
 }
 
@@ -337,14 +347,14 @@ static uint8_t att_write(uint16_t h, const uint8_t *v, uint16_t n)
     if (n != 2u)
         return ATT_ERR_VAL_LEN;
     if (h == H_SC_CCC) {
-        batt.ccc_sc = v[0] & 2u;                /* indications only */
-        batt.sc_due = BLE_SC_ON_SUBSCRIBE && batt.ccc_sc;
+        att_st.ccc_sc = v[0] & 2u;                /* indications only */
+        att_st.sc_due = BLE_SC_ON_SUBSCRIBE && att_st.ccc_sc;
     } else {
-        uint8_t was = batt.ccc_midi;
-        batt.ccc_midi = v[0] & 1u;              /* notifications only */
-        if (batt.ccc_midi != was) {
-            if (batt.ccc_midi) {
-                ble_midi_enc_reset(&batt.enc);
+        uint8_t was = att_st.ccc_midi;
+        att_st.ccc_midi = v[0] & 1u;              /* notifications only */
+        if (att_st.ccc_midi != was) {
+            if (att_st.ccc_midi) {
+                ble_midi_enc_reset(&att_st.enc);
                 ble_sig_want_fast();           /* stock asks for 7.5..11.25 ms here too */
             }
             ble_app_state();
@@ -368,9 +378,9 @@ BLE_API void ble_att_rx(const uint8_t *p, uint16_t n)
     case 0x02:                                 /* Exchange MTU */
         if (n != 3u)
             break;
-        batt.mtu = (uint16_t)ble_min(ble_rd16(p + 1) < 23u ? 23u : ble_rd16(p + 1), BLE_ATT_MTU_MAX);
-        batt.buf[0] = 0x03;
-        ble_wr16(batt.buf + 1, BLE_ATT_MTU_MAX);
+        att_st.mtu = (uint16_t)ble_min(ble_rd16(p + 1) < 23u ? 23u : ble_rd16(p + 1), BLE_ATT_MTU_MAX);
+        att_st.buf[0] = 0x03;
+        ble_wr16(att_st.buf + 1, BLE_ATT_MTU_MAX);
         att_send(3);
         return;
     case 0x04:
@@ -410,12 +420,12 @@ BLE_API void ble_att_rx(const uint8_t *p, uint16_t n)
         if (err)
             att_error(op, ble_rd16(p + 1), err);
         else {
-            batt.buf[0] = 0x13;
+            att_st.buf[0] = 0x13;
             att_send(1);
         }
         return;
     case 0x1E:                                 /* Handle Value Confirmation */
-        batt.ind_wait = 0;
+        att_st.ind_wait = 0;
         return;
     default:
         if (!(op & 0x40u) && (op & 1u) == 0 && op != 0x1Eu)
@@ -430,7 +440,7 @@ static void att_midi_out(void)
 {
     uint32_t pkt, t, k;
     uint16_t h = H_MIDI_IO;
-    uint8_t op = 0x1B, on = batt.ccc_midi & 1u;   /* Handle Value Notification to the central that listens */
+    uint8_t op = 0x1B, on = att_st.ccc_midi & 1u;   /* Handle Value Notification to the central that listens */
 #if BLE_CENTRAL
     if (ble_ll_central()) {                    /* as central: Write Without Response to the peripheral's MIDI I/O */
         h = ble_gattc_midi();
@@ -445,20 +455,20 @@ static void att_midi_out(void)
     }
     for (k = 0; k < BLE_MIDI_PER_EVENT; k++) {
         uint16_t len;
-        if (!ble_app_midi_peek(&pkt, &t) || ble_ll_tx_room() < batt.mtu + BLE_ATT_RESERVE)
+        if (!ble_app_midi_peek(&pkt, &t) || ble_ll_tx_room() < att_st.mtu + BLE_ATT_RESERVE)
             return;
-        ble_midi_enc_begin(&batt.enc, batt.buf + 3, (uint16_t)(batt.mtu - 3u));
+        ble_midi_enc_begin(&att_st.enc, att_st.buf + 3, (uint16_t)(att_st.mtu - 3u));
         while (ble_app_midi_peek(&pkt, &t)) {
-            int r = ble_midi_enc_add(&batt.enc, pkt, t);
+            int r = ble_midi_enc_add(&att_st.enc, pkt, t);
             if (!r)
                 break;
             ble_app_midi_pop();                /* (added, or not a message: dropped) */
         }
-        len = ble_midi_enc_len(&batt.enc);
+        len = ble_midi_enc_len(&att_st.enc);
         if (!len)
             return;
-        batt.buf[0] = op;                       /* Handle Value Notification / Write Command */
-        ble_wr16(batt.buf + 1, h);
+        att_st.buf[0] = op;                       /* Handle Value Notification / Write Command */
+        ble_wr16(att_st.buf + 1, h);
         att_send((uint16_t)(3u + len));
 #if BLE_CENTRAL
         BLE_DG(ble_dgc.gc_wcmd_tx += op == 0x52);
@@ -468,13 +478,13 @@ static void att_midi_out(void)
 
 BLE_API void ble_att_event(void)
 {
-    if (batt.sc_due && !batt.ind_wait && ble_ll_tx_room() >= 7u + BLE_ATT_RESERVE) {
-        batt.buf[0] = 0x1D;                     /* Handle Value Indication: Service Changed, 0x0001..0xFFFF */
-        ble_wr16(batt.buf + 1, H_SC);
-        ble_cpy(batt.buf + 3, V_SC, 4);
+    if (att_st.sc_due && !att_st.ind_wait && ble_ll_tx_room() >= 7u + BLE_ATT_RESERVE) {
+        att_st.buf[0] = 0x1D;                     /* Handle Value Indication: Service Changed, 0x0001..0xFFFF */
+        ble_wr16(att_st.buf + 1, H_SC);
+        ble_cpy(att_st.buf + 3, V_SC, 4);
         att_send(7);
-        batt.sc_due = 0;
-        batt.ind_wait = 1;
+        att_st.sc_due = 0;
+        att_st.ind_wait = 1;
     }
     att_midi_out();
 }

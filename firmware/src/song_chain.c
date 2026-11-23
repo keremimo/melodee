@@ -94,6 +94,12 @@ static uint32_t chain_bank(uint32_t row, uint32_t track)
 {
     return chain_patterns[chain_origin(row, track)][track];
 }
+/* Track 1 sets each section's length. A continued block on it lasts one loop of the held pattern
+ * (a 4-bar pattern grown over two sections plays 8 bars); only a rest keeps the four-beat bar. */
+static uint32_t chain_conductor(uint32_t row)
+{
+    return chain_bank(row, 0);
+}
 static uint32_t chain_block_end(uint32_t row, uint32_t track)
 {
     while (row + 1u < chain_config.count && chain_patterns[row+1u][track] == CHAIN_HOLD) row++;
@@ -101,7 +107,7 @@ static uint32_t chain_block_end(uint32_t row, uint32_t track)
 }
 static uint64_t chain_row_samples(uint32_t row)
 {
-    uint32_t bank = chain_patterns[row][0];
+    uint32_t bank = chain_conductor(row);
     if (bank >= NPAT) return (uint64_t)16u * seq_div_samples(2u) * chain_config.row[row].repeat;
     uint32_t len = (uint32_t)pattern_timing(0, bank, 0);
     uint32_t period = seq_div_samples((uint32_t)pattern_timing(0, bank, 1));
@@ -203,7 +209,7 @@ static void chain_stop(void)
 static void chain_fx_tick(void)
 {
     if (!chain.running) return;
-    uint32_t step = chain_patterns[chain.row][0] >= NPAT ?
+    uint32_t step = chain_conductor(chain.row) >= NPAT ?
         chain.rest_pos / seq_div_samples(2u) : trk[0].seq_idx;
     uint32_t latest = 0, event = 0;
     punch_song_req = -1;
@@ -221,9 +227,9 @@ static void chain_tick(uint32_t n)
     uint32_t length;
     if (!chain.running || t->seq_pos >= 0x7FFFFFFFu) return;
     uint32_t position;
-    int timed = chain_patterns[chain.row][0] >= NPAT;
+    int timed = chain_conductor(chain.row) >= NPAT;
     if (timed) {
-        /* Rests and continuations retain the section's four-beat clock. */
+        /* A rest keeps the section's four-beat clock; a continuation ends with its pattern's loop. */
         length = 16u * seq_div_samples(2u);
         position = chain.rest_pos;
         chain.rest_pos += n;

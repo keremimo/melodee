@@ -40,7 +40,7 @@ static void project_scale_test(void)
     for (uint32_t k = 0; k < NPART; k++) assert(trk[k].p[P_ROOT] == 9);
     btn_up(B_SCL); frame();
 
-    set_engine_of(&trk[3], ENGI_DRUM);
+    set_engine_of(&trk[3], ENGI_808);
     song.sel = 3;                                  /* shared settings can be edited on drums too */
     go_title("SCL");
     edit_param(0, -4);
@@ -60,7 +60,7 @@ static void project_scale_test(void)
         trk[3].p[P_QUANT] = (int16_t)mode;
         scale_share(&trk[3]);
         for (uint32_t key = 0; key < 27u; key++)
-            assert(kb_map(&trk[3], key) == (uint32_t)ENGINES[ENGI_DRUM]->keys(&trk[3], key));
+            assert(kb_map(&trk[3], key) == (uint32_t)ENGINES[ENGI_808]->keys(&trk[3], key));
         if (mode != Q_MPC)
             for (uint32_t note = 0; note < 128u; note++) assert(midi_map(&trk[3], note) == note);
         else assert(midi_map(&trk[3], 21) == 38u);    /* MPC drum pads retain their mapping */
@@ -96,7 +96,8 @@ int main(void)
     edit_param(2, 100); assert(TSEL->p[P_ROOT] == 11);
     edit_param(2, -100); assert(TSEL->p[P_ROOT] == 0);
     for (uint32_t family = 1; family <= SCALE_FAMILIES; family++) {
-        edit_param(0, (int32_t)family - ui.scale_family);
+        if (scale_family_empty(family)) continue;       /* (Historical: tunings now) */
+        while (ui.scale_family != family) edit_param(0, ui.scale_family < family ? 1 : -1);
         uint32_t total = scale_picker_count();
         assert(total && scale_picker_match(TSEL->p[P_SCALE]));
         for (uint32_t rank = 0; rank < total; rank++) {
@@ -108,23 +109,23 @@ int main(void)
         int16_t last = TSEL->p[P_SCALE]; edit_param(1, 1000); assert(TSEL->p[P_SCALE] == last);
         edit_param(1, -1000); assert(TSEL->p[P_SCALE] == scale_picker_at(0));
     }
-    assert(visited == SCALE_TOTAL);
+    assert(visited == 60u);                             /* (every entry but the retired) */
     ui.scale_family = 0; scale_picker_select(39); /* 53 EDO */
     TSEL->p[P_MPCDEG] = 53; scale_share(TSEL);
     mark(1); assert(scale_favorite(39));
-    scale_picker_select(50); /* meantone */
-    for (uint32_t k = 0; k < NPART; k++) assert(trk[k].p[P_MPCDEG] == 12);
-    mark(1); assert(scale_favorite(50));
+    scale_picker_select(59); /* shruti */
+    for (uint32_t k = 0; k < NPART; k++) assert(trk[k].p[P_MPCDEG] == 22);
+    mark(1); assert(scale_favorite(59));
     edit_param(0, SCALE_FAMILIES + 1u);
     assert(scale_picker_count() == 2 && scale_picker_rank() == 1);
     uint32_t engine = TSEL->eng_req;
     turn(EN_PRESET, -1); frame();
     assert(TSEL->p[P_SCALE] == 39 && TSEL->eng_req == engine);
     mark(0); assert(!scale_favorite(39) && TSEL->p[P_SCALE] == 39 && scale_picker_count() == 1);
-    edit_param(1, 1); assert(TSEL->p[P_SCALE] == 50);
-    mark(0); assert(!scale_picker_count() && TSEL->p[P_SCALE] == 50);
-    edit_param(1, 1); assert(TSEL->p[P_SCALE] == 50);
-    mark(1); assert(scale_picker_count() == 1 && scale_favorite(50));
+    edit_param(1, 1); assert(TSEL->p[P_SCALE] == 59);
+    mark(0); assert(!scale_picker_count() && TSEL->p[P_SCALE] == 59);
+    edit_param(1, 1); assert(TSEL->p[P_SCALE] == 59);
+    mark(1); assert(scale_picker_count() == 1 && scale_favorite(59));
     edit_param(3, -100); assert(TSEL->p[P_QUANT] == Q_OFF);
     edit_param(3, 1);
     for (uint32_t k = 0; k < NPART; k++) assert(trk[k].p[P_QUANT] == TSEL->p[P_QUANT]);

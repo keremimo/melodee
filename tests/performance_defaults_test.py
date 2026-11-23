@@ -17,7 +17,7 @@ import build
 OPTIONS = tuple("MELODEE_" + name for name in (
     "RAM_AUDIO", "CACHE_RAM", "MOD_CACHE", "CONTROL_FAST", "MIX_FAST",
     "FX_DORMANT", "RECORD_INDEX", "PROPHET_FAST", "PANEL_FAST", "FM6_FAST",
-    "CZ_FAST", "DRUM_FAST", "SID_FAST", "CAPTURE_FAST"))
+    "CZ_FAST", "DRUM_FAST", "SID_FAST", "CAPTURE_FAST", "RENDER_AHEAD"))
 
 
 class PerformanceDefaultsTest(unittest.TestCase):

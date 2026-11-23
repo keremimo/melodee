@@ -13,6 +13,19 @@ static int name_on(void);                              /* NAME (ui_name.c) */
 static void name_draw(void);
 static int new_on(void);                               /* NEW SONG (ui_new.c) */
 static void new_draw(void);
+#if BOARD_SMK37
+/* the SMK-37's banks (ui_smk.c): what the strip shows and the faders reach */
+enum { BK_PAGE, BK_SOUND, BK_FILTER, BK_ENV, BK_LFO, BK_FX, BK_ARP, BK_LEVELS, BK_SENDS, BK_PANS, BK_N };
+static uint32_t strip_bank(void);
+static const page_t *bank_page(uint32_t bank);
+static uint32_t bank_trk(uint32_t bank);                /* a track bank's id (LEVELS, SENDS, PANS), else P_COUNT */
+static void smk_fader_gauges(void);
+static int smk_faders_out(void);
+static const char *smk_head_tag(void);
+static void smk_strip_poll(void);
+static void layer_cards(uint32_t l);                    /* ui_layer.c */
+static void trk_cards(uint32_t id);                     /* ui_layer.c: tracks 1..4's id (LEVEL, SEND, PAN) */
+#endif
 
 /* --------------------------------------------------------- drawing --- */
 #define COL_W CARD_W                                  /* a knob's cell: 57 x 48 at x 2 + 60 c, y 32 */
@@ -150,6 +163,7 @@ static uint16_t fx_fam_col(uint32_t f)
 }
 static int sec_on(void);                                /* ui_sections.c */
 static uint32_t sec_of(uint32_t i);
+static int sec_inst(uint32_t i);
 static void sec_chip(uint32_t i, char *b, uint32_t n);
 static int sec_map_on(void);
 static void sound_name(const track_t *t, char *b);
@@ -172,15 +186,19 @@ static void head_chip_text(char *b)
         pat_num(b + str_len(b), ui.ptc_dst);
     } else if (ui.home) {                               /* Stage: the engine (a kit: its name, "909 KIT") */
         if (browse_pending()) { uint32_t kk, s = browse_shown(&kk); e = src_engine(s, kk); }
-        if (ENGINES[eng_idx(e)] == &ENG_DRUM && !browse_pending()) sound_name(TSEL, b);
-        else str_cpy(b, ENGINES[eng_idx(e)]->name, 16);
+        if (pads_eng(eng_idx(e)) && !browse_pending()) sound_name(TSEL, b);   /* (a kit: its name) */
+        else str_cpy(b, eng_name(eng_idx(e)), 16);
     } else if (sec_map_on()) {                          /* the map: the engine */
-        str_cpy(b, ENGINES[e]->name, 16);
+        str_cpy(b, eng_name(e), 16);
     } else if (pg->graph == GR_ROLL && grid_on()) {     /* the drum grid */
         str_cpy(b, "STEP", 16);
-    } else if (pg->graph == GR_FMEG) {                  /* FM6's EG RATE / LVL: "OP3 EG" */
-        str_cpy(b, "OP1 EG", 16);
-        b[2] = (char)('1' + fm6_opsel % 6u);
+    } else if (pg->graph == GR_ENV8 && sch_pg_ninst(pg)) {   /* an instance's envelope (FM6's EG RATE / LVL):
+                                                              * "OP3 EG", the instance and the title's first word */
+        uint32_t n = sch_inst_name(sch_inst, b, 12), k;
+        b[n++] = ' ';
+        for (k = 0; pg->title[k] && pg->title[k] != ' ' && n + 1u < 16u; k++)
+            b[n++] = pg->title[k];
+        b[n] = 0;
     } else if (pg->fam == FAM_FX && pg->graph == GR_NONE) {   /* an FX slot: its effect */
         str_cpy(b, N_FX[clamp((pg->scope == SC_GLOBAL ? song.g : TSEL->p)[pg->id[0] - 1u], 0, FX_COUNT - 1)], 16);
     } else if (pg->scope != SC_ENGINE && sec_on()) {   /* an engine in sections: the page's name in its section */
@@ -200,8 +218,8 @@ static void head_pages(int32_t x, int32_t x1)          /* (x: after the transpor
     if (designer_on() && !name_on())                    /* the designer: its stage's pages */
         designer_pages(&n, &k);
     else for (i = 0; i < NPAGES; i++)                   /* (an engine in sections: the section's pages) */
-        if (PAGES[i].fam == pg->fam && page_visible(i) &&
-            (!sc || (PAGES[i].scope == SC_FMOP ? PAGES[ui.page].scope == SC_FMOP : sec_of(i) + 1u == sc))) {
+        if (PG(i).fam == pg->fam && page_visible(i) &&
+            (!sc || (sec_inst(i) ? sec_inst(ui.page) : sec_of(i) + 1u == sc))) {
             if (i == ui.page)
                 k = n;
             n++;
@@ -256,7 +274,7 @@ static void ble_head_text(char text[24])
     if (code != BLE_NO_PASSKEY) {
         str_cpy(text, "PIN 000000", 24);
         for (uint32_t n = 0; n < 6; n++) { text[9u - n] = (char)('0' + code % 10u); code /= 10u; }
-    } else if (mb.on && !mb.ready) {
+    } else if (mb.on && !MB_ANY(ready)) {
         const char *s = mel_ble_status();
         if (str_eq(s,"CONNECTION TIMEOUT")) s = "BLE TIMEOUT";
         else if (str_eq(s,"WAITING FOR MIDI")) s = "BLE WAIT";
@@ -287,6 +305,9 @@ static void draw_head(void)
 #endif
 #if MELODEE_USB_HOST
     sig += uh.on ? (1u + uh.run) * 6151u : 0u;          /* the HOST tag: waiting, or a controller connected */
+#endif
+#if BOARD_SMK37
+    sig += str_hash(0x51u, smk_head_tag());             /* the bank's tag */
 #endif
     if (bpm != ui.roll_bpm) {
         char a[8];
@@ -340,6 +361,9 @@ static void draw_head(void)
 #endif
 #if MELODEE_BLE
         if (mb.on) tag = tag[0] ? "HOST BLE" : "BLE";
+#endif
+#if BOARD_SMK37
+        if (smk_head_tag()[0]) tag = smk_head_tag();    /* the knobs' bank, FADERS (ui_smk.c) */
 #endif
         int32_t hw = tag[0] ? text_w(TY_LB, tag) + 10 : 0;
 
@@ -399,7 +423,7 @@ static void draw_head(void)
         if (uh.on && !uh.run) tag_color = T_MID;
 #endif
 #if MELODEE_BLE
-        if (mb.ready) tag_color = T_THEME;
+        if (MB_ANY(ready)) tag_color = T_THEME;
 #endif
         if (hw)
             cv_text_on(236 - cw - (low ? 22 : 0) - hw + 4, ty_y(H_HEAD / 2, TY_LB), TY_LB, tag, tag_color, T_BG);
@@ -475,6 +499,21 @@ static const struct { const char *k, *s; } CELL_SHORT[] = {
     {"SECTION", "SECT"}, {"LENGTH", "LEN"}, {"REPEAT", "REP"}, {"JITTER", "JITT"}, {"VIBRATO", "VIB"},
     {"TEMPO", "BPM"}, {"SNAPPY", "SNAP"}, {"SEND 1", "FX 1"}, {"SEND 2", "FX 2"}, {"SEND 3", "FX 3"},
     {"DIFFUSE", "DIFF"}};
+/* a name drawn whole in a knob's cell (draw_column: the text face, else the label face by its ink), 1; else 0 */
+static int cell_whole(const char *name)
+{
+    char lb[12], v[16], u[8];
+    int32_t l, r, w;
+    pv_words("", name, "", lb, v, u);
+    if ((w = text_w(TY_TX, v)) <= COL_W) {
+        text_ink(TY_TX, v, &l, &r);
+        return COL_W / 2 - w / 2 + l >= 0 && COL_W / 2 - w / 2 + r <= COL_W;
+    }
+    text_ink(TY_LB, v, &l, &r);
+    if ((w = text_w(TY_LB, v)) <= COL_W)
+        return COL_W / 2 - w / 2 + l >= 0 && COL_W / 2 - w / 2 + r <= COL_W;
+    return r - l <= COL_W;
+}
 static const char *cell_label(const char *label, int32_t room)
 {
     uint32_t i;
@@ -570,8 +609,16 @@ static void draw_column(uint32_t c, const char *label0, const char *val0, const 
             x = COL_W - 6;
         } else if (vf == TY_TX)                         /* the value rolls */
             x = roll_text(c, vx, ROLL_Y, val, vc);
-        else if (val[0] >= 'A' && val[0] <= 'Z' && val[1] >= 'a' && val[1] <= 'z')   /* a name ("Chorus"): free text */
-            x = cv_free_text(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
+        else if (val[0] >= 'A' && val[0] <= 'Z' && val[1] >= 'a' && val[1] <= 'z') {   /* a name ("Chorus"): free text;
+                                                                                        * its ink fitting, centred by it */
+            int32_t l = 0, r = 0x7FFF;
+            if (vw > room)
+                text_ink(vf, val, &l, &r);
+            if (r - l <= room - uw)
+                x = cv_text_on((COL_W - (r - l)) / 2 - l, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg);
+            else
+                x = cv_free_text(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
+        }
         else
             x = cv_text_fit(vx, ROLL_Y + TY_TX->asc - vf->asc, vf, val, vc, cbg, room - uw);
         if (unit[0])                                    /* the unit on the value's baseline */
@@ -611,14 +658,18 @@ static void sound_name(const track_t *t, char *b)
         const song_sound_t *s = song_sound_get(song_sounds.active[t - trk]);
         if (s) { str_cpy(b, s->name, 16); return; }
     }
-    const engine_t *e = ENGINES[t->eng_req % NENGINES];
+    uint32_t np = eng_npresets(t->eng_req % NENGINES);
     b[0] = 0;
-    if(t->eng_req==ENGI_PROPHET)p5_short_name(t,b,16);
+    if (sch_flag(eng_idx(t->eng_req), MOD_SCH_F_SNAME)) {   /* (a synth whose sound is its patch's own name: the Prophet) */
+        char full[MOD3_PATCH_MAX < 64u ? MOD3_PATCH_MAX : 64u];
+        patch_name_of(eng_idx(t->eng_req), patch_of(trk_ix(t)), full, sizeof full);
+        str_cpy(b, full, 16);
+    }
     else if(t->user_native && user_of(t)<USER_NONE)native_name(t->eng_req,user_of(t),b);
     else if (user_of(t) < UP_SLOTS)
         up_name(user_of(t), b);
-    else if (e->npresets)
-        str_cpy(b, eng_preset(e, t->preset % e->npresets)->name, 16);
+    else if (np)
+        eng_preset_name(t->eng_req, t->preset % np, b, 16);   /* (a synth module's: its file's) */
 }
 
 #if MELODEE_UART
@@ -632,7 +683,7 @@ static void sound_name(const track_t *t, char *b)
 static int midi_rx_recent(uint32_t trs)
 {
 #if MELODEE_BLE
-    if (trs == 2u) return mb.ready && fm1_ms - mb.epoch_ms < 250u;
+    if (trs == 2u) return MB_ANY(ready) && fm1_ms - mb.epoch_ms < 250u;
 #endif
     static uint32_t last[2], at[2];
     static uint8_t seen[2];
@@ -724,25 +775,56 @@ static void draw_foot(void)
 #include "ui_browser.c"                                 /* SAVE > PRESETS, the sound browser */
 #include "ui_patterns.c"                                /* SEQ > PATTERNS, SEQ > SONG */
 static int own_screen(void);
+static void draw_cards(void);                           /* the page's four (below) */
 static void draw_columns(void)
 {
     if (own_screen() && col_style != CS_CAPTURE)         /* own screens have no cards; lists still need their values */
         return;
+#if BOARD_SMK37
+    if (!page_over && !ui.home && col_style != CS_CAPTURE && (strip_bank() != BK_PAGE || smk_faders_out())) {
+        uint32_t bk = strip_bank();                      /* a bank's cards in place of the page's (ui_smk.c), the
+                                                          * faders' with their pickup gauges; Stage: stage_columns */
+        uint32_t tid = bank_trk(bk);
+        const page_t *bp = bk == BK_PAGE || tid < P_COUNT ? 0 : bank_page(bk);
+        if (tid < P_COUNT) {                             /* LEVELS, SENDS, PANS: tracks 1..4's (the GLO layer's cards) */
+            uint32_t c;
+            for (c = 0; c < NPART; c++)
+                card_tc[c] = T_TRK(c);
+            trk_cards(tid);
+            memset(card_tc, 0, sizeof card_tc);
+        } else {
+            page_over = bp ? bp : cur_page();
+            draw_cards();
+            page_over = 0;
+        }
+        if (smk_faders_out())
+            smk_fader_gauges();
+        return;
+    }
+#endif
+    draw_cards();
+}
+static void draw_cards(void)
+{
     if (ui.home)                                        /* Stage: its knobs drop in when turned (ui_stage.c stage_knobs);
                                                          * the page left (DRUM SOUND ..) draws none under them */
         return;
-    if(cur_page()->scope==SC_DRUM){
-        char v[12];uint32_t sound=ui.drum_sound%drum_sound_count(TSEL);const int8_t *c=drum_patch_of(song.sel)->c[sound];
-        draw_column(0,"DRUM",drum_sound_name(TSEL,sound),"",VAL(0u),-1,ICON_AUTO);
-        if(cur_page()->id[1]==4){fmt_int(v,127-c[3]);draw_column(1,"LEVEL",v,"",VAL(1u),-1,ICON_AUTO);draw_column(2,"","","",T_THEME,-1,ICON_NONE);draw_column(3,"","","",T_THEME,-1,ICON_NONE);return;}
-        fmt_int(v,c[0]);draw_column(1,"TUNE",v,"ST",VAL(1u),-1,ICON_PITCH);
-        fmt_int(v,c[1]+64);draw_column(2,"DECAY",v,"",VAL(2u),-1,ICON_GATE);
-        fmt_int(v,c[2]+64);draw_column(3,(drum_is909(TSEL)?drum_character(sound):drum_issid(TSEL)?"SNAP":sound==D9_SD?"SNAPPY":"TONE"),v,"",VAL(3u),-1,ICON_AUTO);return;
+    if(cur_page()->scope==SC_PADS){                     /* a kit's pads (pads.c): the pad, its parameters */
+        const pads_v_t *pd=pads_view(TSEL);
+        char v[12],lb[MOD_SCH_NAME+1u];uint32_t sound=ui.pad%pads_count(TSEL);
+        draw_column(0,pads_word(TSEL,MOD3_PW_PAD),pads_name(TSEL,sound),"",VAL(0u),-1,ICON_AUTO);
+        for(uint32_t c=1;c<4u;c++){
+            uint32_t id=cur_page()->id[c],k=id-1u;const int8_t *q=id!=255u?pads_par_at(song.sel,sound,k):0;
+            if(!pd || !q){draw_column(c,"","","",T_THEME,-1,ICON_NONE);continue;}
+            fmt_int(v,pads_par_shown(pd,k,q));
+            draw_column(c,pads_par_label(TSEL,sound,k,lb),v,pd->par[k].unit,VAL(c),-1,pd->par[k].icon[0]?icon_for_label(pd->par[k].icon):ICON_AUTO);
+        }
+        return;
     }
-    if(cur_page()->scope==SC_DRUMHIT){
-        char v[12];uint32_t i=drum_hit_selected();const recorded_note_t *r=i<RECORD_MAX?&recording[i]:0;
+    if(cur_page()->scope==SC_PADHIT){
+        char v[12];uint32_t i=pads_hit_selected();const recorded_note_t *r=i<RECORD_MAX?&recording[i]:0;
         fmt_int(v,ui.cursor+1);draw_column(0,"STEP",v,"",VAL(0u),-1,ICON_AUTO);
-        draw_column(1,"DRUM",drum_sound_name(TSEL,ui.drum_sound%drum_sound_count(TSEL)),"",VAL(1u),-1,ICON_AUTO);
+        draw_column(1,pads_word(TSEL,MOD3_PW_PAD),pads_name(TSEL,ui.pad%pads_count(TSEL)),"",VAL(1u),-1,ICON_AUTO);
         fmt_int(v,r?r->pitch:0);draw_column(2,"PITCH",v,"ST",VAL(2u),-1,ICON_PITCH);
         if(r && recorded_gate(r)){uint32_t x=((uint32_t)r->duration*(1u<<(recorded_exponent(r)))*100u+RECORD_UNIT/2)/RECORD_UNIT;fmt_int(v,x/100);str_cpy(v+str_len(v),".",2);if(x%100<10)str_cpy(v+str_len(v),"0",2);fmt_int(v+str_len(v),x%100);}
         else str_cpy(v,"FREE",sizeof v);
@@ -750,7 +832,7 @@ static void draw_columns(void)
     }
 
     uint32_t c;
-    char val[12];
+    char val[16];
     const char *unit;
     if (cur_page()->scope == SC_TRK) {                 /* LEVEL PAN MUTE of the selected track */
         const track_t *t = TSEL;
@@ -770,26 +852,6 @@ static void draw_columns(void)
         draw_column(3, "MUTE", t->p[P_MUTE] ? "ON" : "OFF", "", t->p[P_MUTE] ? T_ACCENT : VAL(3u), -1, ICON_AUTO);
         return;
     }
-#if MELODEE_SLICE
-    if (cur_page()->graph == GR_SLICES) {                /* SLICE POS, then SPLIT JOIN (ui_slice.c) */
-        uint32_t n = slice_count(), j = slice_sel(), src, div, ok = slice_src(&src, &div) && src;
-        char u[8];
-        if (j < n) {
-            fmt_int(val, (int32_t)j + 1);
-            str_cpy(u, "/", 8);
-            fmt_int(u + 1, (int32_t)n);
-        } else {
-            str_cpy(val, n ? "END" : "--", sizeof val);
-            u[0] = 0;
-        }
-        draw_column(0, "SLICE", val, u, VAL(0u), -1, ICON_SLICE);
-        slice_time(val, slice_mark(j));
-        draw_column(1, "POS", val, "S", ok ? VAL(1u) : T_DIM, -1, ICON_AUTO);
-        draw_act_column(2, "SPLIT", ok ? T_THEME : T_DIM, ICON_AUTO);
-        draw_act_column(3, "JOIN", ok ? T_THEME : T_DIM, ICON_AUTO);
-        return;
-    }
-#endif
     if (cur_page()->graph == GR_MOD) {                   /* the route's SRC, the route, its DST AMT */
         const track_t *t = TSEL;
         uint32_t id = P_M1SRC + 3u * mod_ui_slot;
@@ -808,13 +870,14 @@ static void draw_columns(void)
         uint32_t chosen = notes_selected(TSEL), start = notes_manual_start(TSEL);
         const step_t *st = start < NSTEP ? &TSEL->step[start] : 0;
         int selected = chosen < RECORD_MAX || (st && st->n);
-        char sn[12], u[12];
+        char sn[12], u[12], cents[6];
+        const char *pl;
         fmt_int(sn, (int32_t)ui.cursor + 1); u[0] = '/'; fmt_int(u + 1, TSEL->p[P_SLEN]);
         draw_column(0, ui.note_copy?"COPY":bulk.on||ui.note_move?"MOVE":"STEP", sn, bulk.on||ui.note_move?"":u, VAL(0u), -1, ICON_AUTO);
         uint32_t pitch = chosen < RECORD_MAX ? recorded_note(&recording[chosen]) : st && st->n ? st->note[notes_manual_slot(st)] : last_note;
-        note_name(sn, pitch);
-        if(chosen<RECORD_MAX && drum_track(TSEL))fmt_int(sn,recording[chosen].pitch);
-        draw_column(1, "PITCH", sn, chosen<RECORD_MAX && drum_track(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
+        pl = note_card(sn, cents, pitch, "PITCH");
+        if(chosen<RECORD_MAX && pads_on(TSEL))fmt_int(sn,recording[chosen].pitch);
+        draw_column(1, pl, sn, chosen<RECORD_MAX && pads_on(TSEL)?"ST":"", selected ? VAL(1u) : T_DIM, -1, ICON_PITCH);
         if (chosen < RECORD_MAX) {
             uint32_t hundredths = ((uint32_t)recording[chosen].duration * (1u << (recorded_exponent(&recording[chosen]))) * 100u + RECORD_UNIT / 2u) / RECORD_UNIT;
             if (!hundredths) str_cpy(sn, "<.01", sizeof sn);
@@ -839,15 +902,15 @@ static void draw_columns(void)
         draw_column(3, "VEL", sn, chosen >= RECORD_MAX && st && st->n > 1u ? "ALL" : "", selected ? VAL(3u) : T_DIM, -1, ICON_ACCENT);
         return;
     }
-    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* the grid: STEP LANE HIT ACC */
+    if (cur_page()->scope == SC_STEP && pads_on(TSEL)) {   /* the grid: STEP LANE HIT ACC */
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        uint32_t b = 1u << ui.lane, on = (step_lanes(st) & b) != 0u, ac = (step_accents(st) & b) != 0u;
+        uint32_t b = 1u << ui.lane, on = (step_lanes(TSEL, st) & b) != 0u, ac = (step_accents(TSEL, st) & b) != 0u;
         char sn[8], sl[8];
         fmt_int(sn, (int32_t)ui.cursor + 1);
         str_cpy(sl, "/", 8);
         fmt_int(sl + 1, TSEL->p[P_SLEN]);
         draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-        draw_column(1, "", drum_lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);   /* (its chip: "Snare") */
+        draw_column(1, "", lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);   /* (its chip: "Snare") */
         draw_column(2, "HIT", on ? "ON" : "--", "", on ? VAL(2u) : T_DIM, -1, ICON_AUTO);
         draw_column(3, "ACC", ac ? "ON" : "--", "", ac ? VAL(3u) : T_DIM, -1, ICON_AUTO);
         return;
@@ -855,16 +918,17 @@ static void draw_columns(void)
     if (cur_page()->scope == SC_STEP) {
         static const char *const TIME_N[3] = {"NOTE", "TIE", "REST"};
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        char u[8];
+        char u[8], cents[6];
+        const char *nl = "NOTE";
         uint32_t cnt = st->n, first = st->note[0], l;
         for (l = NLANE; l-- > 0;)                         /* (lane hits count as their notes) */
             if ((st->hit >> l) & 1u) {
                 cnt++;
                 if (!st->n)
-                    first = DRUM_LANE_NOTE[l];
+                    first = lane_note(TSEL, l);
             }
         if (cnt) {
-            note_name(val, first);
+            nl = note_card(val, cents, first, nl);
             u[0] = 0;
             if (cnt > 1) {
                 str_cpy(u, "+", 8);
@@ -881,7 +945,7 @@ static void draw_columns(void)
             str_cpy(sl, "/", 8);
             fmt_int(sl + 1, TSEL->p[P_SLEN]);
             draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-            draw_column(1, "NOTE", val, u, step_on(st) ? VAL(1u) : T_DIM, -1, ICON_AUTO);
+            draw_column(1, nl, val, u, step_on(st) ? VAL(1u) : T_DIM, -1, ICON_AUTO);
             draw_column(2, "TIME", TIME_N[st->time % 3u], "", VAL(2u), -1, ICON_AUTO);
             draw_column(3, "FLAG", FLAG_N[(st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u)], "",
                         VAL(3u), -1, ICON_AUTO);
@@ -910,7 +974,7 @@ static void draw_columns(void)
             uint32_t trs = (uint32_t)song.g[G_MIDI], rx = midi_rx_recent(trs);
 #if MELODEE_BLE
             if (trs == 2u) {
-                draw_column(c, "MIDI", "BLE", mb.ready ? "ON" : "WAIT", rx ? T_ACCENT : T_THEME, -1, ICON_AUTO);
+                draw_column(c, "MIDI", "BLE", MB_ANY(ready) ? "ON" : "WAIT", rx ? T_ACCENT : T_THEME, -1, ICON_AUTO);
                 continue;
             }
 #endif
@@ -935,20 +999,26 @@ static void draw_columns(void)
         } else {
             param_format(d, *vp, val, &unit);
             /* Rows have room for enum names that the compact parameter formatter abbreviates. */
-            if (d->fmt == F_ENUM && col_style == CS_CAPTURE)
+            if (d->fmt == F_ENUM && col_style == CS_CAPTURE
+#if MELODEE_RECORDS
+                && !(pads_rec_names(d) >= 0 && *vp >= pads_rec_names(d))   /* (a kit's record: its own name, as formatted) */
+#endif
+                )
                 str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);
+            else if (d->fmt == F_ENUM && d->names && sch_whole(d) && cell_whole(d->names[clamp(*vp, d->min, d->max)]))
+                str_cpy(val, d->names[clamp(*vp, d->min, d->max)], sizeof val);   /* (a synth's name whole where it fits:
+                                                                                  * the CZ-1's waves) */
             else if (fx_names(d))                       /* a rack's KNOB 1: the effect's family (its row names it) */
                 str_cpy(val, FX_FAM_NAME[fx_family(*vp)], sizeof val);
         }
         draw_column(c, d->names == N_NOTE_FX ? "NOTE" : d->label, val, unit, fx_names(d) && col_style != CS_CAPTURE ? fx_fam_col(fx_family(*vp)) :
-                    (cur_page()->scope == SC_CZ1 &&   /* CZ-1: no effect on the tone as it is */
-                    !cz_ed_active(cz_patch_of(song.sel % NTRK)->raw, cur_page()->id[c])) ||
-                    (cur_page()->scope == SC_P5 && !p5_ed_active(TSEL, cur_page()->id[c])) ||
+                    sch_col_dim(cur_page(), c) ||     /* a synth's: no effect on its patch as it is */
                     (vp == &TSEL->p[P_LRATE] && TSEL->p[P_LSYNC]) ? T_DIM : VAL(c),   /* LFO 2 SYNC on: RATE does nothing */
                     d->fmt == F_ENUM && d->max < 2 ? -1 : RATIO(d, *vp), param_icon(d, *vp));
     }
 }
 
+#if MELODEE_UPDATE_COUNTDOWN
 /* UPDATE MODE countdown (main.c: OCT- + OCT+ held): over everything, the menu and the dialogs too */
 static void draw_uboot(void)
 {
@@ -974,6 +1044,7 @@ static void draw_uboot(void)
     ui.force = 0;
     scr_shown();
 }
+#endif
 
 /* the OCT- / OCT+ dialog: what it does (ui.confirm, ui.confirm_trk) on two lines, on a surface */
 #define DLG_X 8                                         /* (large type: 224 wide, as tall as its words, centred) */
@@ -981,6 +1052,14 @@ static void draw_uboot(void)
 #define DLG_W 224
 #define DLG_H 168
 #define CF_DETAIL 64                                    /* confirm_text's b: its longest detail and the 0 */
+/* SEQ's pattern dialog: how its half / double keys show (the FM-1's C# D# blink; the SMK-37's two pads breathe) */
+#ifndef PAT_DLG_WORD
+#if BOARD_SMK37
+#define PAT_DLG_WORD "Breathing"
+#else
+#define PAT_DLG_WORD "Blinking"
+#endif
+#endif
 static void confirm_text(char *a, char *b)
 {
     uint32_t k = ui.confirm_trk;
@@ -1046,6 +1125,10 @@ static void confirm_text(char *a, char *b)
         str_cpy(b, "Forget Melodee on the peer too", 32);
         break;
 #endif
+    case CF_MLEARN_FORGET:
+        str_cpy(a, "FORGET ALL LEARNED?", 24);
+        str_cpy(b, "Every MIDI learn control", 32);
+        break;
     case CF_CLEAR_SHARED:                               /* SHARED's sheet */
         str_cpy(a, "CLEAR SHARED FX?", 24);
         str_cpy(b, "All tracks \xB7 three slots off", 32);
@@ -1087,8 +1170,8 @@ static void confirm_text(char *a, char *b)
         str_cpy(a, "REPLACE OLD TEMPLATE?", 24);
         str_cpy(b, "Old settings/template replaced", 32);
         break;
-    case CF_PAT_KEY: {                                  /* SEQ + a white key held: its length, what its keys do now
-                                                         * (b: CF_DETAIL) */
+    case CF_PAT_KEY: {                                  /* SEQ + a white key held (the SMK-37: a pattern pad): its
+                                                         * length, what its keys do now (b: CF_DETAIL) */
         uint32_t p = ui.pat_dlg % NPAT, n;
         n = (uint32_t)clamp(pattern_timing(k % NTRK, p, 0), 1, NSTEP);
         str_cpy(a, "PATTERN ", 24);
@@ -1096,9 +1179,19 @@ static void confirm_text(char *a, char *b)
         str_cpy(a + str_len(a), " \xB7 ", 4);
         fmt_int(a + str_len(a), (int32_t)n);
         str_cpy(a + str_len(a), n == 1u ? " STEP" : " STEPS", 7);
-        str_cpy(b, "Again: delete \xB7 other: copy\nBlinking: half \xB7 double", CF_DETAIL);
+        str_cpy(b, "Again: delete \xB7 other: copy\n" PAT_DLG_WORD ": half \xB7 double", CF_DETAIL);
         break;
     }
+    case CF_DEL_ITEM:                                   /* GLO > SYNTHS / STORAGE (storage_items.c) */
+        sti_question(k, a, b);
+        break;
+#if REC_TAKES
+    case CF_DEL_KIT:                                    /* Record kit's sheet: a recorded kit, all its takes */
+        str_cpy(a, "DELETE KIT 1?", 24);
+        a[11] = (char)('1' + k % MOD3_NREC);
+        str_cpy(b, "Every pad's recording", 32);
+        break;
+#endif
     case CF_DEL_TRACK:                                  /* Stage's sheet: the tracks after it move down a place */
         str_cpy(a, "REMOVE TRACK 1?", 24);
         a[13] = (char)('1' + k % NTRK);
@@ -1188,6 +1281,7 @@ static void draw_confirm(void)
 #include "ui_motion.c"                                  /* MOTION: its lanes */
 #include "ui_scales.c"                                  /* SCALES: a screen of its own */
 #include "ui_designer.c"                                /* guided native sound creation */
+#include "ui_smk.c"                                     /* the SMK-37's banks: knobs, faders, their picker */
 static int own_screen(void)                             /* a page drawn whole by its own code, no cards or footer */
 {
     uint32_t g = cur_page()->graph;
@@ -1278,7 +1372,8 @@ static void ui_draw(void)                               /* (gfx.c: the fills wai
 }
 static void ui_draw_frame(void)
 {
-    if (boot_work.state == 4u && RES_OK()) { boot_work.state = 0; ui.force = 1; }   /* (Finish setup meanwhile) */
+    if (boot_work.state == 4u && RES_OK() && SHIPPED_OK()) { boot_work.state = 0; ui.force = 1; }   /* (Finish setup
+                                                                                                   * meanwhile) */
     if (boot_work.state) {
         scrn.idle = fm1_ms;                          /* maintenance/errors never sleep or get covered */
         if (ui.force) { boot_work_draw(); ui.force = 0; }
@@ -1303,11 +1398,13 @@ static void ui_draw_frame(void)
         ui.force = 1;
     }
 
+#if MELODEE_UPDATE_COUNTDOWN
     if (ui.uboot) {
         draw_uboot();
         draw_head();
         return;
     }
+#endif
     if (ui.menu) {
         draw_menu();
         ui.force = 0;
@@ -1336,6 +1433,9 @@ static void ui_draw_frame(void)
         return;
     }
     pick_poll();
+#if BOARD_SMK37
+    smk_strip_poll();
+#endif
     if (song_punch_on()) {
         song_punch_draw();
         draw_toast();
@@ -1354,7 +1454,7 @@ static void ui_draw_frame(void)
                                                          * over it as it is (it comes with every turn of a list knob:
                                                          * dimming sent the whole screen twice, ~150 ms on the SPI) */
         if (ui.force) {
-            cv_dim = pop.on != POP_PICK && pop.on != POP_PRESET;
+            cv_dim = pop.on != POP_PICK && pop.on != POP_PRESET && pop.on != POP_BANK;
             cv_under = 1;
             draw_page();
             cv_dim = cv_under = 0;

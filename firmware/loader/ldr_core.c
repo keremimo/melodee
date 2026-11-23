@@ -12,9 +12,9 @@
  *   2. checks that the package's app area decrypts with THIS chip's key
  *      (taken from isd_config.ini in the device's own flash head), so a
  *      package for another key is refused before anything is erased;
- *   3. writes the app area [0x4000, 0x93000), sector by sector, skipping
- *      sectors that are already equal, and verifies each one; the flash head
- *      (SPL, isd_config) is never written;
+ *   3. writes the app area [0x4000, 0x93000) (SMK-37: 0x9D000), sector by
+ *      sector, skipping sectors that are already equal, and verifies each one;
+ *      the flash head (SPL, isd_config) is never written;
  *   4. writes the resource region from the package's res.bin (ldr_res), the
  *      app being committed: nothing there decides whether the unit boots;
  *   5. asks 0xF0000000 ("success"), then invalidates the update record (RAM
@@ -28,7 +28,9 @@
  *   b. sector 0x4000 (the directory and the stub), only if it differs from the
  *      flash: the one window without a working stub. It is the same bytes in
  *      every build with the same stub, so normally nothing is written here;
- *   c. the body, 0x5000..0x90FFF and 0x92000..0x92FFF;
+ *   c. the body, 0x5000..0x90FFF and 0x92000..0x92FFF (SMK-37: and the app
+ *      area tail 0x93000..0x9CFFF, the app's data, src/smkx.c: a committed
+ *      body always has its tail);
  *   d. the marker's sector last (its last page holds the marker).
  * A package without the marker is written in address order, as before.
  * Power loss during 3 (the SPL does not start the loader from the flash copy
@@ -41,15 +43,43 @@
  *   ldr_progress(done, total)
  * plus the ota.c hooks (frames, time, idle). */
 #define LDR_APP_LO 0x4000u
+#if BOARD_SMK37
+/* SMK-37: app area up to the stock PRCT end (the stub, the body and the marker at the FM-1's places; the sectors
+ * from 0x93000 up are the app area tail, the app's read-only data, firmware/src/smkx.c); records only in the VM, so
+ * the record scan can never erase BTIF / USRTRIM (0xC0000..0xC1FFF, the key calibration) or anything above */
+#define LDR_APP_HI 0x9D000u
+#define LDR_REC_LO 0x9D000u
+#define LDR_REC_HI 0xC0000u
+_Static_assert(LDR_APP_HI <= LDR_REC_LO && LDR_REC_HI <= 0xC0000u && LDR_APP_LO >= 0x4000u,
+               "SMK loader windows must stay below BTIF / USRTRIM and above the head");
+#else
 #define LDR_APP_HI 0x93000u
 #define LDR_REC_LO 0x93000u                     /* update records live above the app ... */
 #define LDR_REC_HI 0xFC000u                     /* ... and below Melodee's globals */
+#endif
 #define LDR_STUB_SEC 0x4000u                    /* the directory and the boot stub */
 #define LDR_MARK_SEC 0x91000u                   /* stub_core.h STUB_MARK_SEC, STUB_MARK_OFF */
 #define LDR_MARK_OFF 0x91FE0u
 #define LDR_RES_TYPE 101u                       /* the package's res.bin (tools/fm1pkg_make.py RES_TYPE) */
+#if BOARD_SMK37
+/* the resource region (firmware/src/res.c RES_BASE, hal/fm1_flash_map.h FL_RES): in the VM, below the store owner tag */
+#define LDR_RES_LO 0x9F000u
+#define LDR_RES_HI 0xAF000u
+#else
 #define LDR_RES_LO 0xCB000u                     /* the resource region (firmware/src/res.c RES_BASE ...) */
 #define LDR_RES_HI 0xE0000u                     /* ... to the staged loader */
+#endif
+_Static_assert(LDR_RES_LO >= LDR_REC_LO && LDR_RES_HI <= LDR_REC_HI, "the resource region lies in the loader's record window");
+#define LDR_RES_N ((LDR_RES_HI - LDR_RES_LO) / 0x1000u)
+/* The window of the region every build from the bridge on keeps (hal/fm1_flash_map.h FL_RES_RESERVE, res.c): the
+ * store may hold records in the region above an installed header's window, so the loader writes and blanks only
+ * inside it, and below this floor when no valid header tells (torn, or a unit from before 1.6) */
+#ifdef FL_RES_RESERVE
+#define LDR_RES_FLOOR FL_RES_RESERVE
+#else
+#define LDR_RES_FLOOR 9u
+#endif
+_Static_assert(LDR_RES_FLOOR >= 1u && LDR_RES_FLOOR <= LDR_RES_N, "the resource floor lies in the region");
 #define LDR_RES_MAGIC 0x3153524Du               /* res.c RES_MAGIC "MRS1": its commit record */
 #define LDR_ST_MAGIC 0x554C4546u                /* storage.c ST_MAGIC "FELU": a storage commit record */
 
@@ -196,20 +226,30 @@ static int ldr_blank(const uint8_t *p, uint32_t n)
     return 1;
 }
 
+/* a commit record's window: rsv[0] its sectors from the region's start, 0 (every build before the bridge) the whole */
+static uint32_t ldr_res_window(const uint8_t *h)
+{
+    uint32_t n = ota_rd32(h + 12);
+    return LDR_RES_LO + (n && n <= LDR_RES_N ? n : LDR_RES_N) * 0x1000u;
+}
 /* 4. the resource region (res.c) from the package's res.bin: its commit record, the payload, padded to sectors
  * (off/size: the entry, 0 when the package has none). Left as it is when it holds this build's region whole (a
- * code-only update reads nothing more), or when it holds no region and a sector there holds a storage record: an
- * older layout's preset banks, which the app moves into the pool and then clears (res.c res_boot), so the next
- * install writes it. Otherwise the commit record's sector goes blank first and its first page is written last:
- * a valid record only ever stands over a whole region. Sectors past the package's are left blank, as res.c's
- * begin leaves them. A failure here costs no boot: the app falls back (res_ok 0) and asks for another install */
+ * code-only update reads nothing more), or when it holds no region and a sector below the floor holds a storage
+ * record: an older layout's preset banks, which the app moves into the pool and then clears (res.c res_boot), so the
+ * next install writes it. Written and blanked only inside the installed window (the store may hold records above
+ * it): a package whose window is wider is left for its app to make room first (res_ok 0, another install). Otherwise
+ * the commit record's sector goes blank first and its first page is written last: a valid record only ever stands
+ * over a whole region. Sectors past the package's are left blank up to its window, as res.c's begin leaves them. A
+ * failure here costs no boot: the app falls back (res_ok 0) and asks for another install */
 static void ldr_res(uint32_t off, uint32_t size, uint8_t *sec, uint8_t *cur)
 {
-    uint32_t s, k, c, len, open = 1;
+    uint32_t s, k, c, len, open = 1, hi, want;
     if (!off || !size || (size & 0xFFFu) || size > LDR_RES_HI - LDR_RES_LO || ota_read(off, sec, 512) ||
         !ldr_record(sec, LDR_RES_MAGIC) || (len = ota_rd32(sec + 4)) > size - 32u || ldr_fread(LDR_RES_LO, cur, 32))
         return;
+    want = ldr_res_window(sec);
     if (ldr_record(cur, LDR_RES_MAGIC)) {
+        hi = ldr_res_window(cur);
         if (ota_memeq(sec, cur, 32)) {
             for (s = 0, c = 0xFFFFFFFFu; s < len; s += k) {
                 k = len - s > 0x1000u ? 0x1000u : len - s;
@@ -221,13 +261,17 @@ static void ldr_res(uint32_t off, uint32_t size, uint8_t *sec, uint8_t *cur)
                 return;                                  /* this build's, whole */
         }
     } else {
-        for (s = LDR_RES_LO; s < LDR_RES_HI; s += 0x1000u)
+        hi = LDR_RES_LO + LDR_RES_FLOOR * 0x1000u;
+        for (s = LDR_RES_LO; s < hi; s += 0x1000u)
             if (ldr_fread(s, cur, 32) || ldr_record(cur, LDR_ST_MAGIC))
                 return;                                  /* preset banks the app has not moved yet */
     }
+    if (want > hi || size > want - LDR_RES_LO)
+        return;                                          /* wider than the installed window: the app first */
+    hi = want;
     if (ldr_erase(LDR_RES_LO))
         return;
-    for (s = LDR_RES_LO + 0x1000u; s < LDR_RES_HI; s += 0x1000u) {
+    for (s = LDR_RES_LO + 0x1000u; s < hi; s += 0x1000u) {
         if (s < LDR_RES_LO + size) {
             if (ldr_sector(off - LDR_RES_LO, s, sec, cur, 0u, &open))
                 return;

@@ -19,7 +19,7 @@ static uint32_t mo_lanes(uint16_t *ids)
     uint32_t i, j, n = 0, k = song.sel % NTRK;
     for (i = 0; i < motion.count; i++) {
         const motion_event_t *e = &motion.event[i];
-        if ((e->place >> 6) != k || motion_pattern[i] != TSEL->pattern || e->param == P_RECQ ||
+        if ((e->place >> 6) != k || motion_pattern[i] != TSEL->pattern || e->param == P_RECQ || e->param == P_TUNING ||
             (motion_native_event(e->param,e->value) && (uint32_t)e->value >> 8 != motion_native_tag(TSEL)))   /* (another engine's) */
             continue;
         for (j = 0; j < n && ids[j] != motion_token(e); j++)
@@ -49,51 +49,57 @@ static int mo_value(uint32_t id, uint32_t step, int16_t *v)   /* the event at st
         }
     return 0;
 }
-/* a lane of the engine's own patch (motion.c MO_NATIVE + i): the Prophet's and FM6's values by their pages' names
- * (FM6's operators "OP3 OUT"), the CZ-1's tone bytes by what they belong to ("DCW 1 env") */
+/* a lane of the synth's own patch (motion.c MO_NATIVE + i): by its schema. Motion by ids (FM6's): the parameter i, its
+ * label in words ("Cutoff"), an instanced page's ("OP3 OUT"); by bytes (the Prophet's, the CZ-1's): the parameter at
+ * byte i (else its label, the byte's range: Motion's map), or the schema's lane names ("DCW 1 env", the bytes 0..255) */
 static const param_desc_t MO_CZ_BYTE = {"TONE", F_INT, 0, 255, 0, 0, 0};
+static param_desc_t mo_d;
+static char mo_dl[MOD_SCH_NAME + 1u];
 static const param_desc_t *mo_desc(uint32_t id)         /* its range (and name) */
 {
-    uint32_t i = (id&255u) - MO_NATIVE;
+    uint32_t i = (id&255u) - MO_NATIVE, e = eng_idx(TSEL->eng_req);
+    sch_param_t p;
+    uint8_t mx;
+    mod_sch_head h;
     if (!(id&256u))
-        return param_desc_of(eng_idx(TSEL->eng_req), id);
-#if MELODEE_PROPHET
-    if (motion_native_tag(TSEL) == MO_TAG_P5 && i < NELEM(P5_PANEL) && P5_PANEL[i].label)
-        return &P5_PANEL[i];
-#endif
-    if (motion_native_tag(TSEL) == MO_TAG_FM6)
-        return i < FP_PR1 ? &FM6_OPD[i % FP_OP] : i < FP_NAME ? &FM6_GD[i - FP_PR1] : &MO_CZ_BYTE;
-    return &MO_CZ_BYTE;
-}
-static void mo_cz_name(uint32_t i, char *b, uint32_t n, int brief)
-{
-    static const char *const PART[6] = {"Wave", "DCA key", "DCW key", "DCA", "DCW", "Pitch"};
-    static const uint8_t END[6] = {2, 4, 6, 23, 40, 57};   /* (a line's 57 bytes: its parts' ends) */
-    uint32_t line = i >= 71u, o = i - (line ? 71u : 14u), p;
-    char d[2] = {(char)('1' + line), 0};
-    if (i < 14u) {
-        str_cpy(b, i < 4u ? "Detune" : "Vibrato", n);
-        return;
+        return param_desc_of(e, id);
+    if (sch_head(e, &h) || (h.flags & MOD_SCH_F_MLANES))
+        return &MO_CZ_BYTE;
+    if (sch_param(e, i, &p))
+        return &MO_CZ_BYTE;
+    if (!(h.flags & MOD_SCH_F_MBYTES) || (p.kind == MOD3_SK_FIELD && p.off == i && !p.shift)) {
+        const param_desc_t *d = sch_param_desc(e, &p);   /* (its own: a value as its pages show it) */
+        if (d)
+            return d;
     }
-    for (p = 0; p < 5u && o >= END[p]; p++)
-        ;
-    str_cpy(b, PART[p], n);
-    str_cpy(b + str_len(b), brief ? "" : " ", n - str_len(b));
-    str_cpy(b + str_len(b), d, n - str_len(b));
-    if (p >= 3u && !brief)
-        str_cpy(b + str_len(b), " env", n - str_len(b));
+    sch_str(e, p.label, mo_dl, sizeof mo_dl);            /* (a byte its parameter computes from: the byte's own range) */
+    if (sch_wid(e, h.mmap + i, &mx, 1u))
+        mx = 255u;
+    mo_d = (param_desc_t){mo_dl, F_INT, 0, mx, 0, 0, 0};
+    return &mo_d;
 }
 static void mo_name(uint32_t id, char *b, uint32_t n)   /* "Cutoff" */
 {
-    uint32_t i = (id&255u) - MO_NATIVE;
-    if ((id&256u) && motion_native_tag(TSEL) == MO_TAG_CZ) {
-        mo_cz_name(i, b, n, 0);
+    uint32_t i = (id&255u) - MO_NATIVE, e = eng_idx(TSEL->eng_req), k;
+    mod_sch_head h;
+    if ((id&256u) && !sch_head(e, &h) && (h.flags & MOD_SCH_F_MLANES)) {   /* (the schema's lane names) */
+        uint8_t d[3], x;
+        if (sch_wid(e, h.mmap + 2u * h.patch, d, 3u) || i >= h.patch || sch_wid(e, h.mmap + 2u * h.patch + 3u + i, &x, 1u) ||
+            x >= d[2]) {
+            str_cpy(b, "TONE", n);
+            return;
+        }
+        uint32_t off = sch_u16(d);
+        char t[MOD_SCH_NAME + 1u];
+        for (k = 0; k < x; k++)
+            off += sch_str(e, off, t, sizeof t) + 1u;
+        sch_str(e, off, b, n);
         return;
     }
-    if ((id&256u) && motion_native_tag(TSEL) == MO_TAG_FM6 && i < FP_PR1) {   /* "OP3 OUT" */
-        str_cpy(b, "OP1 ", n);
-        b[2] = (char)('6' - i / FP_OP);
-        str_cpy(b + 4, mo_desc(id)->label, n - 4u);
+    if ((id&256u) && n > 4u && sch_inst_of(e, i, &k)) {   /* "OP3 OUT" */
+        uint32_t m = sch_inst_name(k, b, n - 1u);
+        b[m++] = ' ';
+        str_cpy(b + m, mo_desc(id)->label, n - m);
         return;
     }
     list_words(b, mo_desc(id)->label, n);
@@ -101,11 +107,9 @@ static void mo_name(uint32_t id, char *b, uint32_t n)   /* "Cutoff" */
 static int16_t mo_base(uint32_t id)                     /* the value the patch itself has */
 {
     uint32_t i = (id&255u) - MO_NATIVE, k = song.sel % NTRK;
-    const uint8_t *b;
     if (!(id&256u))
         return motion_base_value(TSEL, id);
-    b = motion_native_at(TSEL, i);
-    return (int16_t)(motion_nbit(k, i) ? motion_nbase[k][i] : b ? *b : 0);
+    return (int16_t)(motion_nbit(k, i) ? motion_nbase[k][i] : motion_slot_get(TSEL, i));
 }
 
 /* ------------------------------------------------------- the sheet --- */
@@ -200,7 +204,7 @@ static void motion_knob(uint32_t k, int32_t s)
             if (id & 256u) {
                 int32_t next = v;
                 while (next >= d->min && next <= d->max &&
-                       !motion_native_ok(id & 255u, (int16_t)(motion_native_tag(TSEL) << 8 | (uint32_t)next)))
+                       !motion_native_ok(id & 255u, (int16_t)(motion_native_tag(TSEL) << 8 | (uint32_t)next), 0))
                     next += s > 0 ? 1 : -1;
                 if (next < d->min || next > d->max) return;
                 wire = (int16_t)(motion_native_tag(TSEL) << 8 | (uint32_t)next);

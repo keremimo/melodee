@@ -110,3 +110,22 @@ def descriptors(audio, cdc, loader=0):
 for mode in ((0, 0), (0, 1), (1, 0)):
     descriptors(*mode)
 descriptors(0, 0, loader=1)
+
+
+def smk_name(loader):
+    """the SMK-37 builds name their own family, never FM-1"""
+    source = subprocess.check_output([
+        *shlex.split(os.environ.get("CC", "cc")), "-E", "-P", "-DBOARD_SMK37=1",
+        *(["-DMELODEE_LOADER=1"] if loader else []), str(ROOT / "firmware/src/usb.c"),
+    ], text=True)
+    body = re.search(r"STR2\[.*?\]\s*=\s*\{(.*?)\};", source, re.S)[1]
+    values = [ast.literal_eval(x.strip()) for x in body.split(",") if x.strip()]
+    product = bytes(ord(x) if isinstance(x, str) else x for x in values)
+    assert product[0] == len(product) and product[1] == 3
+    name = product[2:].decode("utf-16-le")
+    assert name == ("Melodee SMK-37 Update" if loader else "Melodee SMK-37"), name
+    print(f"USB name (SMK-37, loader={loader}): {name}: OK")
+
+
+smk_name(0)
+smk_name(1)

@@ -1,0 +1,59 @@
+dx7 start slots 25e26bc5 patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen 811c9dc5 out 0 811c9dc5
+dx7 bank staged slots 25e26bc5 patches bbfb9c41 params 5d71d9f5 import b6a8dd53 screen 89a3eab9 out 0 811c9dc5
+dx7 bank into U033..U064 slots 402c62ec patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 bank bad checksum slots 402c62ec patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 bank cut by a note slots 402c62ec patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 voice request ch 3 slots 402c62ec patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 163 53b50d69
+dx7 bank request U033 slots 402c62ec patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 4104 18e36241
+dx7 bank request U001 empty slots 402c62ec patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 4104 442fdc86
+dx7 voice staged slots 402c62ec patches bbfb9c41 params 5d71d9f5 import d74a103c screen 84fe9b19 out 0 811c9dc5
+dx7 voice into U006 slots 86ace8a3 patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 random voice staged slots 86ace8a3 patches bbfb9c41 params 5d71d9f5 import 79845ef5 screen e7e38935 out 0 811c9dc5
+dx7 import cancelled slots 86ace8a3 patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen 327ef2f7 out 0 811c9dc5
+dx7 wrapped voice staged slots 86ace8a3 patches bbfb9c41 params 5d71d9f5 import 48a31cbb screen abcf1a78 out 0 811c9dc5
+dx7 wrapped voice into U007 slots 393dca7a patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 wrapped voice out of range slots 393dca7a patches bbfb9c41 params 5d71d9f5 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 voice parameters slots 393dca7a patches 2cabb129 params 5d71d9f5 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 function parameters slots 393dca7a patches 2467df67 params 253c1fd7 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 parameter on channel 2 slots 393dca7a patches cc574bb3 params 253c1fd7 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 with no FM6 part slots 393dca7a patches 87bdb61b params 2e0b0825 import 050c5d1f screen cedb047f out 0 811c9dc5
+dx7 library send U034 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen cedb047f out 163 85825fa1
+dx7 bulk send U005..U008 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 8dda492f out 326 41ee6f73
+dx7 STORE SEND slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 163 451ca70d
+dx7 bank export U033..U064 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 4104 546f192e
+dx7 bank export U006 U001 U007 U048 slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 4104 0fb2fd2e
+dx7 bank export 40 slots slots 393dca7a patches afc60e5b params f82e3cc3 import 050c5d1f screen 6f4473ed out 4104 38724260
+cz start slots 25e26bc5 patches e4fae7eb params 584e153d import 050c5d1f screen 811c9dc5 out 0 811c9dc5
+cz direct 144 staged slots 25e26bc5 patches e4fae7eb params 584e153d import 45e916dc screen 94a1562a out 0 811c9dc5
+cz direct 144 into U008 slots 3ce98699 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 0 811c9dc5
+cz direct 128 staged slots 3ce98699 patches e4fae7eb params 584e153d import 00c458a9 screen 5b9f92e9 out 0 811c9dc5
+cz direct 128 into U009 slots c467bbfa patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 0 811c9dc5
+cz direct invalid slots c467bbfa patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 0 811c9dc5
+cz send header answered slots c467bbfa patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 6 db738821
+cz send tone staged slots c467bbfa patches e4fae7eb params 584e153d import a0972747 screen a1fe56e6 out 1 720b75b6
+cz send 128 staged slots c467bbfa patches e4fae7eb params 584e153d import 6fe408f2 screen 5b9f92e9 out 1 720b75b6
+cz send 128 into U010 slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 1 720b75b6
+cz request 144 slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 295 34b44b21
+cz request 128 ch 3 slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 263 cd7cc308
+cz handshake header slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 6 db738821
+cz handshake data slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 289 db3323fd
+cz handshake end slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 0 811c9dc5
+cz handshake timeout slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 1 720b75b6
+cz handshake cut by a note slots 339da5b4 patches e4fae7eb params 584e153d import 050c5d1f screen cedb047f out 1 720b75b6
+cz request with no CZ part slots 339da5b4 patches 87bdb61b params 2e0b0825 import 050c5d1f screen cedb047f out 0 811c9dc5
+cz direct with no CZ part slots 339da5b4 patches 87bdb61b params 2e0b0825 import a0972747 screen a1fe56e6 out 0 811c9dc5
+cz library send U008 slots 339da5b4 patches 5352a837 params e42a6a30 import 050c5d1f screen 327ef2f7 out 295 a3346b07
+cz bulk send U007..U010 slots 339da5b4 patches 5352a837 params e42a6a30 import 050c5d1f screen 8dda492f out 885 2f9363e2
+p5 start slots 25e26bc5 patches 6ba102d3 params a6460e0e import 050c5d1f screen 811c9dc5 out 0 811c9dc5
+p5 program 2 staged slots 25e26bc5 patches 6ba102d3 params a6460e0e import 81211541 screen 3e270acc out 0 811c9dc5
+p5 program into U128 slots 3197eb47 patches 6ba102d3 params a6460e0e import 050c5d1f screen cedb047f out 0 811c9dc5
+p5 edit buffer 128 staged slots 3197eb47 patches 6ba102d3 params a6460e0e import 00c020ff screen 7b00d51c out 0 811c9dc5
+p5 edit buffer into U127 slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen cedb047f out 0 811c9dc5
+p5 bad mask slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 0 811c9dc5
+p5 another model slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 0 811c9dc5
+p5 request the edit buffer slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 157 a3a5ea0d
+p5 request U128 slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 159 b5a89810
+p5 request U127 as Rev 3 slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 154 189f59e8
+p5 request an empty slot slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 0 811c9dc5
+p5 library send U128 slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 159 68a2d293
+p5 STORE SEND slots 4bf19f93 patches 6ba102d3 params a6460e0e import 050c5d1f screen 425ca3ea out 157 a3a5ea0d

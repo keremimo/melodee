@@ -18,7 +18,7 @@ typedef struct {
                                                          * SR_RED: no question, red (a destructive act) */
 } sheet_row_t;
 #define SR_RED 0xFFu
-enum { POP_NONE, POP_SHEET, POP_PICK, POP_LIST, POP_PRESET, POP_SONG_PUNCH };
+enum { POP_NONE, POP_SHEET, POP_PICK, POP_LIST, POP_PRESET, POP_SONG_PUNCH, POP_BANK };   /* (POP_BANK: the SMK-37's bank picker, ui_smk.c) */
 #define PAT_AUDITION_MS 2000u
 #define POP_X BOX_X                                     /* a sheet (large type): 236 wide, its title row 34, its rows
                                                          * 32 px, 34 apart (ui_list.c row_draw), five at most shown */
@@ -50,6 +50,14 @@ static void slot_save_sheet(void);
 static int track_remove(uint32_t k);                    /* tracks.c */
 static void track_add(void);
 static int track_create_to(uint32_t k);
+#if REC_TAKES
+static void kit_rec_open(void);                         /* rec_ui.c */
+static void kit_rec_poll(void);
+static void kit_rec_delete(uint32_t u);
+#define KIT_ROW , {"Record kit\x85", 0, 0, kit_rec_open, 0}   /* the last row: a kit that records its pads only */
+#else
+#define KIT_ROW
+#endif
 
 static void pop_close(void)
 {
@@ -101,7 +109,7 @@ static void sheet_open(const char *title, const char *sub, const sheet_row_t *ro
 static void ps_save(void)
 {
     uint32_t i;
-    for (i = 0; i < NPAGES && PAGES[i].graph != GR_USER; i++)
+    for (i = 0; i < NPAGES && PG(i).graph != GR_USER; i++)
         ;
     ui.home = 0;
     ui.page = (uint8_t)i;
@@ -113,7 +121,7 @@ static void ps_fav(void) { preset_mark(!preset_favorite()); }
 static void ps_undo(void) { undo_step(0); }
 static const sheet_row_t SHEET_SOUND[] = {
     {"Init sound", 0, 0, 0, CF_INIT_SOUND}, {"Save as user\x85", 0, 0, ps_save, 0}, {"Favourite", ps_fav_v, 0, ps_fav, 0},
-    {"Undo last load", 0, 0, ps_undo, 0}, {"Sound designer", 0, 0, designer_open, 0}};
+    {"Undo last load", 0, 0, ps_undo, 0}, {"Sound designer", 0, 0, designer_open, 0} KIT_ROW};
 /* Stage's: the sound's, then the tracks: the one added (the next), the one removed (the selected: its question) */
 static void ps_trk_v(char *b, uint32_t k, int none)
 {
@@ -127,10 +135,22 @@ static void ps_trk_v(char *b, uint32_t k, int none)
 }
 static void ps_add_v(char *b) { ps_trk_v(b, trk_n(), trk_n() >= NTRK); }
 static void ps_remove_v(char *b) { ps_trk_v(b, song.sel, trk_n() < 2u); }
+#if BOARD_SMK37
+static void ps_pads_v(char *b);                         /* the pads' mode (ui_smk.c) */
+static void ps_pads_turn(int32_t s);
+static void ps_pads(void);
+#endif
 static const sheet_row_t SHEET_STAGE[] = {
     {"Init sound", 0, 0, 0, CF_INIT_SOUND}, {"Save as user\x85", 0, 0, ps_save, 0}, {"Favourite", ps_fav_v, 0, ps_fav, 0},
     {"Undo last load", 0, 0, ps_undo, 0}, {"Sound designer", 0, 0, designer_open, 0},
-    {"Add track", ps_add_v, 0, track_add, 0}, {"Remove track", ps_remove_v, 0, 0, CF_DEL_TRACK}};
+    {"Add track", ps_add_v, 0, track_add, 0}, {"Remove track", ps_remove_v, 0, 0, CF_DEL_TRACK},
+#if BOARD_SMK37
+    {"Pads", ps_pads_v, ps_pads_turn, ps_pads, 0},
+#endif
+#if REC_TAKES
+    {"Record kit\x85", 0, 0, kit_rec_open, 0},             /* the last row: a kit that records its pads only */
+#endif
+};
 /* the song's (SONG) */
 static int ps_song_free(void)
 {
@@ -283,7 +303,7 @@ static const sheet_row_t SHEET_NOTE[] = {{"Length", nt_len_v, nt_len, 0, 0}, {"V
     {"Chance", nt_chance_v, nt_chance, 0, 0}, {"Slide", nt_slide_v, 0, nt_slide, 0}, {"Move note",0,0,note_move_arm,0}, {"Copy note",0,0,nt_copy,0}, {"Delete note", 0, 0, nt_delete, SR_RED}};
 static const sheet_row_t SHEET_REC_NOTE[] = {{"Length", nt_len_v, nt_len, 0, 0}, {"Velocity", nt_vel_v, nt_vel, 0, 0},
     {"Move note",0,0,note_move_arm,0}, {"Copy note",0,0,nt_copy,0}, {"Delete note", 0, 0, nt_delete, SR_RED}};
-static int ht_acc_on(void) { return (step_accents(&seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u; }
+static int ht_acc_on(void) { return (step_accents(TSEL, &seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u; }
 static void ht_acc_v(char *b) { str_cpy(b, ht_acc_on() ? "On" : "Off", 8); }
 static void ht_acc(void) { edit_param(3u, ht_acc_on() ? -1 : 1); }
 static void ht_clear(void) { edit_param(2u, -1); }
@@ -301,11 +321,11 @@ static int step_enter(void)
     str_cpy(sub, "step ", sizeof sub);
     fmt_int(sub + 5, (int32_t)ui.cursor + 1);
     if (grid_on()) {
-        if (!((step_lanes(&seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u)) {
+        if (!((step_lanes(TSEL, &seq_steps(TSEL)[ui.cursor]) >> ui.lane) & 1u)) {
             edit_param(2u, 1);                          /* (the grid's HIT: its checks) */
             return 1;
         }
-        str_cpy(t, drum_lane_abbr(TSEL, ui.lane), sizeof t);   /* "SD \xB7 step 5" */
+        str_cpy(t, lane_abbr(TSEL, ui.lane), sizeof t);   /* "SD \xB7 step 5" */
         str_cpy(t + str_len(t), " \xB7 ", 4);
         str_cpy(t + str_len(t), sub, sizeof t - str_len(t));
         sheet_open(t, "", SHEET_HIT, NELEM(SHEET_HIT));
@@ -345,6 +365,7 @@ static uint32_t page_sheet(void)
         return 5;
     return fam == FAM_EDIT || fam == FAM_ENV || fam == FAM_LFO || fam == FAM_FX ? 1u : 0u;
 }
+#define KIT_ROWS_OFF (REC_TAKES && !pads_flag(TSEL, MOD3_PD_RECORD) ? 1u : 0u)   /* Record kit: a kit that records its pads only */
 static void page_sheet_open(void)
 {
     char nm[20];
@@ -352,9 +373,9 @@ static void page_sheet_open(void)
     case 1:
         sound_name(TSEL, nm);
         if (ui.home)
-            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_STAGE, NELEM(SHEET_STAGE));
+            sheet_open(nm[0] ? nm : "Sound", eng_name(eng_idx(TSEL->eng_req)), SHEET_STAGE, NELEM(SHEET_STAGE) - KIT_ROWS_OFF);
         else
-            sheet_open(nm[0] ? nm : "Sound", ENGINES[eng_idx(TSEL->eng_req)]->name, SHEET_SOUND, NELEM(SHEET_SOUND));
+            sheet_open(nm[0] ? nm : "Sound", eng_name(eng_idx(TSEL->eng_req)), SHEET_SOUND, NELEM(SHEET_SOUND) - KIT_ROWS_OFF);
         break;
     case 2:
         fmt_int(nm, chain_config.count);
@@ -418,10 +439,15 @@ static void sheet_input(int32_t k1, int32_t k2, uint32_t oct)
     if (oct & 1u) {
         pop_close();
     } else if (oct & 2u) {
+        const sheet_row_t *rows = pop.rows;
+        uint8_t force = ui.force;
         pop_close();
-        if (r->act)
+        if (r->act) {
             r->act();
-        else if (r->cf && !cf_refused(r->cf))
+            if (pop.on == POP_SHEET && pop.rows == rows)   /* the same sheet again (Record kit's Pad): its card alone
+                                                            * redraws (sheet_draw's sig), not the page under it */
+                ui.force = force;
+        } else if (r->cf && !cf_refused(r->cf))
             confirm_open(r->cf, r->cf == CF_DEL_ROW ? ui.song_row : song.sel);
         else if (r->turn)
             r->turn(1);
@@ -494,7 +520,7 @@ static int32_t enum_value(const param_desc_t *d,int32_t rank)
     for(int32_t v=d->min;v<=d->max;v++)if(d->names[v][0] && !rank--)return v;return d->min;
 }
 static struct { uint8_t page, slot; int16_t sel; } vl;
-static const param_desc_t *vlist_desc(int16_t **vp) { return page_desc(&PAGES[vl.page], vl.slot, vp); }
+static const param_desc_t *vlist_desc(int16_t **vp) { return page_desc(&PG(vl.page), vl.slot, vp); }
 static void vlist_open(uint8_t page, uint8_t slot)
 {
     int16_t *vp;
@@ -610,7 +636,7 @@ static const char *const FX_KNOB_WORDS[NELEM(FX_ORDER)] = {"", "SIZE DECAY TONE"
 #define FXL_H (240 - H_HEAD)
 static void fxl_draw(const param_desc_t *d)
 {
-    const page_t *pg = &PAGES[vl.page];
+    const page_t *pg = &PG(vl.page);
     uint32_t sh = pg->scope == SC_GLOBAL, r = fx_rack_row[sh] % FX_SLOTS, f = fx_family(vl.sel), rank = fx_rank(vl.sel), i;
     uint32_t a = FX_FAM_FIRST[f], b = FX_FAM_FIRST[f + 1u] < fx_order_n(d) ? FX_FAM_FIRST[f + 1u] : fx_order_n(d);
     uint16_t fc = fx_fam_col(f), sc = T_KNOB(1);
@@ -718,7 +744,7 @@ static void sheet_row(uint32_t i, int32_t y)
 }
 static void sheet_draw(void)
 {
-    uint32_t i, vis = pop.n < POP_VIS ? pop.n : POP_VIS, first, sig = str_hash(pop.sel * 7u + pop.n * 131u + ux.gen * 977u + ux.pal * 31u, pop.title);
+    uint32_t i, vis = pop.n < POP_VIS ? pop.n : POP_VIS, first, sig = str_hash(str_hash(pop.sel * 7u + pop.n * 131u + ux.gen * 977u + ux.pal * 31u, pop.title), pop.sub);
     char v[20];
     for (i = 0; i < pop.n; i++)
         if (pop.rows[i].value) {
@@ -788,8 +814,8 @@ static void preset_pick_draw(void)
     pop.sig = sig;
     draw_head();
     entry_label(src, k, tag, nm);
-    if (src == ENGI_PROPHET)
-        str_cpy(nm, eng_preset(ENGINES[ENGI_PROPHET], k)->name, sizeof nm);
+    if (src < NENGINES && sch_flag(src, MOD_SCH_F_SNAME))
+        eng_preset_name(src, k, nm, sizeof nm);   /* (its name whole: its module's file, loaded or not) */
     title[1] = (char)('1' + song.sel);
     for (uint32_t band = 0; band < 104u; band += CV_MAX / POP_W) {
         cv_begin_band(POP_W, 104u, T_BG, band);
@@ -797,12 +823,15 @@ static void preset_pick_draw(void)
         cv_rrect(1, 1, POP_W - 2, 102, 9, T_SURF, T_LINE);
         cv_text_on(12, ty_y(16, TY_LB), TY_LB, title, T_THEME, T_SURF);
         cv_free_text(12, ty_y(40, TY_TX), TY_TX, nm[0] ? nm : tag, T_TEXT, T_SURF, POP_W - 24);
-        cv_text_on(12, ty_y(64, TY_LB), TY_LB, ENGINES[eng_idx(e)]->name, T_THEME, T_SURF);
+        cv_text_on(12, ty_y(64, TY_LB), TY_LB, eng_name(eng_idx(e)), T_THEME, T_SURF);
         cv_text_on(12, ty_y(88, TY_LB), TY_LB, "PLAY KEYS TO TRY", T_MID, T_SURF);
         GFX_HOOK_COVER(POP_X, Y_GRAPH, POP_X + POP_W, Y_GRAPH + 104);
         cv_blit_band(POP_X, Y_GRAPH);
     }
 }
+#if BOARD_SMK37
+static void bank_pick_draw(void);                       /* ui_smk.c */
+#endif
 static void pop_draw(void)
 {
     if (pop.on == POP_SHEET)
@@ -813,4 +842,8 @@ static void pop_draw(void)
         vlist_draw();
     else if (pop.on == POP_PRESET)
         preset_pick_draw();
+#if BOARD_SMK37
+    else if (pop.on == POP_BANK)
+        bank_pick_draw();
+#endif
 }

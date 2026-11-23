@@ -133,7 +133,9 @@ static int replaced_motion(void)
     edit.event[0] = (motion_event_t){0,P_LEVEL,80};
     bad += check("replacing motion in another bank preserves valid tagged duplicates", !motion_replace_track(TSEL, &edit) &&
         motion_valid(&motion) && motion.count == 2 && motion_pattern[0] == 0 && motion_pattern[1] == 1);
-    bad += check("retired user sample sources remain silent in GRAIN", !SMP_USER_SLOTS && !eng_ok(8) && !ENGINES[8]->npresets);
+    int grain = 0;                                   /* (GRAIN: 1.x's handle 8, retired; 2.0 names no synth GRAIN) */
+    for (uint32_t e = 0; e < NENGINES; e++) grain |= !strcmp(eng_name(e), "GRAIN") && (eng_ok(e) || ENGINES[e]->npresets);
+    bad += check("retired user sample sources remain silent in GRAIN", !SMP_USER_SLOTS && !grain);
     return bad;
 }
 static int migrated_bank_rename(void)

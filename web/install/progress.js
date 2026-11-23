@@ -68,16 +68,20 @@ export function releaseVersion(product, prefix = "FM-1_9") {
 //   melodee   another Melodee release; dev: a development build (FM-1_900)
 //   stock    M-VAVE's own firmware (version: "V16"); open: M-VAVE's Open firmware (must go back to stock first)
 //   other    another firmware for the FM-1; model: not an FM-1
+//   The model is the package's (FM-1_9.. an FM-1; SMK-37 Pro_9.. an SMK-37 Pro, SMK-37 Elite, MKE-P37): a package
+//   goes only to exactly its model.
 export function describeDevice(id, product) {
   if (!id) return { kind: "none" };
   if (/^ota-/i.test(id.model)) return { kind: "loader" };
   if (id.open || /^FM1_(OFFICIAL_OPEN|COMMUNITY_\d+)$/.test(id.text)) return { kind: "open" };
-  if (id.model !== "FM-1") return { kind: "model", text: id.text };
-  if (id.text === "FM-1_900") return { kind: "dev" };
-  if (id.text === product) return { kind: "this", version: releaseVersion(product) };
-  const v = releaseVersion(id.text);
+  const model = (product || "FM-1_9").split("_")[0], prefix = model + "_9";
+  if (id.model !== model) return { kind: "model", text: id.text };
+  if (id.text === model + "_900") return { kind: "dev" };
+  if (id.text === product) return { kind: "this", version: releaseVersion(product, prefix) };
+  const v = releaseVersion(id.text, prefix);
   if (v) return { kind: "melodee", version: v };
-  if (/^FM-1_0\d\d$/.test(id.text) && id.text !== "FM-1_099") return { kind: "stock", version: "V" + parseInt(id.text.slice(5), 10) };
+  if (id.text.startsWith(model + "_0") && /^_0\d\d$/.test(id.text.slice(model.length)) && id.text !== model + "_099")
+    return { kind: "stock", version: "V" + parseInt(id.text.slice(model.length + 1), 10) };
   return { kind: "other", text: id.text };
 }
 

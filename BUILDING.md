@@ -103,13 +103,18 @@ release ships: the package, the app (`melodee-0.11.1-app.bin`), `SHA256SUMS`, `L
 `LICENSES/` (the package contains Apache-2.0 SDK files, so the licence texts travel with it).
 For example, `--release 1.0.0` uses the distinct identity `FM-1_91000`.
 
+On the device, a plain handshake gets the name, `_` and three digits of that identity (`FM-1_910` for
+`FM-1_91070`): M-VAVE's M-UPGRADE 3.11 refuses a device that answers more. The whole identity answers the
+handshake with the body `01`, which `tools/fm1_install.py` and the web installer send after a three-digit answer.
+
 ## Releases
 
 All future tagged releases, including release candidates, must use
 [zvenson/fm1-build](https://github.com/zvenson/fm1-build) through
 `.github/workflows/release.yml`. The firmware job calls the reviewed `@v1` reusable
 workflow, which installs the JieLi toolchain and SDK, runs our build and blocking
-host/web tests, and attests the resulting `.fwsc` and application binary. Keep the
+host/web tests, and attests the resulting `.fwsc` and application binary, for the FM-1
+and each SMK-37 model. Keep the
 reviewed version tag when updating this integration; the Firmware Hub recognises
 the shared builder's identity. Local release builds are for development and do not
 replace these attested artifacts.
@@ -152,6 +157,7 @@ Build options (environment; most use `0` or `1`; defaults in `firmware/src/build
 | `MELODEE_USB_AUDIO` | 1 | One duplex "Melodee" device: stereo playback and stereo master recording or optional four-track mono recording (16 / 24 bit, 44.1 kHz) |
 | `MELODEE_CDC` | 0 (1 without USB audio) | USB serial console; it shares EP2 / EP3 with USB audio, so `MELODEE_USB_AUDIO=0` |
 | `MELODEE_UART` | 1 | TRS MIDI IN |
+| `MELODEE_BLE_LINKS` | 2 (1 with `MELODEE_BLE=0`) | Bluetooth links at once: `2` holds a computer's link and a device's together (BLE keyboard and iPad), `1` one link, not tried on hardware yet ([docs/BLE-MULTILINK.md](docs/BLE-MULTILINK.md)) |
 | `MELODEE_USB_HOST` | 1 | USB MIDI host: the menu's USB HOST makes the USB-C port the host of a class compliant controller, directly or behind a powered hub, two hub levels deep (`firmware/src/usb_host.c`). Not saved: every boot is a device |
 | `MELODEE_DUAL_CORE` | 1 | paired FM6/Prophet rendering on CPU1; target builds require `1` |
 | `MELODEE_CORE1_FALLBACK` | 1 | automatic recovery on one core; `0` halts for watchdog reset on CPU1 failure |
@@ -166,6 +172,15 @@ continuing on CPU0. Retained CPU1 bars and the one-core choice after an early
 failed boot are ignored; a caught CPU0 crash does not save a new CPU1 bar.
 The existing boot-loop guard, supply values and clock setup remain unchanged.
 This is a diagnostic option; the default stays `1`. `--cpu-manifest` records it.
+Target board: `BOARD=smk37 ./build.sh` (or `./build.sh --board smk37`) builds Melodee for the SMK-37 (beta):
+`-DBOARD_SMK37=1` for the app, the update loader and the boot stub, identity `SMK-37 Pro_900` (release
+`SMK-37 Pro_9XY[Z]`), the SMK flash layout (PRCT 0x9D000, the stock region table with USRTRIM / USRFLASH), the SMK
+stub's lock (`firmware/stub/stub_smk37.lock`) and the package `build/melodee-smk37.fwsc`. `MODEL=elite` or `MODEL=mke`
+builds the same firmware under the SMK-37 Elite's or the MKE-P37's model name (`build/melodee-smk37-elite.fwsc`,
+`build/melodee-smk37-mke.fwsc`), so the stock updater still takes that unit's own package. TRS MIDI IN is off there
+(`MELODEE_UART=0`: PH8 is a key-matrix row); the jack is TRS MIDI OUT (UART1 TX on PC7, `firmware/src/smk_midi_out.h`). Controls: [SMK37.md](SMK37.md). The intermediate files
+(`build/melodee.bin`, `build/loader/ota.bin`, `build/gen/`) are shared: build the FM-1 again before
+`tests/run_tests.sh`. The default stays the FM-1, byte for byte.
 
 ## USB MIDI host
 
@@ -195,8 +210,15 @@ Switch it OFF to give the port back to the computer; the FM-1 never boots as a h
 - **Not supported:** SysEx/editor traffic to attached devices, device-specific LED protocols, USB MIDI 2.0,
   low-speed devices, a third hub level, more than one hub on the first hub's ports at a time, hot-plugging a
   second controller while one runs (unplug and replug; a lost controller is found again by itself).
-- **Messages** (toast): USB MIDI READY, USB NO MIDI DEVICE, USB LOW SPEED, USB CONTROLLER LOST. On / off is the
-  header's `HOST` tag (and the menu row), not a toast.
+- **Messages** (toast, then a hint where there is something to do; `uh_result` picks one from what the search met):
+  USB MIDI CONNECTED, USB MIDI DISCONNECTED, NOT A USB-MIDI DEVICE, USB DEVICE NOT ANSWERING (unplug it, plug it
+  back), HUB FOUND (plug in a MIDI device), NO MIDI DEVICE ON THE HUB, LOW-SPEED USB DEVICE (not supported),
+  NOTHING ON THE USB PORT (use a powered hub; said once, 3 s after HOST is switched on). On / off is the header's
+  `HOST` tag (and the menu row), not a toast.
+- **Hubs:** a hub is recognised by `bDeviceClass` 9 or by an interface of class 9 (some hubs say it only there). A
+  hub port whose device did not finish enumerating is reset and probed again up to 4 times, 1 s apart; a device
+  that answered without MIDI is not. `uh.dg` keeps what the last search met in letters (see `uh_dg` in
+  `usb_host.c`) for the tests and a debugger; it is not shown.
 
 `tests/usb_host_test.c` runs the real driver against a model of the SIE and of a keyboard, a hub and a stick
 (`tests/run_tests.sh`). It cannot show that the controller behaves as the SDK's host code implies; the register
@@ -689,7 +711,7 @@ release tails before adopting it in a release.
 
 ## Nightly builds from `nightly`
 
-The installer offers dual-core firmware for the stable, **Release candidate**
+The installer offers dual-core firmware for the stable, **Pre-release** (a release candidate or beta)
 and nightly channels. `web/publish_rc.py <pages checkout> <release assets
 directory>` checks the candidate's package hashes and build metadata before
 adding it. Stable and nightly updates preserve the RC channel.
@@ -762,7 +784,8 @@ Host register-model tests cannot establish physical audio quality or CPU savings
 The default build includes Optimist's bidirectional BLE MIDI stack, with
 peripheral and central roles. The radio starts OFF each boot. Settings >
 Bluetooth controls discovery, connection and pairings. `MELODEE_BLE=0 ./build.sh`
-builds a comparison without BLE. See [Bluetooth MIDI](docs/BLE_MIDI.md) for
+builds a comparison without BLE; the default build holds a computer's link and a device's at once
+([two links](docs/BLE-MULTILINK.md), unproven on hardware), `MELODEE_BLE_LINKS=1 ./build.sh` one link. See [Bluetooth MIDI](docs/BLE_MIDI.md) for
 pairing, factory-calibration requirements, persistence, provenance and the
 hardware checks still required. The full host suite includes sanitizer BLE
 fixtures and rendered UI checks.

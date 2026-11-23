@@ -25,29 +25,26 @@ static void parameter_namespaces(void)
     assert(trk[2].p[P_LEVEL]==level && trk[2].p[P_ATK]==attack && song.g[G_SWING]==swing);
     assert(!momentary.active && !momentary.count);
 }
-static void native_snapshot(uint32_t engine,uint32_t scope,uint32_t id,uint32_t kind)
+/* a synth's own page (SC_MOD: its patch, taken whole with the voice settings) edited momentarily: everything back */
+static void native_snapshot(uint32_t engine,uint32_t id)
 {
-    ui_power_on();fm6_init();ui.home=0;TSEL->engine=TSEL->eng_req=(uint8_t)engine;
+    ui_power_on();set_engine_of(TSEL,engine);ui.home=0;
     fm1_in.buttons|=1u<<panel.btn[B_LFO];
-    uint8_t fm[FP_SIZE+1u],fn[FM6_NFN],on=fm6_on[0];
-    memcpy(fm,fm6_patch_of(0),sizeof fm);memcpy(fn,fm6_fn[0],sizeof fn);
-    cz_patch_t cz=*cz_patch_of(0);p5_patch_t p5=*p5_patch_of(TSEL);
+    uint8_t before[MOD3_PATCH_MAX];memcpy(before,patch_of(song.sel),sizeof before);
     int16_t voice=TSEL->p[P_VOICE],prio=TSEL->p[P_PRIO],detune=TSEL->p[P_DETUNE],alloc=TSEL->p[P_ALLOC];
-    take_parameter(scope,id);assert(momentary.native==kind);
-    if(kind==1){fm6_patch[0][FP_PR1]^=1;fm6_fn[0][0]^=1;fm6_on[0]^=1;}
-    else if(kind==2)cz_patch_of(0)->raw[0]^=1;
-    else{p5_patch[0].raw[0]^=1;TSEL->p[P_VOICE]=0;TSEL->p[P_PRIO]=1;TSEL->p[P_DETUNE]=7;TSEL->p[P_ALLOC]=1;}
+    take_parameter(SC_MOD,id);assert(momentary.native==1u);
+    for(uint32_t i=0;i<patch_len(engine);i+=7u)patch_of(song.sel)[i]^=1u;   /* (its own bytes, the settings past them too) */
+    TSEL->p[P_VOICE]=0;TSEL->p[P_PRIO]=1;TSEL->p[P_DETUNE]=7;TSEL->p[P_ALLOC]=1;
     momentary_restore();
-    assert(!memcmp(fm,fm6_patch_of(0),sizeof fm) && !memcmp(fn,fm6_fn[0],sizeof fn) && fm6_on[0]==on);
-    assert(!memcmp(&cz,cz_patch_of(0),sizeof cz) && !memcmp(&p5,p5_patch_of(TSEL),sizeof p5));
+    assert(!memcmp(before,patch_of(song.sel),sizeof before));
     assert(TSEL->p[P_VOICE]==voice && TSEL->p[P_PRIO]==prio && TSEL->p[P_DETUNE]==detune && TSEL->p[P_ALLOC]==alloc);
 }
 int main(void)
 {
     parameter_namespaces();
-    native_snapshot(ENGI_FM6,SC_FM6,FP_PR1,1);
-    native_snapshot(ENGI_CZ,SC_CZ1,0,2);
-    native_snapshot(ENGI_PROPHET,SC_P5,P5_FREQ_A,3);
+    native_snapshot(ENGI_FM6,FP_PR1);
+    native_snapshot(ENGI_CZ,23u);                       /* (its WAVE: a panel id) */
+    native_snapshot(ENGI_PROPHET,P5_FREQ_A);
     puts("Momentary snapshots: parameter namespaces, repeated edits and all native patches restore exactly");
     return 0;
 }

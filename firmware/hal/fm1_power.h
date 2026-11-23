@@ -17,8 +17,10 @@
 #pragma once
 #include <stdint.h>
 #ifndef FM1_POWER_HOST_TEST
+#ifndef FM1_POWER_EXTERNAL_HAL       /* fm1-base (platform/app.c): the bsp's fm1_sys.h and fm1_time.h */
 #include "fm1_sys.h"
 #include "fm1_time.h"
+#endif
 
 /* Stock delay(1000), not 1000 us: keep its nop / increment / branch loop.
  * The memory clobber also keeps each delay between its P33 operations. */

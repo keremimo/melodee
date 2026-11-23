@@ -1,0 +1,17 @@
+[
+  {"name": "Equal"},
+  {"name": "Just chromatic", "scale": "JI-12", "on": "root"},
+  {"name": "7-limit just", "scale": "JI-7L", "on": "root"},
+  {"name": "Pythagorean", "scale": "PYTH", "on": "C"},
+  {"name": "Meantone 1/4", "scale": "MT-1/4", "on": "C"},
+  {"name": "Meantone 1/3", "scale": "MT-1/3", "on": "C"},
+  {"name": "Meantone 1/6", "scale": "MT-1/6", "on": "C"},
+  {"name": "Werckmeister 3", "scale": "WERCK3", "on": "C"},
+  {"name": "Kirnberger 3", "scale": "KIRN3", "on": "C"},
+  {"name": "Vallotti", "scale": "VALLOT", "on": "C"},
+  {"name": "Young 2", "scale": "YOUNG2", "on": "C"},
+  {"name": "Rast", "flat": [4, 11], "on": "root"},
+  {"name": "Bayati, saba", "flat": [2], "on": "root"},
+  {"name": "Husayni", "flat": [2, 9], "on": "root"},
+  {"name": "Sikah", "flat": [2, 4, 6, 9, 11], "on": "root"}
+]

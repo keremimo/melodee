@@ -17,9 +17,9 @@ static uint64_t render_hash(int legacy)
             settings.lowcut=2;favorites.factory[15][30]|=1u;
         }
         uint64_t h=1469598103934665603ull;int32_t out[CTL*2];
-        mix_block(out,CTL);trk_note_on(TSEL,60,100);mix_block(out,CTL);uint32_t used=resource_used();
+        mix_block_q15(out,CTL);trk_note_on(TSEL,60,100);mix_block_q15(out,CTL);uint32_t used=resource_used();
         for(uint32_t k=0;k<1024;k++){
-            mix_block(out,CTL);for(uint32_t i=0;i<CTL*2;i++)h=(h^(uint32_t)out[i])*1099511628211ull;
+            mix_block_q15(out,CTL);for(uint32_t i=0;i<CTL*2;i++)h=(h^(uint32_t)out[i])*1099511628211ull;
             assert(resource_used()==used);
         }
         assert(write(fds[1],&h,sizeof h)==sizeof h);_exit(0);
@@ -46,7 +46,7 @@ int main(void)
     assert(motion_valid(&old.motion));assert(!motion_capture(TSEL,P_RESERVED36,100));
     uint32_t used=resource_used();midi_event(0xb0,0,91,127);midi_event(0xb0,0,93,127);
     assert(!TSEL->p[P_RESERVED34] && !TSEL->p[P_RESERVED36] && used==resource_used());
-    for(uint32_t i=0;i<NPAGES;i++)assert(PAGES[i].fam<FAM_COUNT && !str_eq(PAGES[i].title,"SLICER"));
+    for(uint32_t i=0;i<NPAGES;i++)assert(PG(i).fam<FAM_COUNT && !str_eq(PG(i).title,"SLICER"));
     ui_power_on();press(B_FX);assert(cur_page()->fam==FAM_FX);
     btn_down(B_FX);frames(800);assert(ui.layer==LAYER_FX);
     key_down(white(0));frame();assert(!gates() && kb_layer);key_up(white(0));btn_up(B_FX);frames(100);

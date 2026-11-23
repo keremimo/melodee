@@ -22,7 +22,8 @@ typedef struct {
     const uint8_t *cfgd;
     uint16_t cfglen;
     uint8_t ports;                      /* hub: downstream devices by port (1-based), 0 = empty */
-    uint8_t port_dev[8], port_pow[8], port_en[8], port_chg[8];
+    uint8_t port_dev[8], port_pow[8], port_en[8], port_chg[8], port_ls[8];
+    uint8_t fail_probes;                /* the next GET_DESCRIPTOR(device) requests go unanswered (still booting) */
     uint32_t seen_set_cfg, seen_set_if, seen_probe;
 } dev_t_;
 static dev_t_ dev[NDEV];
@@ -138,6 +139,10 @@ static int answer(dev_t_ *d, const uint8_t *s)
     ctl_requests++;
     if (rt == 0x80 && rq == 6 && (val >> 8) == 1) {
         d->seen_probe++;
+        if (d->fail_probes) {
+            d->fail_probes--;
+            return 0;
+        }
         uint8_t dd[18] = {18, 1, 0x00, 0x02, d->cls, 0, 0, d->mps0, 0x09, 0x12, 1, 0, 0, 1, 1, 2, 0, 1};
         memcpy(rsp, dd, 18);
         n = 18;
@@ -178,7 +183,8 @@ static int answer(dev_t_ *d, const uint8_t *s)
             d->port_chg[idx] &= (uint8_t)~0x10u;
     } else if (rt == 0xA3 && rq == 0 && d->ports) {
         int c = hub_port_dev(d, idx);
-        uint32_t st = (c >= 0 && d->port_pow[idx] ? 1u : 0u) | (d->port_en[idx] ? 2u : 0u) | 0x100u;
+        uint32_t st = (c >= 0 && d->port_pow[idx] ? 1u : 0u) | (d->port_en[idx] ? 2u : 0u) | 0x100u |
+                      (d->port_ls[idx] ? 0x200u : 0u);
         rsp[0] = (uint8_t)st;
         rsp[1] = (uint8_t)(st >> 8);
         rsp[2] = d->port_chg[idx];
@@ -562,7 +568,7 @@ static void test_idle_hub(int with_stick)
     dev[HUB].port_dev[3] = 0;
     if (!with_stick) dev[HUB].port_dev[1] = 0;
     host_on();
-    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI);
+    assert(!enumerate() && uh.msg == (with_stick ? UH_MSG_HUB_NOMIDI : UH_MSG_HUB_EMPTY));
     assert(root_resets == 1 && host_attaches == 1);
     assert(dev[STICK].seen_probe == (uint32_t)with_stick);
     uh.msg = 0;
@@ -573,6 +579,7 @@ static void test_idle_hub(int with_stick)
     dev[HUB].port_chg[1] |= 1;
     uint32_t probes = dev[STICK].seen_probe;
     assert(!enumerate() && dev[STICK].seen_probe == probes + 1 && !dev[HUB].port_chg[1]);
+    assert(uh.msg == UH_MSG_HUB_NOMIDI); uh.msg = 0;   /* what was plugged in is said, not skipped silently */
     idle_hub(600);
     dev[HUB].port_dev[1] = 0;
     dev[HUB].port_en[1] = 0;
@@ -597,7 +604,7 @@ static void test_failed_probe(void)
     connect(-1);                                      /* a powered line with nothing answering EP0 */
     ep0_timeout = 1;
     host_on();
-    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI);
+    assert(!enumerate() && uh.msg == UH_MSG_NOANSWER && !strcmp(uh.dg, "DEV D5"));
     uh.msg = 0;
     uint32_t requests = setup_requests;
     for (int k = 0; k < 3000; k++) {
@@ -639,7 +646,7 @@ static void test_hub_synth_unplug(void)
     assert(uh.fault && !uh.run && line_state == 2);
     uh_task(fm1_ms); assert(!uh.fault && uh.msg == UH_MSG_LOST && mo_r == mo_w);
     uh.msg = 0;
-    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI);
+    assert(!enumerate() && uh.msg == UH_MSG_HUB_NOMIDI);
     uh.msg = 0;
     assert(root_resets == 2 && host_attaches == 2);
     idle_hub(3000);
@@ -908,7 +915,7 @@ static void test_cascaded_hub(void)
     for (uint32_t k = 0; k < UH_MAX_ERRORS; k++) { regs[1][17] = 4; usb_poll(); }
     assert(uh.fault);
     uh_task(fm1_ms); assert(uh.msg == UH_MSG_LOST); uh.msg = 0;
-    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI && root_resets == 2);
+    assert(!enumerate() && uh.msg == UH_MSG_HUB_NOMIDI && root_resets == 2);
     uh.msg = 0;
     assert(uh.hub[1].addr == 5 && dev[HUB2].addr == 5);
     for (int k = 0; k < 100; k++) { fm1_ms += 20; uh_task(fm1_ms); assert(!uh.msg); }
@@ -939,7 +946,7 @@ static void test_cascaded_hub(void)
     dev[HUB2].port_dev[1] = HUB3 + 1;
     dev[HUB3].port_dev[1] = KBD + 1;
     host_on();
-    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI);
+    assert(!enumerate() && uh.msg == UH_MSG_HUB_NOMIDI);
     assert(dev[HUB3].addr == 9 && !dev[HUB3].cfg && !dev[KBD].seen_probe);
     uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
     puts("USB host: a hub on a hub's port (two chips in one case): addresses, events, replug, unplug, depth limit: OK");
@@ -955,7 +962,7 @@ static void test_slow_hub(void)
     connect(HUB);
     slow_until = UH_ROOT_TRIES + 1u;                    /* never in time: reported, then quiet until unplug */
     host_on();
-    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI && root_resets == UH_ROOT_TRIES);
+    assert(!enumerate() && uh.msg == UH_MSG_NOANSWER && root_resets == UH_ROOT_TRIES);
     uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
     puts("USB host: a slow hub gets longer resets, a device that answered is not reset again: OK");
 }
@@ -972,6 +979,72 @@ static void test_device_mode_untouched(void)
     assert(usb.up);
     usb.up = 0;
     puts("USB host: off at boot, the device side starts as before: OK");
+}
+
+/* A device behind a hub that misses the scan (still starting) is found by the retry rounds without unplugging it;
+ * one that never answers is given up after UH_PORT_TRIES rounds; a low-speed one is said, not skipped silently. */
+static void test_hub_port_retry(void)
+{
+    connect(HUB);
+    dev[HUB].port_dev[1] = 0;
+    dev[KBD].fail_probes = 2;                          /* the scan and the first retry round miss it */
+    host_on();
+    for (int k = 0; k < 400 && !uh.msg; k++) { fm1_ms += 20; uh_task(fm1_ms); }
+    assert(!uh.run && uh.msg == UH_MSG_NOANSWER && (uh.hub[0].retry & (1u << 3)));
+    uh.msg = 0;
+    for (int k = 0; k < 200 && !uh.run; k++) { fm1_ms += 20; uh_task(fm1_ms); }
+    assert(uh.run && uh.msg == UH_MSG_MIDI && dev[KBD].addr == 4 && root_resets == 1 && host_attaches == 1);
+    assert(dev[KBD].seen_probe == 3 && port_resets[3] == 3 && !uh.hub[0].retry);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+
+    connect(HUB);
+    dev[HUB].port_dev[1] = 0;
+    dev[KBD].fail_probes = 255;                        /* never answers: bounded rounds, then quiet */
+    host_on();
+    for (int k = 0; k < 400 && !uh.msg; k++) { fm1_ms += 20; uh_task(fm1_ms); }
+    assert(!uh.run && uh.msg == UH_MSG_NOANSWER);
+    uh.msg = 0;
+    assert(!strcmp(uh.dg, "HUB4 --D-"));             /* the toast's detail: port 3 did not answer */
+    int said = 0;
+    for (int k = 0; k < 3000; k++) {
+        fm1_ms += 20; uh_task(fm1_ms); assert(!uh.run);
+        if (uh.msg) { assert(uh.msg == UH_MSG_NOANSWER && !said++); uh.msg = 0; }
+    }
+    assert(said == 1 && !strcmp(uh.dg, "RETRY4 D"));  /* said once, after the last round */
+    assert(port_resets[3] == 1u + UH_PORT_TRIES && root_resets == 1);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+
+    connect(HUB);
+    dev[HUB].port_dev[1] = 0;
+    dev[HUB].port_ls[3] = 1;                           /* a low-speed controller on a hub port */
+    host_on();
+    assert(!enumerate() && uh.msg == UH_MSG_LOW && !port_resets[3] && !strcmp(uh.dg, "HUB4 --L-"));
+    uh.msg = 0;
+    idle_hub(600);
+    dev[HUB].port_chg[3] |= 1;                         /* replugged: said again */
+    fm1_ms += 200; for (int k = 0; k < 10 && !uh.msg; k++) { fm1_ms += 20; uh_task(fm1_ms); }
+    assert(uh.msg == UH_MSG_LOW && !port_resets[3] && !uh.run);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+    connect(-1);                                       /* nothing pulls the line up: said once after 3 s */
+    line_state = 0;
+    host_on();
+    for (int k = 0; k < 140; k++) { fm1_ms += 20; uh_task(fm1_ms); assert(!uh.msg); }
+    for (int k = 0; k < 20 && !uh.msg; k++) { fm1_ms += 20; uh_task(fm1_ms); }
+    assert(uh.msg == UH_MSG_NOLINE); uh.msg = 0;
+    for (int k = 0; k < 600; k++) { fm1_ms += 20; uh_task(fm1_ms); assert(!uh.msg); }
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+    connect(HUB);                                      /* a hub that says class 9 on its interface only */
+    dev[HUB].cls = 0;
+    host_on();
+    assert(enumerate() && uh.msg == UH_MSG_MIDI && dev[KBD].addr == 4 && uh.hub[0].addr);
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+
+    connect(STICK);                                    /* no MIDI: its classes in the toast's detail */
+    host_on();
+    assert(!enumerate() && uh.msg == UH_MSG_NOMIDI && !strcmp(uh.dg, "DEV N1 000806"));
+    uh.want = 0; uh_task(fm1_ms); uh.msg = 0;
+
+    puts("USB host: hub port retried while still starting, bounded, low speed said behind a hub, nothing on the port said, interface-class hub: OK");
 }
 
 int main(void)
@@ -992,6 +1065,7 @@ int main(void)
     test_audio_midi_device();
     test_cascaded_hub();
     test_slow_hub();
+    test_hub_port_retry();
     puts("USB host: all OK");
     return 0;
 }

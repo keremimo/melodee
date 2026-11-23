@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* MELODEE boot and main loop. Boot order: WDT first, boot-loop guard, fatal vectors,
- * guards; then LCD, input (TIMER5 IRQ, 10 kHz), audio (ALNK0 IRQ). */
+ * guards; then LCD, input (TIMER5 IRQ, FM1_TICK_HZ: 5 kHz FM-1, 10 kHz SMK-37), audio (ALNK0 IRQ). */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _dsp_start[], _dsp_end[], _dsp_load[], _dt_start[], _dt_end[], _dt_load[];
 extern uint32_t _audio_start[], _audio_end[], _audio_load[];
@@ -33,7 +33,7 @@ static void stack_report(uint32_t *v)
 }
 
 
-/* TIMER5 outranks ALNK0, so the scan keeps its 100 us pace while a half buffer renders: before,
+/* TIMER5 outranks ALNK0, so the scan keeps its tick's pace (fm1_time.h FM1_TICK_US) while a half buffer renders: before,
  * the ticks stopped for the whole render (0.7 ms idle, several ms loaded), the column lit when it
  * began stayed lit that long (a ~16 Hz flicker over all LEDs, beating with the scan) and the
  * encoders lost frames. Nested in ALNK0 it scans GPIO, counts ms and receives TRS MIDI;
@@ -41,18 +41,22 @@ static void stack_report(uint32_t *v)
  * while UART input keeps polling into its single-producer MIDI queue,
  * and the time spent nested is handed to the audio ISR so its load figures stay render-only.
  * The USB audio streams cannot wait for the render (a packet each way per 1 ms frame, a render takes up to
- * ~5 ms): ua_service also runs nested, by elapsed time (every 250 us at most: work spanning ticks does not
- * stretch the next deadline). It touches only the audio endpoints (INDEX is set on every access) and the
+ * ~5 ms): ua_service also runs nested, by elapsed time (every 250 us at most: every other tick at 5 kHz, 2.5 kHz,
+ * two or more services in each 1 ms USB frame; work spanning ticks does not stretch the next deadline). It touches only the audio endpoints (INDEX is set on every access) and the
  * USB side of the audio rings (audio.c copies with the IRQs off), and usb_poll never runs nested, so the
  * two never interleave. */
+#define T5_POLL_DIV (FM1_TICK_HZ / 2000u)     /* ticks per USB / UART poll: 2 at 5 kHz (2.5 kHz), 5 at 10 kHz (2 kHz) */
 void fm1_timer5_irq(void)
 {
     static uint32_t sub, owed;
-    uint32_t t0 = fm1_ticks(), usb_due = sub % 5u == 0u;
+    uint32_t t0 = fm1_ticks(), usb_due = sub == 0u;
     fm1_timer5_ack();
     melodee_dbg.timer_irqs++;
     AP_START(input_start);fm1_input_tick();
     if(melodee_dbg.in_audio){AP_END(AP_INPUT,input_start);}
+#if BOARD_SMK37
+    smo_tick();                                 /* TRS MIDI OUT: at most one byte, never waits */
+#endif
     {   /* milliseconds from the 24 MHz TIMER4 (robust to a late tick) */
         static uint32_t last, acc;
         acc += t0 - last;
@@ -63,12 +67,12 @@ void fm1_timer5_irq(void)
         }
     }
     if (usb_due)
-        owed |= 1u;                             /* 2 kHz: all USB SIE traffic lives here */
+        owed |= 1u;                             /* 2..2.5 kHz: all USB SIE traffic lives here */
 #if MELODEE_UART
-    if (sub % 5u == 2u)
-        owed |= 2u;                             /* 2 kHz: <= ~7 bytes per call at 31250 baud */
+    if (sub == T5_POLL_DIV / 2u)
+        owed |= 2u;                             /* the same rate, the other ticks: <= ~7 bytes per call at 31250 baud */
 #endif
-    if (++sub == 10u)
+    if (++sub == T5_POLL_DIV)
         sub = 0;
 #if MELODEE_USB_AUDIO
     {
@@ -117,7 +121,7 @@ void fm1_timer5_irq(void)
 }
 extern void isr_timer5(void);
 
-static void timer5_start(void)                 /* OSC /4 = 6 MHz, PRD 600 -> 10 kHz */
+static void timer5_start(void)                 /* OSC /4 = 6 MHz, PRD 6 MHz / FM1_TICK_HZ (hal/fm1_timer.h) */
 {
     fm1_timer5_start(isr_timer5, 4);   /* above ALNK0 (3): the scan nests into the render (see fm1_timer5_irq) */
 }
@@ -138,15 +142,118 @@ static void hexs(char *b, uint32_t v)
     b[8] = 0;
 }
 
+#if BOARD_SMK37
+#include "smk_controls.h"                   /* TRS MIDI OUT's setting, the faders (shared with the fm1-base build) */
+#endif
+
+#if BOARD_SMK37
+/* the wheels (stock: mux C address 4 = pitch, 5 = mod), self-calibrating: the pitch wheel's rest is its centre
+ * (taken at power-on, followed slowly while it rests), each wheel's range grows to what it has reached (the
+ * travel is short: raw ~445..640 pitch, ~474..629 mod on a unit). Pitch: a 14-bit bend with a dead band around
+ * the centre; mod: 0..127, up (lower raw) = more. Both go to the selected synth track (voice.c), as a MIDI
+ * controller's would, and only when they change, so MIDI IN's bend and CC1 keep working; selecting another
+ * track takes them off the old one */
+
+static void smk_wheels(void)
+{
+    enum { DEAD = 12, SPAN0 = 80, MOD_LO = 485, MOD_HI = 615 };
+    static int32_t pc, plo, phi, mlo, mhi, rest, sent_b, sent_m = -1;
+    static uint8_t tsel = 0xFF;
+    int32_t p = fm1_in.wheel[0], m = fm1_in.wheel[1], d, b, mw;
+    track_t *t;
+    if (fm1_in.frames < 300u)                     /* (the readings settle) */
+        return;
+    if (!pc) {
+        pc = p;
+        plo = p - SPAN0;
+        phi = p + SPAN0;
+        mlo = m < MOD_LO ? m : MOD_LO;
+        mhi = m > MOD_HI ? m : MOD_HI;
+    }
+    if (p < plo)
+        plo = p;
+    if (p > phi)
+        phi = p;
+    if (m < mlo)
+        mlo = m;
+    if (m > mhi)
+        mhi = m;
+    d = p - pc;
+    if (d > -DEAD && d < DEAD) {
+        b = 0;
+        if (++rest > 200) {                        /* resting: the centre follows a slow drift */
+            pc += d > 0 ? 1 : d < 0 ? -1 : 0;
+            rest = 0;
+        }
+    } else {
+        rest = 0;
+        b = d > 0 ? (d - DEAD) * 8191 / (phi - pc - DEAD > 1 ? phi - pc - DEAD : 1)
+                  : (d + DEAD) * 8192 / (pc - plo - DEAD > 1 ? pc - plo - DEAD : 1);
+        b = clamp(b, -8192, 8191);
+    }
+    mw = mhi - m <= DEAD ? 0 : (mhi - m - DEAD) * 127 / (mhi - mlo - DEAD > 1 ? mhi - mlo - DEAD : 1);
+    mw = clamp(mw, 0, 127);
+    smk_bend = b;
+    if (tsel != song.sel) {                        /* another track: the old one back at rest */
+        if (tsel < NTRK && (sent_b || sent_m > 0)) {
+            t = &trk[tsel];
+            t->bend_raw = 0;
+            midi_bend_target[tsel] = 0;
+            t->mw = 0;
+        }
+        tsel = (uint8_t)song.sel;
+        sent_b = 0;
+        sent_m = -1;
+    }
+    t = TSEL;
+    smk_wheel_trk = (uint8_t)song.sel;
+    smk_modw = pads_flag(t, MOD3_PD_NOBEND) ? 0u : (uint8_t)mw;
+    if (pads_flag(t, MOD3_PD_NOBEND))           /* a kit ignores bend and the wheel (as MIDI's drums) */
+        return;
+    if (b != sent_b) {
+        sent_b = b;
+        t->bend_raw = (int16_t)b;                  /* PROPHET (its BEND) and FM6 (its DX7 range) read this */
+        if (!eng_of(t->eng_req)->bend_range)       /* (else the engine's own range: voice.c trk_bend_own) */
+            midi_bend_target[song.sel % NTRK] = b * (SMK_BEND_ST * 256) / (b < 0 ? 8192 : 8191);
+    }
+    if (mw != sent_m) {
+        sent_m = mw;
+        t->mw = (uint8_t)mw;
+    }
+}
+#endif
+
+#if MELODEE_DUAL_CORE && MELODEE_CORE1_FALLBACK
+/* CPU1 retired (audio_worker.h): barred until power-off, unless it faulted in a synth module's own code (that
+ * module's bug: CPU1 comes back at the next start) */
+static void fm1_core1_retired(void)
+{
+#if MELODEE_MODULES
+    if (fm1_core1_fault.count && mod_spare_core1(fm1_core1_fault.pc, 0))
+        return;
+#endif
+    fm1_core1_bar_set();
+}
+#endif
+
 static void fm1_fault(const fm1_crash_t *c)
 {
     char b[12];
     uint32_t t0;
 #if MELODEE_DUAL_CORE && MELODEE_CORE1_FALLBACK
+#if MELODEE_MODULES
+    if (audio_worker_online && !mod_spare_core1(c->pc, 1))   /* (a module's own fault: once a power-on, not CPU1's) */
+#else
     if (audio_worker_online)
+#endif
         fm1_core1_bar_set();                          /* one core on every boot until power-off */
 #endif
     fm1_audio_stop();
+    mod_run.crashed = 1;                              /* (the next boot leaves out the module whose code ran) */
+    mod_run.pc = c->pc;
+#if MELODEE_MODULES
+    mod_fault_own(c->pc);                             /* (a fault in a module's own code: that one, whatever the markers) */
+#endif
     scr_wake_now();
     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
     draw_text_line(0, 10, 240, TY_TX, "Melodee crash", UI_CRASH_INK, UI_CRASH_BG, 1);   /* (large type) */
@@ -169,6 +276,7 @@ static void fm1_fault(const fm1_crash_t *c)
 /* power-on: the parts with their default sounds (TRK_DEF); the sequencers empty */
 static void melodee_init(void)
 {
+    msx_reset();                                     /* the synths' SysEx: the router, the host table's calls */
     uint32_t i;
     trk_voices_bind();
     midi_insert_init();
@@ -178,8 +286,7 @@ static void melodee_init(void)
     for (i = 0; i < G_COUNT; i++)
         song.g[i] = GP[i].def;
     undo_depth++;                             /* (no undo copy of the power-on loads) */
-    fm6_init();                               /* every track's FM6 patch: the init voice */
-    cz_init();
+    sch_info_sync();                          /* (the synths' patches: schema.c) */
     for (i = 0; i < NTRK; i++) {
         track_t *t = &trk[i];
         track_defaults(t);
@@ -257,6 +364,10 @@ static void fm1_main(void)
     melodee_dbg.prev_rst = fm1_boot.p3_rst;
     fm1_input_init();
     fm1_adc_init();
+#if BOARD_SMK37 && MELODEE_FLASH
+    if (flash_ok || st_foreign)                     /* the factory key / pad velocity curves (USRTRIM, read only) */
+        smk_trim_load(fm1_xip_ptr(SMK_TRIM_FLASH));
+#endif
     panel_init();
     melodee_init();
 #if MELODEE_DUAL_CORE
@@ -276,11 +387,14 @@ static void fm1_main(void)
 #if MELODEE_UART
     uart_midi_init();
 #endif
+#if BOARD_SMK37
+    smk_uart1_tx_init();                      /* TRS MIDI OUT (before TIMER5 sends) */
+#endif
     timer5_start();
     fm1_guard_lock_top();
     fm1_irq_enable_all();
     fm1_delay_ms(30);
-    if ((fm1_in.buttons & 3u) == 3u) {
+    if ((fm1_in.buttons & FM1_OCT_BOTH) == FM1_OCT_BOTH) {
         panel_setup();                        /* OCT- + OCT+ held at power-on */
         settings_save();
     }
@@ -290,8 +404,15 @@ static void fm1_main(void)
     fm1_audio_unmute();                       /* the codec settled on silent I2S since audio_init: no cold-boot click */
     if (boot_work.state != 2u)
         lcd_fill(0, 0, 240, 240, T_BG);
+#if MELODEE_MODULES
+    if (mod_blamed && !boot_work.state) {     /* the last run crashed in a synth module's code: it is left out */
+        boot_work.state = 5u;
+        ui.force = 1;
+    }
+#endif
 #ifdef RES_BASE
-    if (flash_ok && !res_ok && !boot_work.state) {    /* the resource region missing: ask for an install (ui_boot.c) */
+    if (flash_ok && (!res_ok || !SHIPPED_OK()) && !boot_work.state) {   /* the resource region or a shipped synth
+                                                      * module missing: ask for an install (ui_boot.c) */
         boot_work.state = 4u;
         ui.force = 1;
     }
@@ -302,13 +423,28 @@ static void fm1_main(void)
         wire_release();                                 /* last turn's jobs are done with the scratch */
         fm1_wdt_feed();
         pattern_poll();
+#ifdef MODULE_STORE
+        mod_service(fm1_ms);                            /* synth modules: the used ones in SRAM, the idle ones out */
+#endif
 #if MELODEE_USB_HOST
         uh_task(fm1_ms);                                /* before usb_retry: a host port is not retried as a device */
         if (uh.msg) {
-            static const char *const UH_TEXT[] = {"", "", "", "MIDI READY", "NO MIDI DEVICE",
-                                                  "LOW SPEED", "CONTROLLER LOST"};
-            if (UH_TEXT[uh.msg][0])                     /* (on / off is the header's HOST tag, not a toast) */
-                ui_say("USB ", UH_TEXT[uh.msg]);
+            /* Each UH_MSG_* as the toast the user sees, then (if there is something to do) a hint shown as the second
+             * message. ON / OFF have no text: they are the header's HOST tag (docs/design/README.md, HOST). */
+            static const char *const UH_TEXT[][2] = {
+                [UH_MSG_MIDI] = {"USB MIDI CONNECTED", ""},
+                [UH_MSG_LOST] = {"USB MIDI DISCONNECTED", ""},
+                [UH_MSG_NOMIDI] = {"NOT A USB-MIDI DEVICE", ""},
+                [UH_MSG_LOW] = {"LOW-SPEED USB DEVICE", "NOT SUPPORTED"},
+                [UH_MSG_NOLINE] = {"NOTHING ON THE USB PORT", "USE A POWERED HUB"},
+                [UH_MSG_NOANSWER] = {"USB DEVICE NOT ANSWERING", "UNPLUG IT, PLUG IT BACK"},
+                [UH_MSG_HUB_EMPTY] = {"HUB FOUND", "PLUG IN A MIDI DEVICE"},
+                [UH_MSG_HUB_NOMIDI] = {"NO MIDI DEVICE ON THE HUB", ""},
+            };
+            if (uh.msg < sizeof UH_TEXT / sizeof UH_TEXT[0] && UH_TEXT[uh.msg][0]) {
+                ui_message(UH_TEXT[uh.msg][0]);
+                str_cpy(ui.msg2, UH_TEXT[uh.msg][1], sizeof ui.msg2);
+            }
             uh.msg = 0;
         }
 #endif
@@ -367,8 +503,7 @@ static void fm1_main(void)
                 fm1_enter_uboot();
             }
         }
-        cz_service();
-        fm6_service();                                  /* DX7 SysEx for FM6, a pending FM6 settings save */
+        msx_service();                                  /* the synths' SysEx: a frame to its module */
 #if MELODEE_OTA
         ed_service();                                   /* web editor SysEx */
         ota_service();                                  /* M-UPGRADE handshake */
@@ -407,11 +542,24 @@ static void fm1_main(void)
 #endif
         settings_poll();                              /* queued settings save: only while stopped */
         melodee_dbg.stage = 2;
+#if BOARD_SMK37
+        smk_pads_sync();                                /* the pads' map and mode (ui_input.c) */
+        smo_sync();
+#endif
         ui_leds();
+#if BOARD_SMK37
+        smk_faders();
+        smk_wheels();
+        padled_flush();                                 /* the pads' colours, between LCD transfers */
+#endif
         ui_draw();
         melodee_dbg.stage = 9;
         while (fm1_ms - m < 15u) {                               /* ~60 UI frames/s at most */
             ui_input();
+#if BOARD_SMK37
+            smk_wheels();                       /* (bends follow the wheel, not the screen) */
+            smk_pads_sync();                                /* the pads' map and mode (ui_input.c) */
+#endif
 #if MELODEE_OTA
             ed_service();                       /* editor replies without waiting for the next frame */
 #endif
@@ -419,18 +567,32 @@ static void fm1_main(void)
     }
 }
 
-/* one boot-compressed load image at rec (tools/boot_audio.py: MAGIC, packed bytes, raw bytes, 0, the stream) into
- * start .. end; the next record. The decoder's tables borrow the audio working arena, unused until resources_init. */
-static __attribute__((noinline)) const uint32_t *boot_image(const uint32_t *rec, uint32_t *start, uint32_t *end)
+/* the SRAM load images, one boot-compressed stream at _rt_load (tools/boot_audio.py: MAGIC, packed bytes, raw bytes, 0,
+ * the stream: .dsp_tables, .data, .ram_text, .dsp_text, .audio_text). It unpacks up to _audio_end, so .audio_text lands
+ * in place and the rest in the tail of .pool (zeroed after this; app.ld checks the room), copied out from there. The
+ * decoder's tables borrow the audio working arena, unused until resources_init. Anything not exact: update mode */
+static __attribute__((noinline)) void boot_images(void)
 {
-    uint32_t bytes = (uint32_t)((uintptr_t)end - (uintptr_t)start), packed;
+    const uint32_t *rec = _rt_load;
+    uint32_t audio = (uint32_t)((uintptr_t)_audio_end - (uintptr_t)_audio_start);
+    uint32_t bytes = audio + (uint32_t)((uintptr_t)_dt_end - (uintptr_t)_dt_start) +
+                     (uint32_t)((uintptr_t)_data_end - (uintptr_t)_data_start) +
+                     (uint32_t)((uintptr_t)_rt_end - (uintptr_t)_rt_start) +
+                     (uint32_t)((uintptr_t)_dsp_end - (uintptr_t)_dsp_start), packed;
+    uint32_t *unpack = _audio_end - bytes / 4u;
+    const uint32_t *at = unpack;
     if ((uintptr_t)(rec + 4) > (uintptr_t)_app_xip_end || rec[0] != BOOT_LZMA_MAGIC || rec[2] != bytes || rec[3] != 0)
         fm1_enter_uboot();
     packed = rec[1];
     if (packed > (uintptr_t)_app_xip_end - (uintptr_t)(rec + 4) ||
-        !boot_lzma((uint8_t *)start, bytes, (const uint8_t *)(rec + 4), packed, (uint16_t *)_resource_start))
+        !boot_lzma((uint8_t *)unpack, bytes, (const uint8_t *)(rec + 4), packed, (uint16_t *)_resource_start))
         fm1_enter_uboot();
-    return rec + 4 + (packed + 3u) / 4u;
+    at = boot_take(_dt_start, _dt_end, at);
+    boot_undelta(_dt_start, _dt_end);
+    at = boot_take(_data_start, _data_end, at);
+    at = boot_take(_rt_start, _rt_end, at);
+    (void)boot_take(_dsp_start, _dsp_end, at);
+    boot_uncall((uint8_t *)_audio_start, audio);
 }
 _Static_assert(BOOT_LZMA_PROBS * 2u <= 49152u, "boot decoder tables fit the audio working arena's minimum");
 
@@ -466,17 +628,8 @@ void fm1_cstart(void)
     }
     for (d = _bss_start; d < _bss_end; d++)
         *d = 0;
-    for (d = _pool_start; d < _pool_end; d++)
-        *d = 0;
     if (_rt_load[0] == BOOT_LZMA_MAGIC) {
-        /* the SRAM load images boot-compressed (tools/boot_audio.py), one after another in their load order; one
-         * that does not unpack exactly: update mode */
-        const uint32_t *at = _rt_load;
-        at = boot_image(at, _rt_start, _rt_end);
-        at = boot_image(at, _dsp_start, _dsp_end);
-        at = boot_image(at, _dt_start, _dt_end);
-        at = boot_image(at, _data_start, _data_end);
-        (void)boot_image(at, _audio_start, _audio_end);
+        boot_images();
     } else {                                    /* MELODEE_COMPRESS_AUDIO=0: the raw-copy reference profile */
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++)
         *d = *s;
@@ -489,6 +642,8 @@ void fm1_cstart(void)
     for (s = _audio_load, d = _audio_start; d < _audio_end; s++, d++)
         *d = *s;
     }
+    for (d = _pool_start; d < _pool_end; d++)   /* (after the images: they unpack through its tail) */
+        *d = 0;
     fm1_code_sync();
     fm1_mailbox_clear();
     fm1_power_ready = (uint8_t)fm1_power_init(); /* stock V15 supplies before cache, peripherals or CPU1 */

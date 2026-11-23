@@ -29,8 +29,8 @@
 #include <stdio.h>
 #include <string.h>
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
-#include "../firmware/src/ble/ble_stack.c"
-#include "../firmware/src/ble/ble_diag.c"
+#include "ble/ble_stack.c"
+#include "ble/ble_diag.c"
 /* the diagnostics' counters (ble_dg) exist unless the stack is built with -DBLE_DIAG=0, which this test also runs:
  * DG(expr) is the check on a counter, true without them; DGV(expr) is a counter to print, 0 without them */
 #if BLE_DIAG
@@ -172,7 +172,7 @@ static void cen_ctrl(const uint8_t *p, int n) { cen_pdu(3, p, n); }
 static void cind(void)                  /* the CONNECT_IND, as the FM-1 stored it */
 {
     uint32_t b = CB->rxtog & 1u;
-    uint8_t *p = bb.rx[b].buf + HW_SWHDR;
+    uint8_t *p = bb.lk[0].rx[b].buf + HW_SWHDR;
     static const uint8_t init_a[6] = {1, 2, 3, 4, 5, 0x46};
     memcpy(p, init_a, 6);
     memcpy(p + 6, drv.adv.adv + 2, 6);
@@ -527,7 +527,7 @@ static void eng_save(void)
     for (b = 0; b < 2u; b++) {
         eng.cntl[b] = CB->txbufcntl[b];
         eng.dhdr[b] = CB->txdhdr[b];
-        memcpy(eng.pay[b], bb.tx[b].buf + HW_SWHDR, sizeof eng.pay[b]);
+        memcpy(eng.pay[b], bb.lk[0].tx[b].buf + HW_SWHDR, sizeof eng.pay[b]);
     }
     eng.tog = CB->txtog;
 }
@@ -546,7 +546,7 @@ static void eng_watch(int evt)
         if ((CB->txdhdr[b] ^ eng.dhdr[b]) & 4u)
             eng.sw_bit2++;
         if (!(eng.cntl[b] & 1u) && (((CB->txdhdr[b] ^ eng.dhdr[b]) & ~8u) ||
-                                    memcmp(eng.pay[b], bb.tx[b].buf + HW_SWHDR, sizeof eng.pay[b])))
+                                    memcmp(eng.pay[b], bb.lk[0].tx[b].buf + HW_SWHDR, sizeof eng.pay[b])))
             eng.sw_touch++;
         if (evt && (eng.cntl[b] & 1u) && !(CB->txbufcntl[b] & 1u))
             eng.evt_load++;
@@ -579,7 +579,7 @@ static void eng_send(void)
             CB->txtog = (uint16_t)((CB->txtog & ~1u) | b);
         eng.last[0] = (uint8_t)((CB->txdhdr[b] & 3u) | (CB->txdhdr[b] & 8u) << 1);
         eng.last[1] = (uint8_t)(CB->txdhdr[b] >> 8);
-        memcpy(eng.last + 2, bb.tx[b].buf + HW_SWHDR, eng.last[1] < 38u ? eng.last[1] : 38u);
+        memcpy(eng.last + 2, bb.lk[0].tx[b].buf + HW_SWHDR, eng.last[1] < 38u ? eng.last[1] : 38u);
         eng.last_b = (int)b;
         eng.sends[b] += eng.last[1] != 0;               /* (data PDUs only) */
     } else {
@@ -610,7 +610,7 @@ static void eng_event(uint32_t rb, int c_lost, int p_lost)
         eng.in_flight = 0;
     }
     if (cen.sn == eng.nesn) {                                           /* new: into RXTOG's buffer */
-        uint8_t *p = bb.rx[rb].buf + HW_SWHDR;
+        uint8_t *p = bb.lk[0].rx[rb].buf + HW_SWHDR;
         eng.nesn ^= 1;
         memcpy(p, cen.cur, n);
         CB->rxdhdr[rb] = (uint16_t)(n << 8 | (uint32_t)cen.sn << 3 | (uint32_t)cen.nesn << 2 | llid);

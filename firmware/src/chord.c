@@ -5,7 +5,8 @@
  * after kb_map; runs in the audio ISR with the rest of the note input.
  *   CHRD OFF; DIA3 / DIA7: the triad / seventh of the track's scale (ROOT, SCALE) built on the key, every tone
  *        in key (a key outside the scale takes the scale note below it, as QNT SNAP does; CHR builds on the
- *        major scale of ROOT); MAJ MIN DOM7 MAJ7 MIN7 SUS4 POW: that shape on the key, whatever the scale.
+ *        major scale of ROOT); MAJ MIN DOM7 MAJ7 MIN7 SUS4 POW: that shape on the key, whatever the scale (a
+ *        microtonal scale's degrees nearest its just ratios: 4:5:6 is the scale's nearest 5:4 and 3:2).
  *   VOIC CLOSE (root position); OPEN (the second tone an octave up: 1-5-3); INV1 / INV2 (the lowest tone, then
  *        the next, an octave up); +OCT (the root an octave down added; a seventh drops its fifth). At most
  *        CHORD_MAX notes, notes outside 0..127 left out.
@@ -22,6 +23,12 @@ enum { VC_CLOSE, VC_OPEN, VC_INV1, VC_INV2, VC_BASS };
 
 static const int8_t CHORD_SHAPE[CH_POW - CH_MAJ + 1][CHORD_MAX] = {
     {0, 4, 7, -1}, {0, 3, 7, -1}, {0, 4, 7, 10}, {0, 4, 7, 11}, {0, 3, 7, 10}, {0, 5, 7, -1}, {0, 7, 12, -1},
+};
+/* The same shapes by ratio, hundredths of a cent above the key: 4:5:6, 10:12:15, 4:5:6:7, 8:10:12:15, 10:12:15:18,
+ * 6:8:9, 2:3:4 (5:4 38631, 6:5 31564, 4:3 49804, 3:2 70196, 7:4 96883, 9:5 101760, 15:8 108827) */
+static const int32_t CHORD_JUST[CH_POW - CH_MAJ + 1][CHORD_MAX] = {
+    {0, 38631, 70196, -1}, {0, 31564, 70196, -1}, {0, 38631, 70196, 96883}, {0, 38631, 70196, 108827},
+    {0, 31564, 70196, 101760}, {0, 49804, 70196, -1}, {0, 70196, 120000, -1},
 };
 
 static uint8_t kb_chord[27][CHORD_MAX], kb_chn[27];   /* the notes key k started (kb_chn 0: none) */
@@ -57,8 +64,8 @@ static uint32_t chord_tones(const track_t *t, uint32_t mode, int32_t *root, int3
             n = mode == CH_DIA7 ? 4u : 3u;
             for (i = 0; i < n; i++) iv[i] = 2 * (int32_t)i;
         } else {
-            for (i = 0; i < CHORD_MAX && CHORD_SHAPE[mode - CH_MAJ][i] >= 0; i++) {
-                int32_t target = micro_pitch(t, *root) + CHORD_SHAPE[mode - CH_MAJ][i] * 10000;
+            for (i = 0; i < CHORD_MAX && CHORD_JUST[mode - CH_MAJ][i] >= 0; i++) {
+                int32_t target = micro_pitch(t, *root) + CHORD_JUST[mode - CH_MAJ][i];
                 int32_t lo = 0, hi = 127;
                 while (lo < hi) {
                     int32_t mid = (lo + hi) / 2;

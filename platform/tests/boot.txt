@@ -1,0 +1,20 @@
+# Melodee on fm1-base in the host simulator: the power-on Stage, its four default tracks, a key and MIDI in sounding
+wait 3000
+expect engine 19
+expect track 0
+expect playing 0
+wav boot.wav
+key 12 down 100
+wait 400
+key 12 up
+wait 600
+wavstop
+expect peak_db_max >-60
+peakreset
+midi USB 90 3C 64
+wait 300
+midi USB 80 3C 00
+wait 300
+expect peak_db_max >-60
+shot boot.png
+expect usb_play_gain 2048

@@ -145,7 +145,7 @@ static void test_map_encoder_reads(void)
     const uint32_t roles[] = {EN_K1, EN_K2, EN_SELECT};
     for (uint32_t i = 0; i < NELEM(roles); i++)
     for (int32_t dir = -1; dir <= 1; dir += 2) {
-        reset_controls(); set_engine_of(TSEL, ENGI_FM6); fm6_opsel = 2;
+        reset_controls(); set_engine_of(TSEL, ENGI_FM6); sch_inst = 2;
         go_title("EG RATE"); frame(); press(B_EDIT);
         uint32_t row = smap.row, col = smap.col, role = roles[i], page = ui.page;
         assert(smap.on && row >= 2u && row + 2u < sec.n && col == 2u);

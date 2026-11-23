@@ -575,7 +575,7 @@ LL_CHANNEL_MAP_IND instant = counter + 6 + random 0-3. The master's TX payload a
 
 **21.5-21.8.** Each role runs on its own instance (the first free table entry of 8; each needs its own control block and buffers). The
 vendor never overlaps two instances in the radio but time-slices in software; Optimist runs **one link at a time**, time-sliced with
-advertising. RFPRIO: scanning 17 / 26, initiating 26 / 30, master set-up 28, in a connection 30 around instants and with control PDUs
+advertising (Melodee's `BLE_LINKS 2` runs two instances, untested on hardware: [BLE-MULTILINK.md](BLE-MULTILINK.md)). RFPRIO: scanning 17 / 26, initiating 26 / 30, master set-up 28, in a connection 30 around instants and with control PDUs
 queued, 28 with data queued. The vendor's CONNECT_IND carries SCA 0; no timing register is written on any central path.
 ADV_DIRECT_IND (not used): type 1, length 12, AdvA + TargetA in both TX buffers. Address resolution is software only (no register
 holds a key): Optimist resolves each RPA AdvA with `ah(IRK, prand)` and initiates to the literal RPA just heard.

@@ -31,6 +31,8 @@ typedef struct {
     uint8_t hd[9];               /* the first bytes of the descriptor being read */
     uint8_t pos, len;            /* its bytes seen so far, its bLength */
     uint8_t cfg, in_midi, done;  /* done: nothing more to find (the next interface, or a zero-length descriptor) */
+    uint8_t hub;                 /* an interface of class 9: a hub, whatever bDeviceClass says */
+    uint8_t if_cls, if_sub, nif; /* the first interface's class and subclass, the interfaces seen (diagnostics) */
 } uh_desc_t;
 
 static void uh_desc_start(uh_desc_t *w, uh_midi_t *m)
@@ -48,6 +50,12 @@ static void uh_desc_one(uh_desc_t *w)
     if (d[1] == 2u && l >= 9u) {
         w->cfg = d[5];
     } else if (d[1] == 4u && l >= 9u) {
+        if (!w->nif++) {
+            w->if_cls = d[5];
+            w->if_sub = d[6];
+        }
+        if (d[5] == 9u)
+            w->hub = 1;
         if (m->found) {                                 /* never combine interfaces or alternate settings */
             w->done = 1;
             return;

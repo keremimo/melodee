@@ -32,7 +32,7 @@ static void blocks(uint32_t n)
 {
     uint32_t i, k;
     while (n--) {
-        mix_block(out_buf, CTL);
+        mix_block_q15(out_buf, CTL);
         for (i = 0; i < 2u * CTL; i++)
             for (k = 0; k < 4u; k++) {
                 hash ^= ((uint32_t)out_buf[i] >> (8u * k)) & 0xFFu;

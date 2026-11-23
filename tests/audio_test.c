@@ -45,6 +45,10 @@ static void fresh(void)
     host_clock = host_us = host_half_reads = host_dma_advanced = host_acks = host_nest = 0;
     host_pending = FM1_AUDIO_HALF;
     transport_req = panic_req = 0;
+#if MELODEE_RENDER_AHEAD
+    audio_due_ok = 0;
+    memset(ahead, 0, sizeof ahead);
+#endif
 }
 static voice_t *held(track_t *t, uint32_t note)
 {
@@ -78,30 +82,30 @@ static void overload(void)
           lead && bass && extra && lead->gate && bass->gate && extra->stage == 4u && shed_count == 1u);
     check("part diagnostics attribute the cut to its actual track",
           shed_part[0] == 0u && shed_part[1] == 1u && voice_kills_part[0] == 0u && voice_kills_part[1] == 1u);
-    mix_block(out, CTL);
+    mix_block_q15(out, CTL);
     check("overload frees its victim within one control block", extra && !extra->active && sounding() == 2u);
     shed_voice();
     check("a lead alone on each part stays protected", lead->gate && bass->gate && shed_count == 1u);
 
     fresh();
-    host_preset(&trk[0], ENGI_DRUM, 0);
+    host_preset(&trk[0], ENGI_808, 0);
     trk_note_on(&trk[0], 36, 100); trk_note_on(&trk[0], 38, 100);
     lead = held(&trk[0], 36); extra = held(&trk[0], 38);
-    shed_voice(); mix_block(out, CTL);
+    shed_voice(); mix_block_q15(out, CTL);
     check("overload frees a held one-shot drum without waiting for its decay",
           lead && extra && lead->active && !extra->active && sounding() == 1u);
 
     fresh();
     trk[0].p[P_VOICE] = V_UNISON;
     trk_note_on(&trk[0], 55, 100);
-    shed_voice(); mix_block(out, CTL);
+    shed_voice(); mix_block_q15(out, CTL);
     check("UNISON loses an extra voice and retains its lead", trk[0].v[0].active && trk[0].v[0].gate && sounding() == NPOLY - 1u);
 
     for (mode = V_MONO; mode <= V_LEGATO; mode++) {
         fresh(); trk[0].p[P_VOICE] = V_POLY;
         for (i = 0; i < NPOLY; i++) trk_note_on(&trk[0], 48u + 2u * i, 100);
         trk[0].p[P_VOICE] = (int16_t)mode;
-        shed_voice(); mix_block(out, CTL);
+        shed_voice(); mix_block_q15(out, CTL);
         check("overload can reclaim stale POLY voices after a MONO / LEGATO change",
               shed_count == 1u && trk[0].v[0].gate && sounding() == NPOLY - 1u);
     }
@@ -131,7 +135,7 @@ static void dma(void)
     shed_req = 0;
     host_half_reads = 0; host_dma_advanced = 1; host_us = 100;
     fm1_alnk0_irq();
-    check("DMA advancing during a render is counted once", host_acks == 3u && melodee_dbg.late == 1u && !melodee_dbg.in_audio && !shed_req);
+    check("DMA advancing before the block reaches its half is counted once", host_acks == 3u && melodee_dbg.late == 1u && !melodee_dbg.in_audio && !shed_req);
     fresh();
     expected = HALF_FRAMES * 1000000u / FS;            /* the half's deadline in us */
     host_us = expected * 90u / 100u; host_nest = expected * 30u / 100u;   /* the render 60 %, TIMER5 nested 30 % */
@@ -185,10 +189,47 @@ static void safety(void)
     }
     settings_safety = 1;
 }
+#if MELODEE_RENDER_AHEAD
+/* Render ahead: an IRQ copies the block rendered at the IRQ before into the free half, then renders the next */
+static void render_ahead(void)
+{
+    static int32_t keep[HALF_WORDS];
+    uint32_t i, ok = 1, rendered = 0;
+    fresh(); host_us = 0; host_clock = 1000u;
+    for (i = 0; i < HALF_WORDS; i++) ahead[i] = (int32_t)(i * 3u + 1u);
+    fm1_alnk0_irq();
+    for (i = 0; i < HALF_WORDS; i++) ok &= abuf[i] == (int32_t)(i * 3u + 1u);
+    check("render ahead: the free half gets the block rendered at the IRQ before", ok && host_acks == 1u && !melodee_dbg.late);
+    song.master_q12 = 2048;
+    trk_note_on(&trk[0], 60, 110);
+    for (i = 0; i < HALF_WORDS; i++) ahead[i] = 0x7F7F7F7F;   /* (no 24-bit sample: the render must overwrite it) */
+    host_clock += AUDIO_DEADLINE_TICKS;
+    fm1_alnk0_irq();
+    memcpy(keep, ahead, sizeof keep);
+    for (i = 0; i < HALF_WORDS; i++) rendered |= keep[i] != 0x7F7F7F7F;
+    host_clock += AUDIO_DEADLINE_TICKS;
+    fm1_alnk0_irq();
+    check("render ahead: what an IRQ renders plays from the next IRQ's half", rendered && !memcmp(abuf, keep, sizeof keep));
+
+    fresh(); host_us = 0; host_clock = 1000u;
+    fm1_alnk0_irq();                                            /* on time: the timeline starts here */
+    host_clock = 1000u + AUDIO_DEADLINE_TICKS + AUDIO_DEADLINE_TICKS / 2u;   /* the render before ran half a half over */
+    fm1_alnk0_irq();
+    check("render ahead: a late IRQ keeps MIDI on the DAC's timeline",
+          midi_render_time == 1000u + AUDIO_DEADLINE_TICKS - CTL * DAC_TICKS && !melodee_dbg.late);
+    host_clock = 1000u + 3u * AUDIO_DEADLINE_TICKS + AUDIO_DEADLINE_TICKS / 2u + 1u;   /* a whole half went by */
+    fm1_alnk0_irq();
+    check("render ahead: an IRQ a whole half late counts once and restarts the timeline",
+          melodee_dbg.late == 1u && audio_due == host_clock);
+}
+#endif
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     overload(); dma(); safety(); bench_output();
+#if MELODEE_RENDER_AHEAD
+    render_ahead();
+#endif
     printf(bad ? "audio: %d FAILED\n" : "audio: all passed\n", bad);
     return bad != 0;
 }

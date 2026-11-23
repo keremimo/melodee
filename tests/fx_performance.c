@@ -21,7 +21,7 @@ static void setup(const uint8_t modes[3],int tracks,int setting,int mixer){
     for(uint32_t id=0;id<RES_COUNT;id++)resource_release(id);
     memset(trk,0,sizeof trk);trk_voices_bind();memset(&song,0,sizeof song);memset(fx_state,0,sizeof fx_state);host_tracks_init();spread_on=0;
     for(int t=0;t<tracks;t++){
-        if(mixer){host_preset(&trk[t],t==0?ENGI_PROPHET:t==3?ENGI_DRUM:ENGI_FM6,t==0?3:0);trk[t].p[P_SUS]=127;trk_note_on(&trk[t],48+t*7,100);if(t<3)trk_note_on(&trk[t],52+t*7,100);}
+        if(mixer){host_preset(&trk[t],t==0?ENGI_PROPHET:t==3?ENGI_808:ENGI_FM6,t==0?3:0);trk[t].p[P_SUS]=127;trk_note_on(&trk[t],48+t*7,100);if(t<3)trk_note_on(&trk[t],52+t*7,100);}
         for(int s=0;s<3;s++){int b=P_FXTYPE+s*FX_PARAMS;trk[t].p[b]=modes[s];trk[t].p[b+1]=100;trk[t].p[b+2]=setting?127:60;trk[t].p[b+3]=setting?127:64;trk[t].p[P_FXTONE+s]=setting?FX_TONE_MAX:0;}
     }
     {for(uint32_t k=0;k<tracks;k++){trk[k].p[P_FXSEND]=127;trk[k].p[P_FXSEND2]=trk[k].p[P_FXSEND3]=127;}
@@ -32,7 +32,7 @@ static void setup(const uint8_t modes[3],int tracks,int setting,int mixer){
 }
 static void block(int tracks,int mixer,uint32_t frame){
     int32_t out[CTL*2],b[CTL];
-    if(mixer){mix_block(out,CTL);checksum^=(uint32_t)out[0];return;}
+    if(mixer){mix_block_q15(out,CTL);checksum^=(uint32_t)out[0];return;}
     for(uint32_t i=0;i<CTL;i++)b[i]=sine_i((frame*CTL+i)*0x01734567u)/2;
     for(int t=0;t<tracks;t++){int active=fx_kernel_process(&trk[t],b,CTL);checksum^=(uint32_t)(active?fx_left[0]:b[0]);}
 }

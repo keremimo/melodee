@@ -31,7 +31,16 @@
 #undef __attribute__                                  /* the RAM tables the firmware fills at boot (fm1_main) */
 __attribute__((constructor)) static void host_dsp_tables(void) { dsp_tables_init(); }
 #define __attribute__(x)
-static struct { volatile uint32_t notes, buttons; } fm1_in;
+static struct {
+    volatile uint32_t notes, buttons, remote, remote_tap;
+#if BOARD_SMK37
+    uint32_t notes_retrig;                              /* (hal/smk_input.h: what the SMK-37 UI and seq.c read) */
+    uint8_t key_vel[37], pad_st[16], pad_press[16], fader[4];
+    int16_t enc_steps[8];
+    uint16_t pedal;
+    uint32_t frames;
+#endif
+} fm1_in;
 /* Serial host fixtures retain their established admission policy. Dedicated
  * resident/dual-core tests select the target policy explicitly. */
 #ifndef MELODEE_RAM_AUDIO
@@ -39,23 +48,6 @@ static struct { volatile uint32_t notes, buttons; } fm1_in;
 #endif
 #include "../firmware/src/core.h"
 #include "../firmware/src/engines.c"
-/* the packed factory banks, unpacked for comparisons (four slots each, so a few can be held at once) */
-static const p5_patch_t *p5_fac(uint32_t k)
-{
-    static p5_patch_t s[4];
-    static uint32_t n;
-    p5_patch_t *p = &s[n++ % 4u];
-    p5_factory(k, p);
-    return p;
-}
-static const uint8_t *cz_fac(uint32_t k)
-{
-    static uint8_t s[4][CZ_BYTES];
-    static uint32_t n;
-    uint8_t *p = s[n++ % 4u];
-    cz_factory(k, p);
-    return p;
-}
 #include "../firmware/src/params.c"
 #include "../firmware/src/mod.c"
 #include "../firmware/src/voice.c"
@@ -84,6 +76,7 @@ static void mel_ble_radio_start(const struct ble_rf_trims *t) { ble_hw_wl82_star
 #include "../firmware/src/midi_uart.c"                /* TRS MIDI IN: its parser (um_byte) feeds midi_in_q */
 #include "../firmware/src/song_chain.c"
 #include "../firmware/src/seq.c"
+#include "synth_compat.h"                        /* (the synths' patches by their schemas, for the checks) */
 /* Assertions can inspect a bank without exposing mutable pool internals.
  * Mutating fixtures must publish through pattern_write. */
 static const pattern_t *pattern_at(uint32_t k, uint32_t bank)
@@ -123,7 +116,7 @@ static void host_tracks_init(void)                /* as melodee_init: defaults, 
 {
     trk_voices_bind();
     midi_insert_init();
-    cz_init();
+
     pattern_init();
     uint32_t i, k;
     for (i = 0; i < G_COUNT; i++)
@@ -153,9 +146,11 @@ static void host_preset_values(track_t *t, uint32_t e, uint32_t pi, const preset
     t->p[P_REL] = p->env[3];
     t->p[P_ED_FLT] = p->fenv;
     t->p[P_VOICE] = p->mono ? V_LEGATO : V_POLY;
-    cz_factory_loaded(t);
-    if(e==ENGI_PROPHET){uint32_t k=(uint32_t)(t-trk)%NPART;p5_ready[k]=1;p5_preset_loaded(t,pi);}   /* (its program, as ui.c) */
-    fm6_track_loaded(t);                          /* FM6: the preset's patch (ui.c apply_preset_to) */
+    {                                             /* the synth's patch: the preset's (ui.c apply_preset_with) */
+        static preset_entry_t x;
+        preset_fetch_into(e, pi, &x, 1);
+        preset_patch_put(t, &x);
+    }
 }
 static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
 {
@@ -165,6 +160,7 @@ static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
         t->preset = 0;
         for (uint32_t i = 0; i < 8u; i++)
             t->p[P_E0 + i] = ENGINES[e]->edit[i].def;
+        patch_set((uint32_t)(t - trk), e, 0, 0, MOD3_PATCH_NEW);
         return;
     }
     pi %= n;
@@ -190,10 +186,40 @@ static void host_power_on_sound(track_t *t, uint32_t k)
  * on the generic voice path (NPOLY voices, no cap of its own) as ANALOG was */
 #define HOST_SYNTH ENGI_CZ
 
-/* Explicit legacy fixture: hidden from factory browsing, still used by saved GM projects. */
+/* the 808's kit (its synth's first preset) */
 static void host_808_kit(track_t *t)
 {
-    host_preset(t, ENGI_DRUM, 0);
+    host_preset(t, ENGI_808, 0);
+}
+/* the kit synth that plays KIT value kit (drum_map.c's DK_*: 0..4 the 808, 5 the 909, 6 SID KIT, 7 CR78, 8 FM KIT, the
+ * user's KIT 1..8 from 9 SAMPLER's; any build, the kits built in or not) */
+#if MELODEE_DRUM_BUILTIN
+_Static_assert(DK_808 == 4 && DK_909 == 5 && DK_SID == 6 && DK_CR78 == 7 && DK_FM == 8 && DK_USER0 == 9, "the kits' KIT values");
+#endif
+static uint32_t kit_engine(int32_t kit)
+{
+    static const uint8_t E[9] = {ENGI_808, ENGI_808, ENGI_808, ENGI_808, ENGI_808, ENGI_909, ENGI_SIDKIT, ENGI_CR78, ENGI_FMKIT};
+    return kit >= 9 ? ENGI_SAMPLER : E[kit < 0 ? 0 : kit];
+}
+/* 1.x's DRUM preset k (0 808 KIT, 1 909 KIT, 2 SID KIT, 3 SID DIGI, 4 CR78 KIT, 5 FM KIT) as its kit synth's: engine, preset */
+static uint32_t kit_preset_engine(uint32_t k) { static const uint8_t E[6] = {ENGI_808, ENGI_909, ENGI_SIDKIT, ENGI_SIDKIT, ENGI_CR78, ENGI_FMKIT}; return E[k % 6u]; }
+static uint32_t kit_preset_index(uint32_t k) { return k == 3u ? 1u : 0u; }
+static void host_kit_preset(track_t *t, uint32_t k) { host_preset(t, kit_preset_engine(k), kit_preset_index(k)); }
+/* 1.x DRUM's preset 0 (the 808's values and patch) with KIT kit, on the kit synth that plays it (1.x: KIT moved on DRUM) */
+static void host_kit_values(track_t *t, int32_t kit)
+{
+    static int16_t p[P_COUNT];
+    static uint8_t pt[MOD3_PATCH_MAX];
+    uint32_t k = (uint32_t)(t - trk), e = kit_engine(kit);
+    host_preset(t, ENGI_808, 0);
+    memcpy(p, t->p, sizeof p);
+    memcpy(pt, patch_of(k), sizeof pt);
+    if (e != ENGI_808) {
+        host_preset(t, e, 0);
+        memcpy(t->p, p, sizeof p);
+        patch_set(k, e, pt, patch_len(e), MOD3_PATCH_NEW);
+    }
+    t->p[P_E0] = (int16_t)kit;
 }
 
 static void put_step(track_t *t, uint32_t i, uint32_t n, const uint8_t *notes, uint32_t time, uint32_t flags)
@@ -265,7 +291,7 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
     song.g[G_BPM] = 120;
     host_power_on_sound(t1, 0);
     host_power_on_sound(t2, 1);
-    host_preset(t3, 3, 0);
+    host_preset(t3, ENGI_SID, 0);
     host_808_kit(td);                   /* saved 808 DRUM sound */
     for (i = 0; i < 16u; i++) {
         uint8_t n = ACID[i];
@@ -335,7 +361,7 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
             fm1_in.notes = 0;
             keys_on = 0;
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         if (busy_now() > bmax)
             bmax = busy_now();
         for (i = 0; i < CTL; i++) {
@@ -350,12 +376,13 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
         return bmax > NVOICE;
     {
         const step_t *s3 = &td->step[3], *s4 = &td->step[4], *l1 = &t3->step[1], *p14 = &t2->step[14];
-        int ok_clap = !(s3->hit & (1u << DV_CLAP)) && (s4->hit & (1u << DV_CLAP)) &&
+#define HS_CLAP_LANE 2u                                  /* (the clap's lane: STEP_LANE_NOTE[2], 39) */
+        int ok_clap = !(s3->hit & (1u << HS_CLAP_LANE)) && (s4->hit & (1u << HS_CLAP_LANE)) &&
                       s4->n == 3u && s4->note[0] == 36 && s4->note[1] == 38 && s4->note[2] == 42 && clap_hits == 3u;
         int ok_lead = l1->n == 1u && l1->note[0] == 84u && l1->time == ST_NOTE;
         int ok_keys = p14->n == 2u && p14->time == ST_NOTE && p14->note[0] == 60u && p14->note[1] == 64u;
         printf("tracks: recording: late clap rounds to step 4 = %u; step 4 keeps %u notes, triggers %u hits "
-               "(want 3: no repeated clap) %s\n", (s4->hit & (1u << DV_CLAP)) ? 39u : 0u, s4->n, clap_hits,
+               "(want 3: no repeated clap) %s\n", (s4->hit & (1u << HS_CLAP_LANE)) ? 39u : 0u, s4->n, clap_hits,
                ok_clap ? "ok" : "FAIL");
         printf("tracks: recording: MIDI ch 3 -> lead step 1 = %u (want 84) %s; keys -> pad step 14 = %u notes %u %u %s\n",
                l1->note[0], ok_lead ? "ok" : "FAIL", p14->n, p14->note[0], p14->note[1], ok_keys ? "ok" : "FAIL");
@@ -403,7 +430,7 @@ static double tracks_cost(const uint8_t parts[NPART][3], uint32_t *busy_max)
             if (parts[3][2] == DRUM_HITS && (k * CTL) % (FS / 8u) < CTL)   /* 16ths at 120 BPM */
                 drum_hit((k * CTL) / (FS / 8u));
             t0 = now_ns();
-            mix_block(o, CTL);
+            mix_block_q15(o, CTL);
             if (k >= 2u * FS / CTL) {                  /* (the host's own noise only ever adds) */
                 ns += now_ns() - t0;
                 if ((k - 2u * FS / CTL) % seg == seg - 1u) {
@@ -470,7 +497,7 @@ static int steal_test(const char *dir)
             p = ms / 500u % 2u ? 1u : 2u;          /* parts 2, 3 in turn: each takes a voice */
             trk_note_on(&trk[p], 76u + ms / 250u, 90);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         if (voice_kills != k0 && nev < 6u)
             events[nev++] = f;
         for (i = 0; i < CTL; i++) {
@@ -522,7 +549,7 @@ static int xfade_test(const char *dir)
     /* switches: (a) in a release tail, (b) twice with a chord held, (c) with a note right after it */
     const uint32_t sw[4] = {11u * B, 23u * B, 29u * B + 7u * CTL, 33u * B};
     const uint32_t on[3] = {B, 15u * B, 25u * B}, sine[3] = {14u * B, 24u * B, 32u * B};
-    const uint8_t to[4] = {ENGI_FM6, 2, 3, 4};
+    const uint8_t to[4] = {ENGI_FM6, ENG_H_NONE, ENGI_SID, ENG_H_NONE};   /* (1.x: retired PHASE, SID, reserved 4) */
     char path[512];
     FILE *w;
     int32_t *L = calloc(frames, sizeof *L);
@@ -562,7 +589,7 @@ static int xfade_test(const char *dir)
             late_ok = late_ok && t->engine == to[3];
             trk_note_off(t, 60);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (i = 0; i < CTL; i++) {
             L[f + i] = o[2 * i];
             wav_put(w, o[2 * i], o[2 * i + 1]);
@@ -596,7 +623,7 @@ static void rec_run_to(track_t *t, uint32_t idx, uint32_t q)
     int32_t o[2 * CTL];
     uint32_t guard = 0;
     do {
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
     } while (++guard < 100000u && !(t->seq_idx == idx &&
              t->seq_pos >= step_samples(t, seq_div_samples((uint32_t)t->p[P_SDIV]), idx) * q / 100u));
 }
@@ -717,7 +744,7 @@ static void trs_bytes(const uint8_t *b, uint32_t n)
     int32_t o[2 * CTL];
     while (n--)
         um_byte(*b++);
-    mix_block(o, CTL);
+    mix_block_q15(o, CTL);
 }
 static int trs_test(void)
 {
@@ -978,7 +1005,7 @@ int main(int argc, char **argv)
             if (sscanf(getenv("PSWEEP"), "%d:%d:%d", &id, &a, &b) == 3 && id >= 0 && id < P_COUNT)
                 inst.p[id] = (int16_t)(a + (int64_t)(b - a) * f / frames);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         {   /* VOICES=1: report the most voices active at once (engine voice caps) */
             static uint32_t vmax, hi;
             uint32_t k, a = 0;

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
-"""Install a Melodee package (.fwsc) on an FM-1 over USB-MIDI.
+"""Install a Melodee package (.fwsc) on an FM-1 (or an SMK-37) over USB-MIDI.
 
 The same update as the web installer (web/fm1ota.js): step 1, the
 running firmware reads parts of the package and starts the update loader;
@@ -12,6 +12,7 @@ the FM-1 restarts and the installed identity is checked.
 
   fm1_install.py PACKAGE.fwsc [--port NAME] [--yes] [--force]
   fm1_install.py FM-1.fwsc            (the official V15 file: back to the stock firmware)
+  fm1_install.py SMK-37_Pro_016.fwsc (the official SMK-37 Pro V016 file: back to the stock firmware)
   fm1_install.py --info [--port NAME]
 
 If the FM-1 is still in update mode (an earlier install was cut off), the
@@ -24,6 +25,11 @@ Exit codes: 0 done, 1 cancelled or other error, 2 bad arguments or package,
 3 FM-1 not found, 4 connection lost or the device stopped, 5 timeout (no
 loader / no restart), 6 wrong model, another update loader than the package's,
 or another identity after the install.
+
+A package installs only on exactly its model (FM-1, SMK-37 Pro, SMK-37 Elite, MKE-P37: the identity's model,
+"ota-" aside); the unit's own stock package is that model, so the way back to stock stays open.
+Packages: 20 interleave blocks (FM-1, Melodee, the SMK-37 builds) or more (the stock SMK-37 Pro v016 has 36: the
+extra markers are 0x7D); the detected count is used only when the files' CRCs pass with it, else 20.
 """
 import argparse
 import hashlib
@@ -34,10 +40,17 @@ import time
 from pathlib import Path
 
 HS_QUERY = bytes([0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7])
+# the handshake with the one-byte body 01 (00 59 11, length 1, 01, checksum FE), as fm1-base's installer asks: a
+# firmware built on fm1-base (felucca-bsp chip/ota.c, tools/build_base.py) answers HS_QUERY with its name, '_' and
+# three digits only ("FM-1_9001613" -> "FM-1_900": M-UPGRADE 3.11 refuses more) and this one with its whole identity.
+# Classic Melodee answers both the same way from 1.7.0 (firmware/src/ota.c ota_handshake; before, its whole identity
+# to HS_QUERY and nothing to this one); M-VAVE's firmware and the update loaders don't answer it; it is never sent to a stock identity (NAME_0dd: nothing more to tell) or to a loader
+HS_FULL = bytes([0xF0, 0x00, 0x32, 0x45, 0x08, 0x00, 0x00, 0x40, 0x00, 0x7E, 0x01, 0xF7])
 UPGRADE = bytes([0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7])
 FINISH_CHECK, FINISH_WRITE = 0xE0000000, 0xF0000000
 MAXDATA = 512
-BLOCKS, BLK, KEEP = 20, 0x30, 0x2F
+BLOCKS, BLK, KEEP = 20, 0x30, 0x2F         # BLOCKS: the identity blocks (more may follow, see block_count)
+MAX_BLOCKS = 64
 LOADER_MARK = b"FELUCCA-LOADER-1"
 # the unmodified official FM-1 V15 (FM-1.fwsc from M-VAVE): returning to it is allowed without --force,
 # as the web installer's "Return to official V15" (web/fm1pkg.js validateStockPackage)
@@ -48,11 +61,16 @@ STOCK_V15_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7e
 MELODEE_LOADER, STOCK_LOADER = "ota-FM-1_900", "ota-FM-1_015"
 LOADER_HINT = {MELODEE_LOADER: "finish the interrupted Melodee install with a Melodee package first",
                STOCK_LOADER: "finish the interrupted return to stock with the official FM-1.fwsc first"}
-PORT_RE = re.compile(r"fm-1|melodee|felucca|ota|composite|sinco|usb-midi", re.I)   # never probe other gear
+# the SMK-37 builds: the same two loaders under the package's model ("ota-SMK-37 Pro_900", the official
+# "ota-SMK-37 Pro_016"); an FM-1 package keeps MELODEE_LOADER / STOCK_LOADER
+SMK_LOADER_RE = re.compile(r"ota-(SMK-37 Pro|SMK-37 Elite|MKE-P37)_(900|016)")
+# the unmodified official SMK-37 Pro V016 (SMK-37_Pro_016.fwsc, 36 interleave blocks): the return of an SMK-37 Pro
+STOCK_SMK016_SHA256 = "2d98ce72530e71d617384963423820536f094501299e2cfec0a8d3c3fb6bcfb0"
+PORT_RE = re.compile(r"fm-1|smk|elite|mke-p37|starry|melodee|felucca|ota|composite|sinco|usb-midi", re.I)   # never probe other gear
 
 # seconds; the tests shorten them
 DELAY = {"open": 0.3, "start": 2.0, "reply": 0.01, "loader": 3.0, "reboot": 3.0, "retry": 1.0,
-         "poll": 1.0, "hs": 1.0, "idle_check": 8.0, "idle_write": 180.0,
+         "poll": 1.0, "hs": 1.0, "hs_full": 0.6, "idle_check": 8.0, "idle_write": 180.0,
          "wait_loader": 30.0, "wait_reboot": 40.0}
 
 EXIT = {"usage": 2, "badpkg": 2, "notfound": 3, "model": 6, "lost": 4, "stopped": 4, "badreq": 4,
@@ -112,12 +130,16 @@ def parse_request(pkt):
 
 
 class Identity:
-    def __init__(self, text, model, version):
+    def __init__(self, text, model, version, flash=0):
         self.text, self.model, self.version = text, model, version
+        self.flash = flash          # the flash's JEDEC ID (fm1-base firmware: bytes 24..26), 0: not sent
 
     @property
     def loader(self):
         return self.model.lower().startswith("ota-")
+
+
+FLASH_PARTS = {0x856014: "Puya P25Q80", 0xB36014: "UC25HQ80"}
 
 
 def parse_identity(pkt):
@@ -126,30 +148,67 @@ def parse_identity(pkt):
     d = unpack7(pkt[1:-1])
     if len(d) != 34 or d[:3] != b"\x00\x59\x11":
         return None
-    txt = d[6:33].rstrip(b"\0").decode("latin-1")
+    # the text up to its first zero: after the zeros, fm1-base firmware sends the flash's JEDEC ID in bytes 24..26
+    txt = d[6:33].split(b"\0", 1)[0].decode("latin-1")
+    flash = int.from_bytes(d[30:33], "big") if len(txt) < 24 else 0
     m = re.fullmatch(r"([^_]+)_(\d+)", txt)
-    return Identity(txt, m[1], int(m[2])) if m else None
+    return Identity(txt, m[1], int(m[2]), flash) if m else None
 
 
 # --------------------------------------------------------------- package ---
 
 def product_of(raw):
-    """the package identity ("FM-1_906"): one marker byte after each of the first 20 blocks"""
+    """the package identity ("FM-1_906", "SMK-37 Pro_016"): one marker byte after each of the first 20 blocks"""
     if len(raw) < BLOCKS * BLK:
         raise InstallError("badpkg", "not an FM-1 package (too short)")
     return "".join(chr((m - i - 1) & 0xFF) for i in range(BLOCKS) if (m := raw[i * BLK + KEEP]) != 0x7D)
 
 
-def logical_image(raw):
-    """the image the device reads during an update: the package without the 20 marker bytes"""
+def block_count(raw):
+    """interleave blocks: 20, then more while the marker is the unused 0x7D (SMK-37 Pro v016: 36).
+    A 20-block package can have 0x7D there by chance: load_package checks the CRCs and falls back."""
+    n = BLOCKS
+    while n < MAX_BLOCKS and (n + 1) * BLK <= len(raw) and raw[n * BLK + KEEP] == 0x7D:
+        n += 1
+    return n
+
+
+def logical_image(raw, blocks=BLOCKS):
+    """the image the device reads during an update: the package without the marker bytes"""
     out = bytearray()
-    for i in range(BLOCKS):
+    for i in range(blocks):
         out += raw[i * BLK:i * BLK + KEEP]
-    return bytes(out + raw[BLOCKS * BLK:])
+    return bytes(out + raw[blocks * BLK:])
+
+
+def deinterleave(raw):
+    """-> (logical image, block count): the detected count only when the files' CRCs pass with it, else 20"""
+    n = block_count(raw)
+    if n != BLOCKS:
+        image = logical_image(raw, n)
+        if not package_damage(image):
+            return image, n
+    return logical_image(raw, BLOCKS), BLOCKS
 
 
 def model_of(text):
     return text.split("_")[0].removeprefix("ota-")
+
+
+def package_loader(product, official, ours):
+    """the identity of a package's own update loader: the official one for the official file, Melodee's for a
+    Melodee package (both under the package's model), None (--force) otherwise"""
+    if official:
+        return "ota-" + product
+    return MELODEE_LOADER.replace("FM-1", model_of(product), 1) if ours else None
+
+
+def loader_hint(text):
+    m = SMK_LOADER_RE.fullmatch(text)
+    if m:
+        return (LOADER_HINT[MELODEE_LOADER] if m[2] == "900" else
+                "finish the interrupted return to stock with the official package of this model first")
+    return LOADER_HINT.get(text, "Please report this loader on GitHub")
 
 
 def own_loader(dev, loader):
@@ -158,7 +217,7 @@ def own_loader(dev, loader):
         dev.link.close()
         raise InstallError("loader", f"the FM-1 is in update mode as {dev.id.text}; this package goes only to "
                                      f"{loader or 'the loader it starts itself'}, so nothing was sent. "
-                                     + LOADER_HINT.get(dev.id.text, "Please report this loader on GitHub"))
+                                     + loader_hint(dev.id.text))
 
 
 # ------------------------------------------------------------------ MIDI ---
@@ -243,19 +302,36 @@ class Device:
         self.link, self.id, self.name = link, ident, name
 
 
+def ask(link, query, secs):
+    """send a handshake -> the identity answered, None (no answer in secs), False (the send failed)"""
+    if not link.send(query):
+        return False
+    end = time.monotonic() + secs
+    while (left := end - time.monotonic()) > 0:
+        p = link.read(left)
+        if p is None:
+            break
+        ident = parse_identity(p)
+        if ident:
+            return ident
+    return None
+
+
 def handshake(link, tries=3):
+    """the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits, not 0dd (Melodee from 1.7.0
+    and fm1-base firmware tell their whole identity so); the plain answer when nothing answers HS_FULL (Melodee
+    before 1.7.0)"""
     link.drain()
     for _ in range(tries):
-        if not link.send(HS_QUERY):
+        ident = ask(link, HS_QUERY, DELAY["hs"])
+        if ident is False:
             return None
-        end = time.monotonic() + DELAY["hs"]
-        while (left := end - time.monotonic()) > 0:
-            p = link.read(left)
-            if p is None:
-                break
-            ident = parse_identity(p)
-            if ident:
-                return ident
+        if ident is None:
+            continue
+        if ident.loader or not re.fullmatch(r"[^_]+_[1-9]\d\d", ident.text):
+            return ident
+        full = ask(link, HS_FULL, DELAY["hs_full"])
+        return full if full and full.model == ident.model and full.text.startswith(ident.text) else ident
     return None
 
 
@@ -400,13 +476,62 @@ def load_package(path, force):
     product = product_of(raw)
     if not re.fullmatch(r"[^_]+_\d+", product):
         raise InstallError("badpkg", f"{path}: not an FM-1 package (identity {product!r})")
-    official = hashlib.sha256(raw).hexdigest() == STOCK_V15_SHA256
+    official = hashlib.sha256(raw).hexdigest() in (STOCK_V15_SHA256, STOCK_SMK016_SHA256)
     if LOADER_MARK not in raw and not official and not force:
         raise InstallError("badpkg", f"{path}: no Melodee update loader in this package; only Melodee's own "
-                                     "packages and the unmodified official V15 (FM-1.fwsc) are installed "
+                                     "packages and the unmodified official V15 (FM-1.fwsc) or SMK-37 Pro V016 (SMK-37_Pro_016.fwsc) are installed "
                                      "(--force overrides)")
-    loader = STOCK_LOADER if official else MELODEE_LOADER if LOADER_MARK in raw else None
-    return product, logical_image(raw), loader
+    loader = package_loader(product, official, LOADER_MARK in raw)
+    return product, deinterleave(raw)[0], loader
+
+
+def _crc16(data, crc=0):
+    """CRC-16/XMODEM, as the package and the device use"""
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def _dec(b):
+    """JieLi ENC stream cipher (its own inverse)"""
+    out, key = bytearray(b), 0xFFFF
+    for i in range(len(out)):
+        out[i] ^= key & 0xFF
+        key = ((key << 1) ^ (0x1021 if key & 0x8000 else 0)) & 0xFFFF
+    return bytes(out)
+
+
+def package_damage(image):
+    """what is wrong with the update image (header, file list, each file's CRC), or None; the device
+    only checks the loader before it rewrites the firmware, so a damaged file is caught here"""
+    if len(image) < 0x40:
+        return "too short"
+    hdr = _dec(image[0:0x40])
+    if _crc16(hdr[2:0x40]) != int.from_bytes(hdr[0:2], "little"):
+        return "header CRC"
+    count = int.from_bytes(hdr[8:10], "little")
+    if not 1 <= count <= 8 or len(image) < 0x40 + 0x50 * count:
+        return "file list"
+    lst = image[0x40:0x40 + 0x50 * count]
+    if _crc16(lst) != int.from_bytes(hdr[2:4], "little"):
+        return "file list CRC"
+    for i in range(count):
+        e = _dec(lst[i * 0x50:(i + 1) * 0x50])
+        dcrc = int.from_bytes(e[4:6], "little")
+        off = int.from_bytes(e[8:12], "little")
+        size = int.from_bytes(e[12:16], "little")
+        name = e[0x40:0x50].split(b"\0")[0].decode("ascii", "replace")
+        if off + size > len(image):
+            return f"{name}: cut short"
+        typ = int.from_bytes(e[0:2], "little")
+        # flash.bin (0) and ota.bin (100), what the device installs, carry the CRC of their bytes as
+        # served. The stock packer's other entries (USR 50, isd_config.ini 52, script.ver, blimit.bin)
+        # store a CRC of something else (decrypted contents): checked for their bounds only.
+        if typ in (0, 100) and _crc16(image[off:off + size]) != dcrc:
+            return f"{name}: CRC"
+    return None
 
 
 def not_found(up):
@@ -449,7 +574,8 @@ def run(a, backend, out, ask):
             raise not_found(up)
         dev.link.close()
         mode = "update loader (update not finished)" if dev.id.loader else "running"
-        print(f"{dev.id.text}  [{mode}]  port: {dev.name}", file=out)
+        flash = f"  flash: {FLASH_PARTS.get(dev.id.flash, 'unknown')} ({dev.id.flash:06X})" if dev.id.flash else ""
+        print(f"{dev.id.text}  [{mode}]  port: {dev.name}{flash}", file=out)
         return 0
     product, image, loader = load_package(a.package, a.force)
     print(f"package: {product}  ({a.package})", file=out)
@@ -473,7 +599,32 @@ def run(a, backend, out, ask):
         (p for p in (pkg.with_name(pkg.stem + "-res.bin"), pkg.with_name("melodee-res.bin")) if p.exists()), None)
     if not a.no_resources and res and res.exists():
         install_resources(up, res, out)
+    mods = Path(a.modules) if a.modules else next(
+        (p for p in (pkg.with_name(pkg.stem + "-mods.bin"), pkg.with_name("melodee-mods.bin")) if p.exists()), None)
+    if not a.no_resources and mods and mods.exists():
+        install_modules(up, mods, out)
     return 0
+
+
+def install_modules(up, mods, out):
+    """the build's synth modules (SID, DRUM: tools/fm1_modules.py) after the resources; never fails the install:
+    without them their tracks stay silent and the FM-1 asks to finish the update"""
+    import fm1_modules
+    from prophet_device import Device
+    dev = up.find()
+    if not dev:
+        print(f"synth modules: the FM-1 did not answer after the update; run tools/fm1_modules.py {mods}", file=out)
+        return
+    name = dev.name
+    dev.link.close()
+    device = Device(name)
+    try:
+        print(f"synth modules: {fm1_modules.push(device, mods.read_bytes(), lambda *s, **k: print(*s, file=out, **k))}",
+              file=out)
+    except (RuntimeError, TimeoutError) as e:
+        print(f"synth modules: {e}; run tools/fm1_modules.py {mods}", file=out)
+    finally:
+        device.close()
 
 
 def install_resources(up, res, out):
@@ -512,7 +663,9 @@ def main(argv=None, backend=None, out=sys.stdout, ask=ask_tty):
     ap.add_argument("--force", action="store_true", help="install a package without the Melodee loader marker")
     ap.add_argument("--resources", metavar="FILE", help="resource region to write after the update (default: "
                     "melodee-res.bin beside the package)")
-    ap.add_argument("--no-resources", action="store_true", help="do not write the resource region")
+    ap.add_argument("--modules", metavar="FILE", help="synth modules to write after the update (default: "
+                    "melodee-mods.bin beside the package)")
+    ap.add_argument("--no-resources", action="store_true", help="do not write the resource region nor the synth modules")
     a = ap.parse_args(argv)
     if bool(a.info) == bool(a.package):
         ap.error("give a PACKAGE.fwsc or --info")

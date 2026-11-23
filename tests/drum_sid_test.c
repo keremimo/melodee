@@ -18,7 +18,7 @@ static void kit(uint32_t preset, int digi)       /* part 1 on a DRUM preset, not
     for (uint32_t p = 0; p < NPART; p++)
         memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, preset);
+    host_kit_preset(&trk[0], preset);
     if (preset == 2u)
         trk[0].p[P_E6] = (int16_t)digi;
 }
@@ -89,7 +89,7 @@ static void demo(const char *dir, const char *name, int digi)
             if (b >= 28) trk_note_on(&trk[0], b == 28 ? 50 : b == 29 ? 47 : b == 30 ? 45 : 41, 115);
             if (b == 12) trk_note_on(&trk[0], 39, 100);
         }
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (uint32_t i = 0; i < CTL; i++)
             wav_put(f, o[2 * i], o[2 * i + 1]);
     }
@@ -112,20 +112,20 @@ int main(int argc, char **argv)
             }
         }
         check("16 frame programs: TRI, PULSE or NOISE a step, steps and loops in range, a gate", ok);
-        check("KIT 6 is SID: factory kits SID KIT (DIGI OFF) and SID DIGI (DIGI ON)", ENG_DRUM.edit[0].max >= DK_SID &&
-              !strcmp(N_DRUM_KIT[DK_SID], "SID") && ENG_DRUM.npresets >= 4u && !strcmp(ENG_DRUM.presets[2].name, "SID KIT") &&
-              ENG_DRUM.presets[2].e[0] == DK_SID && !ENG_DRUM.presets[2].e[6] && !strcmp(ENG_DRUM.presets[3].name, "SID DIGI") &&
-              ENG_DRUM.presets[3].e[0] == DK_SID && ENG_DRUM.presets[3].e[6] == 1);
+        check("KIT 6 is SID: factory kits SID KIT (DIGI OFF) and SID DIGI (DIGI ON)", ENG_KITSID.edit[0].min == DK_SID &&
+              ENG_KITSID.edit[0].max == DK_SID && !strcmp(N_DRUM_KIT[DK_SID], "SID") && ENG_KITSID.npresets == 2u &&
+              !strcmp(ENG_KITSID.presets[0].name, "SID KIT") && ENG_KITSID.presets[0].e[0] == DK_SID && !ENG_KITSID.presets[0].e[6] &&
+              !strcmp(ENG_KITSID.presets[1].name, "SID DIGI") && ENG_KITSID.presets[1].e[0] == DK_SID && ENG_KITSID.presets[1].e[6] == 1);
     }
     {   /* every drum alone, DIGI OFF: sounds, bounded, deterministic, over */
         int sound = 1, bounded = 1, det = 1, ends = 1, mapped = 1;
         int32_t pk[16];
         for (s = 0; s < 16u; s++) {
-            uint32_t note = drum_sound_note(&trk[0], s);
+            uint32_t note = pads_note(&trk[0], s);
             uint64_t h[2] = {1469598103934665603ull, 1469598103934665603ull};
             for (uint32_t r = 0; r < 2u; r++) {
                 kit(2, 0);
-                mapped &= drum_sound_of(&trk[0], note) == s;
+                mapped &= pads_pad_of(&trk[0], note) == s;
                 trk_note_on(&trk[0], note, 127);
                 pk[s] = run(a, FS / CTL);
                 for (i = 0; i < FS / CTL * CTL; i++)
@@ -138,7 +138,7 @@ int main(int argc, char **argv)
         }
         printf("SID KIT:   peaks alone:");
         for (s = 0; s < 16u; s++)
-            printf(" %s %d", drum_sound_name(&trk[0], s), (int)pk[s]);
+            printf(" %s %d", pads_name(&trk[0], s), (int)pk[s]);
         printf("\n");
         check("every drum alone sounds, under full scale, deterministic, then its voice ends", sound && bounded && det && ends && mapped);
     }
@@ -271,7 +271,7 @@ int main(int argc, char **argv)
         uint32_t n = FS * 6u / 10u / CTL, from = FS * 15u / 100u;
         double full, cut;
         kit(2, 0); trk_note_on(&trk[0], 46, 110); run(a, n); full = rms(a + from, n * CTL - from);
-        kit(2, 0); drum_event_length = FS / 20u; trk_note_on(&trk[0], 46, 110); drum_event_length = 0;
+        kit(2, 0); note_hit_len = FS / 20u; trk_note_on(&trk[0], 46, 110); note_hit_len = 0;
         run(a, n); cut = rms(a + from, n * CTL - from);
         printf("SID KIT:   open hat after 150 ms: rms %.0f, recorded 50 ms long %.0f\n", full, cut);
         check("a recorded open hat of 50 ms releases early", cut < 0.5 * full);
@@ -281,7 +281,7 @@ int main(int argc, char **argv)
         int32_t pk;
         kit(0, 0);
         for (i = 0; i < 8u; i++)
-            trk_note_on(&trk[0], DRUM_LANE_NOTE[i], 110);
+            trk_note_on(&trk[0], STEP_LANE_NOTE[i], 110);
         run(0, 2);
         before = voices_on();
         trk[0].p[P_E0] = DK_SID;
@@ -329,10 +329,10 @@ int main(int argc, char **argv)
                 trk[0].p[P_E0 + k] = corner & 2u ? 127 : 0;
             trk[0].p[P_E5] = 127; trk[0].p[P_E7] = 127;
             for (s = 0; s < 16u; s++)
-                trk_note_on(&trk[0], drum_sound_note(&trk[0], s), 127);
+                trk_note_on(&trk[0], pads_note(&trk[0], s), 127);
             for (i = 0; i < FS / CTL; i++) {           /* (the mix, as the 808's corners are checked) */
                 int32_t o[2 * CTL];
-                mix_block(o, CTL);
+                mix_block_q15(o, CTL);
                 for (k = 0; k < 2u * CTL; k++)
                     pk = abs(o[k]) > pk ? abs(o[k]) : pk;
             }

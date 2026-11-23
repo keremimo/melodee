@@ -5,12 +5,20 @@
 # Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Build Melodee: the app, the update loader and an installable .fwsc package.
 
-  tools/build.py [--release X.Y[.Z][-suffix]]
+  tools/build.py [--release X.Y[.Z][-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
 
 Outputs in build/: melodee.bin (app), loader/ota.bin (update loader),
 melodee.fwsc (package). A release build (--release X.Y) writes melodee-X.Y.fwsc and a folder
 release-X.Y/ with the package, the app, SHA256SUMS, the licence files.
 See BUILDING.md for the toolchain and the SDK.
+
+BOARD=smk37 (or --board smk37) builds for the SMK-37: -DBOARD_SMK37=1 for the app, the loader and the boot
+stub, identity SMK-37 Pro_900 (release SMK-37 Pro_9XY[Z]), the SMK flash layout (fm1pkg_make.py), the SMK stub's
+own lock (firmware/stub/stub_smk37.lock) and the package build/melodee-smk37.fwsc (melodee-smk37-X.Y.fwsc for a
+release). MODEL=elite / mke (or --model) builds the same firmware under the SMK-37 Elite's or the MKE-P37's model
+name (identity, loader, update record, the stub's record: -DSMK_MODEL; stub_smk37-elite.lock, stub_smk37-mke.lock),
+so the stock updater still takes that unit's own package: build/melodee-smk37-elite.fwsc, -mke.fwsc.
+The default stays the FM-1.
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
 macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
@@ -59,6 +67,11 @@ SDK_SHA256 = {
 }
 
 PRODUCT = "FM-1_900"                # package identity; release builds are FM-1_9XY[Z] (0.10: FM-1_9010, 0.11.1: FM-1_90111)
+BOARD = "fm1"                       # fm1 (default) or smk37: BOARD env or --board
+BOARD_DEFS = {"fm1": [], "smk37": ["-DBOARD_SMK37=1"]}       # the FM-1 build gets no new flag (byte-identical)
+BOARD_STEM = {"fm1": "melodee", "smk37": "melodee-smk37"}   # package name: STEM.fwsc, STEM-X.Y.fwsc
+BOARD_LOCK = {"fm1": "stub.lock", "smk37": "stub_smk37.lock"}   # the boot stub that ships, per board (and model)
+MODEL = "pro"                       # smk37: the model name (MODEL env or --model; fm1pkg_make.MODELS)
 VERSION = None                      # MELODEE_VERSION for release builds (default: firmware/src/melodee.c)
 
 
@@ -126,7 +139,7 @@ def generate():
             [tools / "gen_tables.py", GEN / "melodee_tables.h"],
             [tools / "gen_fm6_patches.py", GEN / "melodee_fm6.h"],
             [tools / "gen_cz1_factory.py", GEN / "melodee_cz1.h"],
-            [tools / "gen_prophet_factory.py", GEN / "melodee_prophet_factory.h", "--web", "check"]]
+            [tools / "gen_prophet_factory.py", GEN / "melodee_prophet_factory.h"]]
     procs = [subprocess.Popen([sys.executable, *map(str, c)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True) for c in cmds]
     failed = []
@@ -139,6 +152,19 @@ def generate():
 
 
 # ---- update loader
+
+def mod_file_id(b):
+    """a .mmod file's ID from its IDNT chunk (version 2), None without one (tools/fm1_modules.py file_id)"""
+    if not b[7] & 1:
+        return None
+    at = 60 + struct.unpack_from("<I", b, 12)[0] + 4 * struct.unpack_from("<I", b, 20)[0]
+    while at + 8 <= len(b):
+        tag, n = struct.unpack_from("<II", b, at)
+        if tag == 0x544E4449 and n == 96 and b[at + 16] == 2:
+            return struct.unpack_from("<Q", b, at + 8)[0]
+        at += 8 + ((n + 3) & ~3)
+    return None
+
 
 def ldr_head(dcrc, a, b, attr, name):
     body = struct.pack("<HIIBBH16s", dcrc, a, b, attr, 0, 0, name)
@@ -163,7 +189,7 @@ def ldr_wrap(image):
 def build_loader():
     LDR.mkdir(parents=True, exist_ok=True)
     src = FW / "loader"
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src"]
+    flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src"]
     tc_all(("cc", "-c", src / "crt0_ldr.S", "-o", LDR / "crt0_ldr.o"),
            ("cc", *flags, "-c", src / "loader.c", "-o", LDR / "loader.o"))
     elf = LDR / "loader.elf"
@@ -200,7 +226,7 @@ def build_stub():
     STB.mkdir(parents=True, exist_ok=True)
     src = FW / "stub"
     tc_all(("cc", "-Ifirmware/stub", "-c", src / "crt0_stub.S", "-o", STB / "crt0_stub.o"),
-           ("cc", *CFLAGS, "-Ifirmware/stub", "-c", src / "stub.c", "-o", STB / "stub.o"))
+           ("cc", *CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/stub", "-c", src / "stub.c", "-o", STB / "stub.o"))
     elf = STB / "stub.elf"
     tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", src / "stub.ld",
        STB / "crt0_stub.o", STB / "stub.o", "-o", elf)
@@ -235,7 +261,7 @@ def build_stub():
     img += b"\xff" * (STUB_LEN - len(img))
     ver, sha = fm1pkg_make.stub_version(img), hashlib.sha256(img).hexdigest()
     print(f"stub: {used} B of {STUB_LEN} ({100 * used / STUB_LEN:.1f}%), version {ver}, sha256 {sha[:16]}")
-    lock = src / "stub.lock"
+    lock = src / BOARD_LOCK[BOARD]
     want = lock.read_text().split() if lock.exists() else []
     if want != [str(ver), sha]:
         if os.environ.get("FM1_STUB_LOCK") == "update":
@@ -256,18 +282,41 @@ def build_stub():
 
 def build_app(stub):
     subprocess.run([sys.executable, SRC / "tools/gen_909_tables.py", GEN / "x0x_drum_tables.h"], check=True)
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
+    flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("MELODEE_FLASH", "MELODEE_OTA", "MELODEE_OTA_DRYRUN", "MELODEE_OTA_RAMONLY", "MELODEE_CDC",
-                 "MELODEE_UART", "MELODEE_BLE", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
-                 "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ", "MELODEE_MOD_CACHE", "MELODEE_CONTROL_FAST", "MELODEE_MIX_FAST", "MELODEE_FX_DORMANT", "MELODEE_RECORD_INDEX", "MELODEE_PROPHET_FAST", "MELODEE_PANEL_FAST", "MELODEE_FM6_FAST", "MELODEE_CZ_FAST", "MELODEE_DRUM_FAST", "MELODEE_SID_FAST", "MELODEE_CAPTURE_FAST"):
+                 "MELODEE_UART", "MELODEE_BLE", "MELODEE_BLE_EDITOR", "MELODEE_USB_AUDIO", "MELODEE_USB_HOST", "MELODEE_ICONS", "MELODEE_PROPHET_PROTOTYPE", "MELODEE_CORE1_FALLBACK",
+                 "MELODEE_BENCH_SILENT", "MELODEE_FX_PROFILE", "MELODEE_AUDIO_PROFILE", "MELODEE_BATCH_AUDIO", "MELODEE_ADMISSION", "MELODEE_AUDIO_BENCH", "MELODEE_DUAL_CORE", "MELODEE_CACHE_RAM", "MELODEE_CORE1_TEST", "MELODEE_RAM_AUDIO", "MELODEE_HW_EQ", "MELODEE_MOD_CACHE", "MELODEE_CONTROL_FAST", "MELODEE_MIX_FAST", "MELODEE_FX_DORMANT", "MELODEE_RECORD_INDEX", "MELODEE_PROPHET_FAST", "MELODEE_PANEL_FAST", "MELODEE_FM6_FAST", "MELODEE_CZ_FAST", "MELODEE_DRUM_FAST", "MELODEE_SID_FAST", "MELODEE_CAPTURE_FAST", "MELODEE_RENDER_AHEAD",
+                 *(("FELUCCA_DATA_UNTAGGED_OK",) if BOARD == "smk37" else ())):
         v = os.environ.get(flag)    # unset: the default in firmware/src/melodee.c
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
+    fam = os.environ.get("FELUCCA_DATA_FAMILY")   # SMK store owner (storage.c; default MELODEE)
+    if fam and BOARD == "smk37":
+        if not re.fullmatch(r"[A-Z0-9]{1,7}", fam):
+            raise SystemExit("FELUCCA_DATA_FAMILY: 1..7 of A-Z 0-9")
+        flags.append(f'-DFELUCCA_DATA_FAMILY="{fam}"')
     if os.environ.get("P5_OVERSAMPLE") in ("1", "2"):
         flags.append("-DP5_OVERSAMPLE=" + os.environ["P5_OVERSAMPLE"])
+    # Bluetooth links at once: 2 (the default) = a computer's and a device's (docs/BLE-MULTILINK.md); 1 without Bluetooth
+    links = os.environ.get("MELODEE_BLE_LINKS", "1" if os.environ.get("MELODEE_BLE") == "0" else "2")
+    if links not in ("1", "2"):
+        raise SystemExit("MELODEE_BLE_LINKS: 1 or 2")
+    if links == "2":
+        if os.environ.get("MELODEE_BLE") == "0":
+            raise SystemExit("MELODEE_BLE_LINKS=2 needs Bluetooth (MELODEE_BLE=1)")
+        flags.append("-DBLE_LINKS=2")
+    # Melodee's release key here (tools/mod_build.py signs the shipped synths with it): the image takes no other key for
+    # Melodee's synths. Without it they are signed with the test key, and the image takes that one (mod_sign_keys.h)
+    sys.path.insert(0, str(SRC / "firmware" / "modules" / "sdk"))
+    import mod_sign
+    rk = os.environ.get("MELODEE_SIGN_KEY", os.path.expanduser("~/.config/melodee/module-sign.key"))
+    if rk and os.path.isfile(rk) and mod_sign.public(mod_sign.load(rk)).hex().startswith("45442ab682efbecc"):
+        flags.append("-DMELODEE_RELEASE_KEY=1")
     flags.append(f'-DMELODEE_ID="{PRODUCT}"')
     if VERSION:
         flags.append(f'-DMELODEE_VERSION="{VERSION}"')
+    global APP_DEFS                 # (the engine-source synth modules build with the image's options: tools/mod_build.py)
+    APP_DEFS = [f for f in flags if f.startswith("-D") and not f.startswith(("-DMELODEE_ID=", "-DMELODEE_VERSION="))]
     # melodee.c goes to LLVM IR without the optimizer, the main-loop functions (UI, stores, editor) are
     # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. MELODEE_SIZE=0: -Os everywhere
     size = os.environ.get("MELODEE_SIZE") != "0"
@@ -292,11 +341,16 @@ def build_app(stub):
         raise SystemExit("resident audio requires MELODEE_SIZE=1 for the verified IR placement pass")
     elf = OUT / "melodee.elf"
     extra_ld = ["--defsym=AUDIO_RESIDENT=1"] if os.environ.get("MELODEE_RAM_AUDIO") == "1" else []
-    tc("pi32v2/bin/ld", "--gc-sections", *extra_ld, "-T", FW / "app.ld", OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o",
+    # The SRAM sections' load addresses after .text are their raw sizes; the packager stores them compressed from
+    # _rt_load and enforces the body limit itself. On the SMK-37 the raw extent reaches the resource region's (.mres)
+    # load addresses, an overlap no flash ever holds: no section check (.text stays bounded by the XIP region).
+    extra_ld.append("--no-check-sections")
+    tc("pi32v2/bin/ld", "--gc-sections", *extra_ld, "-T", linker_script(), OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o",
        OUT / "melodee.o", "-o", elf)
-    for sect in ("text.bin", "data.bin", "ramtext.bin", "dsptext.bin", "dsptables.bin", "audiotext.bin"):
+    for sect in ("text.bin", "data.bin", "ramtext.bin", "dsptext.bin", "dsptables.bin", "audiotext.bin", "smkx.bin"):
         (OUT / sect).unlink(missing_ok=True)
-    *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
+    tail = [("common/bin/objcopy", "-O", "binary", "-j", ".smkx", elf, OUT / "smkx.bin")] if BOARD == "smk37" else []
+    *_, syms, dis, rt = tc_all(*tail, ("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".data", elf, OUT / "data.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".dsp_text", elf, OUT / "dsptext.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".dsp_tables", elf, OUT / "dsptables.bin"),
@@ -312,6 +366,8 @@ def build_app(stub):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)
     img = bytearray((OUT / "text.bin").read_bytes())
     resources(img, symv)
+    if BOARD == "smk37":
+        app_tail(img, symv)
     loads = (("ramtext.bin", "_rt_load"), ("dsptext.bin", "_dsp_load"), ("dsptables.bin", "_dt_load"),
              ("data.bin", "_data_load"), ("audiotext.bin", "_audio_load"))
     assert tuple(sect for sect, _ in loads) == boot_audio.SECTIONS
@@ -342,7 +398,39 @@ def build_app(stub):
     return bytes(img), syms, dis, rt
 
 
-RES_BASE, RES_SECTORS, RES_HEAD = 0xCB000, 21, 32     # firmware/src/res.c
+# the resource region per board (hal/fm1_flash_map.h FL_RES, FL_RES_RESERVE): base, sectors, the window every build
+# keeps (written into the header: the update loader writes and blanks only inside it, the store takes the rest)
+BOARD_RES = {"fm1": (0xCB000, 21, 9), "smk37": (0x9F000, 16, 9)}   # (hal/fm1_flash_map.h FL_RES_RESERVE)
+RES_BASE, RES_SECTORS, RES_RESERVE, RES_HEAD = 0xCB000, 21, 9, 32    # firmware/src/res.c (set per board in main)
+
+
+# the SMK-37's app area tail (firmware/src/smkx.c): flash 0x93000 (the FM-1's PRCT end) up to the SMK's (0x9D000)
+TAIL_LO, TAIL_HI, TAIL_WANT = fm1pkg_make.TAIL_LO, fm1pkg_make.BOARDS["smk37"][0], fm1pkg_make.TAIL_WANT
+
+
+def linker_script():
+    """firmware/app.ld, with the RES memory region at this board's resource region (the FM-1: the file itself); the
+    SMK-37's also places .smkx (MELODEE_SMKX) in the app area tail, XIP 0x0208F000.. (the FM-1 has no such section).
+    The SRAM images' nominal load addresses run over it as over .mres (no section check, build_app): the body that
+    holds them packed ends below the marker's sector (check: BODY_MAX), the tail starts two sectors above it"""
+    if BOARD == "fm1":
+        return FW / "app.ld"
+    origin, length = 0x02000000 + RES_BASE + RES_HEAD - 0x4000, RES_SECTORS * 4096 - RES_HEAD
+    ld, n = re.subn(r"RES    \(r\)   : ORIGIN = 0x[0-9A-Fa-f]+, LENGTH = 0x[0-9A-Fa-f]+",
+                    f"RES    (r)   : ORIGIN = {origin:#010x}, LENGTH = {length:#x}", (FW / "app.ld").read_text())
+    if n != 1:
+        raise SystemExit("app.ld: the RES region line was not found")
+    tail = 0x02000000 + TAIL_LO - 0x4000
+    ld, n1 = re.subn(r"(\n    RES    \(r\)   : [^\n]*\n(?:[^\n]*\*/\n)?)",
+                     rf"\1    SMKX   (r)   : ORIGIN = {tail:#010x}, LENGTH = {TAIL_HI - TAIL_LO:#x}"
+                     "   /* flash 0x93000..0x9CFFF: the SMK-37's app area tail (build.py) */\n", ld)
+    ld, n2 = re.subn(r"(\n    \.mres : [^\n]*\n)",
+                     r"\1    .smkx : { _smkx_start = .; *(.smkx*) . = ALIGN(4); _smkx_end = .; } > SMKX\n", ld)
+    if n1 != 1 or n2 != 1:
+        raise SystemExit("app.ld: the RES region or the .mres section line was not found")
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "app.ld").write_text(ld)
+    return OUT / "app.ld"
 
 
 def resources(img, symv):
@@ -354,18 +442,33 @@ def resources(img, symv):
     if img[at:at + 4] != struct.pack("<I", 0x544E5752):
         raise SystemExit("res_want: no RWNT marker in the image")
     img[at + 4:at + 12] = struct.pack("<II", len(payload), crc)
-    head = struct.pack("<7I", 0x3153524D, len(payload), crc, 0, 0, 0, 0)
+    head = struct.pack("<7I", 0x3153524D, len(payload), crc, RES_RESERVE, 0, 0, 0)
     region = head + struct.pack("<I", zlib.crc32(head)) + payload
-    if len(region) > RES_SECTORS * 4096:
-        raise SystemExit(f"resources: {len(region)} B over the {RES_SECTORS * 4096} B region")
+    if len(region) > RES_RESERVE * 4096:
+        raise SystemExit(f"resources: {len(region)} B over the {RES_RESERVE * 4096} B the build keeps (FL_RES_RESERVE)")
     # the SPL and the update loader act on a sector whose last 256 bytes are an update record (ota.c UPDATA_PARM)
     for s in range(0, len(region), 4096):
         tail = region[s + 0xF00:s + 0xF08]
         if len(tail) == 8 and tail[2:8] == struct.pack("<3H", 0x5A0D, 0x5A01, 0x5441):
             raise SystemExit(f"resources: sector {RES_BASE + s:#x}'s tail reads as an update record")
     (OUT / "melodee-res.bin").write_bytes(region)
-    print(f"resources: {len(payload)} B at {RES_BASE + RES_HEAD:#x} ({-(-len(region) // 4096)} of {RES_SECTORS} sectors), "
+    print(f"resources: {len(payload)} B at {RES_BASE + RES_HEAD:#x} ({-(-len(region) // 4096)} of {RES_RESERVE} sectors), "
           f"crc {crc:08x} -> build/melodee-res.bin")
+
+
+def app_tail(img, symv):
+    """the SMK-37's app area tail (smkx.c): .smkx as linked = build/melodee-tail.bin, which the package carries at
+    flash 0x93000; its length and CRC-32 patched into smkx_want"""
+    tail = (OUT / "smkx.bin").read_bytes() if (OUT / "smkx.bin").exists() else b""
+    if len(tail) > TAIL_HI - TAIL_LO:
+        raise SystemExit(f"app tail: {len(tail)} B over the {TAIL_HI - TAIL_LO} B from {TAIL_LO:#x}")
+    at = symv("smkx_want") - APP_XIP
+    if img[at:at + 4] != struct.pack("<I", TAIL_WANT):
+        raise SystemExit("smkx_want: no SXWT marker in the image")
+    img[at + 4:at + 12] = struct.pack("<II", len(tail), zlib.crc32(tail))
+    (OUT / "melodee-tail.bin").write_bytes(tail)
+    print(f"app tail: {len(tail)} B at {TAIL_LO:#x} ({TAIL_HI - TAIL_LO - len(tail)} B free to {TAIL_HI:#x}), "
+          f"crc {zlib.crc32(tail):08x} -> build/melodee-tail.bin")
 
 
 def check(img, syms, dis, rt):
@@ -553,17 +656,38 @@ def mmio_check():
 
 
 def main():
-    global PRODUCT, VERSION
+    global PRODUCT, VERSION, BOARD, MODEL, RES_BASE, RES_SECTORS, RES_RESERVE
     ap = argparse.ArgumentParser()
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--nightly", action="store_true", help="development package from the current Git commit")
     mode.add_argument("--release", metavar="X.Y[.Z]", help="release build: identity FM-1_9XY[Z], version string vX.Y[.Z]")
+    ap.add_argument("--board", choices=sorted(BOARD_DEFS), default=None,
+                    help="target board: fm1 (default) or smk37 (default: $BOARD, else fm1)")
+    ap.add_argument("--model", choices=sorted(fm1pkg_make.MODELS), default=None,
+                    help="smk37: the model name, pro (default), elite or mke (default: $MODEL, else pro)")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     ap.add_argument("--cpu-manifest", type=Path, help="Write source/package identity for CPU experiments")
     ap.add_argument("--no-core1-fallback", action="store_true",
                     help="Diagnostic: halt for watchdog reset on CPU1 failure instead of rendering on one core")
     a = ap.parse_args()
     apply_performance_defaults()
+    BOARD = (a.board or os.environ.get("BOARD") or "fm1").lower().replace("-", "")
+    if BOARD not in BOARD_DEFS:
+        raise SystemExit(f"BOARD={BOARD}: use fm1 or smk37")
+    MODEL = (a.model or (os.environ.get("MODEL") if BOARD == "smk37" else None) or "pro").lower()
+    if MODEL not in fm1pkg_make.MODELS or (MODEL != "pro" and BOARD != "smk37"):
+        raise SystemExit(f"MODEL={MODEL}: pro, elite or mke, with BOARD=smk37")
+    fm1pkg_make.set_board(BOARD)
+    RES_BASE, RES_SECTORS, RES_RESERVE = BOARD_RES[BOARD]
+    stem = BOARD_STEM[BOARD]
+    model = fm1pkg_make.MODELS[MODEL] if BOARD == "smk37" else "FM-1"
+    if BOARD == "smk37":            # the model's name: identity, loader, update record, the stub's record
+        PRODUCT = model + PRODUCT[PRODUCT.index("_"):]
+        if MODEL != "pro":
+            BOARD_DEFS[BOARD] = [*BOARD_DEFS[BOARD], f'-DSMK_MODEL="{model}"']
+            BOARD_LOCK[BOARD] = f"stub_smk37-{MODEL}.lock"
+            stem += "-" + MODEL
+    name = f"{stem}.fwsc"
     if a.no_core1_fallback:
         os.environ["MELODEE_CORE1_FALLBACK"] = "0"
     if os.environ.get("MELODEE_CORE1_FALLBACK", "1") not in ("0", "1"):
@@ -577,21 +701,20 @@ def main():
             cpu_flags[flag] = int(os.environ[flag])
         cpu_sources = {str(p.relative_to(SRC)): hashlib.sha256(p.read_bytes()).hexdigest()
                        for p in sorted(FW.rglob('*')) if p.is_file()}
-    name = "melodee.fwsc"
     if os.environ.get("MELODEE_DUAL_CORE", "1") != "1":
         ap.error("Single-core firmware is retired; MELODEE_DUAL_CORE must be 1")
     os.environ["MELODEE_DUAL_CORE"] = "1"
     if a.release:                   # X one digit, Y one or two (1.0: FM-1_910; 1.0.0: FM-1_91000),
         try:
-            PRODUCT = fm1pkg_make.release_product(a.release)
+            PRODUCT = fm1pkg_make.release_product(a.release, model)
         except ValueError as error:
             raise SystemExit(str(error)) from error
         VERSION = "v" + a.release.lower()      # e.g. v1.0, v1.1-rc1
-        name = f"melodee-{a.release}.fwsc"
+        name = f"{stem}-{a.release}.fwsc"
     if a.nightly:
         revision = subprocess.check_output(["git", "rev-parse", "--short=7", "HEAD"], cwd=SRC, text=True).strip()
         VERSION = "next-" + revision
-        name = f"melodee-nightly.fwsc"
+        name = f"{stem}-nightly.fwsc"
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
@@ -614,34 +737,58 @@ def main():
         print("  FAIL ", e)
     if errors:
         raise SystemExit("build: checks failed")
-    pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT,
+    tail = (OUT / "melodee-tail.bin").read_bytes() if BOARD == "smk37" else b""
+    pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY, tail=tail), ota, PRODUCT,
                           (OUT / "melodee-res.bin").read_bytes())
     (OUT / name).write_bytes(pkg)
     (OUT / "ATTRIBUTION.txt").unlink(missing_ok=True)
     print(f"app      {OUT / 'melodee.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
-    print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
+    print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
+    # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py);
+    # (ABI 3; the engine-source ones, SID DRUM CZ-1 FM6 and the Prophet, with the image's options: per board)
+    # Only the rows firmware/modules/shipped.h flags SHIP_F_MODS go into melodee-mods.bin, matched by the ID in each
+    # file's IDNT chunk; the others are built all the same (build/modules), installed on their own from the hub.
+    rows = re.findall(r"X\((0x[0-9A-Fa-f]+)ULL,\s*\"[^\"]*\",[^)]*?,\s*([A-Z_| 0-9u]+)\)",
+                      (FW / "modules" / "shipped.h").read_text())
+    default = {int(uid, 16) for uid, flags in rows if "SHIP_F_MODS" in flags}
+    if not default:
+        raise SystemExit("build.py: no SHIP_F_MODS row read from firmware/modules/shipped.h")
+    shipped = []
+    for src in sorted((FW / "modules").glob("*/*.c")):
+        if src.parent.name != "sdk" and src.stem == src.parent.name:
+            subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src, *APP_DEFS], check=True)
+            mmod = OUT / "modules" / (src.stem + ".mmod")
+            if 'mod_engine.h"' in src.read_text() and mod_file_id(mmod.read_bytes()) in default:
+                shipped.append(mmod)            # (the engines the image left to modules, in the default install)
+    # the engines the image left to modules, as the installers write them after it (web/fm1mods.js): one file, the
+    # .mmod files one after another (build/melodee-mods.bin; web/make_site.py publishes it as <package>-mods.bin)
+    mods = b"".join(p.read_bytes() for p in shipped)
+    (OUT / "melodee-mods.bin").write_bytes(mods)
+    print(f"modules  {OUT / 'melodee-mods.bin'}  {len(mods)} B: " + ", ".join(p.stem for p in shipped))
     if a.cpu_manifest:
         if any(hashlib.sha256((SRC / p).read_bytes()).hexdigest() != digest for p, digest in cpu_sources.items()):
             raise SystemExit("Firmware source changed during CPU experiment build; rebuild before measuring")
         cpu_flags["MELODEE_DUAL_CORE"] = 1
         cpu_flags["MELODEE_CORE1_FALLBACK"] = int(os.environ.get("MELODEE_CORE1_FALLBACK", "1"))
         a.cpu_manifest.write_text(json.dumps(dict(package=str((OUT / name).resolve()),
-            package_sha256=hashlib.sha256(pkg).hexdigest(), editor_identity=("MELODEE " + (VERSION or "v1.6.1"))[:24],
+            package_sha256=hashlib.sha256(pkg).hexdigest(), editor_identity=("MELODEE " + (VERSION or "v2.0.0-beta.1"))[:24],
             source_revision=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SRC, text=True).strip(),
             source_status=subprocess.check_output(["git", "status", "--short"], cwd=SRC, text=True).splitlines(),
             firmware_sha256=cpu_sources, flags=cpu_flags,
             build_options={k:v for k,v in os.environ.items() if k.startswith(("MELODEE_", "P5_"))},
             cflags=CFLAGS), indent=2)+'\n')
     if a.release:                   # what a release carries: the package, the app and every licence they need
-        rel = OUT / f"release-{a.release}"
+        rel = OUT / (f"release-{a.release}" if BOARD == "fm1" else f"release-{stem}-{a.release}")   # (one per model)
         shutil.rmtree(rel, ignore_errors=True)
         (rel / "LICENSES").mkdir(parents=True)
-        app = f"melodee-{a.release}-app.bin"
+        app = f"{stem}-{a.release}-app.bin"
+        modsname = f"{stem}-{a.release}-mods.bin"     # (the synth modules this build needs: <package>-mods.bin)
         (rel / name).write_bytes(pkg)
         (rel / app).write_bytes(img)
+        (rel / modsname).write_bytes(mods)
         (rel / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n"
-                                                for n, b in ((name, pkg), (app, bytes(img)))))
+                                                for n, b in ((name, pkg), (app, bytes(img)), (modsname, mods))))
         for f in sorted((SRC / "LICENSES").glob("*.txt")):
             shutil.copy(f, rel / "LICENSES" / f.name)
         for doc in ("LICENSE", "LICENSING.md"):

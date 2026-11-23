@@ -6,17 +6,20 @@
 #include <assert.h>
 #include "../firmware/src/tuning.h"
 #define __attribute__(x)
-#define NENGINES 20u
-#define USER_GENERAL 16u
-#define USER_NATIVE_P5 20u
-#define ENGI_PROPHET 19u
-static int p5_favorite_has(uint32_t slot,int factory){(void)slot;(void)factory;return 0;}
-static int p5_favorite_set(uint32_t slot,int on,int factory){(void)slot;(void)on;(void)factory;return 0;}
+#define NENGINES 30u                                 /* (core.h: handles; the kinds past them) */
+#define USER_GENERAL 0x40u
+#define USER_NATIVE_FM 0x41u
+#define USER_NATIVE_CZ 0x42u
+#define USER_NATIVE_P5 0x43u
+#define ENGI_PROPHET 2u
+#define ENGI_FM6 3u
+#define ENGI_CZ 4u
 #define UP_SLOTS 64u
-#define USER_NATIVE_FM 17u
-#define USER_NATIVE_CZ 18u
-#define ENGI_FM6 12u
-#define ENGI_CZ 15u
+/* (eng_map.c: the synths' IDs by handle, for the stars) */
+static struct { uint64_t uid; char name[16]; } eng_map[NENGINES] = {[ENGI_FM6] = {0x918284C33909E71AULL, "FM6"}};
+static uint64_t mod_le64(const uint8_t *b) { uint64_t v = 0; for (uint32_t i = 8; i--;) v = v << 8 | b[i]; return v; }
+static void mod_put64(uint8_t *b, uint64_t v) { for (uint32_t i = 0; i < 8u; i++) b[i] = (uint8_t)(v >> (8u * i)); }
+static uint32_t eng_npresets(uint32_t e) { return e == ENGI_FM6 ? 33u : 0u; }
 static void fm1_led_key(unsigned k, int on) { (void)k; (void)on; }
 static int fm1_enc_take(unsigned k) { (void)k; return 0; }
 static void lcd_sync(void) {}
@@ -84,7 +87,8 @@ int main(void)
     original.magic = PERSIST_MAGIC;
     original.palette = 4; original.bold = original.lowcut = original.zoom = 1;   /* an untagged id: the default */
     original.panel = PANEL_DEFAULT; original.panel.enc[0] = 3;
-    original.favorites.factory[8][0] = 1;
+    mod_put64(original.favorites.factory[9], eng_map[ENGI_FM6].uid);   /* (FM6's stars: preset 0) */
+    original.favorites.factory[9][8] = 5; original.favorites.factory[9][9] = 1;
     original.favorites.user = 1u << 31; original.favorites.filter = 1;
     p = original;
     assert(settings_import(&p, sizeof p) == 1); settings_init();
@@ -100,7 +104,8 @@ int main(void)
         p = original; assert(settings_import(&p, sizeof p) == 1); settings_init();
     }
 #ifdef MELODEE_FAVORITES
-    assert(favorite_has(8, 0) && favorite_has(USER_GENERAL, 31) && favorites.filter);
+    assert(favorite_has(ENGI_FM6, 0) && !favorite_has(ENGI_FM6, 1) && !favorite_has(ENGI_CZ, 0) && favorite_has(USER_GENERAL, 31) && favorites.filter);
+    assert(favorite_set(ENGI_FM6, 32, 1) && favorite_has(ENGI_FM6, 32) && !favorite_set(ENGI_FM6, 40, 1));
 #endif
     favorite_set(USER_NATIVE_FM,63,1);favorite_set(USER_NATIVE_CZ,63,1);favorite_set(USER_GENERAL,63,1);
     settings_export(&p);memset(&favorites,0,sizeof favorites);favorites_user_hi=0;settings_import(&p,sizeof p);
@@ -122,7 +127,7 @@ int main(void)
     settings.lowcut = 0;
     settings_export(&p);
     assert(!p.lowcut && p.bold == 1 && p.favorites.user == (1u << 31));   /* bold: kept as saved */
-    assert(p.favorites.factory[8][0] == 1 && p.favorites.filter == 1);
+    assert(p.favorites.factory[9][9] == 1 && p.favorites.filter == 1);   /* (FM6's star kept) */
     assert(p.panel.enc[0] == 3); /* saving one feature preserves the other */
     {   /* A4 shares PER5's last spare word; old and malformed records use 440 Hz. */
         persist_t q = original;
@@ -195,5 +200,5 @@ int main(void)
     }
     assert(settings_import(&p, 3) == 0 && settings_import(&p, -1) == 0);
     assert(settings_import(&p, sizeof p - 1) == 0);
-    puts("Settings: PER5 only, palette ids, calibration, HOLD, AUTOSAVE, ext and independent feature preservation passed.");
+    puts("Settings: PER6 only, palette ids, calibration, HOLD, AUTOSAVE, ext and independent feature preservation passed.");
 }

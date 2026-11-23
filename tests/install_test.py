@@ -7,7 +7,8 @@ The fake device is the one in web/test_web.mjs: identity on the handshake,
 then "device asks, host answers" reads of the logical image. Run from the repo root:
   python3 tests/install_test.py
 Also checks logical_image/product_of against web/fm1pkg.js (needs node and
-build/melodee.fwsc, skipped otherwise)."""
+build/melodee.fwsc, skipped otherwise), the SMK-37 identities (exactly the model), and the 20 / 36 block
+deinterleave against the stock SMK-37 Pro packages (a directory named by SMK_STOCK_DIR, skipped when unset)."""
 import io
 import queue
 import shutil
@@ -22,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import fm1_install as I  # noqa: E402
 
-I.DELAY.update(open=0, start=0.01, reply=0, loader=0.01, reboot=0.01, retry=0.02, poll=0.05, hs=0.1,
+I.DELAY.update(open=0, start=0.01, reply=0, loader=0.01, reboot=0.01, retry=0.02, poll=0.05, hs=0.1, hs_full=0.05,
                idle_check=0.4, idle_write=0.4, wait_loader=2, wait_reboot=2)
 failed = 0
 
@@ -64,15 +65,27 @@ class FakeLink:
         self.closed = True
 
 
+def ident_frame(text, flash=0):
+    """a handshake answer as the firmware sends it (00 59 11, 27 bytes, checksum): the text, zeros and, from
+    fm1-base firmware, the flash's JEDEC ID in bytes 24..26"""
+    body = text.encode("latin-1").ljust(24, b"\0")[:24] + flash.to_bytes(3, "big")
+    return b"\xF0" + I.pack7(bytes([0, 0x59, 0x11, len(body), 0, 0]) + body + bytes([~sum(body) & 0xFF])) + b"\xF7"
+
+
 class FakeFM1:
-    """a MIDI backend with one FM-1 on it"""
+    """a MIDI backend with one FM-1 on it. base: it runs firmware built on fm1-base (felucca-bsp chip/ota.c): HS_QUERY
+    gets the name, '_' and three digits, HS_FULL the whole identity (not from the loader), both with the flash's
+    JEDEC ID (flash=0: classic Melodee from 1.7.0, the same two answers without it); otherwise HS_FULL goes unanswered
+    (classic Melodee before 1.7.0, M-VAVE's firmware). base_after: what runs after the
+    write (default: the same)"""
 
     def __init__(self, image, identity="FM-1_015", name="FM-1", unplug_after=None, after_write="FM-1_900",
-                 stall_after=None, bad_addr=None, loader=I.MELODEE_LOADER):
+                 stall_after=None, bad_addr=None, loader=I.MELODEE_LOADER, base=False, base_after=None, flash=0x856014):
         self.image, self.unplug_after, self.after_write = image, unplug_after, after_write
         self.loader = loader        # the loader step 1 starts (the package's own)
         self.stall_after, self.bad_addr = stall_after, bad_addr
-        self.served = self.bad = self.upgrades = 0
+        self.base, self.base_after, self.flash = base, base_after, flash
+        self.served = self.bad = self.upgrades = self.full_asked = 0
         self.sent, self.links, self.gen, self.lock = [], [], 0, threading.Lock()
         self.boot(identity, name)
 
@@ -99,10 +112,22 @@ class FakeFM1:
             if link.gen == self.gen and not link.closed:
                 link.q.put(bytes(pkt))
 
+    def answer(self, full):
+        t, ota = self.identity, self.identity.startswith("ota-")
+        if not self.base:
+            return ident_frame(t)
+        i = t.find("_")
+        if not full and not ota and 0 <= i and i + 4 < len(t):
+            t = t[:i + 4]               # "FM-1_9001613" -> "FM-1_900"; "FM-1_900" stays
+        return ident_frame(t, self.flash)
+
     def rx(self, d):
         if d == I.HS_QUERY:
-            t = self.identity.encode()
-            self.tx(b"\xF0" + I.pack7(bytes([0, 0x59, 0x11, 0, 0, 0]) + t + bytes(28 - len(t))) + b"\xF7")
+            self.tx(self.answer(False))
+        elif d == I.HS_FULL:
+            self.full_asked += 1
+            if self.base and not self.identity.startswith("ota-"):
+                self.tx(self.answer(True))
         elif d == I.UPGRADE:
             self.upgrades += 1
             first = self.bad_addr if self.bad_addr is not None else 0
@@ -127,9 +152,14 @@ class FakeFM1:
             if addr == I.FINISH_CHECK:
                 threading.Timer(0.05, self.boot, (self.loader, "Melodee Update")).start()
             elif addr == I.FINISH_WRITE:
-                threading.Timer(0.05, self.boot, (self.after_write, "Melodee")).start()
+                threading.Timer(0.05, self.restart).start()
             else:
                 self.next()
+
+    def restart(self):
+        if self.base_after is not None:
+            self.base = self.base_after
+        self.boot(self.after_write, "Melodee")
 
     def next(self):
         if not self.queue:
@@ -142,11 +172,30 @@ class FakeFM1:
 
 # ----------------------------------------------------------------- helpers ---
 
-def package(product="FM-1_900", marker=True, size=0x2000):
-    raw = bytearray((i * 7) & 0xFF for i in range(size + I.BLOCKS))
-    for i in range(I.BLOCKS):
-        raw[i * I.BLK + I.KEEP] = (ord(product[i]) + i + 1) & 0xFF if i < len(product) else 0x7D
-    raw[0x1800:0x1800 + 16] = I.LOADER_MARK if marker else bytes(16)
+def package(product="FM-1_900", marker=True, size=0x2000, damage=False, blocks=20, seed=7):
+    """a package with a valid header and file list (one file: 0x400 to the end), as fm1pkg_make writes"""
+    img = bytearray((i * seed) & 0xFF for i in range(size))
+    img[0x1800:0x1800 + 16] = I.LOADER_MARK if marker else bytes(16)
+    data = bytes(img[0x400:])
+    e = bytearray(0x50)
+    e[0:16] = (0).to_bytes(2, "little") + (0).to_bytes(2, "little") + I._crc16(data).to_bytes(2, "little") + bytes(2) + \
+        (0x400).to_bytes(4, "little") + len(data).to_bytes(4, "little")
+    e[0x40:0x49] = b"flash.bin"
+    lst = I._dec(bytes(e))
+    hdr = bytearray(0x40)
+    hdr[4:8] = size.to_bytes(4, "little")
+    hdr[8:10] = (1).to_bytes(2, "little")
+    hdr[2:4] = I._crc16(lst).to_bytes(2, "little")
+    hdr[0:2] = I._crc16(bytes(hdr[2:0x40])).to_bytes(2, "little")
+    img[0:0x40] = I._dec(bytes(hdr))
+    img[0x40:0x90] = lst
+    if damage:
+        img[0x1000] ^= 1
+    raw = bytearray()
+    for i in range(blocks):
+        m = (ord(product[i]) + i + 1) & 0xFF if i < len(product) else 0x7D
+        raw += img[i * I.KEEP:(i + 1) * I.KEEP] + bytes([m])
+    raw += img[blocks * I.KEEP:]
     return bytes(raw)
 
 
@@ -284,6 +333,173 @@ def loaders():
        "step 1 starts the official loader -> exit 6, nothing sent to it")
 
 
+def base():
+    """firmware built on fm1-base (tools/build_base.py): the flash's JEDEC ID after the identity's zeros, the plain
+    handshake's name and three digits, the whole identity on HS_FULL; classic Melodee and stock never answer HS_FULL"""
+    reply = bytes.fromhex("f000324558010000234d5a447915070c180000000000000000000000000000000000001404462207f7")
+    ident = I.parse_identity(reply)
+    ok(ident and ident.text == "FM-1_900" and ident.model == "FM-1" and ident.version == 900 and not ident.loader
+       and ident.flash == 0x856014, "fm1-base FM-1's reply (2026-11-06): FM-1_900, flash 856014")
+    ok(ident_frame("FM-1_900", 0x856014) == reply, "... the simulated fm1-base FM-1 answers those very bytes")
+    ok(I.unpack7(I.HS_FULL[1:-1]) == bytes([0, 0x59, 0x11, 1, 0, 0, 1, 0xFE]), "HS_FULL: the handshake with the body 01")
+    loader = I.parse_identity(ident_frame("ota-FM-1_900", 0xB36014))
+    ok(loader and loader.loader and loader.text == I.MELODEE_LOADER and loader.flash == 0xB36014,
+       "fm1-base loader's reply with a flash ID: ota-FM-1_900")
+
+    raw = package()
+    image = I.logical_image(raw)
+    p = pkgfile("ok.fwsc", raw)
+    dev = FakeFM1(image, identity="FM-1_900", name="FM-1", base=True)
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and out.startswith("FM-1_900  [running]") and "flash: Puya P25Q80 (856014)" in out and dev.full_asked == 1,
+       "--info on an fm1-base FM-1: FM-1_900 and its flash")
+    dev = FakeFM1(image, identity="FM-1_900", name="Melodee", base=True)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2 and "done: the FM-1 runs FM-1_900" in out,
+       "install over an fm1-base FM-1: loader, back as FM-1_900")
+    dev = FakeFM1(image, identity="FM-1_91041", name="Melodee", base_after=True)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and "done: the FM-1 runs FM-1_900" in out, "classic -> fm1-base package: it comes back")
+    dev = FakeFM1(image, identity="FM-1_900", name="Melodee", base=True, after_write="FM-1_015")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 6 and "reports FM-1_015" in err, "fm1-base: another identity after the restart -> exit 6")
+
+    rel = package("FM-1_9001613")
+    p = pkgfile("rel.fwsc", rel)
+    image = I.logical_image(rel)
+    dev = FakeFM1(image, identity="FM-1_9001613", name="FM-1", base=True)
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and out.startswith("FM-1_9001613  [running]"), "fm1-base release: HS_FULL gives the whole FM-1_9001613")
+    dev = FakeFM1(image, identity="FM-1_900", name="Melodee", base=True, after_write="FM-1_9001613")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and "done: the FM-1 runs FM-1_9001613" in out, "... and the install's check after the restart sees it")
+
+    for identity, name, asked, what in (("FM-1_900", "Melodee", 1, "classic FM-1_900: HS_FULL unanswered, plain kept"),
+                                        ("FM-1_91041", "Melodee", 0, "classic release FM-1_91041: no HS_FULL"),
+                                        ("FM-1_015", "FM-1", 0, "stock FM-1_015: no HS_FULL"),
+                                        ("SMK-37 Pro_016", "SMK-37 Pro Midi", 0, "stock SMK-37 Pro_016: no HS_FULL"),
+                                        (I.MELODEE_LOADER, "Melodee Update", 0, "update loader: no HS_FULL")):
+        dev = FakeFM1(image, identity=identity, name=name)
+        rc, out, err = cli(["--info"], dev)
+        ok(rc == 0 and out.startswith(identity + "  [") and "flash:" not in out and dev.full_asked == asked, what)
+
+    # classic Melodee from 1.7.0 (firmware/src/ota.c ota_handshake): the same two answers as fm1-base, no flash ID
+    rel = package("FM-1_91070")
+    p = pkgfile("rel17.fwsc", rel)
+    image = I.logical_image(rel)
+    dev = FakeFM1(image, identity="FM-1_91070", name="Melodee", base=True, flash=0)
+    ok(I.parse_identity(dev.answer(False)).text == "FM-1_910", "classic 1.7.0: the plain handshake answers FM-1_910")
+    rc, out, err = cli(["--info"], dev)
+    ok(rc == 0 and out.startswith("FM-1_91070  [running]") and "flash:" not in out and dev.full_asked == 1,
+       "classic 1.7.0 --info: HS_FULL gives the whole FM-1_91070, no flash ID")
+    dev = FakeFM1(image, identity="FM-1_91061", name="Melodee", after_write="FM-1_91070", base_after=True, flash=0)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and "done: the FM-1 runs FM-1_91070" in out,
+       "1.6.1 -> 1.7.0: the install's check after the restart sees FM-1_91070 behind FM-1_910")
+    dev = FakeFM1(image, identity="FM-1_91070", name="Melodee", after_write="FM-1_91070", base=True, flash=0)
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and "done: the FM-1 runs FM-1_91070" in out, "1.7.0 over itself")
+
+
+def smk():
+    """SMK-37: identities, port names, the 36-block stock package, the SMK loader, exactly the model"""
+    ok(I.PORT_RE.search("SMK-37 Pro Midi") and I.PORT_RE.search("SMK-37 Pro-MCP 2") and I.PORT_RE.search("FM-1")
+       and not I.PORT_RE.search("IAC Driver Bus 1"), "port names: SMK-37 Pro ports probed, FM-1 too, other gear not")
+    ident = I.parse_identity(b"\xF0" + I.pack7(bytes([0, 0x59, 0x11, 0, 0, 0]) + b"SMK-37 Pro_016" + bytes(14)) + b"\xF7")
+    ok(ident and ident.model == "SMK-37 Pro" and ident.version == 16 and I.model_of("ota-SMK-37 Pro_900") == "SMK-37 Pro",
+       "identity SMK-37 Pro_016 parses (model SMK-37 Pro, the space kept)")
+
+    # synthetic 36-block package (as the stock v016): detected, CRCs agree
+    raw36 = package("SMK-37 Pro_900", blocks=36, size=0x3000)
+    image36, n = I.deinterleave(raw36)
+    ok(n == 36 and I.block_count(raw36) == 36 and len(image36) == len(raw36) - 36 and not I.package_damage(image36)
+       and I.product_of(raw36) == "SMK-37 Pro_900", "36 blocks (synthetic): detected, logical image valid")
+    ok(I.package_damage(I.logical_image(raw36)) is not None, "... a fixed 20-block deinterleave of it fails the CRCs")
+    # a 20-block package whose next data byte is 0x7D by chance: the CRC check falls back to 20
+    for seed in range(1, 256):
+        raw = package("FM-1_900", seed=seed)
+        if raw[20 * I.BLK + I.KEEP] == 0x7D:
+            break
+    image, n = I.deinterleave(raw)
+    ok(I.block_count(raw) > 20 and n == 20 and image == I.logical_image(raw) and not I.package_damage(image),
+       f"20 blocks with a 0x7D data byte at the 21st marker (seed {seed}): falls back to 20")
+
+    # install on a simulated SMK-37 Pro (stock 016 -> Melodee's SMK loader -> SMK-37 Pro_900)
+    p = pkgfile("smk.fwsc", package("SMK-37 Pro_900"))
+    image = I.logical_image(package("SMK-37 Pro_900"))
+    dev = FakeFM1(image, identity="SMK-37 Pro_016", name="SMK-37 Pro Midi", after_write="SMK-37 Pro_900",
+                  loader="ota-SMK-37 Pro_900")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2 and "runs SMK-37 Pro_900" in out,
+       "install on an SMK-37 Pro: running -> loader -> SMK-37 Pro_900")
+    dev = FakeFM1(image, identity="ota-SMK-37 Pro_900", name="Melodee Update", after_write="SMK-37 Pro_900")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 0 and dev.upgrades == 1, "SMK in Melodee's update mode -> finishes the write")
+    dev = FakeFM1(image, identity="ota-SMK-37 Pro_016", name="SMK-37 Pro")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 6 and dev.upgrades == 0 and "nothing was sent" in err and "official package of this model" in err,
+       "Melodee SMK package, the SMK-37 Pro in the official loader -> exit 6, nothing sent")
+    ok(I.package_loader("SMK-37 Elite_900", False, True) == "ota-SMK-37 Elite_900" and
+       I.package_loader("FM-1_906", False, True) == I.MELODEE_LOADER and I.package_loader("FM-1_015", True, False) == I.STOCK_LOADER,
+       "each package's own loader: under its model (the FM-1's as before)")
+    raw36d = package("SMK-37 Pro_900", blocks=36, size=0x3000, damage=True)
+    ok(I.deinterleave(raw36d)[1] == 20, "36 blocks whose files fail the CRCs: not taken, 20 blocks")
+    # exactly the model: the SMK-37 Pro, SMK-37 Elite and MKE-P37 builds each on their own model only
+    ok(all(I.PORT_RE.search(n) for n in ("SMK-37 Elite Midi", "MKE-P37 MIDI", "Starrykey", "Melodee"))
+       and not any(I.PORT_RE.search(n) for n in ("IAC Driver Bus 1", "Launchpad X MIDI", "Digitakt")),
+       "port names: the SMK models and Melodee probed, other gear not")
+    for model, other in (("SMK-37 Elite", "SMK-37 Pro"), ("MKE-P37", "SMK-37 Pro"), ("SMK-37 Pro", "SMK-37 Elite")):
+        pm = pkgfile(model.replace(" ", "") + ".fwsc", package(model + "_900"))
+        im = I.logical_image(package(model + "_900"))
+        dev = FakeFM1(im, identity=other + "_016", name=other + " Midi")
+        rc, out, err = cli([pm, "--yes"], dev)
+        ok(rc == 6 and dev.upgrades == 0, f"{model} package on an {other} -> exit 6, nothing sent")
+        dev = FakeFM1(im, identity="ota-" + other + "_900", name="Melodee Update")
+        rc, out, err = cli([pm, "--yes"], dev)
+        ok(rc == 6 and dev.served == 0, f"... on an {other} in update mode -> exit 6, nothing written")
+        dev = FakeFM1(im, identity=model + "_016", name=model + " Midi", after_write=model + "_900",
+                      loader="ota-" + model + "_900")
+        rc, out, err = cli([pm, "--yes"], dev)
+        ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2, f"{model} package on an {model}: installed")
+    fm1 = pkgfile("fm1.fwsc", package("FM-1_900"))
+    dev = FakeFM1(image, identity="SMK-37 Pro_016", name="SMK-37 Pro Midi")
+    rc, out, err = cli([fm1, "--yes"], dev)
+    ok(rc == 6 and dev.upgrades == 0, "FM-1 package on an SMK-37 Pro -> exit 6 (wrong model), nothing sent")
+    dev = FakeFM1(image, identity="FM-1_015", name="FM-1")
+    rc, out, err = cli([p, "--yes"], dev)
+    ok(rc == 6 and dev.upgrades == 0, "SMK package on an FM-1 -> exit 6, nothing sent")
+
+    # the stock packages (outside this repo; read only)
+    stock = __import__("pathlib").Path(__import__("os").environ.get("SMK_STOCK_DIR") or ROOT / "no-stock-packages")
+    v016 = stock / "SMK-37_Pro_016.fwsc"
+    if not v016.exists():
+        print("stock SMK-37 Pro packages: skipped (SMK_STOCK_DIR not set)")
+    else:
+        raw = v016.read_bytes()
+        image, n = I.deinterleave(raw)
+        ok(n == 36 and I.product_of(raw) == "SMK-37 Pro_016" and len(raw) == 705252 and not I.package_damage(image),
+           "stock SMK-37_Pro_016.fwsc: 36 blocks, identity SMK-37 Pro_016, CRCs ok")
+        ok(I.package_damage(I.logical_image(raw)) is not None, "... a 20-block deinterleave of it is damaged")
+        product, image2, loader = I.load_package(str(v016), False)
+        ok(product == "SMK-37 Pro_016" and image2 == image and loader == "ota-SMK-37 Pro_016",
+           "... load_package accepts it without --force (the official file, by SHA-256), for its official loader")
+        modified = bytearray(raw); modified[-1] ^= 1
+        p16 = pkgfile("smk016_modified.fwsc", bytes(modified))
+        rc, out, err = cli([p16, "--yes"], FakeFM1(image, identity="SMK-37 Pro_016", name="SMK-37 Pro Midi"))
+        ok(rc == 2 and "no Melodee update loader" in err, "... a modified copy without --force is refused (exit 2)")
+        for old in sorted(stock.glob("SMK-37_Pro_01[1-5].fwsc")):
+            raw = old.read_bytes()
+            image, n = I.deinterleave(raw)
+            ok(not I.package_damage(image) and I.product_of(raw) == "SMK-37 Pro_" + old.stem[-3:],
+               f"stock {old.name}: {n} blocks, identity {I.product_of(raw)}, CRCs ok")
+    clean = ROOT / "build/melodee.fwsc"
+    if clean.exists():
+        raw = clean.read_bytes()
+        image, n = I.deinterleave(raw)
+        ok(n == 20 and image == I.logical_image(raw) and not I.package_damage(image) and I.product_of(raw).startswith("FM-1_"),
+           f"FM-1 package {clean.name} still parses: 20 blocks, {I.product_of(raw)}")
+
+
 def against_js():
     clean = ROOT / "build/melodee.fwsc"
     if not shutil.which("node") or not clean.exists():
@@ -330,6 +546,8 @@ wire()
 installs()
 errors()
 loaders()
+base()
+smk()
 against_js()
 official()
 shutil.rmtree(TMP, ignore_errors=True)

@@ -11,11 +11,11 @@ static void reset(void)
     ui_power_on();punch_reset();punch_panel_lock=1;sample=0;
     song.g[G_BPM]=120;song.playing=0;
 }
-static void test_signal(int silence)
+static void test_signal(int silence)                    /* (on the bus punch_process takes: Q15 << MIX_FRAC) */
 {
     for(uint32_t i=0;i<CTL;i++,sample++){
-        l[i]=silence?0:(int32_t)(10000*sin(6.28318530718*347*sample/FS)+4000*sin(6.28318530718*3209*sample/FS));
-        r[i]=silence?0:(int32_t)(8000*sin(6.28318530718*523*sample/FS));
+        l[i]=silence?0:(int32_t)(MIX_ONE*(10000*sin(6.28318530718*347*sample/FS)+4000*sin(6.28318530718*3209*sample/FS)));
+        r[i]=silence?0:(int32_t)(MIX_ONE*8000*sin(6.28318530718*523*sample/FS));
     }
 }
 static void tap_fast(uint32_t b){btn_down(b);frames(20);btn_up(b);frames(20);}
@@ -53,10 +53,10 @@ static void effects(void)
             punch_process(l,r,CTL);
             for(uint32_t i=0;i<CTL;i++){
                 changed+=l[i]!=dryl[i] || r[i]!=dryr[i];energy+=abs(l[i])+abs(r[i]);
-                assert(abs(l[i])<524288 && abs(r[i])<524288);
+                assert(abs(l[i])<524288*MIX_ONE && abs(r[i])<524288*MIX_ONE);
             }
         }
-        assert(changed>1000 && energy>1000 && punch.cur==fx);
+        assert(changed>1000 && energy>1000*MIX_ONE && punch.cur==fx);
         punch.req=-1;
         for(uint32_t b=0;b<4;b++){test_signal(0);punch_process(l,r,CTL);}
         assert(!punch.g && punch.cur==-1);
@@ -108,7 +108,7 @@ static void freeze(void)
             if(b*CTL>7*FS)late+=abs(l[i])+abs(r[i]);
         }
     }
-    assert(early>100000 && late>early/10 && late<early*3);
+    assert(early>100000*MIX_ONE && late>early/10 && late<early*3);
     assert(punch.freeze.type==FX_REVERB);
     puts("Punch FREEZE: SLOOP reverb holds captured audio for eight seconds after input ends");
 }
@@ -142,9 +142,9 @@ static void hot_mix(void)
     for(int32_t fx=0;fx<(int32_t)PUNCH_NFX;fx++){
         punch.req=(int8_t)fx;
         for(uint32_t b=0;b<250;b++){
-            for(uint32_t i=0;i<CTL;i++){l[i]=((i+b)&1u)?2097148:-2097148;r[i]=l[i]/2;}
+            for(uint32_t i=0;i<CTL;i++){l[i]=(((i+b)&1u)?2097148:-2097148)*MIX_ONE;r[i]=l[i]/2;}
             punch_process(l,r,CTL);
-            for(uint32_t i=0;i<CTL;i++)assert(abs(l[i])<2200000 && abs(r[i])<2200000);
+            for(uint32_t i=0;i<CTL;i++)assert(abs(l[i])<2200000*MIX_ONE && abs(r[i])<2200000*MIX_ONE);
         }
     }
     puts("Punch headroom: all effects and transitions accept the maximum four-track master sum");
@@ -156,18 +156,18 @@ static void master(void)
     int32_t out[2*CTL];punch.req=PX_FADE;
     for(uint32_t b=0;b<beat_samples()*3u/CTL;b++){
         test_signal(0);
-        for(uint32_t i=0;i<CTL;i++){mix_l[i]=l[i];mix_r[i]=r[i];fx_left[i]=l[i];fx_right[i]=r[i];}
+        for(uint32_t i=0;i<CTL;i++){mix_l[i]=l[i];mix_r[i]=r[i];fx_left[i]=l[i]>>MIX_FRAC;fx_right[i]=r[i]>>MIX_FRAC;}   /* (the FX: Q15) */
         master_samples(out,CTL);
     }
-    int64_t energy=0;for(uint32_t i=0;i<2*CTL;i++)energy+=abs(out[i]);assert(energy<200);
+    int64_t energy=0;for(uint32_t i=0;i<2*CTL;i++)energy+=abs(out[i]);assert(energy<320*MIX_ONE);   /* (a fade's few-LSB tail, ~-78 dBFS; 200 held only while the master tanh floored every sample by 1) */
     assert(gates());
     punch.req=-1;
     for(uint32_t b=0;b<100;b++){
         test_signal(0);
-        for(uint32_t i=0;i<CTL;i++){mix_l[i]=l[i];mix_r[i]=r[i];fx_left[i]=l[i];fx_right[i]=r[i];}
+        for(uint32_t i=0;i<CTL;i++){mix_l[i]=l[i];mix_r[i]=r[i];fx_left[i]=l[i]>>MIX_FRAC;fx_right[i]=r[i]>>MIX_FRAC;}
         master_samples(out,CTL);
     }
-    energy=0;for(uint32_t i=0;i<2*CTL;i++)energy+=abs(out[i]);assert(energy>200);
+    energy=0;for(uint32_t i=0;i<2*CTL;i++)energy+=abs(out[i]);assert(energy>200*MIX_ONE);
     puts("Punch master: dry mix AND shared returns fade while voices stay held; release restores audio");
 }
 int main(void){controls();effects();loops();transitions();freeze();tempo_memory();hot_mix();master();return 0;}

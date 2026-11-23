@@ -51,11 +51,33 @@ runs Felucca.
 - Install: [web installer](https://keremimo.github.io/melodee/) (Chrome or Edge, USB), or `tools/fm1_install.py` from a terminal
 - Editor: [web editor](https://keremimo.github.io/melodee/webapp/editor/)
 - Build: [BUILDING.md](BUILDING.md)
+- SMK-37 (beta): [SMK37.md](SMK37.md)
 
 Tagged releases from 1.4.4 use the [FM-1 shared build workflow](https://github.com/zvenson/fm1-build)
 to build and attest firmware from the tagged source. See [release verification](BUILDING.md#releases)
 for the process and the command to check a downloaded package. An attestation establishes
 build provenance; hardware validation is a separate check.
+
+## In development since 1.6.1
+
+**[Melodee 2.0.0-beta.1](https://github.com/keremimo/melodee/releases/tag/v2.0.0-beta.1)** is a pre-release of this work ([release notes](docs/RELEASE_2.0.0-beta.1.md)), on the installer's Pre-release channel. Every synth is a module the installer writes beside the firmware, named by its ID; DRUM is split into kit synths and a 16-pad SAMPLER; and the web installer converts a Melodee 1.x FM-1's projects and sounds during the update, since 2.0 does not read 1.x's records.
+
+On the nightly channel, not yet in a stable release. Everything here but the SMK-37 builds themselves is covered by automated tests and has not yet run on hardware, apart from the one read-only recovery run described below.
+
+- **SMK-37 family (beta):** builds for the SMK-37 Pro, SMK-37 Elite and MKE-P37, with pad modes, knob and fader banks, velocity, sustain pedal and TRS MIDI out. See [SMK37.md](SMK37.md).
+- **Free take:** stopped, on an empty pattern, play a phrase and press and hold REC on the next 1. The loop plays from the top, and the tempo follows if nothing else has notes.
+- **MIDI LEARN:** another controller's knobs and buttons now stand for the panel's own on every page, and stay learned after power-off. FORGET LEARNED clears them.
+- **Capture:** holding EDIT takes all of a capture's notes away, with redo, and a capture no longer erases what a step already played.
+- **Bluetooth:** a device the FM-1 once paired with on CONNECT OUT can connect back on VISIBLE.
+- **USB HOST:** MIDI devices are found behind more hubs, and the screen says why none was found.
+- **Tunings apart from scales:** a scale says which notes are used, a tuning what pitch they have, and each is chosen on its own. SCL's list has a Tuning row under Scale: equal, just, historical and maqam tunings, for any 12-tone scale. See [Scale keyboard](#scale-keyboard).
+- **Maqam at QNT OFF:** picking Rast on SCALES brings its tuning, so the chromatic keyboard plays E and B a quarter tone flat while they stay E and B. Bayati, Saba, Husayni and Sikah work the same way; Hijaz is equal. These six are now 12-tone scales, so note names, AUTO and AUTO2 work on them.
+- **Old projects:** a project on one of the 16 entries that moved keeps its stored scale, with the same notes and pitches. The entry stays listed on SCALES only while selected. The one exception is the next item.
+- **Microtonal chords:** fixed chord shapes (MAJ to POW) aim at just ratios instead of equal-tempered intervals, on every microtonal entry, old ones included. So a fixed chord played on an old microtonal project can land on different notes than it did. DIA3, DIA7 and notes already saved stay as they were.
+- **Microtonal note names:** notes read by the semitone they sound nearest and the cents off it, such as E4-14, where they read D3+1. Recordings and projects still store degrees.
+- **Microtonal MIDI OUT:** sends the semitone nearest each pitch instead of a degree address, so an external synth plays the closest twelve-tone notes without sharing the tuning. A receiver set up to share Melodee's degree mapping no longer gets exact degrees.
+- **SMK-37 TRS:** a MIDI Track's notes now end at the jack with no computer attached, and USB or BLE being gone or full no longer holds them back. Turning TRS MIDI OUT OFF ends what the jack sounds instead of leaving it held.
+- **Recovery:** `tools/fm1_recover.py` now accepts the UC25HQ80 flash (JEDEC 0xB36014). yne ran the branch read-only on a unit on [#110](https://github.com/keremimo/melodee/issues/110) (backup verified, 0 application sectors differ). `--write` has not been tried on this chip, and all SPI work goes through the opaque `wl82loader.bin`, so this does not make UBOOT recovery supported on it.
 
 ## What's new in 1.6.1
 
@@ -540,7 +562,7 @@ user presets saved by earlier Melodee versions are not imported, and the user sa
   AUTO2 keeps your played melody on top with stable harmony underneath;
   one finger also plays the scale's triads or sevenths, or fixed chord
   shapes), with voicings; on the keys, MIDI in, recording and the arpeggiator
-- **Arpeggiator** with REPEAT and a beat LED, 70 scales with a white-key mode, glide,
+- **Arpeggiator** with REPEAT and a beat LED, 60 scales and 15 tunings with a white-key mode, glide,
   MONO / LEGATO / UNISON
 - **Modulation matrix:** 4 slots per track, MIDI controllers as sources
 - **Mixer and effects:** track level, pan and synth voice spread, per-track note effects, a three-slot shared audio
@@ -597,9 +619,10 @@ user presets saved by earlier Melodee versions are not imported, and the user sa
   Clock pulses alone do not take over, and if the leader has stopped, PLAY runs on the internal tempo until its next
   Start, Continue or Stop. Changing the clock source clears this transport selection. TRS is an input only, so no clock
   leaves through it
-- **MIDI LEARN and controllers:** the HOME menu's **MIDI LEARN** binds up to 16 CCs to any knob of a track's page or
-  Stage's knobs: start it, turn a knob, send a CC. Bindings are kept only until power-off. **MIDI KNOBS** (GENERAL or
-  MINILAB) operates the eight panel controls from a controller
+- **MIDI LEARN and controllers:** the HOME menu's **MIDI LEARN** gives another controller's knobs and buttons to the
+  panel's own, on every page: touch a control, send a CC (a button also takes a note). They stay learned after
+  power-off and travel in backups; **FORGET LEARNED** clears them. **MIDI KNOBS** (GENERAL or MINILAB) operates the
+  eight panel controls from a controller
 - **Bluetooth MIDI:** one BLE-MIDI connection, in and out, alongside USB and TRS. Hold HOME and choose **BLUETOOTH**.
   **Mode** picks how you connect: **CONNECT OUT** scans for BLE controllers and synths from that page; **VISIBLE**
   advertises as Melodee XXXX so a Mac, iPad or phone can connect. The radio's on/off state, the pairing and the last
@@ -665,8 +688,8 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
 - **GLO + SELECT** turns the menu's **GLO SELECT** on any page: the same choices, BPM by default
 - **Held:** GLO and SCL open their quick layers; EDIT undoes, SAVE saves the project, HOME opens the menu, SEQ the PATTERNS grid with
   the song under it, REC captures (below).
-- **Undo:** hold EDIT to undo a finished recording take (**UNDO RECORDING**; there is one such undo), else the last
-  sound or pattern load or Capture; hold it again to go further back (up to 8 levels); while EDIT is held, OCT- undoes and OCT+ redoes. On the step pages EDIT's undo
+- **Undo:** hold EDIT to undo a finished recording take or Capture (**UNDO RECORDING**; there is one such undo), else the
+  last sound or pattern load; hold it again to go further back (up to 8 levels); while EDIT is held, OCT- undoes and OCT+ redoes. On the step pages EDIT's undo
   covers the step edits first
   When editing synth steps, SCL and EDIT use the editing controls below instead.
 - **FX** opens the track's rack: three note-effect slots and a Shared row; SELECT visits the racks and occupied slots.
@@ -710,6 +733,11 @@ Thanks to [@aroum](https://github.com/aroum) for the detailed feedback in
   switching tracks clears it. Hold **REC** to write the selected track's last bars into its pattern, with their timing, velocities and lengths: an
   empty pattern takes 1, 2 or 4 bars (as many as your notes span) and its LEN follows; a pattern with notes takes its
   last LEN steps over what it holds. Hold EDIT to undo
+- **Free take:** stopped, on an empty pattern, with nothing armed and CLK on INT, play a phrase and press and hold **REC**
+  on the next 1. The press ends the loop; when the hold registers, the pattern plays it from the top. If every other
+  track's current pattern is empty and you played more than one note, the tempo follows: the BPM nearest the current
+  one that makes the loop 16, 32 or 64 steps. Otherwise the tempo stays and the loop is as short as your notes allow.
+  A rest over 8 seconds starts again. Hold EDIT to undo; the tempo stays as set
 
 ### Browsing sounds
 
@@ -1093,8 +1121,8 @@ as the synthesized 808 kit.
 
 ## Scale keyboard
 
-**Scale, ROOT (key note), and scale/key-map QNT apply to the whole project.** Changing them on any track
-updates every track. Drum tracks keep their drum note mappings and bypass scale quantization.
+**Scale, tuning, ROOT (key note), and scale/key-map QNT apply to the whole project.** Changing them on any track
+updates every track. Drum tracks keep their drum note mappings and bypass scale quantization and tuning.
 TRN remains per track. Projects and templates save the shared settings; older projects with different
 roots per track use the selected track's root when loaded.
 
@@ -1104,11 +1132,12 @@ The first **SCL** page is **SCALES**, a browser with full names and note counts.
 The **PRESETS** knob also browses scales on this page. Family changes select the first
 matching scale when the current one is outside the family; an empty favorites list keeps
 that scale and shows how to add it. Device favorites survive power-off.
-Press **SCL** again for the settings page: ROOT, FAV, QNT and TRN. **KNOB 2** there
-saves or removes the active scale as a favorite without changing its tuning.
+Press **SCL** again for the settings list: Root, Scale, Tuning, Quantize, Transpose and Favourite
+(MPC degree with QNT MPC). **KNOB 2** picks a row and **KNOB 1** changes it; on Favourite that saves
+or removes the active scale without leaving it. **OCT+** opens Scale's browser or Tuning's list.
 Press **SCL** once more for CHORD.
 The web editor adds family filtering, search by full or short name, and favorites saved
-in that browser. Its filters keep the active tuning until a scale is selected;
+in that browser. Its filters keep the active scale until another is selected;
 browser favorites and device favorites are separate.
 
 On the **SCL** page, set **QNT** to WHITE to play the selected scale using only the
@@ -1124,17 +1153,40 @@ minor blues (BLUES), whole tone (WHOLE), half-whole diminished (DIMHW), and
 whole-half diminished (DIMWH). Scales with other than seven notes continue across
 the white keys without repeating notes; their roots need not fall on every C key.
 
-The list also includes **54 microtonal selections**, for **70 scales in total**:
-selected equal divisions from 5 to 53, just intonation, harmonic scales, Partch, historical temperaments,
-maqam models, shruti, gamelan examples and Bohlen–Pierce. See the [complete catalogue and
-playing notes](assets/scales/README.md). QNT WHITE, ALL and MPC play consecutive degrees;
+The list also includes the six maqam scales (Rast, Bayati, Hijaz, Saba, Husayni and Sikah), 12-tone
+scales like those above, and **38 microtonal selections**, for **60 scales** to choose from:
+selected equal divisions from 5 to 53, just intonation, harmonic scales, Partch, shruti, gamelan
+examples and Bohlen–Pierce. See the [complete catalogue and playing notes](assets/scales/README.md).
+
+**Tunings.** A scale says which notes are used; a tuning says what pitch they have. The **Tuning** row
+in SCL's list sets it for the project, on any 12-tone scale and in every QNT mode: Equal, Just chromatic,
+7-limit just, Pythagorean, Meantone 1/4, 1/3 and 1/6, Werckmeister 3, Kirnberger 3, Vallotti, Young 2,
+Rast, Bayati and Saba (these two share one tuning), Husayni and Sikah. The temperaments stay fixed on C, so each key keeps
+its colour; the just and maqam tunings are built on ROOT + TRN. A key keeps its note, so note names, chords,
+AUTO and recordings work as on any 12-tone scale, and the octave under the rows shows each key off its line
+by its cents, flat lower. MIDI OUT sends those notes without the tuning. Picking a maqam scale also sets its
+tuning, so Rast at QNT OFF plays E and B a quarter tone flat on the chromatic keyboard; leaving it puts Equal
+back, unless you changed the tuning meanwhile. A microtonal selection tunes itself: the row hides and its value
+waits. Projects and templates save the tuning; loading a sound leaves it alone. The web editor has the same control.
+
+**Microtonal selections.** QNT WHITE, ALL and MPC play consecutive degrees;
 SNAP rounds the keyboard and incoming MIDI pitches to the nearest scale degree. QNT OFF bypasses
 microtonal tuning. ROOT and TRN shift pitch in ordinary semitones. The octave buttons,
 ARP OCT and chord voicings move by the scale's repeat period (3:1 for Bohlen–Pierce).
-Microtonal notes display as degrees, such as D1 and D3+1, and retain separate identities
-when several degrees fit inside one semitone. Recordings and projects retain these degrees.
-MIDI OUT carries degree addresses; an external synth needs the same tuning and mapping to
-reproduce these pitches.
+Microtonal notes read by the semitone they sound nearest and the cents off it, such as E4-14
+(on a page's cell, -14c over E4), and retain separate identities when several degrees fit inside
+one semitone. Recordings and projects store these degrees, not the names. DIA3 and DIA7 stack every other
+degree; fixed chord shapes aim at just ratios (a major triad at 4:5:6), each note the scale's nearest degree.
+MIDI OUT sends the semitone nearest each pitch, ROOT and TRN included, so an external synth plays
+the closest twelve-tone notes without sharing the tuning. A release goes to the note its press
+sent. Degrees that share a semitone strike it again, and it ends with the last of them.
+
+**Older projects.** The ten twelve-note tunings and the six quarter-tone maqams used to be scale entries.
+A project on one keeps its stored scale and plays the same notes and pitches as before: it reads as a scale
+(Werck3, Rast-D), has no Tuning row, and QNT OFF still bypasses it. SCALES lists the entry only while it is
+selected; once you leave it, pick a scale and a tuning instead. One thing does change: fixed chord shapes on
+these entries, as on every microtonal selection, now aim at just ratios, so a fixed chord played on such a
+project can land on different notes. DIA3, DIA7 and notes already saved stay as they were.
 
 QNT **ALL** plays the next scale note on every key, black keys included. QNT **MPC** routes MPC Sample
 Bank **E → track 1**, **F → track 2**, **G → track 3** and **H → track 4**, on any MIDI channel,
@@ -1193,7 +1245,8 @@ The CHORD page shows the chosen chord name. When no supported named chord fits a
 a three-note in-scale collection labelled `set`, rather than adding forbidden pitches.
 This is automatic accompaniment, not recognition of a song's intended chord chart. Mono modes play
 only the mapped root and kits retain their own mapping. AUTO plays the input note alone for
-microtonal selections; use the existing DIA3/DIA7 or fixed modes there. Existing chord mode IDs,
+microtonal selections; use the existing DIA3/DIA7 or fixed modes there. A tuned 12-tone scale and the
+six maqam scales are not microtonal selections: AUTO and AUTO2 work on them. Existing chord mode IDs,
 saved songs and manually recorded notes retain their meaning. Recordings store the chosen notes,
 so playback reproduces the take rather than reharmonizing it.
 

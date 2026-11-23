@@ -8,7 +8,7 @@ static int seq_erase_active(const track_t *t)
     uint32_t request = seq_erase_request, buttons = fm1_in.buttons;
     return (request >> 31) && rec_on(t) && song.seq_mode && song.sel == trk_index(t) &&
            (request & 0xFFFFu) == recording_owner(t) && seq_erase_generation == t->pattern_gen &&
-           (buttons & seq_erase_button) && !(buttons & ~((request >> 16) & 0x3FFFu));
+           (buttons & seq_erase_button) && !(buttons & ~SEQ_ERASE_ALLOW(request));
 }
 static void seq_erase_clear(step_t *st)
 {
@@ -35,8 +35,8 @@ static void seq_erase_rebuild(track_t *t, uint64_t touched)
         found |= (uint64_t)1u << view;
         step_t *st = &t->step[view];
         if (r->vel > st->vel) st->vel = r->vel;
-        uint32_t lane = drum_lane(recorded_note(r));
-        if (drum_track(t) && recorded_note(r) == DRUM_LANE_NOTE[lane]) {
+        uint32_t lane = pads_lane(t, recorded_note(r));
+        if (pads_on(t) && recorded_note(r) == lane_note(t, lane)) {
             st->hit |= (uint8_t)(1u << lane);
             if (r->vel > 110u) st->acc |= (uint8_t)(1u << lane);
         } else {

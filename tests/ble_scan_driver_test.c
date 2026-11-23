@@ -21,8 +21,8 @@
 #ifndef BLE_CENTRAL
 #define BLE_CENTRAL 1
 #endif
-#include "../firmware/src/ble/ble_stack.c"
-#include "../firmware/src/ble/ble_diag.c"
+#include "ble/ble_stack.c"
+#include "ble/ble_diag.c"
 #if BLE_DIAG
 #define DG(x) (x)
 #else
@@ -58,7 +58,7 @@ static void eng_rx(uint8_t hdr, uint8_t a0, const uint8_t *ad, uint8_t n, uint16
                    int cntl)
 {
     uint32_t b = CB->rxtog & 1u;
-    uint8_t *p = bb.rx[b].buf + HW_SWHDR;
+    uint8_t *p = bb.lk[BLE_LINK_CENTRAL].rx[b].buf + HW_SWHDR;
     p[0] = a0, p[1] = 0x11, p[2] = 0x22, p[3] = 0x33, p[4] = 0x44, p[5] = 0xC5;
     memcpy(p + 6, ad, n);
     CB->rxahdr[b] = hdr;
@@ -115,7 +115,7 @@ static void t_scan(void)
         int ok = 1;
         for (k = 0; k < 2u; k++)
             ok &= CB->txahdr[k] == 0x13u && CB->txdhdr[k] == 0x0C00u &&
-                  !memcmp(bb.tx[k].buf + HW_SWHDR, OWN, 6) && !memcmp(bb.tx[k].buf + HW_SWHDR + 6, zero6, 6);
+                  !memcmp(bb.lk[BLE_LINK_CENTRAL].tx[k].buf + HW_SWHDR, OWN, 6) && !memcmp(bb.lk[BLE_LINK_CENTRAL].tx[k].buf + HW_SWHDR + 6, zero6, 6);
         check("scan: both TX buffers a SCAN_REQ: TXAHDR 3 | TxAdd 1 << 4, length 12, ScanA ours, AdvA zeros (C1: the "
               "engine's)", ok);
     }

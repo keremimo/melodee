@@ -205,7 +205,8 @@ give the same content, so a BLE build needs no V15 file (BUILDING.md). A capture
 
 ## 9. The central role: connecting out (`BLE_CENTRAL`)
 
-From the Core spec, the BLE-MIDI spec and HW §21. One link at a time, time-sliced with advertising.
+From the Core spec, the BLE-MIDI spec and HW §21. One link at a time, time-sliced with advertising (Melodee: with `BLE_LINKS 2`
+a peripheral link and a central link side by side, [BLE-MULTILINK.md](BLE-MULTILINK.md)).
 
 ### 9.1 Link layer and driver (`ble_ll_central.c`, `ble_hw_wl82_central.c`)
 - **Scanning:** state 1, interval 64 / window 60 slots (40 / 37.5 ms), active (the engine sends SCAN_REQ with the Core's backoff) for

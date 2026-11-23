@@ -72,7 +72,7 @@ static void song_punch_draw(void)
     uint32_t sig = e->fx + style;
     int32_t play = -1;
     if (chain.running && chain.row == song_punch.row)
-        play = chain_patterns[chain.row][0] >= NPAT ?
+        play = chain_conductor(chain.row) >= NPAT ?
             (int32_t)(chain.rest_pos / seq_div_samples(2u)) : (int32_t)trk[0].seq_idx;
     char b[32];
     draw_head();

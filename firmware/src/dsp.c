@@ -5,6 +5,11 @@
  * Voice output convention: add sample * amp to out[], where a full-scale
  * oscillator at amp = 1.0 (Q15 32767) contributes VOICE_FS. */
 #define VOICE_FS 24000           /* per-voice level: one voice peaks near -6 dBFS before the master */
+/* The bus from the track level on (mix.c) to the DAC and USB: Q15 full scale with MIX_FRAC bits below it (32767 <<
+ * MIX_FRAC = full scale), so the 24-bit outputs carry the level, pan, FX return, limiter and MASTER math's own low
+ * bits instead of a 16-bit cut. The engines, the FX and the punch effects stay Q15 */
+#define MIX_FRAC 8
+#define MIX_ONE (1 << MIX_FRAC)
 
 /* n bytes packed by tools/gen_tables.py lz_pack (reSID's waveforms, CZ-1's factory tones): c < 0x80: c + 1 bytes
  * follow; c >= 0x80: (c & 0x7F) + 3 bytes copied from d + 1 back, d in the next two bytes. A copy may reach back
@@ -38,6 +43,12 @@ static inline int32_t mulq16(int32_t a, uint32_t k)
  * One table a block (mix_block), each cut reading it at its own offset; a zero sample stays exact 0 */
 #define DITH_N 32u
 #define DITH_SEED 0x2545F491u
+#if MOD_SIDE                              /* (a synth module: the firmware's dither of the block, the host table) */
+static const int16_t *mod_imp_dith;
+static const float *mod_imp_dith_f;
+#define dith mod_imp_dith
+#define dith_f mod_imp_dith_f
+#else
 static int16_t dith[DITH_N];                     /* -32767..32767 in 1/32768 of the cut's LSB */
 static float dith_f[2u * DITH_N];                /* the same in LSBs, twice: a voice's row (dith_row) never wraps */
 static uint32_t dith_r = DITH_SEED;
@@ -51,6 +62,7 @@ static __attribute__((noinline)) void dither_block(void)
     }
     dith_r = r;
 }
+#endif
 /* (p + 1/2 LSB + dither) >> sh, 1 <= sh <= 15; p = 0 stays 0 */
 static inline __attribute__((always_inline)) int32_t dith_cut(int32_t p, uint32_t sh, uint32_t k)
 {

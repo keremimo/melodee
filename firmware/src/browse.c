@@ -19,27 +19,29 @@ static const uint8_t CAT_ORDER[] = {CAT_BASS, CAT_LEAD, CAT_PAD, CAT_KEYS, CAT_O
                                     CAT_PLUCK, CAT_BELL, CAT_DRUM, CAT_FX, CAT_OTHER};   /* LIST's order */
 
 /* the factory presets' categories, a letter per preset in its engine's order; tests/ui_test.c checks each string's
- * length against its engine's preset count. An engine without one: cat_of_engine */
+ * length against its engine's preset count. An engine without one: cat_of_engine. A synth module's are its file's
+ * (module_presets.h: tools/mod_build.py writes these there; the device's image has none of them) */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
 static const char *const PRESET_CAT[NENGINES] = {
     [ENGI_MIDI] = "O",                                  /* non-audio destination: OTHER */
-#if MELODEE_LEGACY_EXTRAS                                /* (retired: PHASE VOICE NOISE) */
-    [2] = "RGSLEU",                                     /* PHASE: BRASS ORGAN STRING RESO BELL WIRE */
-    [5] = "PLBF",                                       /* VOICE: CHOIR AAH, VOX LEAD, WOW BASS, WHISPER */
-    [11] = "FFFF",                                      /* NOISE */
+#if MELODEE_HOST_ENGINES
+    HOST_CATS                                           /* (host builds: the built-in engines' makers' categories) */
 #endif
-    [3] = "OLBBBBBBLLLLLLLLPSPPGGKKUUERFFFF",          /* SID */
-    [10] = "DDDDDD",                                    /* DRUM: the kits (808, 909, SID, SID DIGI, CR78, FM) */
-    [12] = "KEBRPEGUKRBEEKGSPLUEWEBEO",                 /* FM6, INIT VOICE */
-    [ENGI_CZ] = "ORRRSSSSSUUUBBBBURWSWWWWUKKKKKKKKGGGGGPPPEEEEEDEESSULLLLFDDDEFFFF",   /* INIT TONE, Casio's 64 */
-    [ENGI_PROPHET] =                                    /* INIT, Sequential's 200 */
-        "OOOKBPROOOGKLPWPOLOUUBEOEGFPOOBOEOOODDDEOOGKSGBPEPPLBROOOOPOKPKOFOSOOEPRODFLFOOEOULWOPBOLOPKFORGLPOBULROOSKOO"
-        "PSBUEFDEEEWEUOUEOOOOSERPUOBOOOBOFLGUGRLOOOBUFOOFEUFORSKKWKLGLGGKROGBGLKSLOOFOFOFLUUEFFEOFEPF",
 };
-static uint32_t cat_of_engine(uint32_t e) { return e == ENGI_DRUM ? CAT_DRUM : e == 11u ? CAT_FX : CAT_OTHER; }
+#pragma clang diagnostic pop
+static uint32_t cat_of_engine(uint32_t e) { return pads_eng(e) ? CAT_DRUM : CAT_OTHER; }   /* (a synth with
+                                                  * pads: its kits) */
 static uint32_t preset_cat(uint32_t e, uint32_t k)           /* factory preset k of engine e */
 {
     const char *s = e < NENGINES ? PRESET_CAT[e] : 0;
     uint32_t c;
+#if MELODEE_MODULES
+    if ((c = mod_pst_of(e % NENGINES)) < NMOD) {            /* (a synth module's: its file's, its code loaded or not) */
+        c = mod_pst_cat(c, k);
+        return c >= 1u && c < CAT_N ? c : cat_of_engine(e);
+    }
+#endif
     if (!s || !s[0] || k >= ENGINES[e]->npresets)
         return cat_of_engine(e);
     for (c = 1; c < CAT_N && CAT_LETTER[c] != s[k]; c++)
@@ -104,13 +106,15 @@ static int name_same(const char *a, const char *b)           /* the first 12 cha
 }
 static uint32_t cat_guess(uint32_t e, const char *nm)
 {
-    const engine_t *en = ENGINES[e % NENGINES];
-    uint32_t k;
-    if (e == ENGI_DRUM || e == 11u)
+    uint32_t k, np = eng_npresets(e % NENGINES);
+    char pn[MOD_PST_NAME + 1u];
+    if (pads_eng(e % NENGINES))
         return cat_of_engine(e);
-    for (k = 0; k < en->npresets; k++)
-        if (name_same(eng_preset(en, k)->name, nm))
+    for (k = 0; k < np; k++) {                               /* (a synth module's names: its file's, read in order) */
+        eng_preset_name(e, k, pn, sizeof pn);
+        if (name_same(pn, nm))
             return preset_cat(e % NENGINES, k);
+    }
     for (k = 0; k < NELEM(CAT_WORDS); k++)
         if (name_has_word(nm, CAT_WORDS[k].w))
             return CAT_WORDS[k].cat;
@@ -131,7 +135,7 @@ static int src_slot(uint32_t src)
 }
 static uint32_t src_engine(uint32_t src, uint32_t k)       /* the engine that plays entry src, k */
 {
-    return src == USER_NATIVE_P5 ? ENGI_PROPHET : src == USER_NATIVE_FM ? ENGI_FM6 : src == USER_NATIVE_CZ ? ENGI_CZ :
+    return src == USER_NATIVE_P5 || src == USER_NATIVE_FM || src == USER_NATIVE_CZ ? user_native_eng(src) % NENGINES :
            src == USER_GENERAL ? up_engine(k) % NENGINES : src % NENGINES;
 }
 static uint32_t entry_cat(uint32_t src, uint32_t k)
@@ -164,15 +168,15 @@ static int entry_ok(uint32_t src, uint32_t k)              /* (a RECENT entry ma
         return up_used(k);
     if (src_slot(src))
         return native_used(src_engine(src, k), k);
-    return src < NENGINES && eng_ok(src) && k < ENGINES[src]->npresets;
+    return src < NENGINES && eng_ok(src) && k < eng_npresets(src);
 }
 
 /* the entry track t plays (USER_GENERAL, UP_SLOTS: none of the list's) */
 static void cur_entry_of(const track_t *t, uint32_t *src, uint32_t *k)
 {
-    uint32_t u = user_of(t), e = t->eng_req % NENGINES, np = ENGINES[e]->npresets;
+    uint32_t u = user_of(t), e = t->eng_req % NENGINES, np = eng_npresets(e);
     if (u < USER_NONE && t->user_native) {
-        *src = e == ENGI_PROPHET ? USER_NATIVE_P5 : e == ENGI_FM6 ? USER_NATIVE_FM : USER_NATIVE_CZ;
+        *src = user_native_ns(e);                    /* (the user presets of its store format) */
         *k = u;
     } else if (u < UP_SLOTS) {
         *src = USER_GENERAL;
@@ -265,9 +269,9 @@ static int list_keep(uint32_t m, uint32_t src, uint32_t k)
 /* one pass over the list LIST keeps: *total its length; the place of entry (ws, wk) (total: not in it); entry n in
  * *as, *ak (USER_GENERAL, UP_SLOTS past the end). The segments: 2 per engine in ENGINE_ORDER (factory, native), then
  * the user presets */
-#define LSEG_USER (2u * NENG_SHOWN)
+#define LSEG_USER (2u * (uint32_t)eng_nshown)
 static uint32_t lseg_src(uint32_t seg){return seg&1u?USER_GENERAL:eng_vis(seg/2u);}
-static uint32_t lseg_len(uint32_t seg){return seg&1u?UP_SLOTS:ENGINES[eng_vis(seg/2u)]->npresets;}
+static uint32_t lseg_len(uint32_t seg){return seg&1u?UP_SLOTS:eng_npresets(eng_vis(seg/2u));}
 static uint32_t list_scan(uint32_t m, uint32_t ws, uint32_t wk, uint32_t n, uint32_t *as, uint32_t *ak,
                           uint32_t *total)
 {

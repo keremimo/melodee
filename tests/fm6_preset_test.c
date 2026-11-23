@@ -4,9 +4,10 @@
 #define PERSISTENCE_TEST_NO_MAIN
 #include "persistence_test.c"
 
+static int native_fm_import32(uint32_t first,const uint8_t *raw,uint32_t *saved){return shared_import(ENGI_FM6,first,32u,raw,FM6_PACKED,saved);}
 static void reboot_presets(void)
 {
-    up_cache_reset();native_cache_reset();cz_bank_boot();up_boot();
+    up_cache_reset();up_boot();
 }
 static int bank_import(void)
 {
@@ -24,7 +25,7 @@ static int bank_import(void)
     for(uint32_t k=0;k<32;k++)bank[k*128u+118]='X';
     fail_after=2;bad+=check("failure in first bank object leaves all old patches in RAM",native_fm_import32(36,bank,&saved)==2 && !saved && !memcmp(native_raw(ENGI_FM6,36),old,128));fail_after=-1;reboot_presets();
     bad+=check("interrupted first object retains prior bank after reboot",!memcmp(native_raw(ENGI_FM6,36),old,128) && !memcmp(native_raw(ENGI_FM6,67),old+31*128u,128));
-    fail_after=16;bad+=check("failure in second object reports exactly 18 committed patches",native_fm_import32(36,bank,&saved)==2 && saved==18 && !memcmp(native_raw(ENGI_FM6,36),bank,128) && !memcmp(native_raw(ENGI_FM6,54),old+18*128u,128));fail_after=-1;reboot_presets();
+    fail_after=17;bad+=check("failure in second object reports exactly 18 committed patches",native_fm_import32(36,bank,&saved)==2 && saved==18 && !memcmp(native_raw(ENGI_FM6,36),bank,128) && !memcmp(native_raw(ENGI_FM6,54),old+18*128u,128));fail_after=-1;reboot_presets();
     bad+=check("partial import RAM matches the durable objects after reboot",!memcmp(native_raw(ENGI_FM6,53),bank+17*128u,128) && !memcmp(native_raw(ENGI_FM6,54),old+18*128u,128));
     bad+=check("resending completes the interrupted bank",!native_fm_import32(36,bank,&saved) && saved==32);reboot_presets();
     bad+=check("resend commits the final voice",!memcmp(native_raw(ENGI_FM6,67),bank+31*128u,128));

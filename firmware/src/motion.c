@@ -6,6 +6,9 @@
  * The parts' only: an event's place is its track << 6 | its step, a byte (a MIDI-only track has none).
  * p[] is the sounding value; motion_base_value() is the patch's saved value. */
 static motion_store_t motion;
+#ifndef MELODEE_MOTION_TAP
+#define MELODEE_MOTION_TAP(k, id, v) ((void)0)          /* (web/core/melodee_core.c: every value motion sets) */
+#endif
 /* Main-loop sound design temporarily auditions the base tone. The saved motion
  * enable bits and event pool remain unchanged. */
 static uint8_t motion_design_pause;
@@ -17,13 +20,15 @@ static void step_clear(step_t *st);
 static int16_t motion_base[NPART][P_COUNT];             /* (the parts': only they have motion) */
 static uint32_t motion_active[NPART][(P_COUNT + 31u) / 32u];
 static uint8_t motion_base_valid, motion_full;
-/* The engines' own patches move too (what the Prophet's, the CZ-1's and FM6's pages edit, Stage's knobs on the Prophet
- * and the CZ-1): an event's param MO_NATIVE + i names byte i of the track's engine's patch (the Prophet's program, the
- * CZ-1's tone, FM6's voice), its value the engine it was recorded on << 8 | the byte (MO_TAG_*: another engine there
- * leaves it). While motion moves a byte, the patch's own is in motion_nbase (its bit in motion_nactive) */
+/* The synths' own patches move too (what their pages and Stage's knobs edit): an event's param MO_NATIVE + i names slot i
+ * of the track's synth's patch, its value the synth's tag << 8 | the value: a synth's MO_TAG_MOD + its handle - ENG_H_SHIP0
+ * (a store's handle, made this device's when the store is read like its sounds': eng_map.c eng_in; another synth on
+ * the part leaves it). A tag
+ * stays below 32: tag << 8 | 255 is the editor's signed 14-bit value (MOTION). A slot is byte i of the patch, or (a schema without MOD_SCH_F_MBYTES) its parameter i through the module
+ * (pget / pput); the schema's motion map says which slots are recorded and their ranges. While motion moves a slot, the
+ * patch's own value is in motion_nbase (its bit in motion_nactive) */
 #define MO_NATIVE 112u
 #define MO_NATIVE_N 144u                                /* (FM6: the voice up to TRANSPOSE; the CZ-1: 128; P5: 88) */
-enum { MO_TAG_NONE, MO_TAG_P5, MO_TAG_CZ, MO_TAG_FM6 };
 /* Native payloads carry an engine tag >= 256; ordinary parameters fit -64..127.
  * Keep the historical native wire IDs even as ordinary engine IDs reach 112. */
 static int motion_native_event(uint32_t id,int32_t value){return id>=MO_NATIVE && value>=256;}
@@ -50,80 +55,98 @@ static void motion_unguard(uint32_t f)
     (void)f;
 #endif
 }
-static uint32_t motion_native_tag(const track_t *t)
+#define MO_TAG_MOD 4u                                   /* a synth's tag: MO_TAG_MOD + its handle - ENG_H_SHIP0 */
+_Static_assert(MO_TAG_MOD + NENGINES - ENG_H_SHIP0 <= 32u, "motion: a native tag << 8 | 255 fits a signed 14-bit value");
+static int patch_motion(uint32_t e) { SCH_INFO(); return sch_info[e % NENGINES].mmap != MOD_SCH_NONE; }
+static uint32_t motion_tag_of(uint32_t e)               /* engine e's tag, 0: e has no Motion */
 {
-    uint32_t e = t->eng_req;
-    return e == ENGI_PROPHET ? MO_TAG_P5 : e == ENGI_CZ ? MO_TAG_CZ : e == ENGI_FM6 ? MO_TAG_FM6 : MO_TAG_NONE;
+    return e >= ENG_H_SHIP0 && e < NENGINES && patch_motion(e) ? MO_TAG_MOD + e - ENG_H_SHIP0 : 0u;
 }
-/* byte i of the patch of the track's engine, 0: none motion moves (the Prophet's voice assignment, the CZ-1's line
- * select, FM6's TRANSPOSE and name: what changes the voices themselves) */
-static uint8_t *motion_native_at(track_t *t, uint32_t i)
+static uint32_t motion_tag_engine(uint32_t tag)         /* the engine of a tag, NENGINES: none */
 {
-    uint32_t k = trk_index(t);
-    switch (motion_native_tag(t)) {
-#if MELODEE_PROPHET
-    case MO_TAG_P5:
-        return i < NELEM(P5_PANEL) && P5_PANEL[i].label && i != P5_UNISON && i != P5_UNISON_COUNT &&
-               i != P5_UNISON_DETUNE && i != P5_RETRIGGER ? &p5_patch_of(t)->raw[i] : 0;
-#endif
-    case MO_TAG_CZ:
-        return i && i < 128u ? &cz_patch_of(k)->raw[i] : 0;
-    case MO_TAG_FM6:
-        return i < FP_TRNSP ? &fm6_patch_of(k)[i] : 0;
-    default:
-        return 0;
+    return tag >= MO_TAG_MOD && tag - MO_TAG_MOD < NENGINES - ENG_H_SHIP0 ? ENG_H_SHIP0 + tag - MO_TAG_MOD : NENGINES;
+}
+static uint32_t motion_native_tag(const track_t *t) { return motion_tag_of(eng_idx(t->eng_req)); }
+/* a stored event's tag as this device has it (the store's entries read: eng_in), 0 none */
+static uint32_t motion_tag_in(uint32_t tag)
+{
+    uint32_t e = motion_tag_engine(tag);
+    e = e < NENGINES ? eng_in(e) : ENG_H_NONE;
+    return e >= ENG_H_SHIP0 && e < NENGINES ? MO_TAG_MOD + e - ENG_H_SHIP0 : 0u;
+}
+/* a store's events just read (its entries' remap on: eng_in): their synths' tags as this device numbers them (a synth
+ * it cannot place: the event kept as it was, played by no part) */
+static void motion_tags_in(motion_store_t *m)
+{
+    for (uint32_t i = 0; i < m->count && i < MOTION_MAX; i++) {
+        motion_event_t *e = &m->event[i];
+        uint32_t tag;
+        if (motion_native_event(e->param, e->value) && (tag = motion_tag_in((uint32_t)e->value >> 8)) != 0)
+            e->value = (int16_t)(tag << 8 | ((uint32_t)e->value & 255u));
     }
 }
-static int motion_native_ok(uint32_t id, int32_t value)    /* (a store's event: in range, an engine's) */
+/* slot i's value now and a new one (the patch's byte, or the module's parameter; audio or main loop) */
+static int32_t motion_slot_get(track_t *t, uint32_t i)
 {
-    uint32_t i = id - MO_NATIVE, tag = (uint32_t)value >> 8, v = (uint32_t)value & 255u;
-    if (id < MO_NATIVE || id >= MO_NATIVE + MO_NATIVE_N || value < 0) return 0;
-    if (tag == MO_TAG_P5) {
-#if MELODEE_PROPHET
-        return i < NELEM(P5_PANEL) && P5_PANEL[i].label && i != P5_UNISON && i != P5_UNISON_COUNT &&
-            i != P5_UNISON_DETUNE && i != P5_RETRIGGER && v >= (uint32_t)P5_PANEL[i].min && v <= (uint32_t)P5_PANEL[i].max;
-#else
-        return 0;
-#endif
+    uint32_t e = eng_idx(t->eng_req), k = trk_index(t);
+    const engine_t *g = ENGINES[e];
+    if (sch_info[e].mbytes)
+        return i < patch_len(e) ? patch_of(k)[i] : 0;
+    return g->pget && !mod_idle(e) ? g->pget(t, patch_of(k), i) : 0;
+}
+static void motion_slot_put(track_t *t, uint32_t i, uint32_t v)
+{
+    uint32_t e = eng_idx(t->eng_req), k = trk_index(t);
+    const engine_t *g = ENGINES[e];
+    if (sch_info[e].mbytes) {
+        if (i < patch_len(e))
+            patch_of(k)[i] = (uint8_t)v;
+    } else if (g->pput && !mod_idle(e)) {
+        (void)g->pput(t, patch_of(k), i, (int32_t)v);
     }
-    if (tag == MO_TAG_CZ) {
-        if (!i || i >= 128u) return 0;
-        if (i == 1u) return v <= 1u;
-        if (i == 2u) return !(v & 3u);
-        if (i == 3u) return v <= 47u;
-        if (i == 16u || i == 73u) return (v & 15u) <= 9u && (v >> 4) <= 14u;
-        if (i == 18u || i == 75u) return v <= 9u;
-        for (uint32_t l = 0; l < 2u; l++)
-            for (uint32_t e = 0; e < 3u; e++)
-                if (i == CZ_ENV_END[l][e]) return !(v & 8u);
-        return 1;
-    }
-    if (tag == MO_TAG_FM6) {
-        static const uint8_t opmax[FP_OP] = {99,99,99,99,99,99,99,99,99,99,99,3,3,7,3,7,99,1,31,99,14};
-        static const uint8_t globalmax[FP_TRNSP - FP_PR1] = {99,99,99,99,99,99,99,99,31,7,1,99,99,99,99,1,5,7};
-        return i < FP_TRNSP && v <= (i < FP_PR1 ? opmax[i % FP_OP] : globalmax[i - FP_PR1]);
-    }
-    return 0;
+}
+/* the slots recorded on t's synth: bit i of mk (the part's RAM summary: audio or main loop) */
+static void motion_slots(const track_t *t, uint8_t *mk)
+{
+    uint32_t e = eng_idx(t->eng_req);
+    const typeof(sch_part[0]) *c = sch_part_of(t);
+    memset(mk, 0, MO_NATIVE_N / 8u);
+    if (c && patch_motion(e) && (sch_info[e].mbytes || (ENGINES[e]->pget && !mod_idle(e))))
+        memcpy(mk, c->mmask, MO_NATIVE_N / 8u);
+}
+#define MO_SLOT(mk, i) (((mk)[(i) / 8u] >> ((i) % 8u)) & 1u)
+/* an event (in range, a synth's): stored, as a store has it (its numbers not this device's yet: their range only) */
+static int motion_native_ok(uint32_t id, int32_t value, int stored)
+{
+    uint32_t i = id - MO_NATIVE, tag = (uint32_t)value >> 8, v = (uint32_t)value & 255u, e;
+    uint8_t mx[MO_NATIVE_N], mz[MO_NATIVE_N];
+    if (id < MO_NATIVE || id >= MO_NATIVE + MO_NATIVE_N || value < 0 || !tag) return 0;
+    if (tag < MO_TAG_MOD || tag >= MO_TAG_MOD + NENGINES - ENG_H_SHIP0) return 0;
+    if (stored) return 1;
+    e = motion_tag_engine(tag);
+    if (e == NENGINES || patch_motion_map(e, mx, mz, MO_NATIVE_N))
+        return 1;                                /* (a synth this device has no schema of: kept as it is) */
+    return mx[i] && v <= mx[i] && !(v & mz[i]);
 }
 static int motion_nbit(uint32_t k, uint32_t i) { return k < NPART && (motion_nactive[k][i / 32u] >> (i % 32u)) & 1u; }
-/* byte i to v (motion playing): the patch's own kept first */
+/* slot i to v (motion playing, the audio): the patch's own kept first */
 static void motion_native_set(track_t *t, uint32_t i, uint32_t v)
 {
     uint32_t k = trk_index(t);
-    uint8_t *b = motion_native_at(t, i);
-    if (!b || k >= NPART)
+    int32_t now;
+    if (k >= NPART)
         return;
+    now = motion_slot_get(t, i);
     if (!motion_nbit(k, i)) {
-        motion_nbase[k][i] = *b;
+        motion_nbase[k][i] = (uint8_t)now;
         motion_nactive[k][i / 32u] |= 1u << (i % 32u);
     }
-    if (*b != (uint8_t)v) {
-        *b = (uint8_t)v;
-        if (motion_native_tag(t) == MO_TAG_FM6)
-            fm6_pgen[k]++;                              /* (its operators figured again) */
+    if (now != (int32_t)v) {
+        motion_slot_put(t, i, v);
+        patch_note(k, MOD3_PATCH_MOTION, i);            /* (the synth figures it again) */
     }
 }
-static void motion_native_restore(track_t *t)           /* the patch's own bytes back */
+static void motion_native_restore(track_t *t)           /* the patch's own values back */
 {
     uint32_t k = trk_index(t), i, w, any = 0;
     if (k >= NPART)
@@ -133,22 +156,23 @@ static void motion_native_restore(track_t *t)           /* the patch's own bytes
     if (!any)
         return;
     for (i = 0; i < MO_NATIVE_N; i++)
-        if (motion_nbit(k, i)) {
-            uint8_t *b = motion_native_at(t, i);
-            if (b)
-                *b = motion_nbase[k][i];
-        }
+        if (motion_nbit(k, i))
+            motion_slot_put(t, i, motion_nbase[k][i]);
     memset(motion_nactive[k], 0, sizeof motion_nactive[k]);
-    if (motion_native_tag(t) == MO_TAG_FM6)
-        fm6_pgen[k]++;
+    patch_note(k, MOD3_PATCH_MOTION, 0xFFFFu);
 }
-/* Copy the saved patch base over a snapshot of its sounding bytes. */
-static void motion_native_snapshot(const track_t *t, uint8_t *raw, uint32_t tag, uint32_t n)
+/* the patch's own values over a copy of its sounding bytes (raw: MOD3_PATCH_MAX bytes) */
+static void motion_native_snapshot(const track_t *t, uint8_t *raw)
 {
-    uint32_t k = trk_index(t);
-    if (motion_native_tag(t) != tag) return;
-    for (uint32_t i = 0; i < n && i < MO_NATIVE_N; i++)
-        if (motion_nbit(k, i)) raw[i] = motion_nbase[k][i];
+    uint32_t k = trk_index(t), e = eng_idx(t->eng_req);
+    const engine_t *g = ENGINES[e];
+    for (uint32_t i = 0; i < MO_NATIVE_N; i++)
+        if (motion_nbit(k, i)) {
+            if (sch_info[e].mbytes)
+                raw[i] = motion_nbase[k][i];
+            else if (g->pput && !mod_idle(e))
+                (void)g->pput((track_t *)t, raw, i, motion_nbase[k][i]);
+        }
 }
 static int motion_param(uint32_t id)
 {
@@ -164,8 +188,8 @@ static int motion_valid(const motion_store_t *m)
     if (m->rsv[0] > 1u || m->count > MOTION_MAX || (m->on & ~((1u << NPART) - 1u))) return 0;
     for (i = 0; i < m->count; i++) {
         const motion_event_t *e = &m->event[i];
-        if (motion_native_event(e->param,e->value) ? !motion_native_ok(e->param, e->value) :
-            (!motion_param(e->param) && !param_reserved(e->param) && e->param != P_RECQ) || e->value < -64 || e->value > 127) return 0;
+        if (motion_native_event(e->param,e->value) ? !motion_native_ok(e->param, e->value, 1) :
+            (!motion_param(e->param) && !param_reserved(e->param) && e->param != P_TUNING && e->param != P_RECQ) || e->value < -64 || e->value > 127) return 0;
         if (!m->rsv[0]) for (j = 0; j < i; j++)
             if (m->event[j].place == e->place && motion_token(&m->event[j]) == motion_token(e)) return 0;
     }
@@ -200,7 +224,10 @@ static void motion_restore(track_t *t)
         return;
     f = motion_guard();
     for (id = 0; id < P_COUNT; id++)
-        if ((motion_active[k][id / 32u] >> (id % 32u)) & 1u) t->p[id] = motion_base[k][id];
+        if ((motion_active[k][id / 32u] >> (id % 32u)) & 1u) {
+            t->p[id] = motion_base[k][id];
+            MELODEE_MOTION_TAP(k, id, t->p[id]);
+        }
     memset(motion_active[k], 0, sizeof motion_active[k]);
     motion_native_restore(t);
     motion_unguard(f);
@@ -255,13 +282,14 @@ static void motion_clear(track_t *t)
     motion_unguard(f);
 }
 static void motion_reset(track_t *t) { motion_clear(t); }
-static int motion_set_event(track_t *t, uint32_t step, uint32_t id, int16_t value)
+/* an event on track t's pattern bank (motion_set_event: the one playing; the editor's MOTION reaches any) */
+static int motion_set_event_at(track_t *t, uint32_t bank, uint32_t step, uint32_t id, int16_t value)
 {
     uint32_t k = trk_index(t), i, f;
     const param_desc_t *d;
     if (k >= NPART || step >= NSTEP) return 1;
     if (motion_native_event(id,value)) {
-        if (!motion_native_ok(id, value)) return 1;
+        if (!motion_native_ok(id, value, 0)) return 1;
     } else {
         if (!motion_param(id)) return 1;
         d = param_desc_of(eng_idx(t->eng_req), id);
@@ -269,11 +297,11 @@ static int motion_set_event(track_t *t, uint32_t step, uint32_t id, int16_t valu
     }
     f = motion_guard();
     for (i = 0; i < motion.count; i++)
-        if (motion_pattern[i] == t->pattern && motion.event[i].place == (k << 6 | step) && motion.event[i].param == id && motion_native_event(id,motion.event[i].value)==motion_native_event(id,value)) break;
+        if (motion_pattern[i] == bank && motion.event[i].place == (k << 6 | step) && motion.event[i].param == id && motion_native_event(id,motion.event[i].value)==motion_native_event(id,value)) break;
     if (i == MOTION_MAX) { motion_full = 1; motion_unguard(f); return 2; }
     if(rec_on(t)&&(i==motion.count||motion.event[i].value!=value||!motion_enabled(t)))recording_undo_capture(t);
-    if (t->pattern) motion.rsv[0] = 1;
-    motion_pattern[i] = t->pattern;
+    if (bank) motion.rsv[0] = 1;
+    motion_pattern[i] = (uint8_t)bank;
     motion.event[i].place = (uint8_t)(k << 6 | step);
     motion.event[i].param = (uint8_t)id;
     motion.event[i].value = value;
@@ -283,18 +311,20 @@ static int motion_set_event(track_t *t, uint32_t step, uint32_t id, int16_t valu
     motion_unguard(f);
     return 0;
 }
-static void motion_delete_event(track_t *t, uint32_t step, uint32_t id)
+#define motion_set_event(t, step, id, value) motion_set_event_at((t), (t)->pattern, step, id, value)
+static void motion_delete_event_at(track_t *t, uint32_t bank, uint32_t step, uint32_t id)
 {
     uint32_t f = motion_guard(), place = trk_index(t) << 6 | step, i, n = 0;
     motion_restore(t);
     for (i = 0; i < motion.count; i++)
-        if (motion_pattern[i] != t->pattern || motion.event[i].place != place || (id&512u ? motion.event[i].param!=(id&255u) : motion_token(&motion.event[i])!=id)) {
+        if (motion_pattern[i] != bank || motion.event[i].place != place || (id&512u ? motion.event[i].param!=(id&255u) : motion_token(&motion.event[i])!=id)) {
             motion_pattern[n] = motion_pattern[i]; motion.event[n++] = motion.event[i];
         }
     memset(motion.event + n, 0, (MOTION_MAX - n) * sizeof motion.event[0]);
     motion.count = (uint8_t)n;
     motion_unguard(f);
 }
+#define motion_delete_event(t, step, id) motion_delete_event_at((t), (t)->pattern, step, id)
 /* one lane (MOTION's sheet): every event of id on the track's pattern; none left there: the track's motion off */
 static void motion_clear_param(track_t *t, uint32_t id)
 {
@@ -345,21 +375,23 @@ static int motion_capture(track_t *t, uint32_t id, int16_t value)
  * move: their number */
 static void motion_native_peek(track_t *t, uint8_t *old)
 {
-    uint32_t i;
-    for (i = 0; i < MO_NATIVE_N; i++) {
-        const uint8_t *b = motion_native_at(t, i);
-        old[i] = b ? *b : 0;
-    }
+    uint8_t mk[MO_NATIVE_N / 8u];
+    motion_slots(t, mk);
+    for (uint32_t i = 0; i < MO_NATIVE_N; i++)
+        old[i] = (uint8_t)(MO_SLOT(mk, i) ? motion_slot_get(t, i) : 0);
 }
 static uint32_t motion_native_edited(track_t *t, const uint8_t *old)
 {
     uint32_t k = trk_index(t), i, idx = 0, rec = rec_on(t) && t == TSEL, tag = motion_native_tag(t), n = 0;
+    uint8_t mk[MO_NATIVE_N / 8u], now[MO_NATIVE_N];
+    motion_slots(t, mk);
+    for (i = 0; i < MO_NATIVE_N; i++)
+        now[i] = (uint8_t)(MO_SLOT(mk, i) ? motion_slot_get(t, i) : 0);
     if (rec) {
         uint32_t extra = 0;
         idx = motion_rec_step(t);
         for (i = 0; i < MO_NATIVE_N; i++) {
-            const uint8_t *b = motion_native_at(t, i);
-            if (!b || *b == old[i]) continue;
+            if (!MO_SLOT(mk, i) || now[i] == old[i]) continue;
             uint32_t j;
             for (j = 0; j < motion.count; j++)
                 if (motion_pattern[j] == t->pattern && motion.event[j].place == (k << 6 | idx) && motion.event[j].param == MO_NATIVE + i && motion_native_event(motion.event[j].param,motion.event[j].value)) break;
@@ -369,8 +401,7 @@ static uint32_t motion_native_edited(track_t *t, const uint8_t *old)
         if (motion.count + extra > MOTION_MAX) { motion_full = 1; rec = 0; }
     }
     for (i = 0; i < MO_NATIVE_N; i++) {
-        const uint8_t *b = motion_native_at(t, i);
-        if (!b || *b == old[i])
+        if (!MO_SLOT(mk, i) || now[i] == old[i])
             continue;
         n++;
         if (rec) {
@@ -378,9 +409,9 @@ static uint32_t motion_native_edited(track_t *t, const uint8_t *old)
                 motion_nbase[k][i] = old[i];
                 motion_nactive[k][i / 32u] |= 1u << (i % 32u);
             }
-            (void)motion_set_event(t, idx, MO_NATIVE + i, (int16_t)(tag << 8 | *b));
+            (void)motion_set_event(t, idx, MO_NATIVE + i, (int16_t)(tag << 8 | now[i]));
         } else if (motion_nbit(k, i)) {
-            motion_nbase[k][i] = *b;
+            motion_nbase[k][i] = now[i];
         }
     }
     return n;
@@ -398,13 +429,14 @@ static __attribute__((noinline)) void motion_step(track_t *t, uint32_t step, con
     for (i = 0; i < m->count; i++) {
         const motion_event_t *e = &m->event[i];
         if (motion_pattern[i] != t->pattern || e->place != (k << 6 | step)) continue;
-        if (e->param == P_RECQ || param_reserved(e->param)) continue; /* old inert FX automation stays inert */
-        if (motion_native_event(e->param,e->value)) {      /* the engine's own patch: its engine's events only */
+        if (e->param == P_RECQ || e->param == P_TUNING || param_reserved(e->param)) continue; /* old inert FX automation stays inert (P_TUNING's slot too) */
+        if (motion_native_event(e->param,e->value)) {      /* the synth's own patch: its synth's events only */
             if ((uint32_t)e->value >> 8 == motion_native_tag(t)) motion_native_set(t, e->param - MO_NATIVE, (uint32_t)e->value & 255u);
             continue;
         }
         const param_desc_t *d = param_desc_of(eng_idx(t->eng_req), e->param);
         t->p[e->param] = (int16_t)clamp(e->value, d->min, d->max);
+        MELODEE_MOTION_TAP(k, e->param, t->p[e->param]);
         motion_active[k][e->param / 32u] |= 1u << (e->param % 32u);
     }
 }

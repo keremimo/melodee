@@ -19,7 +19,7 @@ static int32_t blocks_peak(uint32_t nb)          /* nb blocks of the mix, its pe
     int32_t o[2 * CTL], pk = 0;
     uint32_t i, k;
     for (i = 0; i < nb; i++) {
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (k = 0; k < 2u * CTL; k++)
             pk = abs(o[k]) > pk ? abs(o[k]) : pk;
     }
@@ -32,7 +32,7 @@ static void kit_fresh(void)
     host_tracks_init();
     memset(trk[0].v, 0, NVOICE * sizeof *trk[0].v);
     eng_state_reset();
-    host_preset(&trk[0], ENGI_DRUM, 0);
+    host_preset(&trk[0], ENGI_808, 0);
 }
 
 /* one lane struck alone through the engine: the peak of its first nb blocks */
@@ -53,7 +53,7 @@ static void lane_budget(void)
     eng_state_reset();
     for (p = 0; p < NPART; p++)
         memset(trk[p].v, 0, NVOICE * sizeof *trk[p].v);
-    host_preset(&trk[0], ENGI_DRUM, 0);
+    host_preset(&trk[0], ENGI_808, 0);
     host_preset(&trk[1], HOST_SYNTH, 0);
     trk[1].p[P_VOICE] = V_POLY;
     trk[1].p[P_SUS] = 127;
@@ -165,7 +165,7 @@ static double blocks_rms(uint32_t nb)
     double s = 0;
     uint32_t i, k;
     for (i = 0; i < nb; i++) {
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (k = 0; k < 2u * CTL; k++)
             s += (double)o[k] * o[k];
     }
@@ -236,7 +236,7 @@ static void kit_808(void)
         trk_note_on(&trk[0], 36, 110);
         k = drum_kit_part(0)[DV_KICK].r.ins == DR_BD && blocks_peak(4) > 200;
         printf("drum_test: retired custom kit plays 808: %s\n", k ? "ok" : "FAIL");
-        fails += !k || ENG_DRUM.npresets != 6 || ENG_DRUM.edit[0].min != DK_808;
+        fails += !k || ENG_KIT808.npresets != 1 || ENG_KIT808.edit[0].min != DK_808 || ENG_KIT808.edit[0].max != DK_808;
     }
     {   /* the corners: TUNE TONE DECY SNAP at 0 / 127, ACC 127, velocity 127, the whole kit at once: no clipping */
         int32_t pk = 0, q;

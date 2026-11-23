@@ -37,7 +37,7 @@ static const page_t LY_SCL = {"SCL", FAM_SCL, SC_TRACK, GR_SCALE, {P_ROOT, P_SCA
 
 static struct {
     uint8_t l, trk, oct;               /* SET: layer, snapshot track, OCT- / OCT+ pressed (bits) */
-    int16_t v[9];                      /* the values when it opened: GLO mutes, levels, BPM; SCL ROOT..TRN, CHRD VOIC */
+    int16_t v[9];                      /* the values when it opened: GLO mutes, levels, BPM; SCL ROOT..TRN, CHRD VOIC TUNING */
     uint32_t solo;                     /* GLO: the keys held that solo */
     uint32_t tap[4];                   /* GLO TAP: the last taps (fm1_ms) */
     uint8_t ntap, dt_l, dtap, rp_dirty;
@@ -81,7 +81,11 @@ static void layer_masks(void)
 {
     uint32_t m = !layer_allowed() || (ui.ly && (ui.ly_t0 & LY_DEAD)) ? 0u
                : ui.ly ? ly_bit(ui.ly) : layer_bits() & ~fm1_in.buttons;
+#if BOARD_SMK37
+    kb_mask = m;                                        /* (SEQ held: the keys play on; the pads are the patterns) */
+#else
     kb_mask = m | (layer_allowed() && !ui.ly ? 1u << panel.btn[B_SEQ] : 0u);
+#endif
 
     kb_lock = m && ui.lock ? 1u : 0u;
     punch_panel_mask = (m & ly_bit(LAYER_FX));
@@ -119,7 +123,7 @@ static void layer_opened(uint32_t l)
             lys.v[4u + k] = trk[trk_group() + k].p[P_LEVEL];
         } else {
             lys.v[k] = TSEL->p[P_ROOT + k];
-            lys.v[4u + k] = k < 2u ? TSEL->p[P_CHRD + k] : 0;
+            lys.v[4u + k] = k < 2u ? TSEL->p[P_CHRD + k] : k == 2u ? TSEL->p[P_TUNING] : 0;
         }
     lys.v[8] = song.g[G_BPM];
 }
@@ -230,7 +234,8 @@ static void layer_key(uint32_t l, uint32_t k)
         } else if (p < NPART) {
             if (g + p < trk_n())                        /* (a track not in use: nothing) */
                 lys.solo |= 1u << k;                    /* (layer_masks: track_solo while held) */
-        } else if (p == 4u) {
+        } else if (p == 4u) {                           /* every track on: no mute, no editor solo */
+            track_solo_latch = 0;
             for (i = 0; i < NTRK; i++)
                 trk[i].p[P_MUTE] = 0;
         } else if (p == 7u) {
@@ -252,7 +257,7 @@ static void layer_keys(uint32_t keys)
     for (k = 0; k < 27u; k++)
         if ((lys.solo >> k) & 1u)
             s |= 1u << (trk_group() + key_place(k));
-    track_solo = (uint8_t)s;
+    track_solo = (uint8_t)(s ? s : track_solo_latch);
 }
 
 /* KNOB 1..4 in the open layer: its own (GLO levels), else the four of its page */
@@ -264,12 +269,7 @@ static void layer_knob(uint32_t k, int32_t s)
         return;
     }
     if (l == LAYER_GLO) {                 /* T1..T4 (T5..T8) LEVEL (those in use, with a level), recorded as on MIXER */
-        uint32_t t = trk_group() + k;
-        int16_t *vp = &trk[t].p[P_LEVEL];
-        if (t >= trk_n() || midi_track_only(&trk[t]))
-            return;
-        *vp = (int16_t)clamp(*vp + accel(EN_K1 + k, s, TP[P_LEVEL].max - TP[P_LEVEL].min), TP[P_LEVEL].min, TP[P_LEVEL].max);
-        motion_capture(&trk[t], P_LEVEL, *vp);
+        level_knob(k, s);
     } else if (l) {                                     /* the page's knobs, wherever the page is */
         uint8_t h = ui.home, pg = ui.page;
         ui.home = 0;
@@ -315,6 +315,7 @@ static uint32_t layer_oct(uint32_t pressed, uint32_t oct)
                 trk[lys.trk % NTRK].p[P_ROOT + k] = lys.v[k];
             trk[lys.trk % NTRK].p[P_CHRD] = lys.v[4];
             trk[lys.trk % NTRK].p[P_VOIC] = lys.v[5];
+            trk[lys.trk % NTRK].p[P_TUNING] = lys.v[6];
             scale_share(&trk[lys.trk % NTRK]);
             ui_message("SCALE PUT BACK");
         }
@@ -375,15 +376,27 @@ static uint16_t lc_fill(uint32_t st, uint16_t *ink)
 static void layer_scl(void)                             /* KNOB 2's scales as a list (their names in full), four
                                                          * around the one now selected (filled) */
 {
-    uint32_t i, sc = (uint32_t)TSEL->p[P_SCALE], max = (uint32_t)TP[P_SCALE].max, first;
-    first = sc > 1u ? sc - 1u : 0u;
-    if (max >= 3u && first > max - 3u)
-        first = max - 3u;
-    for (i = first; i < first + 4u && i <= max; i++) {
-        int32_t y = 3 + 30 * (int32_t)(i - first);
-        uint16_t ink, fill = lc_fill(i == sc ? LS_SEL : LS_OFF, &ink);
-        const char *t = SCALE_TITLE[i];
-        const aafont_t *f = ty_fit(TY_TX, t, 200);
+    uint32_t i, sc = (uint32_t)TSEL->p[P_SCALE], rank = 0, total = 0, at = 0, first;
+    for (i = 0; i < SCALE_TOTAL; i++)                   /* (the retired entries left out, the one selected kept) */
+        if (!scale_retired(i) || i == sc) {
+            if (i == sc)
+                rank = total;
+            total++;
+        }
+    first = rank > 1u ? rank - 1u : 0u;
+    if (total >= 4u && first > total - 4u)
+        first = total - 4u;
+    for (i = 0; i < SCALE_TOTAL && at < first + 4u; i++) {
+        int32_t y;
+        uint16_t ink, fill;
+        const char *t;
+        const aafont_t *f;
+        if ((scale_retired(i) && i != sc) || at++ < first)
+            continue;
+        y = 3 + 30 * (int32_t)(at - 1u - first);
+        fill = lc_fill(i == sc ? LS_SEL : LS_OFF, &ink);
+        t = SCALE_TITLE[i];
+        f = ty_fit(TY_TX, t, 200);
         if (i == sc)
             cv_rrect(8, y, 224, 28, 8, fill, T_SURF);
         cv_free_text(18, ty_y(y + 14, f), f, t, i == sc ? ink : T_SEC, i == sc ? fill : T_SURF, 200);
@@ -425,6 +438,32 @@ static void layer_glo_keys(int32_t h)
     }
 }
 
+#if BOARD_SMK37
+/* T1..T4's id (the SMK-37's track banks: LEVEL, SEND, PAN) as four cards, as the GLO layer's (below; the FM-1 build
+ * keeps that one as it is) */
+static void trk_cards(uint32_t id)
+{
+    char val[12];
+    const char *unit;
+    uint32_t c;
+    for (c = 0; c < NPART; c++) {
+        uint32_t t = trk_group() + c;
+        if (t >= trk_n()) {                             /* (a track not in use: an empty card) */
+            draw_column(c, "", "", "", T_THEME, -1, ICON_NONE);
+            continue;
+        }
+        if (midi_track_only(&trk[t])) {                 /* (no level: the MIDI Track's channel) */
+            char ch[8] = "CH ";
+            fmt_int(ch + 3, (int32_t)midi_track_channel(&trk[t]) + 1);
+            draw_column(c, "MIDI", ch, "", glo_sounding(t) ? VAL(c) : T_DIM, -1, ICON_NONE);
+            continue;
+        }
+        param_format(&TP[id], trk[t].p[id], val, &unit);
+        draw_column(c, TP[id].label, val, unit, glo_sounding(t) ? VAL(c) : T_DIM, RATIO(&TP[id], trk[t].p[id]),
+                    trk_icon(t, 1));
+    }
+}
+#endif
 static void layer_cards(uint32_t l)
 {
     char val[12];
@@ -452,7 +491,7 @@ static void layer_cards(uint32_t l)
         ui.home = 0;
         ui.page = (uint8_t)page_first(LAYERS[l].fam);
         page_over = l == LAYER_SCL ? &LY_SCL : 0;
-        draw_columns();
+        draw_cards();                                   /* (the page's four; the SMK-37's banks are off in a layer) */
         page_over = 0;
         ui.home = h;
         ui.page = pg;

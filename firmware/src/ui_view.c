@@ -47,7 +47,7 @@ static int view_notes(uint32_t *on, uint8_t *of, int *faded)
     fm1_irq_off();                                      /* (one coherent ISR snapshot) */
     for (k = 0; k < trk_n(); k++) {                     /* (the selected one last: its colour wins) */
         uint32_t t = k + 1u == trk_n() ? song.sel % NTRK : k < song.sel ? k : k + 1u;
-        if (drum_track(&trk[t]))
+        if (pads_on(&trk[t]))
             continue;
         for (i = 0; i < NVOICE; i++) {
             const voice_t *v = &trk[t].v[i];
@@ -82,6 +82,13 @@ static void vw_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
         cv_disc(x0 + (n ? dx * i / n : 0), y0 + (n ? dy * i / n : 0), 3, c, 0);
 }
 
+/* a note's place on the wheel: a microtonal key's by the semitone it sounds nearest, as it is named */
+static uint32_t view_pc(uint32_t i)
+{
+    int32_t cents;
+    return (micro_active(TSEL) ? micro_nearest(TSEL, (int32_t)i, &cents) : i) % 12u;
+}
+
 /* the wheel and the chord in it */
 static void view_wheel(const uint32_t *on, const uint8_t *of, int faded)
 {
@@ -89,17 +96,18 @@ static void view_wheel(const uint32_t *on, const uint8_t *of, int faded)
     uint32_t key = (uint32_t)TSEL->p[P_ROOT] % 12u, mask = scale_mask(TSEL);
     uint8_t note[8];
     const char *q = 0;
-    char b[48];
+    char b[NOTES_FIT_B];
     uint16_t tc[12];
     for (i = 0; i < 12u; i++)
         pc_of[i] = 0xFFu;
     for (i = 0; i < 128u; i++)                          /* each pitch class's track: its lowest note's */
         if ((on[i >> 5] >> (i & 31u)) & 1u) {
-            if (pc_of[i % 12u] == 0xFFu) {
-                pc_of[i % 12u] = of[i] % NTRK;
+            uint32_t pc = view_pc(i);
+            if (pc_of[pc] == 0xFFu) {
+                pc_of[pc] = of[i] % NTRK;
                 npc++;
             }
-            pcs |= 1u << (i % 12u);
+            pcs |= 1u << pc;
             if (n < sizeof note) note[n] = (uint8_t)i;
             n++;
         }
@@ -167,8 +175,17 @@ static void view_wheel(const uint32_t *on, const uint8_t *of, int faded)
                 notes_fit(b, note, n, TY_LB, 2 * VW_R - 4);
                 cv_text_c(VW_CX, base + 6, TY_LB, b, cn, T_BG);
             } else if (n == 1u) {                           /* one note: large */
-                note_name(b, note[0]);
-                cv_text_c(VW_CX, ty_y(VW_CY, TY_HR), TY_HR, b, c, T_BG);
+                const aafont_t *f;
+                note_name(b, note[0]);                      /* (in the ring: a size smaller for a name with its cents) */
+                f = text_w(TY_HR, b) <= 2 * VW_R - 4 ? TY_HR : text_w(TY_VL, b) <= 2 * VW_R - 4 ? TY_VL : TY_TX;
+                cv_text_c(VW_CX, ty_y(VW_CY, f), f, b, c, T_BG);
+            } else if (micro_active(TSEL)) {                /* names with cents: a line each, the lowest at the foot */
+                uint32_t m = n < 4u ? n : 4u;
+                for (i = 0; i < m; i++) {
+                    if (i == 3u && n > 4u) str_cpy(b, "..", 3);
+                    else note_name(b, note[i]);
+                    cv_text_c(VW_CX, ty_y(VW_CY + 9 * ((int32_t)m - 1) - 18 * (int32_t)i, TY_LB), TY_LB, b, cn, T_BG);
+                }
             } else {
                 notes_fit(b, note, n, TY_TX, 2 * VW_R - 4);
                 cv_text_c(VW_CX, ty_y(VW_CY, TY_TX), TY_TX, b, cn, T_BG);
@@ -206,9 +223,29 @@ static void view_wheel(const uint32_t *on, const uint8_t *of, int faded)
 
 /* the keys: C2 .. B5, those sounding lit in their track's colour (let go: faded) */
 static int vw_black(uint32_t n) { return (int)((0x54Au >> (n % 12u)) & 1u); }
+/* a microtonal key's notes on the keys: each on the semitone it sounds nearest, as it is named (two on one: the lowest's
+ * track, as the wheel) */
+static void view_keys_at(const uint32_t *on, const uint8_t *of, uint32_t *at, uint8_t *by)
+{
+    uint32_t n;
+    memset(at, 0, 16);
+    for (n = 128u; n-- > 0u;)
+        if ((on[n >> 5] >> (n & 31u)) & 1u) {
+            int32_t cents;
+            uint32_t k = micro_nearest(TSEL, (int32_t)n, &cents);
+            at[k >> 5] |= 1u << (k & 31u);
+            by[k] = of[n];
+        }
+}
 static void view_keys(const uint32_t *on, const uint8_t *of, int faded)
 {
-    uint32_t n, w = 0;
+    uint32_t n, w = 0, at[4];
+    uint8_t by[128];
+    if (micro_active(TSEL)) {
+        view_keys_at(on, of, at, by);
+        on = at;
+        of = by;
+    }
     cv_begin(240, VW_KEYS_H, T_BG);
     for (n = VW_LO; n < VW_LO + 12u * VW_OCT; n++) {    /* the white keys, then the black over them */
         uint32_t lit = (on[n >> 5] >> (n & 31u)) & 1u;
@@ -236,10 +273,9 @@ static void view_pulse(uint32_t k)
 {
     static const uint8_t PX[NPART] = {6, 202, 6, 202}, PY[NPART] = {36, 36, 170, 170};
     track_t *t = &trk[k];
-    int32_t m = t->p[P_MUTE] ? 0 : meter_px(t->peak);
+    int32_t pk = trk_peak_take(k, 0), m = t->p[P_MUTE] ? 0 : meter_px(pk);
     uint32_t sig;
     uint16_t c = t->p[P_MUTE] ? T_DIM : T_TRK(k);
-    t->peak = 0;
     if (m < view.lvl[k] - 1)
         m = view.lvl[k] - 1;                            /* (falls ~2 dB a frame) */
     view.lvl[k] = (uint8_t)(m < 0 ? 0 : m);
@@ -270,7 +306,8 @@ static void view_draw(void)
         if ((on[k >> 5] >> (k & 31u)) & 1u)
             sig = (sig ^ (k * 4u + of[k])) * 16777619u;
     sig += (uint32_t)faded * 7u + ux.gen * 977u + ux.pal * 31u + (uint32_t)stage.out * 131u + (uint32_t)micro_active(TSEL) +
-           (uint32_t)TSEL->p[P_ROOT] * 7919u + (uint32_t)TSEL->p[P_SCALE] * 104729u + scale_mask(TSEL) * 13u;
+           (uint32_t)TSEL->p[P_ROOT] * 7919u + (uint32_t)TSEL->p[P_SCALE] * 104729u + scale_mask(TSEL) * 13u +
+           (uint32_t)TSEL->p[P_TRANS] * 1289u;      /* (a microtonal key's names follow TRN) */
     if (ui.force || sig != view.wheel) {
         view.wheel = sig;
         view_wheel(on, of, faded);

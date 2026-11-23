@@ -9,6 +9,10 @@
 // asks, we answer": cmd 0x30 read requests on the logical image.
 
 const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
+// the handshake with the body 01 (tools/fm1_install.py HS_FULL): Melodee from 1.7.0 (firmware/src/ota.c ota_handshake)
+// and firmware built on fm1-base answer HS_QUERY with their name, '_' and three digits only (M-UPGRADE 3.11 refuses
+// more) and this one with their whole identity; Melodee before 1.7.0, M-VAVE's firmware and the loaders don't answer it. Never sent to a stock identity (NAME_0dd) or to a loader
+export const HS_FULL = [0xF0, 0x00, 0x32, 0x45, 0x08, 0x00, 0x00, 0x40, 0x00, 0x7E, 0x01, 0xF7];
 const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
 const MAXDATA = 512;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -18,6 +22,9 @@ const IS_OTA = (id) => /^ota-/i.test(id.model);
 // reports the name in its update record (firmware/src/ota.c). Each package goes only to its own.
 export const MELODEE_LOADER = "ota-FM-1_900";
 export const STOCK_LOADER = "ota-FM-1_015";
+// a Melodee package's own loader: MELODEE_LOADER under the package's model (FM-1_9.. -> MELODEE_LOADER; the SMK-37
+// builds: "ota-SMK-37 Pro_900", "ota-SMK-37 Elite_900", "ota-MKE-P37_900")
+export const melodeeLoader = (product) => MELODEE_LOADER.replace("FM-1", product.split("_")[0]);
 
 // errors carry a code the pages translate: notfound, model, stopped, noloader, lost, noreturn,
 // mismatch (detail: the identity the device reports), badreq, wrongloader (detail: the loader's
@@ -67,7 +74,9 @@ function parseRequest(pkt) {
 function parseIdentity(pkt) {
   const d = unpack7(pkt.slice(1, -1));
   if (d.length !== 34 || d[0] !== 0 || d[1] !== 0x59 || d[2] !== 0x11) return null;
-  const txt = String.fromCharCode(...d.slice(6, 33)).replace(/\0+$/, "");
+  // the text up to its first zero: after the zeros, fm1-base firmware sends the flash's JEDEC ID in bytes 24..26
+  const z = d.indexOf(0, 6);
+  const txt = String.fromCharCode(...d.slice(6, z < 0 || z > 33 ? 33 : z));
   if (/^FM1_(OFFICIAL_OPEN|COMMUNITY_\d+)$/.test(txt))
     return {text:txt,model:"FM-1",open:true};
   const m = /^([^_]+)_(\d+)$/.exec(txt);
@@ -102,17 +111,30 @@ class Link {
   close() { this.input.onmidimessage = null; }
 }
 
+// send a handshake -> the identity answered, null (no answer in ms), false (the send failed)
+async function ask(link, query, ms) {
+  if (!link.send(query)) return false;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const p = await link.read(end - Date.now());
+    if (!p) break;
+    const id = parseIdentity(p);
+    if (id) return id;
+  }
+  return null;
+}
+
+// the identity: HS_QUERY, then HS_FULL when the answer is NAME_ and three digits, not 0dd (Melodee from 1.7.0 and
+// fm1-base firmware tell their whole identity so); the plain answer when nothing answers HS_FULL (Melodee before 1.7.0)
 async function handshake(link, tries = 3) {
   link.drain();
   for (let t = 0; t < tries; t++) {
-    if (!link.send(HS_QUERY)) return null;
-    const end = Date.now() + 1000;
-    while (Date.now() < end) {
-      const p = await link.read(end - Date.now());
-      if (!p) break;
-      const id = parseIdentity(p);
-      if (id) return id;
-    }
+    const id = await ask(link, HS_QUERY, 1000);
+    if (id === false) return null;
+    if (id === null) continue;
+    if (IS_OTA(id) || !/^[^_]+_[1-9]\d\d$/.test(id.text)) return id;
+    const full = await ask(link, HS_FULL, 600);
+    return full && full.model === id.model && full.text.startsWith(id.text) ? full : id;
   }
   return null;
 }
@@ -128,7 +150,7 @@ export class Updater {
     const outs = [...this.access.outputs.values()];
     for (const input of this.access.inputs.values()) {
       if (input.state === "disconnected") continue;
-      if (!/fm-1|melodee|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
+      if (!/fm-1|smk|elite|mke-p37|starry|melodee|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
       const output = outs.find((o) => o.name === input.name && o.state !== "disconnected");
       if (!output) continue;
       try { await input.open(); await output.open(); } catch (_) { continue; }

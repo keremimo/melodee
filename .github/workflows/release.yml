@@ -78,12 +78,28 @@ jobs:
         test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
         version=$(python3 tools/fm1_recover.py --version | awk '{print $NF}')
         if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
+        # The SMK-37 beta, one package per model; the FM-1 build last, the tests use its files (SMK37.md).
+        for model in pro elite mke; do
+          BOARD=smk37 MODEL="$model" ./build.sh --release "$version"
+        done
         ./build.sh --release "$version"
         cp "build/melodee-$version.fwsc" build/melodee.fwsc
         mkdir -p build/release-assets
-        cp "build/release-$version/"*.fwsc "build/release-$version/"*-app.bin build/release-assets/
+        # each package with its app and the synths' modules the installer writes after it (fm1mods.js: every synth is
+        # one since 2.0)
+        cp "build/release-$version/"*.fwsc "build/release-$version/"*-app.bin "build/release-$version/"*-mods.bin \
+           build/release-assets/
+        cp build/release-melodee-smk37*"-$version/"*.fwsc build/release-melodee-smk37*"-$version/"*-app.bin \
+           build/release-melodee-smk37*"-$version/"*-mods.bin build/release-assets/
         # the resource region the installer writes after the firmware (firmware/src/res.c)
         cp build/melodee-res.bin "build/release-assets/melodee-$version-res.bin"
+        # the converter for an FM-1's Melodee 1.x projects and sounds (web/convert; the installer's update to 2.x), built
+        # from the frozen 1.x tree, an older commit of this repository, with the default build flags
+        ref=$(tr -d ' \n' < web/convert/LEGACY_REF)
+        git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch --depth=1 origin "$ref"
+        (unset MELODEE_DUAL_CORE MELODEE_CORE1_FALLBACK MELODEE_RAM_AUDIO MELODEE_CACHE_RAM MELODEE_ADMISSION \
+               MELODEE_AUDIO_PROFILE MELODEE_AUDIO_BENCH; sh web/convert/build.sh)
+        cp build/melodee-convert.bin "build/release-assets/melodee-$version-convert.bin"
       test: |
         set -euo pipefail
         export PARALLEL=2 MELODEE_DUAL_CORE=1 MELODEE_CORE1_FALLBACK=0
@@ -271,8 +287,8 @@ jobs:
             git commit -m "release: publish Melodee $version"
             git push origin HEAD:gh-pages
           fi
-      - name: Publish release candidate beside stable and nightly
-        if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-rc.')
+      - name: Publish release candidate or beta beside stable and nightly
+        if: startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, '-rc.') || contains(github.ref_name, '-beta.'))
         run: |
           python web/publish_rc.py .nightly-pages build/release-assets
           cd .nightly-pages
@@ -284,7 +300,7 @@ jobs:
             git push origin HEAD:gh-pages
           fi
       - name: Request Pages rebuild
-        if: startsWith(github.ref, 'refs/tags/') && (!contains(github.ref_name, '-') || contains(github.ref_name, '-rc.'))
+        if: startsWith(github.ref, 'refs/tags/') && (!contains(github.ref_name, '-') || contains(github.ref_name, '-rc.') || contains(github.ref_name, '-beta.'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds"

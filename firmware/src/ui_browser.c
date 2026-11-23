@@ -96,8 +96,9 @@ static void browser_list(uint32_t cur, uint32_t total)
                     src = preset_at((uint32_t)n, &k);
                     hc = T_KNOB(eng_rank(src_engine(src, k)));
                     entry_label(src, k, tag, nm);
-                    if (src == ENGI_PROPHET)                /* (the Prophet's own name, whole) */
-                        str_cpy(nm, eng_preset(ENGINES[ENGI_PROPHET], k)->name, sizeof nm);
+                    if (src < NENGINES && sch_flag(src, MOD_SCH_F_SNAME))   /* (a sound called by its patch's
+                                                                             * own name, whole: the Prophet's) */
+                        eng_preset_name(src, k, nm, sizeof nm);
                     if (!r) {                               /* the card: the name, its engine, its star */
                         uint16_t bg = out ? T_SURF : ux_mix(T_BG, hc, 18);
                         uint32_t e = src_engine(src, k);
@@ -105,7 +106,7 @@ static void browser_list(uint32_t cur, uint32_t total)
                         cv_rrect(BOX_X, y, BOX_W, BR_CARD - 2, 8, bg, T_BG);
                         cv_free_text(12, ty_y(y + 18, ty_fit(tf, nm[0] ? nm : tag, 196)), ty_fit(tf, nm[0] ? nm : tag, 196),
                                      nm[0] ? nm : tag, out ? T_MID : T_TEXT, bg, 196);
-                        cv_text_on(12, ty_y(y + 42, lf), lf, ENGINES[eng_idx(e)]->name, out ? T_MID : hc, bg);
+                        cv_text_on(12, ty_y(y + 42, lf), lf, eng_name(eng_idx(e)), out ? T_MID : hc, bg);
                         cv_icon_mid(212, y + 42, 16, fav ? ICON_X_STAR : ICON_X_STAR_O, fav ? hc : T_DIM, bg);
                         continue;
                     }

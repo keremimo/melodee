@@ -105,7 +105,7 @@ int main(void)
 {
     uint32_t cases=0;
     for(uint32_t config=0;config<4;config++){
-        eng_state_reset();memset(trk,0,sizeof trk);trk_voices_bind();host_tracks_init();host_preset(&trk[0],ENGI_DRUM,2);
+        eng_state_reset();memset(trk,0,sizeof trk);trk_voices_bind();host_tracks_init();host_kit_preset(&trk[0],2);
         track_t *t=&trk[0];dsk_part_t *K=dsk_of(t);
         for(uint32_t b=0;b<20000;b++){
             t->p[P_E6]=(int16_t)(config<2?config:(b/37u)&1u);
@@ -114,7 +114,7 @@ int main(void)
                 for(uint32_t k=0;k<DV_NLANE;k++)t->p[P_LN0+k]=(int16_t)(random_u()%128u);
             }
             if(b%17u==0){
-                drum_event_pitch=(int32_t)(random_u()%49u)-24;drum_event_length=b%3u?0u:CTL*(1u+b%97u);
+                note_hit_pitch=(int32_t)(random_u()%49u)-24;note_hit_len=b%3u?0u:CTL*(1u+b%97u);
                 dsk_hit(t,DRUM_SOUND_NOTE[(b/17u)%16u],1u+random_u()%127u);
                 if(b%119u==0){dsk_hit(t,36,110);dsk_hit(t,38,100);dsk_hit(t,42,90);}
             }

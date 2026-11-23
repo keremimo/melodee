@@ -27,15 +27,64 @@
 #define ST_PROJECT_SECTORS 8u                 /* a 27,904-byte record (pattern_store.c) */
 #define ST_POOL_PAYLOAD_OFF 32u
 #define ST_POOL_PAYLOAD_MAX (ST_SECTOR - 256u - ST_POOL_PAYLOAD_OFF)
-#define ST_PROJECT_MAX (ST_PROJECT_SECTORS * ST_POOL_PAYLOAD_MAX)
+#define ST_PROJECT_MAX (ST_PROJECT_SECTORS * (ST_SECTOR - 32u - 8u))   /* (ST_LIN_PAYLOAD_MAX) */
+#if BOARD_SMK37
+#define ST_POOL_SECTORS 60u                    /* the SMK-37's pool: indices 0..59 (st_pool_at), no former pools */
+#define ST_SP_N 0u
+#else
 #define ST_POOL_SECTORS 56u                    /* the former project pool's sectors: shared indices 0..55 */
 #define ST_SP_N 23u                            /* the former preset pool's: 56..78 (ST_SP_AT) */
+#endif
 #define ST_U_N (ST_POOL_SECTORS + ST_SP_N)     /* one pool for projects and preset banks */
 #define ST_UW ((ST_U_N + 31u) / 32u)           /* words of a pool bitmap */
 #define ST_POOL_TAG 0xA7000000u                /* a project record's sectors: a bitmap of indices 0..55 (read only) */
 #define ST_LIST_TAG 0xA8000000u                /* .. a list: eight 7-bit indices, 0x7F after the last */
 #define ST_SMALL_U0 100u                       /* a preset bank's copy in the pool: ST_SMALL_U0 + index */
 _Static_assert(ST_PROJECT_SECTORS * 5u <= ST_U_N && ST_U_N < 0x7Fu && ST_SMALL_U0 > ST_SP_N + 1u, "pool numbering");
+/* The store since the bridge (2026-11): every record but the settings is a list record (projects, user kits, preset
+ * banks alike) under ST_LIN_TAG, its sectors given by linear indices: on the FM-1 every data-flash sector by address
+ * (0x93000 + 4 KB * index), on the SMK-37 the pool's own windows. A predicate keeps the fixed places out (OTA
+ * staging, the settings pair, the resource region's installed window). Payload in each sector: 32..0xEFF and
+ * 0xF08..0xFFF; the 8 bytes at 0xF00 stay erased, so the update loader's record scan (ldr_core.c: +6 reads 0x5441)
+ * never takes musical data for an update record. The older forms (fixed pairs, extensions, the 0xA7/0xA8 lists, the bank
+ * copies) are Melodee 1.x's: never read (the web installer converts them). */
+#define ST_GUARD_OFF 0xF00u
+#define ST_GUARD_LEN 8u
+#define ST_RUN0 (ST_GUARD_OFF - ST_POOL_PAYLOAD_OFF)   /* 3,808: a sector's payload before the guard */
+#define ST_LIN_PAYLOAD_MAX (ST_SECTOR - ST_POOL_PAYLOAD_OFF - ST_GUARD_LEN)   /* 4,056 */
+#define ST_LIN_TAG 0xA9000000u                 /* a list record: eight 7-bit linear indices, the 4,056-byte geometry */
+#define ST_LIN_C0 256u                         /* a list record's copy number: ST_LIN_C0 + its first sector's index */
+#ifndef FL_RES_LO                                      /* (hal/fm1_flash_map.h; host tests: the FM-1's) */
+#define FL_RES_LO 0xCB000u
+#define FL_RES_HI 0xE0000u
+#endif
+#ifndef FL_RES_RESERVE
+#define FL_RES_RESERVE 9u
+#define FL_RES_RESERVE_OLD 15u
+#endif
+/* the resource region's sectors the reserve gave the pool when the factory sounds went into the synth modules (2026-11:
+ * FL_RES_RESERVE_OLD -> FL_RES_RESERVE): taken last (st_order), so a firmware from before keeps reading what it can */
+#define ST_RES_GIVEN (FL_RES_RESERVE_OLD - FL_RES_RESERVE)
+#if BOARD_SMK37
+#define ST_LN (ST_U_N + ST_RES_GIVEN)                  /* the pool's windows, then the given sectors */
+#else
+#define ST_LIN_BASE 0x93000u
+#define ST_LN 108u                             /* 0x93000..0xFEFFF */
+#endif
+#define ST_LW ((ST_LN + 31u) / 32u)            /* words of a linear bitmap */
+_Static_assert(ST_LN < 0x7Fu && ST_LIN_C0 > ST_SMALL_U0 + ST_U_N && ST_RUN0 == ST_POOL_PAYLOAD_MAX &&
+               ST_LIN_PAYLOAD_MAX == 4056u, "list record numbering");
+/* A long list record (a pad record: st_long), more than the header's eight sectors: its entries 8.. in index blocks,
+ * one in each of its sectors 1..4 at bytes 0..31, which no list record's payload uses (it starts at 32): ST_LIX_TAG,
+ * then ST_LIX_N linear indices, 0xFF after the last. A record of eight sectors or fewer leaves them erased (each
+ * sector is erased when a record takes it), so a reader looks for the tag past the header's eighth entry. The tag is
+ * never ST_MAGIC: no scan takes a block for a commit header */
+#define ST_LIX_TAG 0x3158494Cu                 /* "LIX1" */
+#define ST_LIX_N 28u
+#define ST_LIX_BLOCKS 4u
+#define ST_REC_MAX (8u + ST_LIX_BLOCKS * ST_LIX_N)      /* a list record's sectors, at most */
+#define ST_LONG_SECTORS (ST_LN < ST_REC_MAX ? ST_LN : ST_REC_MAX)   /* a long record's, at most: the whole pool */
+_Static_assert(ST_LN <= ST_REC_MAX && ST_REC_MAX < 0xFFu, "a pad record can take every pool sector");
 
 /* The Prophet user banks: 0x93000..0x9CFFF. The old banks at 0x89000 are retired and never migrated.
  * The current banks occupy the legacy single-pattern projects' place: those objects are retired (2026-10-10, Kerem: not
@@ -57,8 +106,41 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
  * are pool records of type ST_PFILE0 + slot. Empty slots own no sector. */
 #define ST_NPROJ 32u
 #define ST_PFILE0 64u
+/* Data records (rec_store.c: a pads synth's own, the SAMPLER's kits): 8 kits, each a name record (ST_RFILE0 + kit, made
+ * only when the kit is named) and a record per pad take (ST_SFILE0 + kit * ST_RPAD + pad, any length up to the pool:
+ * st_long), pool records as slots 5..32 are */
+#ifndef MELODEE_RECORDS                      /* (pads.h sets it first in the firmware; storage tests alone: on) */
+#define MELODEE_RECORDS 1
+#endif
+#define ST_NREC 8u
+#define ST_RFILE0 (ST_PFILE0 + ST_NPROJ)
+/* Synth modules (module_store.c): NMOD slots, a module file as built in up to MOD_RECS pool records (ST_PROJECT_MAX
+ * bytes each, the last one the rest): slot k's record j is st_mod_obj(k, j). Slots 0..7's first two keep the numbers
+ * they had (ST_MFILE0 + k, ST_MXFILE0 + k); the rest come after the device's engine map (eng_map.c) */
+#ifndef NMOD
+#define NMOD 16u                               /* (core.h; storage tests alone) */
+#endif
+#ifndef MOD_RECS
+#define MOD_RECS 4u
+#endif
+#define ST_NMOD NMOD
+#define ST_MFILE0 (ST_RFILE0 + ST_NREC)
+#define ST_MXFILE0 (ST_MFILE0 + 8u)
+#define ST_MAPOBJ (ST_MXFILE0 + 8u)            /* the device's engine map: number <-> UID, the data records' owners */
+#define ST_MNEW0 (ST_MAPOBJ + 1u)
+#define ST_TPLX (ST_MNEW0 + ST_NMOD * MOD_RECS)     /* the template's end block (project.c tmpl_ext): only when needed */
+#define ST_RPAD 16u                                 /* a kit's pad records */
+#define ST_NSMP (ST_NREC * ST_RPAD)
+#define ST_SFILE0 (ST_TPLX + 1u)                    /* the pad records */
+#define ST_OBJ_END (ST_SFILE0 + ST_NSMP)            /* every object number below this */
+static uint32_t st_mod_obj(uint32_t k, uint32_t j)
+{
+    return k < 8u && j < 2u ? ST_MFILE0 + 8u * j + k : ST_MNEW0 + k * MOD_RECS + j;
+}
 static uint32_t st_proj_obj(uint32_t slot) { return slot < 4u ? OBJ_BANK0 + slot : ST_PFILE0 + slot; }
-static int st_pfile(uint32_t obj) { return obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ; }
+/* a record that lives only in the pool, never in a fixed pair: projects 5..32, the user kits, the synth modules, the
+ * engine map, the template's end block */
+static int st_pfile(uint32_t obj) { return (obj >= ST_PFILE0 + 4u && obj < ST_PFILE0 + ST_NPROJ) || (obj >= ST_RFILE0 && obj < ST_OBJ_END); }
 static int st_obj_ok(uint32_t obj) { return obj < OBJ_COUNT || st_pfile(obj); }
 
 typedef struct {
@@ -69,12 +151,18 @@ typedef struct {
 } st_hdr_t;
 _Static_assert(sizeof(st_hdr_t) == 32u, "storage commit record layout");
 
+#ifndef ST_IDLE
+#define ST_IDLE() ((void)0)                    /* (firmware: the watchdog, storage_hw.c) */
+#endif
 static int st_read(uint32_t off, void *dst, uint32_t n);
 static int st_erase(uint32_t off);
 static int st_prog(uint32_t off, const void *src, uint32_t n);
 
 /* Allocation must not mistake a failed read for free project space. */
 static uint8_t st_read_failed;
+/* every pool record published or deleted moves it on: a count of free sectors kept from before is stale (project.c
+ * proj_space: the SLOTS card's room left after a kit, a module or a preset bank came or went) */
+static uint32_t st_pool_gen;
 static int st_fetch(uint32_t off, void *dst, uint32_t n)
 {
     int rc = st_read(off, dst, n);
@@ -98,6 +186,34 @@ static uint32_t st_crc32_update(uint32_t c, const void *p, uint32_t n)   /* zlib
 static uint32_t st_crc32(const void *p,uint32_t n)
 {return ~st_crc32_update(0xFFFFFFFFu,p,n);}
 
+#if BOARD_SMK37
+/* SMK-37 (hal/fm1_flash_map.h): the stock region table keeps BTIF / USRTRIM 0xC0000..0xC1FFF (the key calibration),
+ * USR 0xF4000..0xFDFFF and key_mac 0xFF000, and its app area runs to 0x9D000, so Melodee has 79 free sectors in
+ * three windows. The objects, the pool and the formats are the FM-1's; only the places differ:
+ *   store A, FL_DATA 0x9D000..0xBAFFF (the stock VM): 0x9D000 the settings pair; 0x9F000..0xAEFFF the resource
+ *     region (res.c, 16 sectors, written by the update loader inside its VM window); 0xAF000 the store owner tag
+ *     (st_owner_check); 0xB0000..0xBAFFF pool indices 0..10
+ *   store B, FL_UFL 0xC2000..0xE9FFF (USRFLASH below its end marker): pool indices 11..50
+ *   0xEA000 the stock end marker's sector: never data (FL_STOCKTAG, only erased as the release below)
+ *   store C, FL_GAP 0xEB000..0xF3FFF (unlisted, below USR): pool indices 51..59
+ * Nothing was ever stored on an SMK in the old layouts: the legacy A/B copies of every object but the settings are
+ * absent (st_sector 0, st_head -1), and there is no former preset pool (ST_SP_N 0). */
+#define ST_SMK_TAG 0xAF000u
+#define ST_SMK_POOL_A 0xB0000u
+#define ST_SMK_POOL_A_N 11u
+#define ST_SMK_POOL_B_N 40u
+_Static_assert(FL_DATA_LO == 0x9D000u && FL_RES_LO == 0x9F000u && FL_RES_HI == ST_SMK_TAG &&
+               ST_SMK_TAG + ST_SECTOR == ST_SMK_POOL_A && ST_SMK_POOL_A + ST_SMK_POOL_A_N * ST_SECTOR == FL_DATA_HI &&
+               FL_UFL_LO + ST_SMK_POOL_B_N * ST_SECTOR == FL_UFL_HI &&
+               FL_GAP_LO + (ST_POOL_SECTORS - ST_SMK_POOL_A_N - ST_SMK_POOL_B_N) * ST_SECTOR == FL_GAP_HI,
+               "SMK store: the windows and the pool disagree");
+static uint32_t st_pool_at(uint32_t i)                 /* a pool index's sector */
+{
+    return i < ST_SMK_POOL_A_N ? ST_SMK_POOL_A + i * ST_SECTOR
+         : i < ST_SMK_POOL_A_N + ST_SMK_POOL_B_N ? FL_UFL_LO + (i - ST_SMK_POOL_A_N) * ST_SECTOR
+         : i < ST_U_N ? FL_GAP_LO + (i - ST_SMK_POOL_A_N - ST_SMK_POOL_B_N) * ST_SECTOR : 0u;
+}
+#else
 /* The 22 preset banks (upreset.c up_obj) share one pool: a record a sector anywhere in it, the newest valid one of
  * each the current; a save takes a sector no current record holds. One spare serves them all (one save at a time),
  * where each A/B pair kept a private one. Copies 0/1 still read the old fixed pairs; copies 2.. are pool sectors.
@@ -111,13 +227,50 @@ static uint32_t st_pool_at(uint32_t i)                 /* a pool index's sector 
     return i < 40u ? 0xA0000u + i * ST_SECTOR : i < ST_POOL_SECTORS ? ST_BANK_EXT_LO + (i - 40u) * ST_SECTOR
          : i < ST_U_N ? ST_SP_AT[i - ST_POOL_SECTORS] : 0u;
 }
-static int st_preset_object(uint32_t obj);
-static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* legacy A/B (0/1), or project pool index + 2 */
+#endif
+/* the linear index space of list records (ST_LIN_TAG): a sector's address, and back (ST_LN: none) */
+#if BOARD_SMK37
+static uint32_t st_lin_at(uint32_t i)
 {
+    return i < ST_U_N ? st_pool_at(i) : i < ST_LN ? FL_RES_LO + (FL_RES_RESERVE + i - ST_U_N) * ST_SECTOR : 0u;
+}
+static uint32_t st_lin_of(uint32_t addr)
+{
+    uint32_t i = 0;
+    while (i < ST_LN && st_lin_at(i) != (addr & ~(ST_SECTOR - 1u))) i++;
+    return i;
+}
+#else
+static uint32_t st_lin_at(uint32_t i) { return i < ST_LN ? ST_LIN_BASE + i * ST_SECTOR : 0u; }
+static uint32_t st_lin_of(uint32_t addr) { return addr >= ST_LIN_BASE && addr < ST_LIN_BASE + ST_LN * ST_SECTOR ? (addr - ST_LIN_BASE) / ST_SECTOR : ST_LN; }
+#endif
+/* The resource region's installed window ends here (res.c res_window, from the header in flash): the pool takes
+ * sectors of the region only above it, so no update loader ever blanks a record (ldr_core.c ldr_res). Until boot
+ * has read the header: the whole region, as every firmware before the bridge left it. */
+static uint32_t st_res_end = FL_RES_HI;
+/* a linear sector a list record may take: never OTA staging, the settings pair or the installed resource window */
+static int st_lin_ok(uint32_t i)
+{
+#if BOARD_SMK37
+    return i < ST_U_N || (i < ST_LN && st_lin_at(i) >= st_res_end);   /* (the pool's windows hold nothing else) */
+#else
+    uint32_t a = st_lin_at(i);
+    return a && !(a >= 0xE0000u && a < 0xE5000u) && !(a >= 0xFC000u && a < 0xFE000u) &&
+           !(a >= FL_RES_LO && a < st_res_end);
+#endif
+}
+static int st_preset_object(uint32_t obj);
+static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* legacy A/B (0/1), or project pool index + 2; 0: no such sector */
+{
+    if (copy >= ST_LIN_C0) return obj != OBJ_SETTINGS && copy - ST_LIN_C0 < ST_LN ? st_lin_at(copy - ST_LIN_C0) : 0u;
     if (((obj >= OBJ_BANK0 && obj < OBJ_CZBANK0) || st_pfile(obj)) && copy >= 2u) {
         return st_pool_at(copy - 2u);
     }
     if (copy >= ST_SMALL_U0 && st_preset_object(obj)) return st_pool_at(copy - ST_SMALL_U0);
+#if BOARD_SMK37
+    if (copy >= 2u) return 0u;                          /* (no former preset pool) */
+    return obj == OBJ_SETTINGS ? FL_DATA_LO + copy * ST_SECTOR : 0u;   /* no legacy pairs on the SMK */
+#else
     if (copy >= 2u && st_preset_object(obj)) return copy - 2u < ST_SP_N ? ST_SP_AT[copy - 2u] : 0u;
     if (obj == OBJ_SHARED_EXT) return 0x9D000u+copy*ST_SECTOR;
     if (obj >= OBJ_P5BANK0) return 0x93000u+(obj-OBJ_P5BANK0)*2u*ST_SECTOR+copy*ST_SECTOR;
@@ -135,29 +288,147 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* legacy A/B (0/1), or 
     if (obj >= OBJ_UPRESET0)
         return 0xDC000u + (obj - OBJ_UPRESET0) * 2u * ST_SECTOR + copy * ST_SECTOR;
     return 0x97000u + (obj - OBJ_PROJECT0) * 2u * ST_SECTOR + copy * ST_SECTOR;
+#endif
 }
+
+#if BOARD_SMK37
+/* The owner of the store. Several FM-1 firmwares are ported to the SMK-37 with the same board layer and
+ * the same store area, each with its own object formats: a firmware must never parse another's data. The
+ * sector 0xAF000 (the same in every port) holds "SMK37DATA" + the firmware family (FELUCCA_DATA_FAMILY,
+ * build.py; Melodee: MELODEE). Ours: load as ever. Erased (data from before the tag) or another family's:
+ * clear Melodee's whole store (A, B and C; the other firmware's projects, its own backups are its business)
+ * and take it; FELUCCA_DATA_UNTAGGED_OK=1 would keep untagged data (Melodee never wrote any on an SMK).
+ * The resource region (res.c) is not the store: the update loader writes it before the first start, and it
+ * carries its own commit record, so the clear leaves it alone. Calibration, BT pairing, USR and key_mac lie
+ * outside the three windows: never touched. */
+#ifndef FELUCCA_DATA_FAMILY
+#define FELUCCA_DATA_FAMILY "MELODEE"
+#endif
+#ifndef FELUCCA_DATA_UNTAGGED_OK
+#define FELUCCA_DATA_UNTAGGED_OK 0
+#endif
+_Static_assert(ST_SMK_TAG >= FL_DATA_LO && ST_SMK_TAG + ST_SECTOR <= FL_DATA_HI, "SMK store owner: outside FL_DATA");
+_Static_assert(sizeof FELUCCA_DATA_FAMILY - 1u >= 1u && sizeof FELUCCA_DATA_FAMILY - 1u <= 7u, "FELUCCA_DATA_FAMILY: 1..7 characters");
+/* The stock firmware's mapping in USRFLASH (global settings at 0xC2000, magic A3 3A; 8 presets from 0xC3000 every
+ * 0x5000, 0x29E3 bytes each, the rest erased; the end marker "usrdata\0" at 0xEAFF8, FL_STOCKTAG): the stock firmware
+ * trusts the area while the marker is there and never rebuilds it, so after a return to stock Melodee's store B
+ * would be its key, knob and fader mapping (every key one note). So: an intact stock mapping is kept (it reads as
+ * free pool sectors), and the marker is released (its sector erased: the stock firmware rebuilds its factory mapping
+ * at its next start) before the first erase in USRFLASH (storage_hw.c st_erase) and at boot when it stands
+ * over anything else (st_owner_check: ours, an older build's, another firmware's). */
+static int st_stock_tagged(void)
+{
+    static const uint8_t TAG[8] = {'u', 's', 'r', 'd', 'a', 't', 'a', 0};
+    uint8_t t[8];
+    uint32_t i;
+    if (st_read(FL_STOCKTAG_OFF, t, 8))
+        return 0;
+    for (i = 0; i < 8u; i++)
+        if (t[i] != TAG[i])
+            return 0;
+    return 1;
+}
+static int st_stock_intact(void)                /* the marker over the stock layout */
+{
+    uint8_t b[8];
+    uint32_t n, k, i, ff;
+    if (!st_stock_tagged() || st_read(FL_UFL_LO, b, 2) || b[0] != 0xA3u || b[1] != 0x3Au)
+        return 0;
+    for (n = 0; n < 8u; n++)                    /* each preset: its head written, its last two sectors erased */
+        for (k = 0; k < 3u; k++) {
+            if (st_read(FL_UFL_LO + 0x1000u + n * 0x5000u + (k ? 0x2000u + k * 0x1000u : 0u), b, 8))
+                return 0;
+            for (ff = 1, i = 0; i < 8u; i++)
+                ff &= b[i] == 0xFFu;
+            if (ff != (k != 0u))
+                return 0;
+        }
+    return 1;
+}
+#ifndef ST_ERASE_MARKER
+#define ST_ERASE_MARKER() st_erase(FL_STOCKTAG_LO)   /* (host tests; the firmware: storage_hw.c, the raw erase) */
+#endif
+static void st_stock_release(void)              /* erase the marker's sector, once: later calls find no marker */
+{
+    if (st_stock_tagged())
+        (void)ST_ERASE_MARKER();
+}
+static inline int st_in_usrflash(uint32_t off) { return off >= FL_UFL_LO && off < FL_STOCKTAG_LO; }
+static inline int st_in_res(uint32_t off) { return off >= FL_RES_LO && off < FL_RES_HI; }
+static uint8_t st_foreign;                         /* the store could not be cleared: RAM-only this boot (persist_boot) */
+static int st_owner_check(void)                    /* 1: another firmware's (or untagged) store was cleared; -1: an erase
+                                                    * failed: not tagged as ours, so the next boot clears it again */
+{
+    static const char FAM[] = FELUCCA_DATA_FAMILY;
+    uint8_t tag[16], want[16];
+    uint32_t i, erased = 1, ours = 1, s, cleared = 0, keep, bad = 0;
+    for (i = 0; i < 16u; i++)
+        want[i] = i < 9u ? (uint8_t)"SMK37DATA"[i] : i - 9u < sizeof FAM - 1u ? (uint8_t)FAM[i - 9u] : 0u;
+    if (!st_stock_intact())
+        st_stock_release();                     /* the marker over anything but the stock mapping: let it rebuild */
+    if (st_read(ST_SMK_TAG, tag, 16))
+        return 0;
+    for (i = 0; i < 16u; i++) {
+        erased &= tag[i] == 0xFFu;
+        ours &= tag[i] == want[i];
+    }
+    if (ours)
+        return 0;
+    if (!erased || !FELUCCA_DATA_UNTAGGED_OK) {     /* not ours: clear the store */
+        for (s = FL_DATA_LO; s < FL_DATA_HI; s += ST_SECTOR)
+            if (s != ST_SMK_TAG && !st_in_res(s)) {
+                bad |= st_erase(s) != 0;
+                ST_IDLE();
+            }
+        keep = st_stock_intact();                   /* the stock mapping: kept until Melodee writes there */
+        for (s = FL_UFL_LO; !keep && s < FL_UFL_HI; s += ST_SECTOR) {
+            bad |= st_erase(s) != 0;
+            ST_IDLE();
+        }
+        for (s = FL_GAP_LO; s < FL_GAP_HI; s += ST_SECTOR) {
+            bad |= st_erase(s) != 0;
+            ST_IDLE();
+        }
+        for (s = FL_RES_LO + FL_RES_RESERVE * ST_SECTOR; s < FL_RES_HI; s += ST_SECTOR) {
+            bad |= st_erase(s) != 0;                /* (the resource sectors the pool may take: never another's data) */
+            ST_IDLE();
+        }
+        cleared = 1;
+    }
+    if (bad || st_erase(ST_SMK_TAG) || st_prog(ST_SMK_TAG, want, 16))
+        return -1;                                  /* the tag only over a store that is all ours */
+    return (int)cleared;
+}
+#else
+static int st_owner_check(void) { return 0; }
+#endif
 
 static int st_banked(uint32_t obj) { return (obj >= OBJ_BANK0 && obj < OBJ_CZBANK0) || st_pfile(obj); }
 /* New preset objects start directly after the commit header, leaving the last
  * 256 bytes erased so the SPL/update loader cannot interpret musical data as OTA. */
 static uint32_t st_payload_off(uint32_t obj) { return obj >= OBJ_UPRESET_EXT0 ? sizeof(st_hdr_t) : ST_PAYLOAD_OFF; }
-static uint32_t st_capacity(uint32_t obj) { return obj == OBJ_SETTINGS ? ST_SECTOR - sizeof(st_hdr_t) : st_banked(obj) ? ST_PROJECT_MAX : obj >= OBJ_UPRESET_EXT0 ? ST_SECTOR - 256u - sizeof(st_hdr_t) : ST_PAYLOAD_MAX; }
+/* a pad record (rec_store.c): a list record of any length up to the pool */
+static int st_long(uint32_t obj) { return obj >= ST_SFILE0 && obj < ST_SFILE0 + ST_NSMP; }
+static uint32_t st_max_sectors(uint32_t obj) { return st_long(obj) ? ST_LONG_SECTORS : ST_PROJECT_SECTORS; }
+static uint32_t st_capacity(uint32_t obj) { return obj == OBJ_SETTINGS ? ST_SECTOR - sizeof(st_hdr_t) : st_long(obj) ? ST_LONG_SECTORS * ST_LIN_PAYLOAD_MAX : st_banked(obj) ? ST_PROJECT_MAX : obj >= OBJ_UPRESET_EXT0 ? ST_SECTOR - 256u - sizeof(st_hdr_t) : ST_PAYLOAD_MAX; }
 static int st_preset_object(uint32_t obj)
 {
     return (obj>=OBJ_UPRESET0 && obj<OBJ_BANK0) || (obj>=OBJ_CZBANK0 && obj<OBJ_COUNT);
 }
 static int st_small(uint32_t obj) { return st_preset_object(obj); }
-static int st_copy_ok(uint32_t obj, uint32_t copy)    /* 0/1 the fixed pair; 2.. a pool sector */
+static int st_listed(uint32_t obj) { return st_banked(obj) || st_small(obj); }   /* saved as a list record */
+static int st_copy_ok(uint32_t obj, uint32_t copy)    /* 0/1 the fixed pair; 2.. a pool sector; ST_LIN_C0.. a list record */
 {
+    if (copy >= ST_LIN_C0) return st_listed(obj) && copy < ST_LIN_C0 + ST_LN;
     return copy < 2u || (st_banked(obj) && copy < ST_U_N + 2u) ||
            (st_small(obj) && (copy < ST_SP_N + 2u || (copy >= ST_SMALL_U0 && copy < ST_SMALL_U0 + ST_U_N)));
 }
 static uint32_t st_payload_off_header(uint32_t obj,const st_hdr_t *h)
 {
-    if (st_banked(obj) && h->slot >= 2u) return ST_POOL_PAYLOAD_OFF;
+    if ((st_banked(obj) && h->slot >= 2u) || h->slot >= ST_LIN_C0) return ST_POOL_PAYLOAD_OFF;
     return (st_preset_object(obj) && h->rsv[0]==ST_COMPACT_TAG) || (obj == OBJ_SETTINGS && h->rsv[0] == ST_SETTINGS_TAG) ? sizeof(st_hdr_t) : st_payload_off(obj);
 }
-static uint32_t st_extension(uint32_t obj, uint32_t copy)
+static uint32_t st_extension(uint32_t obj, uint32_t copy)   /* (the FM-1's legacy copies; never reached on the SMK) */
 {
     return ST_BANK_EXT_LO + ((obj - OBJ_BANK0) * 2u + copy) * 2u * ST_SECTOR;
 }
@@ -180,43 +451,85 @@ static void st_list_put(st_hdr_t *h, uint32_t k, uint32_t v)
         else h->rsv[p / 32u] &= ~(1u << (p % 32u));
     }
 }
-static void st_list_init(st_hdr_t *h) { h->rsv[0] = 0xFFFFFFFFu; h->rsv[1] = ST_LIST_TAG | 0x00FFFFFFu; }
-/* a pool record's sectors in order (pool indices); their count, 0 when it has no pool shape */
-static uint32_t st_rec_sectors(const st_hdr_t *h, uint8_t idx[ST_PROJECT_SECTORS])
+static void st_list_init(st_hdr_t *h) { h->rsv[0] = 0xFFFFFFFFu; h->rsv[1] = ST_LIN_TAG | 0x00FFFFFFu; }
+static int st_rec_lin(const st_hdr_t *h) { return (h->rsv[1] & 0xFF000000u) == ST_LIN_TAG; }
+/* a record's payload bytes per sector: the list form's 4,056, the old pool forms' 3,808 */
+static uint32_t st_geom(const st_hdr_t *h) { return st_rec_lin(h) ? ST_LIN_PAYLOAD_MAX : ST_POOL_PAYLOAD_MAX; }
+/* a pool record's sectors in order (indices in its tag's space: linear, or the old pool's); their count, 0 when it
+ * has no pool shape. A list record's entries past the header's eight: its index blocks */
+static uint32_t st_rec_sectors(const st_hdr_t *h, uint8_t idx[ST_REC_MAX])
 {
     uint32_t tag = h->rsv[1] & 0xFF000000u, n = 0;
     if (tag == ST_POOL_TAG) {
         for (uint32_t i = 0; i < ST_POOL_SECTORS; i++) if (st_pool_bit(h, i)) { if (n == ST_PROJECT_SECTORS) return 0; idx[n++] = (uint8_t)i; }
-    } else if (tag == ST_LIST_TAG) {
+    } else if (tag == ST_LIST_TAG || tag == ST_LIN_TAG) {
         for (uint32_t k = 0; k < ST_PROJECT_SECTORS; k++) {
             uint32_t v = st_list_get(h, k);
             if (v == 0x7Fu) break;
-            if (v >= ST_U_N) return 0;
+            if (v >= (tag == ST_LIN_TAG ? ST_LN : ST_U_N)) return 0;
             idx[n++] = (uint8_t)v;
+        }
+        for (uint32_t b = 0; tag == ST_LIN_TAG && n == 8u + b * ST_LIX_N && b < ST_LIX_BLOCKS; b++) {
+            uint32_t blk[8];
+            if (st_fetch(st_lin_at(idx[1u + b]), blk, sizeof blk))
+                return 0;
+            if (blk[0] != ST_LIX_TAG)
+                break;
+            for (uint32_t k = 0; k < ST_LIX_N; k++) {
+                uint32_t v = ((const uint8_t *)blk)[4u + k];
+                if (v == 0xFFu) break;
+                if (v >= ST_LN) return 0;
+                idx[n++] = (uint8_t)v;
+            }
         }
     }
     return n;
 }
+/* a long record's index blocks (entries 8.. of its n sectors in list), into its sectors 1..4 (erased) */
+static int st_prog(uint32_t off, const void *src, uint32_t n);
+static int st_lix_write(const uint8_t *list, uint32_t n)
+{
+    for (uint32_t b = 0; n > 8u + b * ST_LIX_N && b < ST_LIX_BLOCKS; b++) {
+        uint8_t blk[32];
+        memset(blk, 0xFF, sizeof blk);
+        blk[0] = (uint8_t)ST_LIX_TAG; blk[1] = (uint8_t)(ST_LIX_TAG >> 8); blk[2] = (uint8_t)(ST_LIX_TAG >> 16);
+        blk[3] = (uint8_t)(ST_LIX_TAG >> 24);
+        for (uint32_t k = 0; k < ST_LIX_N && 8u + b * ST_LIX_N + k < n; k++)
+            blk[4u + k] = list[8u + b * ST_LIX_N + k];
+        int rc = st_prog(st_lin_at(list[1u + b]), blk, sizeof blk);
+        if (rc) return rc;
+    }
+    return 0;
+}
+/* the address of a record's sector by its index (st_rec_sectors) */
+static uint32_t st_rec_addr(const st_hdr_t *h, uint32_t v) { return st_rec_lin(h) ? st_lin_at(v) : st_pool_at(v); }
 static int st_pool_shape(const st_hdr_t *h, uint32_t copy)
 {
-    uint8_t idx[ST_PROJECT_SECTORS];
-    uint32_t n = copy >= 2u && copy < ST_U_N + 2u ? st_rec_sectors(h, idx) : 0u;
-    return n && idx[0] + 2u == copy && n == (h->len ? (h->len + ST_POOL_PAYLOAD_MAX - 1u) / ST_POOL_PAYLOAD_MAX : 1u);
+    uint8_t idx[ST_REC_MAX];
+    int lin = st_rec_lin(h);
+    uint32_t n = lin ? (copy >= ST_LIN_C0 && copy < ST_LIN_C0 + ST_LN ? st_rec_sectors(h, idx) : 0u)
+                     : (copy >= 2u && copy < ST_U_N + 2u ? st_rec_sectors(h, idx) : 0u), g = st_geom(h);
+    return n && idx[0] + (lin ? ST_LIN_C0 : 2u) == copy && n == (h->len ? (h->len + g - 1u) / g : 1u);
 }
+/* payload byte off of a pool record: its flash address, *span the bytes from there up to the guard or the sector end */
 static uint32_t st_pool_address(const st_hdr_t *h, uint32_t off, uint32_t *span)
 {
-    uint8_t idx[ST_PROJECT_SECTORS];
-    uint32_t n = st_rec_sectors(h, idx), k = off / ST_POOL_PAYLOAD_MAX;
+    uint8_t idx[ST_REC_MAX];
+    uint32_t n = st_rec_sectors(h, idx), g = st_geom(h), k = off / g, b = off % g;
     if (k >= n) { *span = 0; return 0; }
-    *span = ST_POOL_PAYLOAD_MAX - off % ST_POOL_PAYLOAD_MAX;
-    return st_pool_at(idx[k]) + ST_POOL_PAYLOAD_OFF + off % ST_POOL_PAYLOAD_MAX;
+    uint32_t at = st_rec_addr(h, idx[k]);
+    if (b < ST_RUN0) { *span = ST_RUN0 - b; return at + ST_POOL_PAYLOAD_OFF + b; }
+    *span = g - b;
+    return at + ST_GUARD_OFF + ST_GUARD_LEN + (b - ST_RUN0);
 }
 static uint32_t st_stream_generation;
+static uint32_t st_stream_open;                     /* the generation of a stream begun and not yet published (0: none) */
+static uint32_t st_stream_activity;                 /* its begins and writes counted (module_store.c: still being written) */
 /* New records use their pool bitmap. Legacy reads retain the five-sector base
  * plus two padded extensions, allowing migration without moving committed data. */
 static uint32_t st_address_at(uint32_t obj, uint32_t copy, uint32_t off, uint32_t *span,uint32_t payload)
 {
-    if (st_banked(obj) && copy >= 2u) {
+    if ((st_banked(obj) && copy >= 2u) || copy >= ST_LIN_C0) {
         st_hdr_t h;
         if (st_fetch(st_sector(obj, copy), &h, sizeof h) || !st_pool_shape(&h, copy)) { *span = 0; return 0; }
         return st_pool_address(&h, off, span);
@@ -260,16 +573,16 @@ static int st_retired(uint32_t obj) { return obj >= OBJ_PROJECT0 && obj < OBJ_PR
 static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record valid: 0 */
 {
     if (!st_obj_ok(obj) || !st_copy_ok(obj, copy) || st_retired(obj) ||
-        (copy < 2u && st_pfile(obj)))
+        (copy < 2u && st_pfile(obj)) || !st_sector(obj, copy))
         return -1;
     if (st_fetch(st_sector(obj, copy), h, sizeof *h))
         return -1;
-    int pooled = st_banked(obj) && copy >= 2u;
+    int pooled = (st_banked(obj) && copy >= 2u) || copy >= ST_LIN_C0;
     if (h->magic != ST_MAGIC || h->type != obj || h->slot != copy || h->len > st_capacity(obj) ||
         h->hcrc != st_crc32(h, sizeof *h - 4u) ||
-        (st_banked(obj) && (copy >= 2u ? !st_pool_shape(h, copy) : h->len > ST_BANK_BASE_MAX + ST_BANK_EXT_MAX)) ||
+        (pooled ? !st_pool_shape(h, copy) : st_banked(obj) && h->len > ST_BANK_BASE_MAX + ST_BANK_EXT_MAX) ||
         (!pooled && h->rsv[0]==ST_COMPACT_TAG && (!st_preset_object(obj) || h->len>ST_SECTOR-256u-sizeof(st_hdr_t))) ||
-        (st_small(obj) && copy >= 2u && (h->rsv[0] != ST_COMPACT_TAG || h->len > ST_SECTOR - 256u - sizeof(st_hdr_t))) ||
+        (st_small(obj) && copy >= 2u && copy < ST_LIN_C0 && (h->rsv[0] != ST_COMPACT_TAG || h->len > ST_SECTOR - 256u - sizeof(st_hdr_t))) ||
         (!pooled && h->rsv[0] == ST_SETTINGS_TAG && obj != OBJ_SETTINGS) ||
         (obj == OBJ_SETTINGS && h->rsv[0] != ST_SETTINGS_TAG && h->len > ST_PAYLOAD_MAX))
         return -1;
@@ -282,10 +595,7 @@ static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* streamin
     for (uint32_t off = 0; off < h->len; off += sizeof st_buf) {
         uint32_t n = h->len - off > sizeof st_buf ? sizeof st_buf : h->len - off;
         if (st_read_range(obj, copy, off, st_buf, n)) return -1;
-        for (uint32_t i = 0; i < n; i++) {
-            crc ^= st_buf[i];
-            for (uint32_t j = 0; j < 8u; j++) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-        }
+        crc = st_crc32_update(crc, st_buf, n);
     }
     return ~crc == h->crc ? 0 : -1;
 
@@ -316,20 +626,18 @@ static int st_legacy_current(uint32_t obj, st_hdr_t *h)
     return -1;
 }
 
-/* the copy numbers a pooled object's records can have: a project's 2..80 (the pool index + 2), a preset bank's
- * 2..24 (the former preset pool's) then ST_SMALL_U0 + the pool index */
-static uint32_t st_cands(uint32_t obj) { return st_small(obj) ? ST_SP_N + ST_U_N : ST_U_N; }
-static uint32_t st_cand(uint32_t obj, uint32_t i)
-{
-    return !st_small(obj) || i < ST_SP_N ? i + 2u : ST_SMALL_U0 + i - ST_SP_N;
-}
+/* the copy numbers a pooled object's records can have: a list record's ST_LIN_C0 + its first sector's linear index
+ * (Melodee 1.x's older forms, the fixed pairs, the 0xA7/0xA8 lists and the bank copies, are never read: the web
+ * installer converts them) */
+static uint32_t st_cands(uint32_t obj) { (void)obj; return ST_LN; }
+static uint32_t st_cand(uint32_t obj, uint32_t i) { (void)obj; return ST_LIN_C0 + i; }
+#define ST_CANDS_MAX ST_LN
 static int st_current(uint32_t obj, st_hdr_t *h)
 {
-    if (!st_banked(obj) && !st_small(obj)) return st_legacy_current(obj, h);
+    if (!st_listed(obj)) return st_legacy_current(obj, h);
     /* Retry older headers only after a failed payload CRC. Rejecting one
      * candidate in RAM avoids an erase merely to read storage. */
-    uint32_t rejected[4] = {0, 0, 0, 0}, n = st_cands(obj);
-    st_hdr_t legacy; int old = st_pfile(obj) ? -1 : st_legacy_current(obj, &legacy);
+    uint32_t rejected[(ST_CANDS_MAX + 31u) / 32u] = {0}, n = st_cands(obj);
     for (;;) {
         st_hdr_t best = {0}; int current = -1; uint32_t at = 0;
         for (uint32_t i = 0; i < n; i++) {
@@ -337,82 +645,100 @@ static int st_current(uint32_t obj, st_hdr_t *h)
             if ((rejected[i / 32u] >> (i % 32u)) & 1u || st_head(obj, st_cand(obj, i), &candidate)) continue;
             if (current < 0 || (candidate.seq != best.seq && candidate.seq - best.seq < 0x80000000u)) { best = candidate; current = (int)st_cand(obj, i); at = i; }
         }
-        if (old >= 0 && (current < 0 || best.seq == legacy.seq || legacy.seq - best.seq < 0x80000000u)) { *h = legacy; return old; }
         if (current < 0) return -1;
         if (!st_body(obj, (uint32_t)current, &best)) { *h = best; return current; }
         rejected[at / 32u] |= 1u << (at % 32u);
     }
 }
-/* the pool index holding a preset bank's copy (-1: a fixed pair outside the pool, in the resource region) */
-static int st_small_index(uint32_t obj, uint32_t copy)
+static void st_mark(uint32_t used[ST_LW], uint32_t addr)   /* the linear sector holding addr: in use */
 {
-    if (copy >= ST_SMALL_U0) return (int)(copy - ST_SMALL_U0);
-    if (copy >= 2u) return (int)(ST_POOL_SECTORS + copy - 2u);
-    uint32_t at = st_sector(obj, copy);
-    for (uint32_t i = 0; i < ST_U_N; i++) if (st_pool_at(i) == at) return (int)i;
-    return -1;
+    uint32_t i = st_lin_of(addr);
+    if (i < ST_LN) used[i / 32u] |= 1u << (i % 32u);
 }
-/* Protect precisely the current payload of each slot, including unreadable musical
- * formats with valid storage CRCs. Old duplicates and abandoned stages are free. */
-static void st_project_used(uint32_t used[ST_UW], uint32_t obj, uint32_t copy, const st_hdr_t *h)
+/* Protect precisely the current payload of each record, in whatever form, including unreadable musical formats with
+ * valid storage CRCs. Old duplicates and abandoned stages are free. */
+static void st_project_used(uint32_t used[ST_LW], uint32_t obj, uint32_t copy, const st_hdr_t *h)
 {
-    if (copy >= 2u) {
-        uint8_t idx[ST_PROJECT_SECTORS];
-        for (uint32_t k = 0, n = st_rec_sectors(h, idx); k < n; k++) used[idx[k] / 32u] |= 1u << (idx[k] % 32u);
+    if (copy >= ST_LIN_C0 || (st_banked(obj) && copy >= 2u)) {     /* a list record (or an old pool list) */
+        uint8_t idx[ST_REC_MAX];
+        for (uint32_t k = 0, n = st_rec_sectors(h, idx); k < n; k++) st_mark(used, st_rec_addr(h, idx[k]));
         return;
     }
-    for (uint32_t i = 0; i < ST_POOL_SECTORS; i++) {
-        uint32_t addr = st_pool_at(i), base = st_sector(obj, copy), ext = st_extension(obj, copy);
-        uint32_t bytes = h->len < ST_BANK_BASE_MAX ? h->len : ST_BANK_BASE_MAX;
-        int live = addr >= base && addr < base + ST_PAYLOAD_OFF + bytes;
-        if (h->len > ST_BANK_BASE_MAX) live |= addr >= ext && addr < ext + ((h->len - ST_BANK_BASE_MAX + ST_PAYLOAD_MAX - 1u) / ST_PAYLOAD_MAX) * ST_SECTOR;
-        if (live) used[i / 32u] |= 1u << (i % 32u);
-    }
+    if (!st_banked(obj)) { st_mark(used, st_sector(obj, copy)); return; }   /* a bank's one sector, old forms */
+    uint32_t base = st_sector(obj, copy), ext = st_extension(obj, copy);   /* a legacy A/B project */
+    uint32_t bytes = h->len < ST_BANK_BASE_MAX ? h->len : ST_BANK_BASE_MAX;
+    for (uint32_t a = base; a < base + ST_PAYLOAD_OFF + bytes; a += ST_SECTOR) st_mark(used, a);
+    if (h->len > ST_BANK_BASE_MAX)
+        for (uint32_t k = 0, n = (h->len - ST_BANK_BASE_MAX + ST_PAYLOAD_MAX - 1u) / ST_PAYLOAD_MAX; k < n; k++)
+            st_mark(used, ext + k * ST_SECTOR);
 }
-/* every current record in the pool, projects' and preset banks', into used; *seq: obj's next sequence (1 when it
- * has none); *outside: preset banks whose current record is outside the pool. Nonzero: a read failed, which is
- * never evidence of free space */
-static int st_pool_used(uint32_t used[ST_UW], uint32_t obj, uint32_t *seq, uint32_t *outside)
+/* every current record (projects, user kits, preset banks) into used, linear sectors; *seq: obj's next sequence (1
+ * when it has none). Nonzero: a read failed, which is never evidence of free space */
+static int st_pool_used(uint32_t used[ST_LW], uint32_t obj, uint32_t *seq)
 {
+    uint8_t seen[(ST_OBJ_END + 7u) / 8u];
+    uint32_t skip = 1;                              /* (a pool object no sector's header names has none) */
     st_read_failed = 0;
     *seq = 1u;
-    if (outside) *outside = 0;
-    for (uint32_t w = 0; w < ST_UW; w++) used[w] = 0;
-    for (uint32_t s = 0; s < ST_NPROJ; s++) {
-        uint32_t o = st_proj_obj(s);
-        st_hdr_t current; int copy = st_current(o, &current);
-        if (copy >= 0) {
-            st_project_used(used, o, (uint32_t)copy, &current);
-            if (o == obj) *seq = current.seq + 1u;
-        }
+    for (uint32_t w = 0; w < ST_LW; w++) used[w] = 0;
+    memset(seen, 0, sizeof seen);
+    for (uint32_t i = 0; skip && i < ST_LN; i++) {  /* every sector's header read once: the objects there are */
+        struct { uint32_t magic; uint16_t type, slot; } h;
+        uint32_t a = st_lin_at(i);
+        if (!a || st_fetch(a, &h, sizeof h)) { skip = 0; break; }
+        if (h.magic == ST_MAGIC && h.type < ST_OBJ_END) seen[h.type / 8u] |= (uint8_t)(1u << (h.type % 8u));
     }
-    for (uint32_t o = 0; o < OBJ_COUNT; o++) {
-        if (!st_small(o)) continue;
+    for (uint32_t o = 0; o < ST_OBJ_END; o++) {
+        uint32_t live = o < OBJ_COUNT ? st_listed(o) && !st_retired(o) : st_pfile(o);
+#if !MELODEE_RECORDS
+        live &= (o < ST_RFILE0 || o >= ST_MFILE0) && o < ST_SFILE0;
+#endif
+        if (!live || (skip && o >= ST_PFILE0 && !(seen[o / 8u] >> (o % 8u) & 1u))) continue;
         st_hdr_t current; int copy = st_current(o, &current);
         if (copy < 0) continue;
-        int i = st_small_index(o, (uint32_t)copy);
-        if (i >= 0) used[(uint32_t)i / 32u] |= 1u << ((uint32_t)i % 32u);
-        else if (outside) (*outside)++;
+        st_project_used(used, o, (uint32_t)copy, &current);
         if (o == obj) *seq = current.seq + 1u;
     }
     return st_read_failed;
 }
-static int st_pool_free_at(const uint32_t used[ST_UW], uint32_t i) { return !((used[i / 32u] >> (i % 32u)) & 1u); }
+/* the m-th linear sector a new record of obj tries. FM-1: from the top down for every record, so the low end next to
+ * the app area stays free longest. SMK-37: projects and kits from store A up, banks from the top (store C), so the
+ * stock mapping in USRFLASH (store B) lasts as long as it can */
+static uint32_t st_order(uint32_t obj, uint32_t m)
+{
+#if BOARD_SMK37
+    if (m >= ST_U_N) return m;                          /* (the resource sectors given to the pool: last) */
+    if (!st_small(obj)) return m;
+    return ST_U_N - 1u - m;
+#else
+    /* top down, the resource sectors given to the pool last: indices hi .. ST_LN-1, then 0 .. lo-1, then lo .. hi-1 */
+    const uint32_t lo = (FL_RES_LO + FL_RES_RESERVE * ST_SECTOR - ST_LIN_BASE) / ST_SECTOR, hi = lo + ST_RES_GIVEN;
+    (void)obj;
+    if (m < ST_LN - hi) return ST_LN - 1u - m;
+    m -= ST_LN - hi;
+    return m < lo ? lo - 1u - m : hi - 1u - (m - lo);
+#endif
+}
+/* a linear sector a new record may take: allowed and held by no current record */
+static int st_pool_free_at(const uint32_t used[ST_LW], uint32_t i) { return st_lin_ok(i) && !((used[i / 32u] >> (i % 32u)) & 1u); }
 /* the pool's free sectors (-1: a read failed) */
 static int st_project_free(void)
 {
-    uint32_t used[ST_UW], seq, n = 0;
-    if (st_pool_used(used, 0xFFFFu, &seq, 0)) return -1;
-    for (uint32_t i = 0; i < ST_U_N; i++) n += (uint32_t)st_pool_free_at(used, i);
+    uint32_t used[ST_LW], seq, n = 0;
+    if (st_pool_used(used, 0xFFFFu, &seq)) return -1;
+    for (uint32_t i = 0; i < ST_LN; i++) n += (uint32_t)st_pool_free_at(used, i);
     return (int)n;
 }
-/* a project slot emptied: every committed copy's header erased, the oldest first and the current one last, so a
- * cut leaves the project as it was or nothing (an older copy never comes back). 0, or the first error */
+/* a record emptied: every committed copy's header erased, the oldest first and the current one last, so a cut
+ * leaves it as it was or nothing (an older copy never comes back). 0, or the first error */
 static int st_project_delete(uint32_t obj)
 {
-    for (uint32_t pass = 0; pass < ST_U_N + 2u; pass++) {
+    uint32_t n = st_cands(obj);
+    st_pool_gen++;
+    for (uint32_t pass = 0; pass < n; pass++) {
         st_hdr_t h, best; uint32_t at = 0; int found = 0;
-        for (uint32_t c = st_pfile(obj) ? 2u : 0u; c < ST_U_N + 2u; c++) {
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t c = st_cand(obj, i);
             if (st_head(obj, c, &h)) continue;
             if (!found || (best.seq != h.seq && best.seq - h.seq < 0x80000000u)) { best = h; at = c; found = 1; }
         }
@@ -422,21 +748,31 @@ static int st_project_delete(uint32_t obj)
     }
     return -7;
 }
+/* a new list record's sectors (in st_order), erased, and its address map staged */
 static int st_project_allocate(uint32_t obj, uint32_t len, st_hdr_t *h)
 {
-    uint32_t used[ST_UW];
+    uint32_t used[ST_LW];
     memset(h, 0xFF, sizeof *h);
     h->type = (uint16_t)obj; h->len = len; h->seq = 1u;
-    if (st_pool_used(used, obj, &h->seq, 0)) return -7;
+    if (st_pool_used(used, obj, &h->seq)) return -7;
     st_list_init(h);
-    uint32_t need = len ? (len + ST_POOL_PAYLOAD_MAX - 1u) / ST_POOL_PAYLOAD_MAX : 1u, k = 0;
-    if (need > ST_PROJECT_SECTORS) return -1;
-    for (uint32_t i = 0; i < ST_U_N && k < need; i++) if (st_pool_free_at(used, i)) st_list_put(h, k++, i);
+    uint8_t list[ST_REC_MAX];
+    uint32_t need = len ? (len + ST_LIN_PAYLOAD_MAX - 1u) / ST_LIN_PAYLOAD_MAX : 1u, k = 0;
+    if (need > st_max_sectors(obj)) return -1;
+    for (uint32_t m = 0; m < ST_LN && k < need; m++)
+        if (st_pool_free_at(used, st_order(obj, m))) {
+            list[k] = (uint8_t)st_order(obj, m);
+            if (k < 8u) st_list_put(h, k, list[k]);
+            k++;
+        }
     if (k < need) return -5;
-    h->slot = (uint16_t)(st_list_get(h, 0) + 2u);
+    h->slot = (uint16_t)(ST_LIN_C0 + list[0]);
     for (uint32_t m = 0; m < need; m++) {
-        int rc = st_erase(st_pool_at(st_list_get(h, m))); if (rc) return rc;
+        int rc = st_erase(st_lin_at(list[m])); if (rc) return rc;
+        ST_IDLE();
     }
+    int rc = st_lix_write(list, need);
+    if (rc) return rc;
     /* Persist the address map for staged range reads. The erased magic and
      * header CRC keep it invisible until the final one-page commit. */
     return st_prog(st_sector(obj, h->slot), h, sizeof *h);
@@ -453,6 +789,15 @@ static int st_load(uint32_t obj, void *dst, uint32_t max)
     return (int)h.len;
 }
 
+/* a committed record to read in pieces (st_read_range) without a buffer for all of it: its copy, *len its bytes; -1
+ * none */
+static int st_open(uint32_t obj, uint32_t *len)
+{
+    st_hdr_t h;
+    int cur = st_obj_ok(obj) ? st_current(obj, &h) : -1;
+    *len = cur >= 0 ? h.len : 0u;
+    return cur;
+}
 /* a committed record is there, whatever it holds (st_load: -1 for one too big for its buffer too) */
 static int st_exists(uint32_t obj)
 {
@@ -460,49 +805,6 @@ static int st_exists(uint32_t obj)
     return st_obj_ok(obj) && !st_retired(obj) && st_current(obj, &h) >= 0 && h.len != 0;
 }
 
-/* a preset bank into a free pool sector: erase, payload at 32, the commit record last, read back */
-static int st_small_save(uint32_t obj, const void *src, uint32_t len)
-{
-    uint32_t used[ST_UW], seq, i, at;
-    if (len > ST_SECTOR - 256u - sizeof(st_hdr_t)) return -1;
-    if (st_pool_used(used, obj, &seq, 0)) return -7;
-    for (i = ST_U_N; i-- && !st_pool_free_at(used, i);)   /* from the top: banks gather where they were, projects */
-        ;                                                 /* grow from the bottom */
-    if (i >= ST_U_N) return -5;                          /* STORAGE FULL */
-    at = st_pool_at(i);
-    int rc = st_erase(at);
-    if (rc) return rc;
-    for (uint32_t off = 0; off < len;) {
-        uint32_t n = len - off > sizeof st_buf ? sizeof st_buf : len - off, page = 256u - ((at + 32u + off) & 255u);
-        if (n > page) n = page;
-        memcpy(st_buf, (const uint8_t *)src + off, n);
-        if ((rc = st_prog(at + 32u + off, st_buf, n)) != 0) return rc;
-        off += n;
-    }
-    st_hdr_t h;
-    h.magic = ST_MAGIC; h.type = (uint16_t)obj; h.slot = (uint16_t)(ST_SMALL_U0 + i); h.seq = seq; h.len = len;
-    h.crc = st_crc32(src, len); h.rsv[0] = ST_COMPACT_TAG; h.rsv[1] = 0xFFFFFFFFu;
-    h.hcrc = st_crc32(&h, sizeof h - 4u);
-    if ((rc = st_prog(at, &h, sizeof h)) != 0) return rc;
-    st_hdr_t chk;
-    if (st_head(obj, ST_SMALL_U0 + i, &chk) || memcmp(&chk, &h, sizeof h) || st_body(obj, ST_SMALL_U0 + i, &chk)) return -7;
-    return 0;
-}
-/* Banks still in their old fixed pairs outside the pool (where the resource region now goes) copied into it, as
- * saves are (the old copy current until the new one commits). Boot and res.c, before anything writes there.
- * 0 when every bank's current record is in the pool */
-static int st_small_migrate(void *buf, uint32_t max)
-{
-    int err = 0;
-    for (uint32_t o = 0; o < OBJ_COUNT; o++) {
-        if (!st_small(o)) continue;
-        st_hdr_t h; int copy = st_current(o, &h);
-        if (copy < 0 || st_small_index(o, (uint32_t)copy) >= 0) continue;
-        int rc = h.len > max || st_read_range(o, (uint32_t)copy, 0, buf, h.len) ? -7 : st_small_save(o, buf, h.len);
-        if (rc) err = rc;                    /* (a 3,816-byte pre-UPB2 bank stays put until up_boot converts it) */
-    }
-    return err;
-}
 static int st_pair_save(uint32_t obj, const void *src, uint32_t len);
 static int st_save(uint32_t obj, const void *src, uint32_t len)
 {
@@ -511,8 +813,7 @@ static int st_save(uint32_t obj, const void *src, uint32_t len)
 #endif
     if (!st_obj_ok(obj) || st_retired(obj) || len > st_capacity(obj))
         return -1;
-    if (st_banked(obj)) return st_project_save(obj, src, len);
-    if (st_small(obj)) return st_small_save(obj, src, len);
+    if (st_listed(obj)) return st_project_save(obj, src, len);
     return st_pair_save(obj, src, len);
 }
 /* the fixed A/B pair: settings (and a preset bank's old home, where host tests build pre-pool fixtures) */
@@ -559,3 +860,15 @@ static int st_pair_save(uint32_t obj, const void *src, uint32_t len)
 }
 
 #include "storage_stream.c"
+
+/* a current record has a sector in [lo, hi): 1 (-1: a read failed) */
+static int st_held(uint32_t lo, uint32_t hi)
+{
+    uint32_t used[ST_LW], seq;
+    if (st_pool_used(used, 0xFFFFu, &seq)) return -1;
+    for (uint32_t i = 0; i < ST_LN; i++) {
+        uint32_t a = st_lin_at(i);
+        if (a >= lo && a < hi && ((used[i / 32u] >> (i % 32u)) & 1u)) return 1;
+    }
+    return 0;
+}

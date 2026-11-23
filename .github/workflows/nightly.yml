@@ -53,6 +53,14 @@ jobs:
             git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK"
           fi
           test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
+      - name: Build the Melodee 1.x -> 2.0 converter
+        # The installer converts an FM-1's Melodee 1.x projects and sounds with it (<package>-convert.bin beside the
+        # package, web/make_site.py); the tests below play its fixtures in both firmwares. The frozen 1.x tree is an
+        # older commit of this repository, so the shallow checkout fetches it.
+        run: |
+          ref=$(tr -d ' \n' < web/convert/LEGACY_REF)
+          git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch --depth=1 origin "$ref"
+          sh web/convert/build.sh
       - name: Build dual core and run host/web checks
         env:
           MELODEE_DUAL_CORE: '1'

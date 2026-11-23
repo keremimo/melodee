@@ -15,7 +15,7 @@ static const char *const SC_FAMILY_WORD[SCALE_FAMILIES + 2u] = {"All", "Western"
 static void scales_back(void)                           /* OCT- / OCT+: SCL's list */
 {
     uint32_t i;
-    for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, "SCL"); i++)
+    for (i = 0; i < NPAGES && !str_eq(PG(i).title, "SCL"); i++)
         ;
     if (i < NPAGES) {
         ui.page = (uint8_t)i;
@@ -65,7 +65,8 @@ static void scales_draw(void)
         }
         cv_blit(0, 0);
     }
-    sig = rank * 7u + scale * 1031u + total * 40503u + ui.scale_family * 13u + fav + ux.gen * 977u + ux.pal * 31u;
+    sig = rank * 7u + scale * 1031u + total * 40503u + ui.scale_family * 13u + fav + ux.gen * 977u + ux.pal * 31u +
+          (uint32_t)TSEL->p[P_TUNING] * 8191u;
     if (sig != scv.list) {                              /* the scales: two before the card, two after it */
         int32_t d, top, h = 240 - SC_BODY_Y - 2;
         scv.list = sig;
@@ -87,13 +88,16 @@ static void scales_draw(void)
                     hc = T_KNOB(SCALE_FAMILY[id]);
                     scales_name(b, id, sizeof b);
                     if (!d) {                               /* the card */
-                        char dt[24];
+                        char dt[28];
                         uint16_t bg = ux_mix(T_BG, hc, 18);
                         y = 2 * SC_ROW;
                         cv_rrect(BOX_X, y, BOX_W, SC_CARD - 2, 8, bg, T_BG);
                         cv_free_text(12, ty_y(y + 18, ty_fit(tf, b, 222)), ty_fit(tf, b, 222), b, T_TEXT, bg, 222);
                         fmt_int(dt, SCALE_DEGREES[id]);
-                        str_cpy(dt + str_len(dt), SCALE_FAMILY[id] == 6u ? " notes \xB7 non-octave" : " notes \xB7 octave", 20);
+                        str_cpy(dt + str_len(dt), SCALE_FAMILY[id] == 6u ? " notes \xB7 non-octave" :
+                                id >= SCALE_LEGACY && id < SCALE_MICRO_END ? " notes \xB7 octave" : " notes \xB7 ", 20);
+                        if (id < SCALE_LEGACY || id >= SCALE_MICRO_END)     /* a twelve-tone scale: its tuning */
+                            str_cpy(dt + str_len(dt), N_TUNING[clamp(TSEL->p[P_TUNING], 0, TUNING_COUNT - 1u)], 16);
                         cv_text_on(12, ty_y(y + 42, lf), lf, dt, hc, bg);
                         cv_icon_mid(212, y + 42, 16, scale_favorite(id) ? ICON_X_STAR : ICON_X_STAR_O,
                                     scale_favorite(id) ? hc : T_DIM, bg);

@@ -5,46 +5,17 @@
  * glow: ui_input.c ui_leds), KNOB ACCEL (ui_input.c accel_by), USB AUDIO (IN+OUT, IN, OUT or OFF; usb.c ua_off_set),
  * USB INPUT (stereo master or four track stems; usb.c ua_tracks_set),
  * USB HOST (the USB-C port hosts a USB-MIDI controller instead of talking to a computer; not saved; usb_host.c),
+ * MIDI THRU (fm1-base: what comes in goes on out where it did not come from; platform/melodee_app.c midi_thru),
+ * TRS MIDI OUT (SMK-37: the jack sends what USB MIDI sends; smk_midi_out.h),
  * AUTOSAVE (automatic project saves after five seconds stopped and untouched), HOME SELECT (what SELECT turns on HOME:
  * ui.c HS_*), GLO SELECT (what SELECT turns with GLO held, on any page: the same choices), UNUSED TRACKS (SHOW:
  * Stage and MIXER keep a greyed "Add track" row for each place not in use; HIDE: the tracks in use only, ui.c
  * stage_rows),
  * CALIBRATION (the setup screen: HARDWARE CALIBRATION), ABOUT.
- * PRESETS scrolls from ABOUT through all credits. ui.menu: 1 list, 2 information. */
+ * PRESETS scrolls from ABOUT through all credits. ui.menu: 1 list, 2 information, 3 Bluetooth, 4 MIDI LEARN. */
 /* ------------------------------------------------------------ menu --- */
 #define MENU_HEAD H_HEAD                 /* the menu's own title strip */
-enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
-#if MELODEE_USB_AUDIO
-       MI_USB, MI_USB_INPUT, MI_USB_VOLUME,
-#endif
-#if MELODEE_USB_HOST
-       MI_USB_HOST,
-#endif
-#if MELODEE_BLE
-       MI_BLE,
-#endif
-       MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN,
-       MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
-       MI_COUNT };
-static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
-#if MELODEE_USB_AUDIO
-                                              "USB AUDIO", "USB INPUT", "USB VOLUME",
-#endif
-#if MELODEE_USB_HOST
-                                              "USB HOST",
-#endif
-#if MELODEE_BLE
-                                              "BLUETOOTH",
-#endif
-                                              "MIDI KNOBS", "MIDI MODE", "MIDI LEARN",
-                                              "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
-                                              "AUTOSAVE", "PICKER POPUPS", "KNOB ACCEL", "HOME SELECT", "GLO SELECT", "UNUSED TRACKS", "SCREEN OFF", "CALIBRATION", "ABOUT", "SOUND DESIGNER", "BACK"};
-#if MELODEE_USB_AUDIO
-/* USB AUDIO's four settings, as ua_off_want (UA_OFF_OUT | UA_OFF_IN) */
-static const char *const MI_USB_NAME[4] = {"IN+OUT", "IN", "OUT", "OFF"};
-#endif
-static const char *const MI_MIDI_KNOB_NAME[MK_PROFILES] = {"OFF", "GENERAL", "MINILAB"};
-static const char *const MI_MIDI_MODE_NAME[MK_MODES] = {"ABSOLUTE", "REL 1", "REL 2", "REL 3"};
+#include "menu_rows.c"                 /* the rows, their values and names (the editor's SETTINGS too) */
 
 /* https://keremimo.github.io/melodee, QR version 3, correction M (segno; checked with a decoder).
  * One row per word, leftmost module in bit 0; the constant matrix needs no encoder or RAM. */
@@ -97,19 +68,9 @@ static const menu_credit_t MENU_CREDITS[] = {
     {"MIT", MC_TEXT},
     {"https://github.com/electro-smith/DaisySP", MC_URL},
     {"", MC_TEXT},
-    {"uPD933 / NATIVE CZ", MC_TITLE},
-    {"Devin Acker / BSD-3-Clause", MC_TEXT},
-    {"https://github.com/mamedev/mame", MC_URL},
-    {"", MC_TEXT},
-    {"DEXED + MSFA / FM6 PORT", MC_TITLE},
-    {"Pascal Gauthier, Google Inc.", MC_TEXT},
-    {"msfa: Apache-2.0, Dexed: GPL-3.0", MC_TEXT},
-    {"https://github.com/asb2m10/dexed", MC_URL},
-    {"", MC_TEXT},
-    {"RESID / SID MODEL", MC_TITLE},
-    {"Dag Lem / GPL-2.0-or-later", MC_TEXT},
-    {"https://github.com/libsidplayfp/resid", MC_URL},
-    {"", MC_TEXT},
+#define SHIP_CREDIT(t, k) {t, k},
+    SHIP_CREDITS(SHIP_CREDIT)          /* (the shipped synths' code: ../modules/shipped.h) */
+#undef SHIP_CREDIT
     {"RINGS / PHYS PORT", MC_TITLE},
     {"Emilie Gillet / MIT", MC_TEXT},
     {"https://github.com/pichenettes/eurorack", MC_URL},
@@ -188,7 +149,7 @@ static int32_t menu_document(int32_t y, int draw)
         else y = menu_text(text, y, c->kind == MC_TITLE ? T_THEME : c->kind == MC_URL ? T_MID : T_TEXT, draw);
     }
     y = menu_text("LICENSES + SOURCE", y + 12, T_THEME, draw);
-    y = menu_text("DRUM + own samples: GPL-3.0-only", y, T_TEXT, draw);
+    y = menu_text(SHIP_LICENCE, y, T_TEXT, draw);
     y = menu_text("Fonts and icons: their licences travel with the source and the release files.", y, T_TEXT, draw);
     y = menu_text("NO WARRANTY", y, T_TEXT, draw);
     y = menu_text("Full notices in source:", y + 8, T_TEXT, draw);
@@ -214,8 +175,8 @@ static void menu_head(void)
 #endif
         ) { draw_head(); return; }
     cv_begin(240, MENU_HEAD, T_BG);
-    cv_text(8, ty_y(MENU_HEAD / 2, TY_TX), TY_TX, ui.menu == 2 ? "About" : "Settings", T_THEME);
-    if (ui.menu >= 2) {                               /* the way back at the right, the REC mark before it (then */
+    cv_text(8, ty_y(MENU_HEAD / 2, TY_TX), TY_TX, ui.menu == 2 ? "About" : ui.menu == 4 ? "Touch a control" : "Settings", T_THEME);
+    if (ui.menu == 2) {                               /* the way back at the right, the REC mark before it (then */
         cv_icon_mid(218, MENU_HEAD / 2, 16, ICON_X_UNDO, T_MID, T_BG);   /* (OCT-) */
         draw_rec_mark(196, T_BG);
     } else {
@@ -233,35 +194,19 @@ static void menu_head(void)
 #define MENU_ROW 34
 #define MENU_RH 32
 #define MENU_SPLIT (MENU_Y0 + 3 * MENU_ROW)
-/* "AUDIO CLICK" -> "Audio click", "P5 OSC A" -> "Osc A" (acronyms and a letter alone stay capitals) */
-static void menu_words(char *d, const char *s, uint32_t n)
-{
-    static const char *const AC[] = {"USB", "FX", "MIDI", "LFO", "EG", "FM", "OP", "PW", "DCW", "DCA", "DCO", "MPC", "GLO"};
-    uint32_t i, w = 0, a;
-    str_cpy(d, s, n);
-    for (i = 0; d[i]; i++) {
-        int first = !i, ac = 0;
-        if (d[i] == ' ' || d[i] == '+' || d[i] == '-' || d[i] == '/') { w = i + 1u; continue; }
-        if (i == w) {                                   /* a word: an acronym, a letter alone stay */
-            for (a = 0; a < NELEM(AC) && !ac; a++) {
-                uint32_t l = str_len(AC[a]);
-                ac = !memcmp(d + w, AC[a], l) && (!d[w + l] || d[w + l] == ' ' || d[w + l] == '/' || (d[w + l] >= '0' &&
-                     d[w + l] <= '9'));
-            }
-            ac |= !d[i + 1] || d[i + 1] == ' ';
-        }
-        if (ac) { while (d[i + 1] && d[i + 1] != ' ' && d[i + 1] != '/') i++; continue; }
-        if (!first && d[i] >= 'A' && d[i] <= 'Z') d[i] = (char)(d[i] + 32);
-    }
-}
+#include "ui_midi_learn.c"
 static void draw_menu(void)
 {
 #if MELODEE_BLE
     if (ui.menu == 3) { draw_ble_page(); return; }
 #endif
+    if (ui.menu == 4) { draw_mlearn_page(); return; }
     uint32_t i, pass, sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
                             settings_hold * 3511u + settings_lights * 6151u + settings_autosave * 15485863u +
                             settings_midi_knobs * 997u + settings_midi_knob_mode * 10007u +
+#if BOARD_SMK37
+                            smk_vel_curve * 28657u +
+#endif
 #if MELODEE_USB_AUDIO
                             ua_off_want * 92821u + ua_tracks_want * 324161u +
 #endif
@@ -301,59 +246,23 @@ static void draw_menu(void)
             for (i = first; i < first+MENU_VISIBLE && i<MI_COUNT; i++) {
                 int32_t y = MENU_Y0 + (int32_t)(i-first) * MENU_ROW;
                 int sel = i == ui.menu_sel;
-                const char *value = 0;
+                const char *value;
                 char b[24], w[24], v[24];
                 if (y + MENU_RH <= top || y >= top + (int32_t)cv_h)
                     continue;
                 menu_words(w, MI_NAME[i], sizeof w);
-                if (i >= MI_CLICK && i <= MI_ADD)
-                    value = i==MI_CLICK?(const char *const[]){"OFF","REC","ON"}[settings_click%3u]:
-                      i==MI_CLICK_LEVEL?(fmt_int(b,settings_click_level),str_cpy(b+str_len(b),"%",4),b):
-                      i==MI_COUNTIN?(const char *const[]){"OFF","1 BAR","2 BARS"}[settings_countin%3u]:
-                      i==MI_PREVIEW?(settings_preview?"ON":"OFF"):(settings_chord_add?"ADD":"HOLD");
-                if (i == MI_ACCEL) value = PREF_BITS & PREF_ACCEL_OFF ? "OFF" : "ON";
-                if (i == MI_MIDI_KNOBS) value = MI_MIDI_KNOB_NAME[settings_midi_knobs % MK_PROFILES];
-                if (i == MI_MIDI_MODE) value = MI_MIDI_MODE_NAME[settings_midi_knob_mode % MK_MODES];
-                if (i == MI_MIDI_LEARN) {                   /* how many CCs are learned */
-                    uint32_t n = 0;
-                    for (uint32_t k = 0; k < MLEARN_N; k++) n += mlearn[k].cc != 0u;
-                    fmt_int(v, n);
-                    str_cpy(v + str_len(v), n == 1u ? " CC" : " CCs", 5);
-                    value = n ? v : "NONE";
-                }
-                if (i == MI_PICKER) value = PREF_BITS & PREF_PICK_OFF ? "OFF" : "ON";
-                if (i == MI_FONT) value = TY_PIXEL ? "PIXEL" : "RUBIK";
-                if (i == MI_AUTOSAVE) value = settings_autosave ? "ON" : "OFF";
-                if (i == MI_HOME_SEL) value = HS_NAME[home_select()];
-                if (i == MI_GLO_SEL) value = HS_NAME[glo_select()];
-                if (i == MI_TRACKS) value = GLO_SELECT & TRACKS_HIDE ? "HIDE" : "SHOW";
-                if (i == MI_SCREEN) value = (const char *const[]){"NEVER", "5 MIN", "15 MIN", "30 MIN", "60 MIN"}[scr_get()];
-                if (i == MI_LIGHTS) value = LIGHTS_NAME[settings_lights % LIGHTS_N];
-#if MELODEE_USB_AUDIO
-                if (i == MI_USB_INPUT) value = ua_tracks_want ? "4 TRACKS" : "STEREO";
-                if (i == MI_USB_VOLUME) { fmt_int(b, settings_usb_volume); str_cpy(b + str_len(b), "%", 4); value = b; }
-                if (i == MI_USB) value = (const char *const[]){"In + Out", "In", "Out", "Off"}[ua_off_want & 3u];
-#endif
-#if MELODEE_USB_HOST
-                if (i == MI_USB_HOST) value = uh.want ? "ON" : "OFF";
-#endif
-                if (i == MI_HOLD) {                         /* "0.4 s" */
-                    str_cpy(b, "0.4 s", sizeof b);
-                    b[2] = (char)('0' + HOLD_MS[settings_hold % 4u] / 100u);
-                    value = b;
-                }
+                value = menu_value(i, menu_get(i), b);      /* (menu_rows.c) */
+                v[0] = 0;
+                if (value)
+                    menu_words(v, value, sizeof v);
                 if (i == MI_COLOR) {                        /* the palette's four track colours as swatches */
                     uint32_t k;
                     int32_t x;
                     uint16_t bg = sel ? ux_mix(T_BG, T_KNOB(i), 18) : T_BG;
-                    menu_words(v, UI_PALETTES[settings.palette % NPALETTES].name, sizeof v);
                     x = row_draw(y, w, v, T_TEXT, sel, 0, i) - 10 - 16 * 4;
                     for (k = 0; k < 4u; k++)
                         cv_rrect(x + 16 * (int32_t)k + 2, y + MENU_RH / 2 - 5, 10, 10, 3, T_TRK(k), bg);
                 } else {
-                    v[0] = 0;
-                    if (value)
-                        menu_words(v, value, sizeof v);
                     row_draw(y, w, v, T_TEXT, sel, 0, i);
                 }
             }
@@ -383,6 +292,7 @@ static void menu_close(void)
 #endif
     settings_save();                                   /* palette / panel table, if changed */
     ui.menu = 0;
+    mlearn_on = 0;                                     /* (MIDI LEARN's page ends with the menu) */
     ui.force = 1;
     go_home();
 }
@@ -395,7 +305,6 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
 #endif
     int32_t s;
     uint32_t ok = (oct >> 1) & 1u, back = oct & 1u;
-    mlearn_on = 0;                                      /* (the menu ends MIDI LEARN) */
     if (back) {
         if (ui.menu >= 2)
             ui.menu = 1, ui.force = 1;
@@ -411,131 +320,27 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         ui.menu_scroll = (uint16_t)clamp((int32_t)ui.menu_scroll + clamp(s, -128, 128) * 18, 0, menu_scroll_max());
     }
     s = panel_enc(EN_K1);
-    if ((s || ok) && ui.menu == 1 && (ui.menu_sel == MI_MIDI_KNOBS || ui.menu_sel == MI_MIDI_MODE)) {
-        volatile uint8_t *p = ui.menu_sel == MI_MIDI_KNOBS ? &settings_midi_knobs : &settings_midi_knob_mode;
-        uint32_t n = ui.menu_sel == MI_MIDI_KNOBS ? MK_PROFILES : MK_MODES, v = *p % n;
-        *p = (uint8_t)(s > 0 ? (v + 1u < n ? v + 1u : v) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % n);
-        ui.force = 1; ok = 0;
-        /* No old mapping's pending turns may edit rows under the new mapping. */
-        memset(midi_panel_delta, 0, sizeof midi_panel_delta);
-        midi_panel_mask = 0;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_MIDI_LEARN) {
-        /* KNOB 1 right or OCT+: learn (the menu closes; a knob, then a CC, as often as wanted; the menu again ends it);
-         * KNOB 1 left forgets them all */
-        if (s < 0) {
-            fm1_irq_off(); memset(mlearn, 0, sizeof mlearn); mlearn_dirty = 0; fm1_irq_on();
-        } else {
-            mlearn_on = 1;
-            mlearn_want.cc = 0;
-            menu_close();
-            ui_say("LEARN: ", "TURN A KNOB");
-        }
-        ui.force = 1; ok = 0;
+    if ((s > 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_MIDI_LEARN) {   /* KNOB 1 right or OCT+: its page */
+        mlearn_page_open();
         return;
     }
-    if (s != 0 && ui.menu == 1 && ui.menu_sel == MI_COLOR) {
-        settings.palette = (settings.palette + (s > 0 ? 1u : NPALETTES - 1u)) % NPALETTES;   /* (wraps) */
-        palette_set(settings.palette);              /* (the menu signature redraws) */
-        ui.force = 1;
+    if (ok && ui.menu == 1 && ui.menu_sel == MI_MIDI_FORGET) {
+        if (mlearn_count()) {
+            ui.menu = 0;
+            confirm_open(CF_MLEARN_FORGET, 0);
+        }
+        return;
     }
-
-#if MELODEE_USB_AUDIO
-    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_USB_INPUT) {
-        ua_tracks_set(s > 0 ? 1 : s < 0 ? 0 : !ua_tracks_want, fm1_ms);
-        ok = 0;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_USB_VOLUME) {   /* the computer's audio: KNOB 1 steps 5 %, OCT+
-                                                                        * steps and wraps (apart from MASTER) */
-        int32_t v = (int32_t)settings_usb_volume;
-        settings_usb_volume = (uint8_t)(s ? clamp(v + s * 5, 0, 100) : v + 5 > 100 ? 0 : v + 5);
-        ok = 0; ui.force = 1;
-    }
-    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_USB) {
-        /* KNOB 1 steps IN+OUT IN OUT OFF, OCT+ steps and wraps; the host gets it once it rests (main.c) */
-        uint32_t v = ua_off_want & 3u;
-        v = s > 0 ? (v < 3u ? v + 1u : 3u) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % 4u;
-        ua_off_set(UA_OFF_OUT, !(v & UA_OFF_OUT), fm1_ms);
-        ua_off_set(UA_OFF_IN, !(v & UA_OFF_IN), fm1_ms);
-        ok = 0;
-    }
-#endif
-#if MELODEE_USB_HOST
-    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_USB_HOST) {
-        /* KNOB 1 right ON, left OFF, OCT+ toggles. Not saved: the next boot is a device again (usb_host.c) */
-        uh.want = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !uh.want);
-        ui.force = 1; ok = 0;                           /* (the row is not part of the menu's signature) */
-    }
-#endif
-    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_LIGHTS) {
-        /* KNOB 1 steps OFF .. FULL, OCT+ steps and wraps (saved when the menu closes) */
-        uint32_t v = settings_lights % LIGHTS_N;
-        settings_lights = (uint8_t)(s > 0 ? (v + 1u < LIGHTS_N ? v + 1u : v) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % LIGHTS_N);
-        ok = 0;
-    }
-    if ((s != 0 || ok) && ui.menu == 1 && ui.menu_sel == MI_HOLD) {
-        /* KNOB 1 steps 0.3 .. 0.6 s, OCT+ steps and wraps */
-        uint32_t v = settings_hold % 4u;
-        settings_hold = (uint8_t)(s > 0 ? (v < 3u ? v + 1u : 3u) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % 4u);
-        ok = 0;
-    }
-    if((s || ok) && ui.menu==1 && ui.menu_sel==MI_CLICK_LEVEL){   /* KNOB 1 steps 5 %, OCT+ steps and wraps */
-        int32_t v=(int32_t)settings_click_level;
-        settings_click_level=(uint8_t)(s?clamp(v+s*5,0,100):v+5>100?0:v+5);
-        ok=0;ui.force=1;
-    }
-    if((s || ok) && ui.menu==1 && ui.menu_sel>=MI_CLICK && ui.menu_sel<=MI_ADD && ui.menu_sel!=MI_CLICK_LEVEL){
-        uint32_t id=ui.menu_sel-MI_CLICK,top=id<3?2:1;
-        uint32_t value=id==0?settings_click:id==2?settings_countin:id==3?settings_preview:settings_chord_add;
-        value=s>0?(value<top?value+1:value):s<0?(value?value-1:0):(value+1)%(top+1);
-        if(id==0)settings_click=value;else if(id==2)settings_countin=value;else if(id==3)settings_preview=value;else settings_chord_add=value;
-        ok=0;ui.force=1;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_AUTOSAVE) {
-        settings_autosave = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !settings_autosave);
-        ui.force = 1; ok = 0;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_FONT) {   /* KNOB 1 right PIXEL, left RUBIK; OCT+ toggles */
-        uint32_t px = s > 0 ? 1u : s < 0 ? 0u : !TY_PIXEL;
-        PREF_BITS = (uint8_t)(px ? PREF_BITS | PREF_PIXEL : PREF_BITS & ~PREF_PIXEL);
-        palette_set(settings.palette);                 /* (ux.gen: every part's signature, the rolls redraw) */
-        ui.force = 1; ok = 0;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_PICKER) {
-        uint32_t on = s > 0 ? 1u : s < 0 ? 0u : !!(PREF_BITS & PREF_PICK_OFF);
-        PREF_BITS = (uint8_t)(on ? PREF_BITS & ~PREF_PICK_OFF : PREF_BITS | PREF_PICK_OFF);
-        ui.force = 1; ok = 0;
-    }
-    if ((s || ok) && ui.menu==1 && ui.menu_sel==MI_ACCEL) {   /* KNOB 1 right ON, left OFF; OCT+ toggles */
-        uint32_t on = s > 0 ? 1u : s < 0 ? 0u : !!(PREF_BITS & PREF_ACCEL_OFF);
-        PREF_BITS = (uint8_t)(on ? PREF_BITS & ~PREF_ACCEL_OFF : PREF_BITS | PREF_ACCEL_OFF);
-        ui.force=1; ok=0;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_HOME_SEL) {   /* KNOB 1 steps, OCT+ steps and wraps */
-        HOME_SELECT = (uint8_t)hs_step(home_select(), s);
-        ui.force = 1; ok = 0;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_TRACKS) {     /* KNOB 1 right HIDE, left SHOW; OCT+ toggles */
-        uint32_t hide = s > 0 ? 1u : s < 0 ? 0u : !(GLO_SELECT & TRACKS_HIDE);
-        GLO_SELECT = (uint8_t)(hide ? GLO_SELECT | TRACKS_HIDE : GLO_SELECT & ~TRACKS_HIDE);
-        ui.force = 1; ok = 0;
-    }
-    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_GLO_SEL) {    /* .. GLO SELECT the same */
-        glo_select_set(hs_step(glo_select(), s));
-        ui.force = 1; ok = 0;
-    }
-    if ((s || ok) && ui.menu==1 && ui.menu_sel==MI_SCREEN) {
-        uint32_t value=scr_get(), top=4u;
-        value=s>0?(value<top?value+1u:value):s<0?(value?value-1u:0u):(value+1u)%(top+1u);
-        scr_put(value);
-        ui.force=1; ok=0;
+    /* a row's value: KNOB 1 steps it, OCT+ steps and wraps (COLOR's OCT+: below); saved when the menu closes */
+    if (ui.menu == 1 && menu_kind(ui.menu_sel) <= MR_PERCENT && (s || (ok && ui.menu_sel != MI_COLOR))) {
+        menu_put(ui.menu_sel, menu_step(ui.menu_sel, s));
+        if (ui.menu_sel != MI_COLOR)
+            ok = 0;
     }
     if (ok && ui.menu == 1) {
         switch (ui.menu_sel) {
         case MI_COLOR:                                 /* OCT+ steps through the palettes too */
-            settings.palette = (settings.palette + 1u) % NPALETTES;
-            palette_set(settings.palette);
-            ui.force = 1;
+            menu_put(MI_COLOR, menu_step(MI_COLOR, 0));
             break;
 #if MELODEE_BLE
         case MI_BLE: ble_page_open(); break;

@@ -12,7 +12,8 @@
  *                         (hub: powers the ports, resets those with something on them, and tries each device
  *                         until one has a USB-MIDI streaming interface; a hub found there is walked the same way,
  *                         one level only). Failed direct probes wait for unplug; idle hubs are polled for
- *                         downstream connection changes. The ISR does nothing until uh.run.
+ *                         downstream connection changes, and a hub port whose device did not finish enumerating
+ *                         is tried again a few times. The ISR does nothing until uh.run.
  *   TIMER5 (uh_poll)      once uh.run is 1 the SIE is the ISR's alone: optional IN and OUT endpoints share host
  *                         EP1 in separate directions. IN is asked for a packet (ReqPkt), read when RxPktRdy, and its channel / clock events
  *                         go to the same ring as USB and TRS MIDI (source 1). A stall or a run of errors sets
@@ -28,17 +29,24 @@
 #include "usb_host_desc.h"
 
 enum { S_DEVCTL = 15, S_TXTYPE = 24, S_TXINTERVAL = 25, S_RXTYPE = 26, S_RXINTERVAL = 27 };
-enum { UH_MSG_NONE, UH_MSG_ON, UH_MSG_OFF, UH_MSG_MIDI, UH_MSG_NOMIDI, UH_MSG_LOW, UH_MSG_LOST };
+/* Events for main.c to tell the user (main.c UH_TEXT holds their words). ON / OFF are the header's HOST tag only.
+ * MIDI / LOST: a device started or stopped; the others say why a search found no MIDI (uh_result picks one). */
+enum { UH_MSG_NONE, UH_MSG_ON, UH_MSG_OFF, UH_MSG_MIDI, UH_MSG_NOMIDI, UH_MSG_LOW, UH_MSG_LOST, UH_MSG_NOLINE,
+       UH_MSG_NOANSWER, UH_MSG_HUB_EMPTY, UH_MSG_HUB_NOMIDI };
 #define UH_FIRST_ADDR 1u
 #define UH_MAX_ERRORS 16u
 #define UH_HUB_LEVELS 2u                                /* the hub on the port, and one hub on its ports */
 #define UH_HUB_PORTS 7u                                 /* ports used per hub */
 #define UH_ROOT_TRIES 5u                                /* resets of a device that does not answer at all */
+#define UH_PORT_TRIES 4u                                /* later rounds for hub ports whose device did not enumerate */
+#define UH_PORT_RETRY_MS 1000u
+#define UH_NOLINE_MS 3000u                              /* nothing on the line this long after HOST: said once */
 
 static uint8_t uh_rx[64 + 4] __attribute__((aligned(4)));
 typedef struct {
     uint8_t addr, mps, ports;                           /* addr 0: no hub at this level */
     uint8_t port;                                       /* level 1: the level-0 port it is on */
+    uint8_t retry;                                      /* bit p: the device on port p did not finish enumerating */
 } uh_hub_t;
 
 static struct {
@@ -50,11 +58,18 @@ static struct {
     uint8_t answered;                                   /* the device on the port answered its first request */
     uh_hub_t hub[UH_HUB_LEVELS];
     uint8_t hub_poll_level, hub_poll_port;
+    uint8_t port_rounds;                                /* retry rounds done since the last hub scan or port change */
+    uint8_t low;                                        /* a low-speed device was skipped on a hub port */
+    uint8_t stage;                                      /* the step the last probe stopped at (uh_dg letters) */
+    uint8_t line_said, dg_n;
+    uint8_t dg_fail, dg_nomidi;                         /* the search met a device that did not answer / was not MIDI */
+    uint8_t dg_cls[3];                                  /* the last device's bDeviceClass, first interface class / subclass */
+    char dg[28];                                        /* what the last search saw, in letters (uh_dg): tests, bench */
     uint8_t in_ep, out_mps, tx_count, tx_rt, tx_errors, line_idle;   /* tx_rt: of tx_count, from the clock's ring */
     uint8_t msg;                                        /* one UH_MSG_* for main.c to show */
     volatile uint8_t errors;
     uint32_t t_ms, retry_ms;
-    uint32_t tx_ms, hub_poll_ms;
+    uint32_t tx_ms, hub_poll_ms, port_retry_ms, line_ms;
     volatile uint32_t pkts, events;
 } uh;
 
@@ -152,6 +167,52 @@ static int uh_ctl(uint8_t addr, uint8_t rt, uint8_t rq, uint16_t val, uint16_t i
 }
 
 /* ---------------------------------------------------- enumeration --- */
+/* What the last search met, in letters (uh.dg). It is never shown: the tests check it, and it is the first thing to
+ * read in a debugger when a device is not found. The user is told uh_result's plain message instead.
+ *   a device   D no answer to its first request, A SET_ADDRESS failed, C configuration header failed,
+ *              W configuration walk failed, N answered without USB-MIDI, S SET_CONFIGURATION / SET_INTERFACE failed,
+ *              H a hub (without MIDI below it), K MIDI found
+ *   a hub      Q its hub descriptor failed (S: its SET_CONFIGURATION)
+ *   a hub port - empty, L low speed, R reset never completed, E not enabled after reset, X status unreadable,
+ *              else the letter of the device on it
+ * Examples: "HUB4 -D(K---)-" a 4-port hub, port 2 a device with no answer, port 3 a second hub whose port 1 has
+ * MIDI; "DEV D3" the device on the FM-1's port did not answer 3 bus resets; "DEV N1 000806" it answered and is not
+ * MIDI, with its bDeviceClass, first interface class and subclass in hex (here a mass-storage stick);
+ * "RETRY2 D" / "PLUG N" a retry round or a hot-plug on a hub port. */
+static void uh_dg(char c)
+{
+    if (uh.dg_n < sizeof uh.dg - 1u) {
+        uh.dg[uh.dg_n++] = c;
+        uh.dg[uh.dg_n] = 0;
+    }
+}
+static void uh_dg_s(const char *s) { while (*s) uh_dg(*s++); }
+static void uh_dg_clear(void) { uh.dg_n = uh.dg_fail = uh.dg_nomidi = 0; uh.dg[0] = 0; }
+
+/* One device's or port's outcome: its letter in uh.dg, and whether it failed to answer or was simply not MIDI,
+ * which is what uh_result tells the user. */
+static void uh_note(char c)
+{
+    uh_dg(c);
+    if (c == 'N')
+        uh.dg_nomidi = 1;
+    else if (c != '-' && c != 'L' && c != 'H' && c != 'K')
+        uh.dg_fail = 1;                                 /* D A C W S Q R E X: it did not finish answering */
+}
+
+/* The search that found no MIDI, as one plain message. Most useful first: a device that does not answer can be
+ * replugged; a low-speed one cannot be used at all; then what the hub (if any) had on it. */
+static uint8_t uh_result(void)
+{
+    if (uh.dg_fail)
+        return UH_MSG_NOANSWER;
+    if (uh.low)
+        return UH_MSG_LOW;
+    if (uh.hub[0].addr)
+        return uh.dg_nomidi ? UH_MSG_HUB_NOMIDI : UH_MSG_HUB_EMPTY;
+    return UH_MSG_NOMIDI;
+}
+
 static int uh_hub_probe(uint8_t level, uint8_t addr, uint8_t mps, uint8_t cfgval, uh_midi_t *m);
 
 /* A device on port p (1..7) of the hub at `level` gets its own address: 2..8 below the first hub, 9..15 below the
@@ -159,72 +220,103 @@ static int uh_hub_probe(uint8_t level, uint8_t addr, uint8_t mps, uint8_t cfgval
 static uint8_t uh_port_addr(uint8_t level, uint8_t p) { return (uint8_t)(UH_FIRST_ADDR + level * UH_HUB_PORTS + p); }
 
 /* The device at address 0 (just reset): give it an address, read its configuration, and if it has a USB-MIDI
- * streaming interface select it. 1 = found, 0 = no (including a hub two levels down and a device that fails). */
+ * streaming interface select it. 1 = found, 0 = it answered and has none (including a hub, whose own ports are
+ * retried, and a hub two levels down), -1 = it did not finish enumerating (worth another try later). */
 static int uh_probe(uint8_t depth, uh_midi_t *m)
 {
     uint8_t d8[8], c9[9], mps, cls, addr = uh.next_addr++;
     uint32_t total;
     uh_desc_t walk;
     int r;
+    uh.stage = 'D';
     r = uh_ctl(0, 0x80, 6, 0x0100, 0, 8, d8, 8);        /* GET_DESCRIPTOR(device), first 8 bytes */
     if (r < 8)
-        return 0;
+        return -1;
+    uh.stage = 'A';
     if (!depth)
         uh.answered = 1;
     mps = d8[7] == 16u || d8[7] == 32u || d8[7] == 64u ? d8[7] : 8u;
     cls = d8[4];
     if (uh_ctl(0, 0x00, 5, addr, 0, 0, 0, mps) < 0)     /* SET_ADDRESS */
-        return 0;
+        return -1;
     uh_wait(10);                                        /* the device settles to its new address */
+    uh.stage = 'C';
     r = uh_ctl(addr, 0x80, 6, 0x0200, 0, 9, c9, mps);
     if (r < 9)
-        return 0;
+        return -1;
     total = (uint32_t)(c9[2] | c9[3] << 8);             /* the whole configuration, walked as it arrives */
     uh_desc_start(&walk, m);
+    uh.stage = 'W';
     if (total > 9u && uh_xfer(addr, 0x80, 6, 0x0200, 0, (uint16_t)total, 0, &walk, mps) < 9)
-        return 0;
-    if (cls == 9u)                                      /* a hub */
-        return depth < UH_HUB_LEVELS ? uh_hub_probe(depth, addr, mps, c9[5], m) : 0;
+        return -1;
+    uh.dg_cls[0] = cls;
+    uh.dg_cls[1] = walk.if_cls;
+    uh.dg_cls[2] = walk.if_sub;
+    if (cls == 9u || walk.hub) {                        /* a hub (some give class 9 on the interface only) */
+        r = depth < UH_HUB_LEVELS && uh_hub_probe(depth, addr, mps, c9[5], m) ? 1 : 0;
+        uh.stage = r ? 'K' : 'H';
+        return r;
+    }
+    uh.stage = 'N';
     if (!m->found)
         return 0;
+    uh.stage = 'S';
     if (uh_ctl(addr, 0x00, 9, m->cfg, 0, 0, 0, mps) < 0)   /* SET_CONFIGURATION */
-        return 0;
+        return -1;
     if (m->alt && uh_ctl(addr, 0x01, 11, m->alt, m->iface, 0, 0, mps) < 0)   /* SET_INTERFACE */
-        return 0;
+        return -1;
     uh.dev = addr;
+    uh.stage = 'K';
     return 1;
 }
 
 /* Probe only this downstream port of the hub at `level`; keep the hubs and the other devices configured. Each
- * port reuses its address on reconnect, so repeated hot-plugs cannot exhaust the USB address space. */
+ * port reuses its address on reconnect, so repeated hot-plugs cannot exhaust the USB address space. A port whose
+ * device did not finish enumerating (still booting, a missed request) is marked for the idle retry rounds; one
+ * that answered without MIDI, or is low speed, is not. */
 static int uh_hub_port_probe(uint8_t level, uint8_t p, uint32_t st, uh_midi_t *m)
 {
-    uint8_t b[4], addr = uh.hub[level].addr, mps = uh.hub[level].mps;
+    uint8_t b[4], addr = uh.hub[level].addr, mps = uh.hub[level].mps, bit = (uint8_t)(1u << p);
     uint32_t t;
-    int r;
-    if (!(st & 0x0001u) || (st & 0x0200u))              /* nothing there, or low speed */
+    int r = -1;
+    char c = 'R';
+    uh.hub[level].retry &= (uint8_t)~bit;
+    if (!(st & 0x0001u)) {                              /* nothing there */
+        uh_note('-');
         return 0;
+    }
+    if (st & 0x0200u) {                                 /* low speed: not supported */
+        uh.low = 1;
+        uh_note('L');
+        return 0;
+    }
     if (!level && uh.hub[1].addr && uh.hub[1].port == p)
         uh.hub[1].addr = 0;                             /* the reset takes the second hub's address and its tree */
     if (uh_ctl(addr, 0x23, 3, 4, p, 0, 0, mps) < 0)    /* SET_FEATURE(PORT_RESET) */
-        return 0;
+        goto out;
     t = fm1_ms;
     for (;;) {
         if (uh_ctl(addr, 0xA3, 0, 0, p, 4, b, mps) >= 4 && (b[2] & 0x10u))   /* C_PORT_RESET */
             break;
         if (fm1_ms - t > 500u)
-            return 0;
+            goto out;
         uh_wait(10);
     }
     uh_ctl(addr, 0x23, 1, 20, p, 0, 0, mps);            /* CLEAR_FEATURE(C_PORT_RESET) */
+    c = 'E';
     if (uh_ctl(addr, 0xA3, 0, 0, p, 4, b, mps) < 4 || !(b[0] & 0x02u))   /* enabled? */
-        return 0;
+        goto out;
     uh_wait(20);                                        /* reset recovery */
     uh.next_addr = uh_port_addr(level, p);
     r = uh_probe((uint8_t)(level + 1u), m);
+    c = (char)uh.stage;
     if (!level && uh.hub[1].addr == uh_port_addr(0, p))
         uh.hub[1].port = p;                             /* a second hub was found here, configured even if idle */
-    return r;
+out:
+    uh_note(c);
+    if (r < 0 && uh.hub[level].addr)
+        uh.hub[level].retry |= bit;
+    return r > 0;
 }
 
 /* Read and acknowledge connection changes, including disconnects and unsupported devices. An unresponsive
@@ -235,6 +327,7 @@ static int uh_hub_status(uint8_t level, uint8_t p, uint8_t *b)
     uh_hub_t *h = &uh.hub[level];
     if (uh_ctl(h->addr, 0xA3, 0, 0, p, 4, b, h->mps) < 4 ||
         ((b[2] & 1u) && uh_ctl(h->addr, 0x23, 1, 16, p, 0, 0, h->mps) < 0)) {
+        uh_note('X');
         h->addr = 0;
         uh.hub[1].addr = 0;                             /* (the second hub is below the first) */
         return 0;
@@ -249,11 +342,23 @@ static int uh_hub_probe(uint8_t level, uint8_t addr, uint8_t mps, uint8_t cfgval
     uint8_t b[16], ports, p;                            /* (the hub descriptor is 9 bytes with <= 7 ports) */
     uint32_t good;
     uh_hub_t *h = &uh.hub[level];
-    if (uh_ctl(addr, 0x00, 9, cfgval, 0, 0, 0, mps) < 0)
+    int r = 0;
+    uh_dg_s(level ? "(" : "HUB");
+    if (uh_ctl(addr, 0x00, 9, cfgval, 0, 0, 0, mps) < 0) {
+        uh_note('S');
+        uh_dg(')');
         return 0;
-    if (uh_ctl(addr, 0xA0, 6, 0x2900, 0, 9, b, mps) < 7)   /* hub descriptor */
+    }
+    if (uh_ctl(addr, 0xA0, 6, 0x2900, 0, 9, b, mps) < 7) {   /* hub descriptor */
+        uh_note('Q');
+        uh_dg(')');
         return 0;
+    }
     ports = b[2] > UH_HUB_PORTS ? UH_HUB_PORTS : b[2];
+    if (!level) {
+        uh_dg((char)('0' + (b[2] > 9u ? 9u : b[2])));
+        uh_dg(' ');
+    }
     good = (uint32_t)b[5] * 2u;                         /* bPwrOn2PwrGood, in 2 ms */
     for (p = 1; p <= ports; p++)
         uh_ctl(addr, 0x23, 3, 8, p, 0, 0, mps);         /* SET_FEATURE(PORT_POWER) */
@@ -261,19 +366,26 @@ static int uh_hub_probe(uint8_t level, uint8_t addr, uint8_t mps, uint8_t cfgval
     h->addr = addr;
     h->mps = mps;
     h->ports = ports;
+    h->retry = 0;
     if (!level) {
-        uh.hub[1].addr = 0;
+        uh.hub[1].addr = uh.hub[1].retry = 0;
         uh.hub_poll_level = 0;
         uh.hub_poll_port = 1;
+        uh.port_rounds = 0;
     }
+    uh.port_retry_ms = fm1_ms;
     uh.hub_poll_ms = fm1_ms;
     for (p = 1; p <= ports; p++) {
         if (!uh_hub_status(level, p, b))
-            return 0;
-        if (uh_hub_port_probe(level, p, (uint32_t)(b[0] | b[1] << 8), m))
-            return 1;
+            break;
+        if (uh_hub_port_probe(level, p, (uint32_t)(b[0] | b[1] << 8), m)) {
+            r = 1;
+            break;
+        }
     }
-    return 0;
+    if (level)
+        uh_dg(')');
+    return r;
 }
 
 /* the next hub port the idle poll reads: every port of the first hub, then of the second if there is one */
@@ -286,6 +398,30 @@ static void uh_hub_poll_next(void)
     }
     uh.hub_poll_level = !l && uh.hub[1].addr && uh.hub[1].ports ? 1u : 0u;
     uh.hub_poll_port = 1;
+}
+
+/* One idle retry round: every hub port marked as not having finished enumerating is reset and probed again, at
+ * most UH_PORT_TRIES rounds UH_PORT_RETRY_MS apart, so a device that was still starting at the hub scan is found
+ * without unplugging it. 1 = a MIDI device was found (in *m). */
+static int uh_hub_retry(uh_midi_t *m)
+{
+    uint8_t b[4], l, p;
+    for (l = 0; l < UH_HUB_LEVELS; l++)
+        for (p = 1; p <= uh.hub[l].ports && uh.hub[l].addr; p++) {
+            if (!(uh.hub[l].retry & (1u << p)))
+                continue;
+            if (!uh_hub_status(l, p, b))
+                return 0;
+            if (uh_hub_port_probe(l, p, (uint32_t)(b[0] | b[1] << 8), m))
+                return 1;
+        }
+    return 0;
+}
+
+static int uh_hub_retry_due(uint32_t now)
+{
+    return (uh.hub[0].retry || uh.hub[1].retry) && uh.port_rounds < UH_PORT_TRIES &&
+           (uint32_t)(now - uh.port_retry_ms) >= UH_PORT_RETRY_MS;
 }
 
 /* Host EP1 has independent RX/TX DMA slots. Both target endpoints belong to this device and alternate setting. */
@@ -376,7 +512,9 @@ static void uh_connect(void)
         uh_wait(100u << t);                             /* 100, 200, 400, 800, 1600 ms */
         uh.next_addr = UH_FIRST_ADDR;
         uh.answered = 0;
-        if ((ok = uh_probe(0, &m)) || uh.answered || t + 1u == UH_ROOT_TRIES)
+        uh.low = 0;
+        uh_dg_clear();
+        if ((ok = uh_probe(0, &m) > 0) || uh.answered || t + 1u == UH_ROOT_TRIES)
             break;
     }
     if (ok) {
@@ -384,8 +522,21 @@ static void uh_connect(void)
         uh.msg = UH_MSG_MIDI;
         uh.tried = 0;
     } else {
-        if (!uh.tried)
-            uh.msg = UH_MSG_NOMIDI;                     /* said once per attach */
+        if (!uh.dg_n) {                                 /* not a hub: the device on the port, and the resets tried */
+            static const char hex[] = "0123456789ABCDEF";
+            uh_dg_s("DEV ");
+            uh_note((char)uh.stage);
+            uh_dg((char)('0' + t + 1u));
+            if (uh.stage == 'N') {                      /* answered: its classes, device / interface / subclass */
+                uh_dg(' ');
+                for (uint32_t i = 0; i < 3u; i++) {
+                    uh_dg(hex[uh.dg_cls[i] >> 4]);
+                    uh_dg(hex[uh.dg_cls[i] & 15u]);
+                }
+            }
+        }
+        if (!uh.tried)                                  /* said once per attach */
+            uh.msg = uh_result();
         uh.tried = 1;
     }
 }
@@ -410,6 +561,9 @@ static void uh_task(uint32_t now)
             uh.on = 1;
             uh_host_up();
             uh.retry_ms = now;
+            uh.line_ms = now;
+            uh.line_said = 0;
+            uh_dg_clear();
             uh.msg = UH_MSG_ON;
         } else {
             uh.on = 0;
@@ -436,6 +590,10 @@ static void uh_task(uint32_t now)
     uh.t_ms = now;
     if (!fm1_usb_line()) {
         uh.seen = 0;
+        if (!uh.line_said && (uint32_t)(now - uh.line_ms) >= UH_NOLINE_MS) {
+            uh.line_said = 1;                           /* the port sees no device pull-up at all */
+            uh.msg = UH_MSG_NOLINE;
+        }
         if (uh.line_idle < 5u) uh.line_idle++;
         if (uh.line_idle >= 5u) {                       /* debounce root disconnect while idle too */
             uh.tried = 0;
@@ -444,7 +602,26 @@ static void uh_task(uint32_t now)
         return;
     }
     uh.line_idle = 0;
+    uh.line_said = 1;
     if (uh.tried) {
+        if (uh.hub[0].addr && uh_hub_retry_due(now)) {
+            uh_midi_t m;
+            uh.port_rounds++;
+            uh.port_retry_ms = now;
+            uh.low = 0;
+            uh_dg_clear();
+            uh_dg_s("RETRY");
+            uh_dg((char)('0' + uh.port_rounds));
+            uh_dg(' ');
+            if (uh_hub_retry(&m)) {
+                uh_start_ep(&m);
+                uh.msg = UH_MSG_MIDI;
+                uh.tried = 0;
+            } else if ((!uh.hub[0].retry && !uh.hub[1].retry) || uh.port_rounds == UH_PORT_TRIES) {
+                uh.msg = uh_result();                  /* settled, or the last round: what it found */
+            }
+            return;
+        }
         if (uh.hub[0].addr && uh.hub[0].ports && (uint32_t)(now - uh.hub_poll_ms) >= 100u) {
             uint8_t b[4], l = uh.hub_poll_level, p = uh.hub_poll_port;
             uh_midi_t m;
@@ -456,12 +633,22 @@ static void uh_task(uint32_t now)
                 return;
             if (!l && uh.hub[1].addr && uh.hub[1].port == p)
                 uh.hub[1].addr = 0;                    /* the second hub's port changed: it and its tree are gone */
-            if ((b[0] & 1u) && !(b[1] & 2u)) {
+            uh.hub[l].retry &= (uint8_t)~(1u << p);   /* a change on the port replaces its pending retries */
+            if (b[0] & 1u) {
                 uh_wait(100);                          /* newly attached device settles before port reset */
+                uh.low = 0;
+                uh_dg_clear();
+                uh_dg_s("PLUG ");
                 if (uh_hub_status(l, p, b) && uh_hub_port_probe(l, p, (uint32_t)(b[0] | b[1] << 8), &m)) {
                     uh_start_ep(&m);
                     uh.msg = UH_MSG_MIDI;
                     uh.tried = 0;
+                } else {
+                    uh.msg = uh_result();              /* what was plugged in, said, not skipped silently */
+                    if (uh.hub[l].retry & (1u << p)) {
+                        uh.port_rounds = 0;            /* a fresh attach gets its own retry rounds */
+                        uh.port_retry_ms = now;
+                    }
                 }
             }
         }

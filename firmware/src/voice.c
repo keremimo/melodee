@@ -118,11 +118,11 @@ static uint32_t trk_vmode(const track_t *t)
 #if MELODEE_ADMISSION
 static const track_t *voice_admitting;
 static uint8_t voice_admitting_p5parts;
-static uint32_t voice_p5_parts(void)
+static uint32_t voice_p5_parts(void)                  /* parts of cost class 1 (engine_t.wclass: the Prophet's) */
 {
     if(voice_admitting)return voice_admitting_p5parts;
     uint32_t parts=0;
-    for(uint32_t p=0;p<NPART;p++)if(trk[p].engine==ENGI_PROPHET){
+    for(uint32_t p=0;p<NPART;p++)if(eng_of(trk[p].engine)->wclass==1u){
         uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=trk[p].v[i].active && trk[p].v[i].stage!=4u;
         parts+=live!=0;
     }
@@ -132,16 +132,17 @@ static uint32_t voice_p5_parts(void)
 static uint32_t voice_units(const track_t *t)
 {
     const engine_t *e = ENGINES[t->engine];
-    /* GLO > WEIGHTS: the player's points per voice replace the built-in rule; AUTO (0) keeps it. */
-    int k = e == &ENG_P5_TEST ? 0 : e == &ENG_CZ ? 1 : e == &ENG_FM6 ? 2 : e == &ENG_SID ? 3 : e == &ENG_DRUM ? 4 : -1;
-    if (k >= 0 && settings_vpoints[k] > 0)
-        return (uint32_t)settings_vpoints[k];
+    /* GLO > WEIGHTS: the player's points per voice replace the built-in rule; AUTO (0) keeps it. The engine's
+     * class (engine_t.wclass): 1 Prophet, 2 CZ-1, 3 FM6, 4 SID, 5 DRUM */
+    uint32_t k = e->wclass;
+    if (k - 1u < VOICE_KINDS && settings_vpoints[k - 1u] > 0)
+        return (uint32_t)settings_vpoints[k - 1u];
 #if MELODEE_ADMISSION
-    if(e==&ENG_P5_TEST){
+    if(k==1u){
         return voice_p5_parts()>1u?4u:3u;
     }
-    if(e==&ENG_CZ)return 3u;
-    if(e==&ENG_FM6 || e==&ENG_SID || e==&ENG_DRUM)return 2u;
+    if(k==2u)return 3u;
+    if(k>=3u && k<=5u)return 2u;
 #endif
     return e->units ? e->units(t) : trk_nvoice(t) > NPOLY ? 1u : 2u;
 }
@@ -280,8 +281,8 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
             voice_room(t, 0);
         return v;
     }
-    if (t->engine == ENGI_DRUM) {
-        voice_t *v = drum_reuse(t, note);
+    if (e->reuse) {                                     /* a hit on its lane's voice (DRUM) */
+        voice_t *v = e->reuse(t, note);
         if (v)
             return voice_reuse(t, v);
     }
@@ -300,7 +301,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
         voice_capacity_kill(&vp->v[k]);
     }
     if (t->p[P_ALLOC] || t->p[P_GLIDE]) {
-        int32_t target=micro_active(t)?clamp(micro_pitch(t,(int32_t)note),0,1270000)*16/10000:(int32_t)note*16;
+        int32_t target=scale_tuned(t)?scale_pitch(t,(int32_t)note)*16/10000:(int32_t)note*16;
         for (i = 0; i < np; i++) {
             int32_t d = t->v[i].pitch_cur - target;
             if (t->v[i].active)
@@ -356,8 +357,8 @@ static void glide_set(track_t *t, voice_t *v, int glide)
 /* Keep each sounding voice's pitch after SCL/ROOT/QNT changes, including release tails. */
 static void voice_scale_pitch(const track_t *t, voice_t *v, uint32_t note)
 {
-    if (micro_active(t)) {
-        int32_t pitch = clamp(micro_pitch(t, (int32_t)note), 0, 1270000);
+    if (scale_tuned(t)) {
+        int32_t pitch = scale_pitch(t, (int32_t)note);
         v->pitch16 = pitch * 16 / 10000;
         v->scale_fine = (pitch * 16 - v->pitch16 * 10000) * 2367 / 1600000;
     } else {
@@ -373,9 +374,6 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
     int sounding = v->active && v->stage != 0;
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
     int32_t s0 = v->s[0], s1 = v->s[1], s4 = v->s[4], s5 = v->s[5];
-#if MELODEE_LEGACY_EXTRAS
-    int32_t s6 = v->s[6], s7 = v->s[7];
-#endif
     uint32_t keep = e->keep;
     /* MIDI replaces a repeated press by releasing its old owner first. A
      * same-pitch one-shot then retriggers the same circuit regardless of gate;
@@ -399,6 +397,7 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
         v->side = t->sp_alt; t->sp_alt ^= 1u;
     }                                                   /* sounding: the attack starts from the current level */
     if (!eng_state_prepare(t)) { v->active = v->gate = 0; return; }
+    pads_flash_note(t, v->note);                        /* (a kit's: its lane lit on Stage) */
     e->note_on(t, v);
     AP_END(AP_ATTACK,attack_start);
     if (sounding && !e->sampled) {                     /* retrigger / steal: keep phases and filter */
@@ -413,12 +412,6 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
             v->s[4] = s4;
         if (keep & 0x20u)
             v->s[5] = s5;
-#if MELODEE_LEGACY_EXTRAS
-        if (keep & 0x40u)
-            v->s[6] = s6;
-        if (keep & 0x80u)
-            v->s[7] = s7;
-#endif
     }
 }
 
@@ -492,8 +485,8 @@ static void mono_push(track_t *t, uint32_t note)       /* the latest key on top 
     t->mono_stack[t->nmono++] = (uint8_t)note;
 }
 
-/* SID's MODEL C64 in POLY: the keys held (the mono stack) are the chord its one voice arpeggiates (eng_sid.c) */
-static int trk_chord(const track_t *t) { return ENGINES[t->engine] == &ENG_SID && sid_chord(t); }
+/* the keys held (the mono stack) are the chord the engine's one voice plays (SID's MODEL C64 in POLY: eng_sid.c) */
+static int trk_chord(const track_t *t) { const engine_t *e = ENGINES[t->engine]; return e->chord && e->chord(t); }
 
 static void trk_note_on_work(track_t *t, uint32_t note, uint32_t vel)
 {
@@ -549,7 +542,7 @@ static void trk_note_on_engine(track_t *t,uint32_t note,uint32_t vel)
 #if MELODEE_ADMISSION
     const track_t *previous=voice_admitting;uint8_t previous_parts=voice_admitting_p5parts;
     voice_admitting=0;uint32_t parts=voice_p5_parts();
-    if(t->engine==ENGI_PROPHET){uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=t->v[i].active && t->v[i].stage!=4u;parts+=!live;}
+    if(eng_of(t->engine)->wclass==1u){uint32_t live=0;for(uint32_t i=0;i<NVOICE;i++)live|=t->v[i].active && t->v[i].stage!=4u;parts+=!live;}
     voice_admitting=t;voice_admitting_p5parts=(uint8_t)parts;
     trk_note_on_work(t,note,vel);voice_admitting=previous;voice_admitting_p5parts=previous_parts;
 #else
@@ -595,15 +588,20 @@ static void trk_note_off_engine(track_t *t, uint32_t note)
 
 #include "midi_track.c"
 #include "midi_insert.c"
+#ifndef MELODEE_NOTE_TAP
+#define MELODEE_NOTE_TAP(tr, note, vel) ((void)0)      /* (web/core/melodee_core.c: every note a track plays) */
+#endif
 /* All ordinary notes go through the persistent per-track MIDI inserts. */
 static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
 {
+    MELODEE_NOTE_TAP((uint32_t)(t - trk), note, vel);
     if (midi_track_only(t)) {
         if (vel) midi_track_note_on(t, note, vel); else midi_track_note_off(t, note);
     } else if (vel) trk_note_on_raw(t, note, vel); else trk_note_off_raw(t, note);
 }
 static void trk_note_off(track_t *t, uint32_t note)
 {
+    MELODEE_NOTE_TAP((uint32_t)(t - trk), note, 0u);
     midi_track_note_off(t, note); /* releases retain their original output channel */
     if (!midi_track_only(t)) trk_note_off_raw(t, note);
 }
@@ -633,7 +631,7 @@ static void trk_all_off(track_t *t)
 static void engine_block(track_t *t)
 {
     uint32_t i, any = 0;
-    if (t->xf_on || t->eng_req != t->engine) {
+    if (t->xf_on || (t->eng_req != t->engine && !mod_waiting(t->eng_req))) {   /* (a module on its way: not yet) */
         if (!t->xf_on) {
             for (i = 0; i < NVOICE; i++)
                 any |= t->v[i].active;
@@ -726,14 +724,43 @@ static __attribute__((noinline)) void spread_sum(int32_t *out)
 /* render one block of a part into out (cleared here); returns the voices rendered */
 /* Channel bend is live performance state, outside projects/presets. Q8 semitones. */
 static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK];
-static __attribute__((noinline)) void p5_update_bend(track_t *t)
+#if BOARD_SMK37
+/* the SMK-37's wheels (main.c smk_wheels) play the selected synth track as a MIDI controller would: the
+ * pitch wheel its bend (bend_raw, +-SMK_BEND_ST semitones; PROPHET by its program's BEND, FM6 by its DX7
+ * setting), the mod wheel its CC1 value t->mw (PROPHET: added to the LFO amount, as its own wheel; FM6: the DX7
+ * mod wheel; any engine: the matrix source MODW). Engines with no wheel of their own get a vibrato from it
+ * here, unless a matrix slot uses MODW: a triangle at SMK_VIB_HZ from the 24 MHz time base (not the preset's
+ * LFO), up to +-1 semitone */
+#define SMK_BEND_ST 2
+#define SMK_VIB_HZ 10u
+#define SMK_VIB_K (SMK_VIB_HZ * 179u)          /* phase per TIMER4 tick: 2^32 / 24e6 = 178.96 */
+static volatile uint8_t smk_wheel_trk, smk_modw;
+static int32_t smk_bend;                        /* (console smk: the last bend, 14 bit) */
+static int32_t smk_vibrato(const track_t *t)   /* Q8 semitones */
+{
+    uint32_t ph, i;
+    int32_t tri;
+    if (!smk_modw || t != &trk[smk_wheel_trk % NTRK] || (eng_of(t->eng_req)->caps & MOD3_CAP_WHEEL))
+        return 0;                               /* (an engine that plays the wheel itself: the Prophet, FM6) */
+    for (i = 0; i < NMSLOT; i++)
+        if (t->p[P_M1SRC + 3u * i] == MS_MODW)
+            return 0;                           /* the wheel is routed in the matrix: that is its job */
+    ph = fm1_ticks() * SMK_VIB_K;
+    tri = (int32_t)((ph >> 15) & 0xFFFFu);
+    tri = (ph & 0x80000000u ? 0xFFFF - tri : tri) - 32768;   /* triangle, +-32767 */
+    return (tri * smk_modw) >> 14;
+}
+#endif
+/* an engine with its own pitch wheel range (engine_t.bend_range: the Prophet's program BEND): the wheel's target from
+ * it, at the part's block before the engine's (track_render_audio) */
+static __attribute__((noinline)) void trk_bend_own(track_t *t, const engine_t *e)
 {
 #if MELODEE_CONTROL_FAST
     /* A centered wheel has an exact zero target at every native bend range.
-     * Smoothing still advances above p5_block, including on silent tracks. */
+     * Smoothing still advances above the engine's block, including on silent tracks. */
     if(!t->bend_raw){midi_bend_target[(uint32_t)(t-trk)]=0;return;}
 #endif
-    uint32_t ti=(uint32_t)(t-trk);int32_t range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
+    uint32_t ti=(uint32_t)(t-trk);int32_t range=e->bend_range(t);
     midi_bend_target[ti]=t->bend_raw*range/(t->bend_raw<0?8192:8191);
 }
 static struct { int16_t cents; uint8_t valid; int32_t pitch, fine; } tune_cache;
@@ -746,27 +773,30 @@ static __attribute__((noinline)) void tune_cache_update(void)
 }
 typedef struct {
     track_t *track;voice_t *voice;const engine_t *engine;vmod_t modulation;uint32_t n;
-    int16_t engine_params[8],lane_params[DV_NLANE];
+    int16_t engine_params[8],lane_params[NLANE];
 } engine_batch_t;
 _Static_assert(sizeof(engine_batch_t)<=AUDIO_BATCH_BYTES,"Engine batch descriptor");
+/* (engine_t.batch, render_p) */
 static void engine_batch_kernel(const void *data,int32_t *pcm)
 {
-    const engine_batch_t *j=data;int16_t params[P_COUNT];
-    for(uint32_t k=0;k<8u;k++)params[P_E0+k]=j->engine_params[k];
-    for(uint32_t k=0;k<DV_NLANE;k++)params[P_LN0+k]=j->lane_params[k];
-    if(j->engine==&ENG_DRUM){dr_scratch_t scratch;drum_render_into(j->track,j->voice,pcm,j->n,&j->modulation,&scratch,params);}
-    else if(j->engine==&ENG_SID)sid_render_into(j->track,j->voice,pcm,j->n,&j->modulation,params);
-    else j->engine->render(j->track,j->voice,pcm,j->n,&j->modulation);
+    const engine_batch_t *j=data;
+    if(j->engine->render_p){
+        int16_t params[P_COUNT];
+        for(uint32_t k=0;k<8u;k++)params[P_E0+k]=j->engine_params[k];
+        for(uint32_t k=0;k<NLANE;k++)params[P_LN0+k]=j->lane_params[k];
+        j->engine->render_p(j->track,j->voice,pcm,j->n,&j->modulation,params);
+    }else j->engine->render(j->track,j->voice,pcm,j->n,&j->modulation);
 }
 
 static inline void engine_join(void) {}
 static void engine_render(track_t *t,voice_t *v,const engine_t *e,int32_t *out,uint32_t n,const vmod_t *m)
 {
-    if(audio_batch_active && (e==&ENG_CZ || e==&ENG_SID || e==&ENG_DRUM)){
+    int32_t cls;
+    if(audio_batch_active && e->batch && (cls=e->batch(t))>=0){
         engine_batch_t j;j.track=t;j.voice=v;j.engine=e;j.modulation=*m;j.n=n;
         for(uint32_t k=0;k<8u;k++)j.engine_params[k]=t->p[P_E0+k];
-        for(uint32_t k=0;k<DV_NLANE;k++)j.lane_params[k]=t->p[P_LN0+k];
-        audio_batch_push(engine_batch_kernel,&j,sizeof j,out,n,e==&ENG_CZ?AP_CZ:e==&ENG_SID||drum_issid(t)?AP_SID:drum_is909(t)?AP_909:drum_isfm(t)?AP_FM6:AP_808);return;
+        for(uint32_t k=0;k<NLANE;k++)j.lane_params[k]=t->p[P_LN0+k];
+        audio_batch_push(engine_batch_kernel,&j,sizeof j,out,n,(uint32_t)cls);return;
     }
     e->render(t,v,out,n,m);
 }
@@ -782,11 +812,14 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
     const engine_t *e = ENGINES[t->engine];
     const int16_t *p = t->p;
     uint32_t i;
+#if MELODEE_MODULES
+    mod_run.audio = mod_at[eng_idx(t->engine)];        /* (the crash blame: the module this part plays) */
+#endif
     int32_t lfo = mulq15(t->lfo_val, t->lfo_fade);
     int32_t tune, tune_fine;
     int32_t bend, bend16, bend_fine;
     uint32_t ti = (uint32_t)(t - trk);
-    if (ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM) {
+    if (ENGINES[eng_idx(t->eng_req)]->oneshot) {       /* (hits: no bend) */
         midi_bend_q8[ti] = midi_bend_target[ti] = 0;
     } else {
         int32_t d = midi_bend_target[ti] - midi_bend_q8[ti];
@@ -808,6 +841,8 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
         }
     AP_START(control_start);
     track_lfo_tick(t);
+    if (e->bend_range)                                  /* (the Prophet: its program's BEND) */
+        trk_bend_own(t, e);
     if (e->block)                                       /* the engine's per-part work (WHEEL: bars, rotor) */
         e->block(t);
     AP_END(AP_TRACK_CONTROL,control_start);
@@ -820,6 +855,9 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
     if(!tune_cache.valid || tune_cache.cents!=song.g[G_TUNE])tune_cache_update();
     tune=tune_cache.pitch;tune_fine=tune_cache.fine;
     bend = midi_bend_q8[ti];
+#if BOARD_SMK37
+    bend += smk_vibrato(t);
+#endif
     bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
     bend_fine = (bend - bend16 * 16) * 2367 / 2560;
     for (i = 0; i < NVOICE; i++) {
@@ -845,8 +883,8 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
             if (e->amp)                                 /* the engine's own amplitude curve */
                 env = e->amp(t, v, env);
             m.envq15 = e->ownenv ? 0 : env;
-            if (e == &ENG_SID)                          /* the chip's envelope counter (ENV3): ENV DEST, the matrix */
-                m.envq15 = sid_env_q15(t, v);
+            if (e->env_q15)                             /* the engine's own (SID: the chip's envelope counter, ENV3): */
+                m.envq15 = e->env_q15(t, v);            /* ENV DEST, the matrix */
             m.amp1 = e->ownenv ? env : mulq15(env, v->vel * 258);
             if (p[P_LD_AMP])
                 m.amp1 = mulq15(m.amp1, 32767 - mulq15(p[P_LPOL] ? lfo : (lfo + 32768) >> 1, p[P_LD_AMP] * 258));
@@ -875,9 +913,8 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
         m.shape = (64 << 8) + ((lfo * p[P_LD_SHP]) >> 7) + ((m.envq15 * p[P_ED_SHP]) >> 7);
-        if ((MELODEE_LEGACY_EXTRAS && e == ENGINES[2]) || e == &ENG_CZ)   /* native DCA remains the matrix's ENV source */
-            m.envq15 = phase_env_source(t, v);
-        if(e==&ENG_P5_TEST)m.envq15=p5_env_source(t,v);
+        if (e->menv)                                    /* the engine's own (CZ-1, PHASE: the native DCA; the */
+            m.envq15 = e->menv(t, v);                   /* Prophet: its amp envelope): the matrix's ENV source */
         if (mod.on){
             AP_START(mod_start);mod_voice(t,v,&m,m.fine);AP_END(AP_MODULATION,mod_start);
         }
@@ -887,7 +924,7 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
         nr++;
     }
     engine_join();
-    if (spread_on) fm6_join();
+    if (spread_on && e->join) e->join();                /* (FM6: a voice paired on CPU1 outside the queue) */
     if (spread_on && !audio_batch_active) spread_sum(out);
     if (e->post && !audio_batch_active)
         e->post(t, out, n, nr);
@@ -897,6 +934,9 @@ track_render_done:
             t->p[P_E0 + i] = pe_new[i];
         t->xf--;
     }
+#if MELODEE_MODULES
+    mod_run.audio = 0;
+#endif
     return nr;
 }
 /* Direct callers receive a cleared buffer even for silence. The mixer can

@@ -71,6 +71,7 @@ static int track_remove(uint32_t k)
     song.rec = trk_bits_remove(song.rec, k);
     song.rec_latch = trk_bits_remove(song.rec_latch, k);
     track_solo = trk_bits_remove(track_solo, k);
+    track_solo_latch = trk_bits_remove(track_solo_latch, k);
     track_say(k, "REMOVED");
     return 0;
 fail:
@@ -139,7 +140,7 @@ static void track_add(void)
     uint32_t k = trk_n(), i;
     if (!track_create_to(k)) return;
     for (i = 0; i < NPAGES; i++)                        /* the browser on it: its sound picked from there; a MIDI-only */
-        if (trk_midi_slot(k) ? PAGES[i].scope == SC_ENGINE && PAGES[i].id[0] == P_E0 : PAGES[i].graph == GR_BROWSE)
+        if (trk_midi_slot(k) ? PG(i).scope == SC_ENGINE && PG(i).id[0] == P_E0 : PG(i).graph == GR_BROWSE)
             break;                                      /* track's sound is its channel */
     ui.home = 0;
     ui.page = (uint8_t)i;

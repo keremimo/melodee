@@ -79,92 +79,29 @@ static int compact_project(void)
     project_t before, after; project_store_t packed, corrupt;
     project_capture(&before);
     bad += check("FUN16 fits the retained and flash extent", sizeof(proj_slot) == 4u * PROJ_STORE_SIZE && proj_pack(&packed, &before));
-    fm6_fn[0][FN_PTIME] = 33;                            /* (FM6 functions: in the FBKK around FUN16, not in FUN16) */
+    fm6_fn_set(1, FN_PTIME, 33);                         /* (FM6 functions, track 2's FM6: in the FBKK around FUN16, not
+                                                          * in FUN16) */
     project_capture(&before);
     {
         static uint8_t fbk[BANK_STORE_SIZE];
         bad += check("FBKK keeps the tracks' FM6 function settings", bank_pack(fbk, &before, 1) &&
-                     bank_valid(fbk, sizeof fbk) && proj_scratch.fm6_fn_ok && proj_scratch.fm6_fn[0][FN_PTIME] == 33u);
+                     bank_valid(fbk, sizeof fbk) && trk[1].eng_req == ENGI_FM6 && proj_scratch.voice_fn_ok && proj_scratch.voice_fn[1][FN_PTIME] == 33u);
     }
     proj_fn_none(&before); proj_pack(&packed,&before);
-    bad += check("FUN16 round trip preserves signed values/FM params/probability/motion", proj_import(&after, &packed, sizeof packed) &&
+    bad += check("FUN16 round trip preserves signed values/FM params/probability/motion", proj_import_same(&after, &packed, sizeof packed) &&
         !memcmp(&before, &after, sizeof before));
     corrupt = packed; corrupt.raw[112] ^= 1u;
-    bad += check("FUN16 torn or corrupted payload is refused", !proj_import(&after, &corrupt, sizeof corrupt));
+    bad += check("FUN16 torn or corrupted payload is refused", !proj_import_same(&after, &corrupt, sizeof corrupt));
     corrupt = packed; corrupt.raw[68] = 255; uint32_t sum = proj_hash(corrupt.raw, sizeof corrupt - 4u);
     memcpy(corrupt.raw + sizeof corrupt - 4u, &sum, 4);
-    bad += check("compact parameter range is validated even with a correct hash", !proj_import(&after, &corrupt, sizeof corrupt));
+    bad += check("compact parameter range is validated even with a correct hash", !proj_import_same(&after, &corrupt, sizeof corrupt));
     corrupt = packed; uint32_t probability_byte = 68u + P_COUNT + 2u + 7u; corrupt.raw[probability_byte] = 255;
     sum = proj_hash(corrupt.raw, sizeof corrupt - 4u); memcpy(corrupt.raw + sizeof corrupt - 4u, &sum, 4);
-    bad += check("invalid probability is refused even with a correct hash", !proj_import(&after, &corrupt, sizeof corrupt));
+    bad += check("invalid probability is refused even with a correct hash", !proj_import_same(&after, &corrupt, sizeof corrupt));
     project_save(1); motion_clear(t); t->p[P_FM1_LEVEL] = 127; step_set_chance(&t->step[3], 100);
     project_load(1);
     bad += check("actual project save/load restores motion, chance and operator settings", motion_count(t) == 1u &&
         step_chance(&t->step[3]) == 25u && t->p[P_FM1_LEVEL] == 80);
-    return bad;
-}
-/* a FUN16 record written with np parameters (np < P_COUNT: a firmware of before parameters were added): its first
- * np - 8 values in place, then the engine's E0..E7; motion ids from np - 8 on for E0..E7 (m: its events as that
- * firmware numbered them). The fixed parts (patches, tones, name) as today's */
-static void pack_np(project_store_t *out, const project_t *q, const motion_store_t *m, uint32_t np)
-{
-    uint8_t *b = out->raw; uint32_t pos = 68u, t, i, sum;
-    proj_pack(out, q);
-    memset(b + 68, 0, PROJ_FM6_OFF - 68u);
-    uint32_t magic=0x46554E43u;memcpy(b,&magic,4);memcpy(b+8,q->g,2u*PROJ_GLOBALS);
-    b[66] = (uint8_t)np;
-    for (t = 0; t < NPART; t++) {
-        for (i = 0; i < np; i++) b[pos++] = (uint8_t)(q->t[t].p[i < np - 8u ? i : i - (np - 8u) + P_E0] + 64);
-        b[pos++] = q->t[t].engine; b[pos++] = q->t[t].preset;
-        for (i = 0; i < NSTEP; i++) {
-            const step_t *s = &q->t[t].step[i];
-            memcpy(b + pos, s->note, 4); pos += 4;
-            b[pos++] = (uint8_t)(s->n | s->time << 3 | s->flags << 5);
-            b[pos++] = s->vel; b[pos++] = s->hit; b[pos++] = s->acc; b[pos++] = s->probability;
-        }
-    }
-    memcpy(b + pos, &q->chain, sizeof q->chain); pos += sizeof q->chain;
-    memcpy(b + pos, m, sizeof *m);
-    sum = proj_hash(b, PROJ_STORE_SIZE - 4u); memcpy(b + PROJ_STORE_SIZE - 4u, &sum, 4);
-}
-static int older_count(void)
-{
-    int bad = 0, ok; ui_power_on(); track_t *t = &trk[0];
-    project_t before, after; project_store_t old; motion_store_t m;
-    const uint32_t np = 104u, e0 = np - 8u;
-    uint32_t i, k;
-    for (k = 0; k < NPART; k++)
-        for (i = 0; i < 8u; i++) trk[k].p[P_E0 + i] = (int16_t)(ENGINES[trk[k].eng_req]->edit[i].min + (int16_t)(k + i) %
-            (ENGINES[trk[k].eng_req]->edit[i].max - ENGINES[trk[k].eng_req]->edit[i].min + 1));
-    t->p[P_FM1_ATK] = 33; t->p[P_LEVEL] = 20;
-    t->step[2] = (step_t){{60, 64, 67}, 3, ST_NOTE, 0, 100};
-    project_capture(&before);
-    memset(&m, 0, sizeof m);                                       /* as that firmware numbered them */
-    m.count = 3; m.on = 1;
-    m.event[0] = (motion_event_t){3, P_LEVEL, 90};
-    m.event[1] = (motion_event_t){5, (uint8_t)e0, 40};             /* its P_E0 */
-    m.event[2] = (motion_event_t){6, P_FM1_ATK, 20};               /* below its P_E0: the same id then and now */
-    pack_np(&old, &before, &m, np);
-    ok = proj_import(&after, &old, sizeof old);
-    for (k = 0; ok && k < NPART; k++) {
-        for (i = 0; i < 8u; i++) ok &= after.t[k].p[P_E0 + i] == before.t[k].p[P_E0 + i];
-        for (i = 0; i < e0; i++) ok &= after.t[k].p[i] == before.t[k].p[i];
-        for (i = e0; i < P_E0; i++) ok &= after.t[k].p[i] == param_desc_of(after.t[k].engine, i)->def;
-    }
-    bad += check("FUN16 of P_COUNT 104: E0..E7 in place, FX defaults, the rest kept", ok &&
-        after.t[0].p[P_FM1_ATK] == 33 && !memcmp(after.t[0].step, before.t[0].step, sizeof before.t[0].step));
-    bad += check("  its motion: its E0 -> P_E0, REV and FM OP1 ATK kept",
-        after.motion.count == 3u && after.motion.event[0].param == P_LEVEL && after.motion.event[1].param == P_E0 &&
-        after.motion.event[1].value == 40 && after.motion.event[2].param == P_FM1_ATK);
-    bad += check("  written again with today's count: the same project", proj_pack(&old, &after) && old.raw[66] == P_COUNT &&
-        proj_import(&before, &old, sizeof old) && !memcmp(&before, &after, sizeof before));
-    pack_np(&old, &before, &m, np); memcpy(&proj_slot[2], &old, sizeof old);
-    project_load(2);
-    bad += check("such a project's motion loads at today's parameter ids", motion.count == 3u &&
-        motion.event[1].param == P_E0 && trk[0].pattern == 0u);
-    m.event[1].param = (uint8_t)(e0 + 1u);                          /* (any id of its E0 .. E7 moves by 2) */
-    pack_np(&old, &before, &m, np);
-    bad += check("  its E1 -> P_E1", proj_import(&after, &old, sizeof old) && after.motion.event[1].param == P_E1);
     return bad;
 }
 static int loads_and_song(void)
@@ -206,25 +143,25 @@ static int native_motion_test(void)
     for (uint32_t e = 0; e < 3u; e++) {
         ui_power_on(); track_t *t = TSEL; set_engine_of(t, engines[e]); apply_preset_to(t, 0);
         uint32_t i = bytes[e], tag = motion_native_tag(t), id = MO_NATIVE + i;
-        uint8_t old[MO_NATIVE_N], base = *motion_native_at(t, i), changed = base == 80u ? 70u : 80u;
+        uint8_t old[MO_NATIVE_N], base = (uint8_t)motion_slot_get(t, i), changed = base == 80u ? 70u : 80u;
         song.rec = 1; seq_start(); seq_tick(t, CTL);
-        motion_native_peek(t, old); *motion_native_at(t, i) = changed; motion_native_edited(t, old);
+        motion_native_peek(t, old); motion_slot_put(t, i, changed); motion_native_edited(t, old);
         bad += check("native edit records tagged motion and keeps its patch base", motion.count == 1u &&
             motion.event[0].param == id && motion.event[0].value == (int16_t)(tag << 8 | changed) && motion_nbase[0][i] == base);
         project_t q, restored; project_store_t packed; uint8_t unpacked[FP_SIZE + 1u];
         project_capture(&q); fm6_unpack(q.fm6[0], unpacked);
         bad += check("native project snapshot saves the original patch while motion sounds",
-            (tag == MO_TAG_P5 ? q.p5[0].raw[i] : tag == MO_TAG_CZ ? q.cz[0].raw[i] : unpacked[i]) == base &&
-            proj_pack(&packed, &q) && proj_import(&restored, &packed, sizeof packed) &&
+            (tag == MO_TAG_P5 ? q.p5[0][i] : tag == MO_TAG_CZ ? q.cz[0][i] : unpacked[i]) == base &&
+            proj_pack(&packed, &q) && proj_import_same(&restored, &packed, sizeof packed) &&
             restored.motion.event[0].value == (int16_t)(tag << 8 | changed));
-        seq_stop(); bad += check("native stop immediately restores the original patch", *motion_native_at(t, i) == base);
+        seq_stop(); bad += check("native stop immediately restores the original patch", motion_slot_get(t, i) == base);
         song.rec = 0; seq_start(); seq_tick(t, CTL);
-        bad += check("native motion replays from the real sequencer", *motion_native_at(t, i) == changed);
+        bad += check("native motion replays from the real sequencer", motion_slot_get(t, i) == changed);
         motion_set_enabled(t, 0);
-        bad += check("native bypass restores the patch without losing events", *motion_native_at(t, i) == base && motion.count == 1u);
+        bad += check("native bypass restores the patch without losing events", motion_slot_get(t, i) == base && motion.count == 1u);
         motion_set_enabled(t, 1); motion_step(t, 0, &motion);
-        motion_native_peek(t, old); *motion_native_at(t, i) = 65; motion_native_edited(t, old); seq_stop();
-        bad += check("native manual edit outside REC becomes the new patch base", *motion_native_at(t, i) == 65);
+        motion_native_peek(t, old); motion_slot_put(t, i, 65); motion_native_edited(t, old); seq_stop();
+        bad += check("native manual edit outside REC becomes the new patch base", motion_slot_get(t, i) == 65);
         int16_t lane_value;
         bad += check("native motion has a named lane and the raw value", (mo_name(id|256u, (char *)unpacked, sizeof unpacked), unpacked[0]) &&
             mo_value(id|256u, 0, &lane_value) && lane_value == changed);
@@ -232,8 +169,8 @@ static int native_motion_test(void)
         bad += check("native lane clear removes its events", !motion.count);
         bad += check("native persisted project restores base then replays its motion", !project_restore_runtime(&restored));
         seq_start(); seq_tick(t, CTL);
-        bad += check("native saved events replay after loading", *motion_native_at(TSEL, i) == changed);
-        seq_stop(); bad += check("loaded native motion restores the saved patch", *motion_native_at(TSEL, i) == base);
+        bad += check("native saved events replay after loading", motion_slot_get(TSEL, i) == changed);
+        seq_stop(); bad += check("loaded native motion restores the saved patch", motion_slot_get(TSEL, i) == base);
     }
     ui_power_on(); set_engine_of(TSEL, ENGI_PROPHET); apply_preset_to(TSEL, 0);
     go_home(); song.rec = 1; turn(EN_K1, -1);
@@ -246,12 +183,12 @@ static int native_motion_test(void)
     bad += check("CZ Stage DCW records through the real UI", motion.count && (uint32_t)motion.event[0].value >> 8 == MO_TAG_CZ);
     seq_stop();
     ui_power_on(); set_engine_of(TSEL, ENGI_FM6); apply_preset_to(TSEL, 0);
-    for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].scope == SC_FMOP) { ui.home = 0; ui.page = p; break; }
+    for (uint32_t p = 0; p < NPAGES; p++) if (sec_inst(p)) { ui.home = 0; ui.page = p; break; }
     song.rec = 1; seq_start(); seq_tick(TSEL, CTL); turn(EN_K1, -1);
     bad += check("FM6 operator page records its native patch through UI", motion.count && (uint32_t)motion.event[0].value >> 8 == MO_TAG_FM6);
     seq_stop();
     ui_power_on(); set_engine_of(TSEL, ENGI_FM6); uint32_t page = 0;   /* (not the Prophet: its events below are another's) */
-    for (uint32_t p = 0; p < NPAGES; p++) if (PAGES[p].graph == GR_MOTION) page = p;
+    for (uint32_t p = 0; p < NPAGES; p++) if (PG(p).graph == GR_MOTION) page = p;
     bad += check("empty motion page is hidden", !page_visible(page));
     motion_set_event(TSEL, 0, P_LEVEL, 50);
     bad += check("recorded motion makes its page visible", page_visible(page));
@@ -261,11 +198,11 @@ static int native_motion_test(void)
     motion_set_event(TSEL, 0, MO_NATIVE + P5_CUTOFF, MO_TAG_P5 << 8 | 60);
     bad += check("another engine's native events cannot expose an empty motion page", !page_visible(page));
     motion_clear(TSEL);
-    bad += check("invalid native tags, fields and values are refused", !motion_native_ok(MO_NATIVE, 0) &&
-        !motion_native_ok(MO_NATIVE + P5_UNISON, MO_TAG_P5 << 8 | 1) &&
-        !motion_native_ok(MO_NATIVE + P5_SAW_A, MO_TAG_P5 << 8 | 127) &&
-        !motion_native_ok(MO_NATIVE + FP_TRNSP, MO_TAG_FM6 << 8) &&
-        !motion_native_ok(MO_NATIVE + FP_DET, MO_TAG_FM6 << 8 | 99));
+    bad += check("invalid native tags, fields and values are refused", !motion_native_ok(MO_NATIVE, 0, 0) &&
+        !motion_native_ok(MO_NATIVE + P5_UNISON, MO_TAG_P5 << 8 | 1, 0) &&
+        !motion_native_ok(MO_NATIVE + P5_SAW_A, MO_TAG_P5 << 8 | 127, 0) &&
+        !motion_native_ok(MO_NATIVE + FP_TRNSP, MO_TAG_FM6 << 8, 0) &&
+        !motion_native_ok(MO_NATIVE + FP_DET, MO_TAG_FM6 << 8 | 99, 0));
     ui_power_on(); set_engine_of(TSEL, ENGI_CZ); apply_preset_to(TSEL, 0);
     for (uint32_t j = 0; j < MOTION_MAX - 1u; j++) motion_set_event(TSEL, j, P_LEVEL, 30);
     song.rec = 1; seq_start(); seq_tick(TSEL, CTL); uint8_t old[MO_NATIVE_N]; motion_native_peek(TSEL, old);
@@ -291,6 +228,6 @@ static int overlapping_motion_ids(void)
 }
 int main(void)
 {
-    int bad = native_motion_test() + overlapping_motion_ids() + motion_recording() + motion_capacity() + probability_playback() + compact_project() + older_count() + loads_and_song() + repeat_mode();
+    int bad = native_motion_test() + overlapping_motion_ids() + motion_recording() + motion_capacity() + probability_playback() + compact_project() + loads_and_song() + repeat_mode();
     printf("%s\n", bad ? "MOTION TEST FAILED" : "motion/chance/compact storage tests passed"); return bad != 0;
 }

@@ -178,8 +178,9 @@ KNOB 1 (or SELECT) to select consecutive sections; tap OCT+ for phrase copy, mov
 and move insert before the destination; duplication inserts after the source. EDIT held undoes up to eight song
 edits; EDIT + OCT-/OCT+ undo/redo. History is acquired on demand and may be reclaimed for audio.
 Rests display `--` and suppress sequence notes, recorded notes and motion while allowing releases and FX tails.
-Pattern starts on track 1 retain the existing section timing; a rest or continuation on track 1 uses one straight
-four-beat bar per retained section repeat. Growing/trimming a block therefore preserves following section times.
+Pattern starts on track 1 retain the existing section timing; a continuation on track 1 lasts one loop of the held
+pattern per section repeat (a 4-bar pattern grown over two sections plays 8 bars); a rest on track 1 uses one straight
+four-beat bar per section repeat.
 The ruler above the blocks shows elapsed minutes:seconds; the footer shows the section position and selected block length.
 KNOB 4 grows/shrinks that block into following sections on its own track. Continued sections do not restart notes,
 recorded playback or motion. Shrinking leaves rests; extension appends empty sections if needed, and stops at an
@@ -230,8 +231,8 @@ clipped to its exact rounded outline. Repeat ranges repeat within the section; o
 latest-start/slot priority as playback. Pattern labels and the selection rim stay in front. Empty, dashed and
 rest cells receive no effect colour. The footer keeps its normal section/length information and progress bar;
 effect names and numbered slots remain in the punch editor.
-The first track's pattern defines the step division, swing and section length; rests and continuations use
-16 straight sixteenth-note steps. Timing restarts on every section repeat, including a punch spanning the
+The first track's pattern defines the step division, swing and section length (a continuation: the held
+pattern's); rests use 16 straight sixteenth-note steps. Timing restarts on every section repeat, including a punch spanning the
 whole section. Overlaps use the latest start, with the later punch slot breaking ties; an earlier punch
 resumes if its duration remains. Events outside a subsequently shortened pattern do not play; their stored
 timing is retained. These are master effects, shared by all tracks, and are local to the song section;
@@ -287,7 +288,9 @@ place status cards over knobs, lists, waveforms, or notes.
   switching USB HOST on to switching it off (or a power-cycle: it is never saved); priority: normal context, below
   `ERASING`, `WAIT LOOP` and messages; label `HOST` in the compact label font left of the page name and the
   low-battery glyph, taking its width from the page marks. Dim (`T_MID`) while no controller answers, theme colour
-  while one is connected. A controller found, lost or not MIDI, and a low-speed device, are brief toasts.
+  while one is connected. A controller found or lost, and why a search found none (nothing on the port, not
+  answering, a hub with nothing or no MIDI on it, not MIDI, low speed), are brief toasts, with a hint as the
+  second message where the user can act (usb_host.c `uh_result`, main.c `UH_TEXT`).
   The optional octave pill gives way when the tag needs the room. Screens that draw their own header (PRESETS, SONG,
   MENU) do not show the tag yet; the USB HOST row in the menu shows the state there.
   A connected device may provide IN, OUT or both; the same tag covers a USB synth receiving MIDI tracks.

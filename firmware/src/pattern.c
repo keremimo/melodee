@@ -28,7 +28,10 @@
 /* every inactive bank dense: the parts' NPAT - 1, the MIDI-only tracks' NPAT_MIDI - 1. Encoding a bank never runs out
  * (whatever path wrote the playing pattern); what a project may hold is the save's room (pattern_room) */
 #define PAT_CHUNKS ((NPART * (NPAT - 1u) + NMIDI * (NPAT_MIDI - 1u)) * PAT_BLOCKS * PAT_BLOCK_CHUNKS)
-#define PAT_RETAINED_CHUNKS (PAT_CHUNKS < 960u ? PAT_CHUNKS : 960u)   /* (the retained SRAM .noinit leaves) */
+#ifndef PAT_RETAINED_MAX
+#define PAT_RETAINED_MAX 960u                  /* (the retained SRAM .noinit leaves; fm1-base: platform/melodee_app.c) */
+#endif
+#define PAT_RETAINED_CHUNKS (PAT_CHUNKS < PAT_RETAINED_MAX ? PAT_CHUNKS : PAT_RETAINED_MAX)
 #define PAT_NONE 0x7FFFu
 #define PAT_REPEAT 0x8000u
 _Static_assert(NSTEP % PAT_BLOCK_STEPS == 0u && PAT_CHUNKS < PAT_NONE, "bounded pattern block pool");
@@ -46,6 +49,7 @@ static pattern_block_t pattern_blocks[NTRK][NPAT][PAT_BLOCKS] __attribute__((sec
 static int16_t pattern_timings[NTRK][NPAT][4] __attribute__((section(".pool")));
 static struct { pattern_t data; uint8_t bank, pending; } pattern_stage[NTRK] __attribute__((section(".pool")));
 static uint32_t pattern_fallbacks;
+static uint16_t pattern_edits;                             /* banks written (the editor's PATTERN_CHANGED follows it) */
 static volatile uint8_t pattern_full;
 static uint8_t chain_patterns[CHAIN_ROWS][NTRK];
 static uint8_t motion_pattern[MOTION_MAX];
@@ -290,7 +294,7 @@ static int pattern_write(uint32_t k, uint32_t bank, const pattern_t *p)
 {
     uint32_t f = pattern_guard();
     if (!pattern_can_write(k, bank, p)) { pattern_full = 1; pattern_unguard(f); return 0; }
-    pattern_flush(k);
+    pattern_flush(k); pattern_edits++;
     if (bank == trk[k].pattern) {
         memcpy(trk[k].step, p->step, sizeof p->step); memcpy(&trk[k].p[P_SLEN], p->timing, sizeof p->timing);
     } else pattern_encode(k, bank, p);

@@ -5,14 +5,8 @@
 #include "backup_test.c"
 #include <assert.h>
 static uint8_t oracle[BANK_STORE_SIZE],actual[BANK_STORE_SIZE],old_flash[sizeof nor];
-/* a stored copy's record as the loader reads it: a compact HPJ1 image expanded (its holes zeros), or a raw one */
-static int ps_image(uint32_t obj,uint32_t copy,uint8_t *dst)
-{
-    uint8_t on=pj.on;pj_head_t h=pj.h;
-    pj.on=!st_read_range(obj,copy,0,&pj.h,PJ_HEAD)&&pj.h.magic==PJ_MAGIC;
-    int rc=pj_read(obj,copy,0,dst,BANK_STORE_SIZE);
-    pj.on=on;pj.h=h;return rc;
-}
+/* a stored copy's record as the loader reads it: a packed or compact image expanded, or a raw one */
+static int ps_image(uint32_t obj,uint32_t copy,uint8_t *dst){return pj_image(obj,copy,dst);}
 /* as the UI does: SLOT on the slot, then SAVE or LOAD (the record keeps SLOT; LOAD leaves it as it is) */
 static int save_slot(uint32_t s,const char *name){song.g[G_SLOT]=(int16_t)(s+1u);return project_save_as(s,name);}
 static void open_slot(uint32_t s){song.g[G_SLOT]=(int16_t)(s+1u);project_load(s);}
@@ -44,7 +38,6 @@ static void midi_tracks_stream(void)
     }
     recording_reindex(); chain_config.count=2; chain_patterns[1][NTRK-1u]=7;
     project_capture(&proj_scratch); assert(bank_pack(oracle,&proj_scratch,1));
-    assert(bank_wide);
     uint32_t hash; project_capture(&proj_scratch);
     assert(proj_image_hash(1,&hash)&&hash==proj_hash(oracle,sizeof oracle));
     assert(!save_slot(0,0)); assert(!project_dirty());
@@ -134,12 +127,12 @@ static void song_sounds_stream(int patterns)
     for (uint32_t k = NPART; k < NTRK; k++) trk[k].p[P_E0] = (int16_t)(k + 1u);
     song_sound_t sound;
     song_sound_capture(&sound, &trk[0], "LOCAL SONG");
-    assert(song_sound_valid(&sound));
+    assert(song_sound_valid(&sound, 0));
     uint32_t id = song_sound_store(&sound); assert(id);
     chain_config.sound[1][0] = chain_config.sound[2][1] = (uint8_t)id;
     if (patterns) pattern_sound[1][15] = (uint8_t)id;
     project_capture(&proj_scratch); assert(bank_pack(oracle, &proj_scratch, 1));
-    assert(*(uint32_t *)oracle == (patterns ? BANKQ_MAGIC : BANKP_MAGIC));
+    assert(*(uint32_t *)oracle == BANKS_MAGIC);
     assert(proj_image_capture(1)); st_stream_t w;
     assert(!proj_stream_generate(&w, OBJ_BANK0)); assert(!st_stream_publish(&w));
     assert(!ps_saved(OBJ_BANK0, actual) && !memcmp(oracle, actual, sizeof actual));
@@ -161,6 +154,144 @@ static void song_sounds_stream(int patterns)
     if (patterns) assert(pattern_sound[1][15] && !pattern_sound[0][15]);
     assert(!memcmp(song_sound_get(chain_config.sound[1][0]), &sound, sizeof sound));
     puts("Project stream: FBKP sound copies, exact codec, dirty hash, rename and track removal passed");
+}
+/* ---- the packed images (project_stream.c HPJ2) ---- */
+static uint8_t img[BANK_STORE_SIZE*2u],blk[BANK_TAIL_SIZE+64u];
+/* n bytes as a packed block a careful writer could have made: runs of one byte as copies from 1 back, the rest as they
+ * are; its stored bytes */
+static uint32_t test_pack(uint8_t *o,const uint8_t *s,uint32_t n)
+{
+    uint32_t k=0,i=0;
+    while(i<n){
+        uint32_t run=0,lit=0;
+        while(i&&run<130u&&i+run<n&&s[i+run]==s[i-1u])run++;
+        if(run>=3u){o[k++]=(uint8_t)(0x80u|(run-3u));o[k++]=0;o[k++]=0;i+=run;continue;}
+        while(lit<128u&&i+lit<n&&!(i+lit&&i+lit+2u<n&&s[i+lit]==s[i+lit-1u]&&s[i+lit+1u]==s[i+lit]&&s[i+lit+2u]==s[i+lit]))lit++;
+        o[k++]=(uint8_t)(lit-1u);memcpy(o+k,s+i,lit);k+=lit;i+=lit;
+    }
+    return k;
+}
+/* rec as a packed image in img: its length. tail / fun: those blocks as they are (PZ_RAW) */
+static uint32_t test_image(const uint8_t *rec,int rawtail,int rawfun)
+{
+    pj_head_t h;memset(&h,0,sizeof h);h.magic=PZ_MAGIC;h.len=BANK_STORE_SIZE;
+    memcpy(&h.map[0],rec,4);memcpy(&h.map[1],rec+BANK_STORE_SIZE-4u,4);
+    uint32_t at=PJ_HEAD,n;
+    if(rawtail){memcpy(img+at,rec+BANK_ACTIVE_OFF,PZ_TAIL);n=PZ_TAIL;h.map[2]=n|PZ_RAW;}else h.map[2]=n=test_pack(img+at,rec+BANK_ACTIVE_OFF,PZ_TAIL);
+    at+=n;
+    if(rawfun){memcpy(img+at,rec+8u,BANK_PROJ_SIZE);n=BANK_PROJ_SIZE;h.map[3]=n|PZ_RAW;}else h.map[3]=n=test_pack(img+at,rec+8u,BANK_PROJ_SIZE);
+    memcpy(img,&h,sizeof h);return at+n;
+}
+static void head_set(uint32_t word,uint32_t v){memcpy(img+8u+4u*word,&v,4);}
+static uint32_t head_get(uint32_t word){uint32_t v;memcpy(&v,img+8u+4u*word,4);return v;}
+#define PJ_MAGIC 0x314A5048u                     /* HPJ1: Melodee 1.x's compact image (2.0 refuses it) */
+/* rec as a compact image (HPJ1, what firmware before the packed images wrote) in img: its length */
+static uint32_t test_compact(const uint8_t *rec)
+{
+    pj_head_t h;memset(&h,0,sizeof h);h.magic=PJ_MAGIC;h.len=BANK_STORE_SIZE;uint32_t at=PJ_HEAD;
+    for(uint32_t r=0;r<2u;r++){
+        uint32_t from=r?0u:BANK_ACTIVE_OFF,size=r?BANK_ACTIVE_OFF:BANK_TAIL_SIZE,pages=(size+255u)/256u;
+        for(uint32_t p=0;p<pages;p++){
+            uint32_t k=size-p*256u<256u?size-p*256u:256u,zero=1;
+            for(uint32_t i=0;i<k;i++)zero&=!rec[from+p*256u+i];
+            if(zero&&!(!r&&p+1u==pages))continue;
+            h.map[2u*r+p/32u]|=1u<<(p%32u);memcpy(img+at,rec+from+p*256u,k);at+=k;
+        }
+    }
+    memcpy(img,&h,sizeof h);return at;
+}
+static uint32_t put_img(uint32_t id,uint32_t n){return put_all(id,img,n,st_crc32(img,n));}
+static uint32_t stored_len(uint32_t obj){st_hdr_t h;return st_current(obj,&h)<0?0u:h.len;}
+static uint32_t stored_sectors(uint32_t obj){return (stored_len(obj)+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX;}
+static void workload(uint32_t count,uint32_t spread,uint32_t tail,uint32_t quant,uint32_t engine);
+static void packed_images(void)
+{
+    static uint8_t rec[BANK_STORE_SIZE],noise[PZ_TAIL];
+    uint32_t n,field,at,lcg=9;
+    /* the packer and the loader's unpacker, block by block on a stage: zeros, noise (kept as it is), every short
+     * length, runs and repeats at the lengths where the codes change, a copy from the block's first byte */
+    for(uint32_t i=0;i<sizeof noise;i++){lcg=lcg*1664525u+1013904223u;noise[i]=(uint8_t)(lcg>>24);}
+    for(uint32_t c=0;c<400u;c++){
+        st_stream_t w;pz_in_t in;memset(&in,0,sizeof in);
+        uint32_t len=c<140u?c+1u:c<300u?(c-139u)*37u:PZ_TAIL-(c-300u);
+        for(uint32_t i=0;i<len;i++)
+            blk[i]=c%5u==0?0u:c%5u==1u?noise[i]:c%5u==2u?(uint8_t)(i%(c%130u+1u)):c%5u==3u?(i<len/2u?noise[i]:noise[i-len/2u]):(uint8_t)(noise[i/131u]&3u);
+        memcpy(img,blk,len);
+        assert(!st_stream_begin_lazy(&w,OBJ_BANK0));at=PJ_HEAD;
+        field=pz_size(blk,len);
+        assert(!pz_store(&w,&at,blk,len,field));
+        assert(!memcmp(img,blk,len));                   /* (the check reads its RAM, never changes it) */
+        assert(field&PZ_RAW?field==(len|PZ_RAW)&&at==PJ_HEAD+len:field<len&&at==PJ_HEAD+field);
+        assert(c%5u!=1u||len<8u||(field&PZ_RAW));       /* noise: as it is */
+        assert(c%5u!=0u||len<4u||field<=4u+3u*(len/130u+1u));   /* zeros: one byte, then copies of 130 */
+        memset(blk,0xA5,len);in.w=&w;in.at=PJ_HEAD;
+        assert(!pz_block(&in,field,blk,len,0)&&!memcmp(img,blk,len)&&in.at==at);
+        blk[len/2u]^=1u;in.at=PJ_HEAD;
+        assert(pz_block(&in,field,blk,len,1));          /* (a byte off: not the same) */
+    }
+    /* a whole record: what a save stores, and the same record packed by another hand, load as the same music */
+    workload(256,1,1,0,0);int16_t slot0=song.g[G_SLOT];project_capture(&proj_scratch);assert(bank_pack(rec,&proj_scratch,1));
+    assert(!project_save_as(0,0)&&!ps_saved(OBJ_BANK0,actual)&&!memcmp(actual,rec,sizeof rec));
+    {pj_head_t h;st_hdr_t sh;int copy=st_current(OBJ_BANK0,&sh);assert(copy>=0&&!st_read_range(OBJ_BANK0,(uint32_t)copy,0,&h,PJ_HEAD));
+     assert(h.magic==PZ_MAGIC&&h.len==BANK_STORE_SIZE&&PJ_HEAD+(h.map[2]&~PZ_RAW)+(h.map[3]&~PZ_RAW)==sh.len&&!memcmp(&h.map[0],rec,4)&&!memcmp(&h.map[1],rec+BANK_STORE_SIZE-4u,4));}
+    uint32_t packed=stored_len(OBJ_BANK0);
+    n=test_compact(rec);
+    printf("Project stream: a save stores %u bytes in %u sectors (the compact image before: %u in %u)\n",packed,stored_sectors(OBJ_BANK0),n,(n+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX);
+    assert(packed<n&&stored_sectors(OBJ_BANK0)<(n+ST_LIN_PAYLOAD_MAX-1u)/ST_LIN_PAYLOAD_MAX);
+    /* a compact image (HPJ1, Melodee 1.x's) is refused, nothing written; a raw record loads, its next save is packed */
+    assert(put_img(3,n)==2u&&!stored_len(OBJ_BANK0+1u));
+    assert(!put_all(3,rec,sizeof rec,st_crc32(rec,sizeof rec))&&stored_len(OBJ_BANK0+1u)==BANK_STORE_SIZE&&
+           !ps_saved(OBJ_BANK0+1u,actual)&&!memcmp(actual,rec,sizeof rec));
+    n=BANK_STORE_SIZE;
+    /* (the music of a load, captured again: the same whichever way the record was stored; SLOT aside, which it keeps) */
+    static uint8_t music[BANK_STORE_SIZE];
+    project_new_blank();open_slot(0);song.g[G_SLOT]=slot0;project_capture(&proj_scratch);assert(bank_pack(music,&proj_scratch,1));
+    project_new_blank();open_slot(1);song.g[G_SLOT]=slot0;project_capture(&proj_scratch);assert(bank_pack(actual,&proj_scratch,1)&&!memcmp(actual,music,sizeof music));
+    assert(!project_rename(1,"AGAIN")&&stored_len(OBJ_BANK0+1u)<n&&proj_read_slot(1)==BANK_STORE_SIZE&&pj.on==2u);
+    for(uint32_t m=0;m<4u;m++){                         /* packed by another hand, either block as it is */
+        n=test_image(rec,m&1u,m>>1);
+        assert(n<=ED_BK_MAX&&!put_img(4,n)&&!ps_saved(OBJ_BANK0+2u,actual)&&!memcmp(actual,rec,sizeof rec));
+        project_new_blank();open_slot(2);song.g[G_SLOT]=slot0;project_capture(&proj_scratch);assert(bank_pack(actual,&proj_scratch,1)&&!memcmp(actual,music,sizeof music));
+    }
+    /* an image that is not what its head says is refused, the slot as it was */
+    memcpy(old_flash,nor,sizeof nor);
+#define REFUSED(why) do{assert(put_img(4,n)==2u);assert(!ps_saved(OBJ_BANK0+2u,actual)&&!memcmp(actual,rec,sizeof rec));}while(0)
+    n=test_image(rec,0,0);uint32_t tn=head_get(2),sn=head_get(3);
+    head_set(1,head_get(1)^1u);REFUSED("the record's sum");
+    n=test_image(rec,0,0);img[PJ_HEAD+tn/2u]^=0x40u;REFUSED("a stored byte");
+    n=test_image(rec,0,0);head_set(2,tn-1u);head_set(3,sn+1u);REFUSED("the tail's stored bytes one short");
+    n=test_image(rec,0,0);head_set(2,tn+1u);head_set(3,sn-1u);REFUSED("the tail's stored bytes one more than used");
+    n=test_image(rec,0,0);head_set(2,tn+1u);REFUSED("blocks past the image");
+    n=test_image(rec,0,0);head_set(2,tn|PZ_RAW);REFUSED("a packed block called as it is");
+    n=test_image(rec,1,0);head_set(2,PZ_TAIL);REFUSED("a block as it is called packed");
+    n=test_image(rec,0,0);img[PJ_HEAD]=0x80u;REFUSED("a copy from before the block");
+    n=test_image(rec,0,0);memmove(img+PJ_HEAD+3u,img+PJ_HEAD,n-PJ_HEAD);img[PJ_HEAD]=0;img[PJ_HEAD+1u]=rec[BANK_ACTIVE_OFF];img[PJ_HEAD+2u]=0xFFu;
+    head_set(2,tn+3u);n+=3u;REFUSED("a run past the block's end");
+    n=test_image(rec,0,0);head_set(0,0x314A5048u);REFUSED("no FBK record");
+    n=test_image(rec,0,0);memcpy(img,rec,4);REFUSED("no image");
+    for(uint32_t c=0;c<300u;c++){                       /* noise where a block should be: never more than a refusal */
+        n=test_image(rec,0,0);
+        for(uint32_t i=0;i<40u;i++){lcg=lcg*1664525u+1013904223u;img[PJ_HEAD+(lcg>>8)%(n-PJ_HEAD)]=(uint8_t)(lcg>>24);}
+        if(c&1u)for(uint32_t i=PJ_HEAD;i<n;i++){lcg=lcg*1664525u+1013904223u;img[i]=(uint8_t)(lcg>>24);}
+        assert(put_img(4,n)==2u);
+    }
+#undef REFUSED
+    assert(!ps_saved(OBJ_BANK0+2u,actual)&&!memcmp(actual,rec,sizeof rec));
+    puts("Project stream: packed images: blocks at every length, another hand's and raw records loaded, 1.x compact and damaged ones refused");
+}
+static uint32_t stored_magic(uint32_t obj){st_hdr_t h;uint32_t m=0;int c=st_current(obj,&h);if(c>=0)st_read_range(obj,(uint32_t)c,0,&m,4);return m;}
+static void power_on(void){memset(proj_meta,0,sizeof proj_meta);memset(proj_saved_hash,0,sizeof proj_saved_hash);proj_boot_scan();}
+/* power-on with a 1.x compact project in slot 1: OLD FORMAT, kept byte for byte, never rewritten */
+static void boot_old(void)
+{
+    static uint8_t one[BANK_STORE_SIZE];
+    uint32_t n,was;
+    workload(256,1,1,0,0);project_capture(&proj_scratch);assert(bank_pack(one,&proj_scratch,1));
+    reset();n=test_compact(one);assert(!st_save(OBJ_BANK0,img,n));
+    was=erases;power_on();
+    assert(erases==was&&stored_magic(OBJ_BANK0)==PJ_MAGIC&&stored_len(OBJ_BANK0)==n&&proj_meta[0].old&&!proj_meta[0].used);
+    power_on();assert(erases==was&&stored_magic(OBJ_BANK0)==PJ_MAGIC);
+    puts("Project stream: boot: a 1.x compact project is OLD FORMAT, kept as it is, never rewritten");
 }
 static void workload(uint32_t count,uint32_t spread,uint32_t tail,uint32_t quant,uint32_t engine)
 {
@@ -219,7 +350,7 @@ int main(void)
     }
     for(uint32_t i=0;i<RECORD_MAX;i++)if(recording[i].vel)assert(recorded_owner(&recording[i])<3u*NPAT);
     assert(proj_image_capture(1));assert(proj_ok(&proj_scratch));
-    /* Earlier raw snapshots use ten-byte notes, not the FUN wire codec. */
+    /* An earlier raw snapshot (ten-byte notes): refused, kept */
     static uint8_t legacy[sizeof(project_t)+RECORD_MAX];
     workload(RECORD_MAX,1,1,0,0);project_capture(&proj_scratch);
     static project_t expected;expected=proj_scratch;
@@ -232,10 +363,10 @@ int main(void)
     }
     memcpy(legacy+at+RECORD_MAX*10u,(const uint8_t *)&expected+end,sizeof expected-end);
     uint32_t len=sizeof legacy,sum;memcpy(legacy+4,&len,4);sum=proj_hash(legacy,len-4u);memcpy(legacy+len-4u,&sum,4);
-    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(proj_read_slot(3)==len);
-    assert(!memcmp(&expected,&proj_scratch,sizeof expected));
-    legacy[at+8u]=25;sum=proj_hash(legacy,len-4u);memcpy(legacy+len-4u,&sum,4);
-    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(!proj_read_slot(3)&&proj_meta[3].old);
+    /* (Melodee 1.x's: 2.0 never reads it, the slot keeps it as OLD FORMAT until replaced) */
+    assert(!st_save(OBJ_BANK0+3u,legacy,len));assert(!proj_read_slot(3)&&proj_meta[3].old&&stored_len(OBJ_BANK0+3u)==len);
+    packed_images();
+    boot_old();
     midi_tracks_stream();
     extended_songs_stream(0);
     extended_songs_stream(1);

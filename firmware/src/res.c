@@ -11,13 +11,27 @@
  * install (ui_boot.c).
  *   0xCB000  header: magic, length, CRC-32 of the payload, header CRC (written last: the commit record)
  *   0xCB020  payload: .mres as linked; the sector tails hold data too (build.py: none parses as an update record) */
-#define RES_BASE 0xCB000u
-#define RES_SECTORS 21u                               /* to 0xDFFFF: room for more data later */
+#ifndef FL_RES_LO                                     /* (hal/fm1_flash_map.h, per board; host tests: the FM-1's) */
+#define FL_RES_LO 0xCB000u
+#define FL_RES_HI 0xE0000u
+#endif
+#ifndef FL_RES_RESERVE
+#define FL_RES_RESERVE 9u
+#define FL_RES_RESERVE_OLD 15u
+#endif
+#define RES_BASE FL_RES_LO                            /* FM-1 0xCB000, 21 sectors to 0xDFFFF; SMK-37 0x9F000, 16 sectors */
+#define RES_SECTORS ((FL_RES_HI - FL_RES_LO) / ST_SECTOR)
+/* the window this build keeps (header rsv[0], read by the update loader: it never writes or blanks past the installed
+ * header's window). FM-1: 9 of the 21 sectors, SMK-37: 9 of 16; the pool takes the rest (storage.c st_res_end) */
+#define RES_RESERVE FL_RES_RESERVE
+_Static_assert(RES_RESERVE >= 1u && RES_RESERVE <= RES_SECTORS, "the resource reserve lies in the region");
 #define RES_HEAD 32u
 #define RES_MAGIC 0x3153524Du                       /* MRS1 */
 typedef struct { uint32_t magic, len, crc, rsv[4], hcrc; } res_hdr_t;
 _Static_assert(sizeof(res_hdr_t) == RES_HEAD, "resource commit record");
+#if !BOARD_SMK37 && defined(FL_DATA_HI)
 _Static_assert(RES_BASE + RES_SECTORS * ST_SECTOR == FL_DATA_HI, "the region ends at the OTA staging");
+#endif
 extern const uint8_t _mres_start[], _mres_end[];
 static uint8_t *wire_take(void);                       /* project.c: the main loop's staging RAM */
 /* build.py finds this by name and writes the payload's length and CRC-32 into the image */
@@ -36,33 +50,30 @@ static int res_valid(void)
     return st_crc32(_mres_start, len) == h.crc;      /* the payload as the app reads it */
 }
 static void res_check(void) { res_ok = (uint8_t)res_valid(); }
-/* boot, after st_small_migrate (moved: every preset bank's current record is in the pool). Not installed: the old
- * copies of banks still here go, as begin erases them, since the update loader leaves a region that holds storage
- * records alone (ldr_res); the next install, from any host, writes it */
-static void res_boot(int moved)
+/* The installed header's window (boot, before the store is touched): rsv[0] its sectors, 0 the whole region (every
+ * firmware before the bridge); no valid header: the reserve, as the update loader then assumes (ldr_core.c ldr_res).
+ * The pool takes the region's sectors above it only (storage.c st_lin_ok) */
+static uint32_t res_window(void)
 {
-    res_check();
-    if (res_ok || !moved) return;
-    for (uint32_t s = 0; s < RES_SECTORS; s++) {
-        st_hdr_t h;
-        uint32_t at = RES_BASE + s * ST_SECTOR;
-        if (!st_read(at, &h, sizeof h) && h.magic == ST_MAGIC && h.hcrc == st_crc32(&h, sizeof h - 4u))
-            (void)st_erase(at);
-    }
+    res_hdr_t h;
+    uint32_t n = RES_RESERVE;
+    if (st_read(RES_BASE, &h, sizeof h)) n = RES_SECTORS;
+    else if (h.magic == RES_MAGIC && h.hcrc == st_crc32(&h, sizeof h - 4u))
+        n = !h.rsv[0] || h.rsv[0] > RES_SECTORS ? RES_SECTORS : h.rsv[0] < RES_RESERVE ? RES_RESERVE : h.rsv[0];
+    st_res_end = RES_BASE + n * ST_SECTOR;
+    return n;
 }
-
-/* begin: refuse while anything could read the region or the flash is in use, invalidate it, move preset banks still
- * in their old pairs here into the preset pool, erase it */
+/* begin: refuse while anything could read the region or the flash is in use, invalidate it, erase it */
 static int res_begin(void)
 {
     if (!flash_ok) return 2;
     if (transport_busy()) return 4;
 #if MELODEE_BLE
-    if (mb.on || mb.closing) return 4;
+    if (mb.on || MB_ANY(closing)) return 4;
 #endif
     res_ok = 0;
-    if (st_small_migrate(wire_take(), sizeof proj_wire_u)) return 3;
-    for (uint32_t s = 0; s < RES_SECTORS; s++)
+    if (st_held(RES_BASE, RES_BASE + RES_RESERVE * ST_SECTOR)) return 3;
+    for (uint32_t s = 0; s < RES_RESERVE; s++)
         if (st_erase(RES_BASE + s * ST_SECTOR)) return 3;
     res_open = 1;
     return 0;
@@ -88,9 +99,10 @@ static int res_commit(void)
     if (st_crc32(_mres_start, res_want[1]) != res_want[2]) return 7;
     res_hdr_t h;
     memset(&h, 0, sizeof h);
-    h.magic = RES_MAGIC; h.len = res_want[1]; h.crc = res_want[2];
+    h.magic = RES_MAGIC; h.len = res_want[1]; h.crc = res_want[2]; h.rsv[0] = RES_RESERVE;
     h.hcrc = st_crc32(&h, sizeof h - 4u);
     if (st_prog(RES_BASE, &h, sizeof h)) return 3;
     res_check();
+    res_window();
     return res_ok ? 0 : 7;
 }

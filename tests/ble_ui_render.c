@@ -19,7 +19,7 @@ int main(void)
             smp_passkey=BLE_NO_PASSKEY; ui.menu=3; ble_row=0;
             if(scene==0)mb.on=0;
             if(scene==1||scene==2){
-                mb.count=8;mb.scanning=scene==1;ble_row=scene==2?12:5;mb.ready=scene==2;
+                mb.count=8;mb.scanning=scene==1;ble_row=scene==2?12:5;mb.ln[0].ready=scene==2;
                 for(uint32_t i=0;i<8;i++){mb.idx[i]=(uint8_t)i;str_cpy(mb.found.e[i].name,"LONG KEYBOARD 123",BLE_NAME_MAX+1);}
             }
             if((scene>=3&&scene<=5)||(scene>=8&&scene<=12)){

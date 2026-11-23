@@ -6,7 +6,7 @@
 
 static void reset_tools(void)
 {
-    seq_stop(); momentary_restore(); ui_power_on(); set_engine_of(&trk[0], 3); recording_reset();   /* (SID: knobs and CC macros on p[]) */ memset(&midi_clock,0,sizeof midi_clock); song.master_q12=4096;
+    seq_stop(); momentary_restore(); ui_power_on(); set_engine_of(&trk[0], ENGI_SID); recording_reset();   /* (SID: knobs and CC macros on p[]) */ memset(&midi_clock,0,sizeof midi_clock); song.master_q12=4096;
     settings_click=settings_countin=settings_preview=settings_chord_add=0;
     settings_click_level=CLICK_LEVEL_DEFAULT; memset(cin_n,0,sizeof cin_n); clk.env=click_req=0;
 }
@@ -16,7 +16,7 @@ static void advance(uint32_t samples)
 }
 static void page_named(const char *name)
 {
-    for(uint32_t i=0;i<NPAGES;i++)if(!strcmp(PAGES[i].title,name)){ui.home=0;ui.page=i;return;}
+    for(uint32_t i=0;i<NPAGES;i++)if(!strcmp(PG(i).title,name)){ui.home=0;ui.page=i;return;}
     assert(0);
 }
 static void test_recording_tools(void)
@@ -50,7 +50,7 @@ static void test_click_volume(void)
             settings_click_level=PCT[l];song.master_q12=4096;
             memset(reference,0,sizeof reference);click_req=beat;click_render(reference,CTL);
             uint32_t peak=0;
-            for(uint32_t i=0;i<2*CTL;i++) { uint32_t a=(uint32_t)abs(reference[i]);if(a>peak)peak=a; }
+            for(uint32_t i=0;i<2*CTL;i++) { uint32_t a=(uint32_t)abs(reference[i])>>MIX_FRAC;if(a>peak)peak=a; }   /* (Q15) */
             assert(PCT[l]?peak>previous_peak:!peak);previous_peak=peak;
             /* the level is its own: MASTER (the mixer) leaves it as it is */
             for(uint32_t master=0;master<=4096;master+=1024) {
@@ -96,7 +96,7 @@ static void test_editing_tools(void)
     btn_down(B_LFO);turn(EN_K1,1);assert(momentary.active);fm1_in.buttons=0;frame();assert(!memcmp(patch,fm6_patch_of(0),sizeof patch));
     set_engine_of(TSEL,ENGI_CZ);TSEL->engine=TSEL->eng_req;
     page_named("CZ LINE");
-    cz_patch_t cz=(*cz_patch_of(0));btn_down(B_LFO);turn(EN_K1,1);assert(momentary.active);fm1_in.buttons=0;frame();assert(!memcmp(&cz,cz_patch,sizeof cz));
+    cz_patch_t cz=(*cz_patch_of(0));btn_down(B_LFO);turn(EN_K1,1);assert(momentary.active);fm1_in.buttons=0;frame();assert(!memcmp(&cz,cz_patch_of(0),sizeof cz));
     set_engine_of(TSEL,ENGI_PROPHET);TSEL->engine=TSEL->eng_req;page_named("P5 FILTER");
     p5_patch_t p5=*p5_patch_of(TSEL);TSEL->p[P_PRIO]=2;btn_down(B_LFO);turn(EN_K1,-1);assert(momentary.active);fm1_in.buttons=0;frame();
     assert(!memcmp(&p5,p5_patch_of(TSEL),sizeof p5) && TSEL->p[P_PRIO]==2);
@@ -113,8 +113,8 @@ static void test_midi_and_levels(void)
     reset_tools();song.rec=1;seq_start();seq_advance(0);midi_event(0xb0,0,7,17);
     assert(motion.count==1 && motion.event[0].param==P_LEVEL && motion.event[0].value==17);seq_stop();
     reset_tools();track_select(3);TSEL->p[P_LN0]=0;trk_note_on(TSEL,36,127);
-    int32_t out[2*CTL];mix_block(out,CTL);for(uint32_t i=0;i<2*CTL;i++)assert(out[i]==0);
-    TSEL->p[P_LN0]=127;mix_block(out,CTL);int energy=0;for(uint32_t i=0;i<2*CTL;i++)energy|=out[i];assert(energy);
+    int32_t out[2*CTL];mix_block_q15(out,CTL);for(uint32_t i=0;i<2*CTL;i++)assert(out[i]==0);
+    TSEL->p[P_LN0]=127;mix_block_q15(out,CTL);int energy=0;for(uint32_t i=0;i<2*CTL;i++)energy|=out[i];assert(energy);
 }
 static void test_compatibility(void)
 {
@@ -135,16 +135,16 @@ static void test_compatibility(void)
     for(uint32_t t=0;t<NPART;t++)q.t[t].p[P_RESERVED35]=77;   /* delay sends and their automation (a FUN16's are kept) */
     q.g[G_RESERVED25]=3;q.g[G_RESERVED26]=9;q.g[G_RESERVED4]=2;q.motion.count=1;q.motion.event[0]=(motion_event_t){0,P_RESERVED35,100};q.sum=proj_sum(&q);
     assert(proj_pack(&current,&q));
-    assert(proj_import(&back,&current,PROJ_STORE_SIZE) && back.t[1].p[P_RESERVED35]==77 && back.g[G_RESERVED25]==3 && back.g[G_RESERVED26]==9 &&
+    assert(proj_import_same(&back,&current,PROJ_STORE_SIZE) && back.t[1].p[P_RESERVED35]==77 && back.g[G_RESERVED25]==3 && back.g[G_RESERVED26]==9 &&
            back.motion.count==1 && back.motion.event[0].value==100);
     {   /* Both current and earlier user presets ignore retired effects in their live values. */
-        up_rec_t r;int16_t v[P_COUNT];memset(&r,0,sizeof r);r.used=UP_USED;r.ver=UP_VER_GRID;r.engine=3;r.np=P_COUNT;memcpy(r.name,"OLD",3);
+        up_rec_t r;int16_t v[P_COUNT];memset(&r,0,sizeof r);r.used=UP_USED;r.ver=UP_VER_GRID;r.engine=ENGI_SID;r.np=P_COUNT;memcpy(r.name,"OLD",3);
         for(uint32_t i=0;i<P_COUNT;i++)up_set_value(&r,i,param_desc_of(0,i)->def);
         up_set_value(&r,P_RESERVED35,77);up_values(&r,v);assert(v[P_RESERVED35]==0);
         r.np=100;up_values(&r,v);assert(v[P_RESERVED35]==0);
     }
     {   /* a factory preset: no delay send (its sends predate the delay coming back) */
-        TSEL->eng_req=3;TSEL->p[P_RESERVED35]=77;apply_preset_to(TSEL,8);assert(TSEL->p[P_RESERVED35]==0 && TSEL->p[P_RESERVED36]==0);
+        TSEL->eng_req=ENGI_SID;TSEL->p[P_RESERVED35]=77;apply_preset_to(TSEL,8);assert(TSEL->p[P_RESERVED35]==0 && TSEL->p[P_RESERVED36]==0);
     }
 }
 int main(void)

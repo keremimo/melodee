@@ -17,6 +17,16 @@
 #pragma once
 #include <stdint.h>
 #include "build_options.h"
+#if defined(MOD_SIDE) && MOD_SIDE
+/* (a synth module: CPU1's pairing is the firmware's, through the host table, mod_abi3.h; without MELODEE_DUAL_CORE
+ * the firmware hands a worker that is never online) */
+static const int *mod_imp_audio_worker_online;
+static int (*mod_imp_audio_worker_submit)(void (*fn)(void *), void *context);
+static int (*mod_imp_audio_worker_join)(void);
+#define audio_worker_online (*mod_imp_audio_worker_online)
+#define audio_worker_submit (*mod_imp_audio_worker_submit)
+#define audio_worker_join (*mod_imp_audio_worker_join)
+#else
 #ifndef AW_IDLE
 #define AW_IDLE() ((void)0)
 #endif
@@ -159,3 +169,4 @@ AW_RAM_LOOP void audio_worker_loop(void)
     for (;;)
         audio_worker_poll(&done);
 }
+#endif

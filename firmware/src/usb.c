@@ -122,10 +122,14 @@ static int usb_midi_out_ready(void);
 static uint32_t midi_render_time;
 static uint8_t midi_render_timed;                  /* audio ISR supplies the block's timeline */
 
+#ifndef MIDI_THRU
+#define MIDI_THRU(pkt, source) ((void)0)        /* (melodee.c: the menu's MIDI THRU, midi_thru.c) */
+#endif
 static int midi_enqueue(uint32_t pkt, uint32_t source)
 {
     uint32_t at = mi_w % MQ;
     uint32_t clock_source = source >= 1u && source <= 3u ? source - 1u : 0u;
+    MIDI_THRU(pkt, source);
     if (((pkt >> 8) & 0xFFu) == 0xF8u)
         midi_rx_pulses[clock_source]++;
     if (midi_in_overflow)
@@ -144,7 +148,7 @@ static int midi_enqueue(uint32_t pkt, uint32_t source)
     return 1;
 }
 
-static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
+static int midi_track_emit(uint32_t pkt)            /* from the audio ISR: USB and BLE, whole or neither */
 {
 #if MELODEE_BLE
     uint32_t ie = fm1_icfg(); fm1_irq_off();
@@ -164,12 +168,21 @@ static int midi_track_emit(uint32_t pkt)            /* from the audio ISR */
 #endif
     return 1;
 }
-static void midi_out_event(uint32_t pkt) { (void)midi_track_emit(pkt); }
+static void midi_out_event(uint32_t pkt)
+{
+#if BOARD_SMK37 && defined(SMO_RING)                /* (the update loader has no TRS queue) */
+    smo_put(pkt);                                   /* the TRS jack, with or without a computer */
+#endif
+    (void)midi_track_emit(pkt);
+}
 
 /* From the audio ISR. Each transport admits them alone, so a stalled one costs the other nothing. */
 static void midi_sync_send(uint32_t pkt)
 {
     uint32_t pulse = ((pkt >> 8) & 0xFFu) == 0xF8u;
+#if BOARD_SMK37 && defined(SMO_RING)
+    smo_put(pkt);                                   /* the TRS jack follows the clock too (one byte a message) */
+#endif
 #if MELODEE_BLE
     uint32_t ie = fm1_icfg(); fm1_irq_off();
     mel_ble_sync(pkt, pulse);
@@ -260,7 +273,16 @@ static const uint8_t STR1[] = {26, 3, 'E', 0, 'l', 0, 'l', 0, 'i', 0, 'c', 0, ' 
                                'i', 0, 'o', 0};
 /* Keep FM-1 in the USB name: macOS may retain this MIDI port name after a
  * firmware switch, and other installers recognise the hardware family. */
+#if BOARD_SMK37                                         /* the SMK-37 builds: its family, never FM-1 */
 #ifdef MELODEE_LOADER
+static const uint8_t STR2[] = {44, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
+                               'S', 0, 'M', 0, 'K', 0, '-', 0, '3', 0, '7', 0, ' ', 0, 'U', 0, 'p', 0,
+                               'd', 0, 'a', 0, 't', 0, 'e', 0};
+#else
+static const uint8_t STR2[] = {30, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
+                               'S', 0, 'M', 0, 'K', 0, '-', 0, '3', 0, '7', 0};
+#endif
+#elif defined(MELODEE_LOADER)
 static const uint8_t STR2[] = {40, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
                                'F', 0, 'M', 0, '-', 0, '1', 0, ' ', 0, 'U', 0, 'p', 0,
                                'd', 0, 'a', 0, 't', 0, 'e', 0};
@@ -614,12 +636,9 @@ stall:
 /* SysEx assembly: only short commands matter here */
 static void sysex_byte(uint8_t b)
 {
-#ifdef CZ_RX
-    cz_sx_byte(b);
-#endif
     static const uint8_t UBOOT_KEY[6] = {0xF0, 0x22, 0x24, 0x35, 0x7D, 0xF7};
-#ifdef FM6_RX
-    fm6_sx_byte(b);                                    /* DX7 voices, banks, parameter changes (eng_fm6.c) */
+#ifdef MSX_ROUTES
+    msx_byte(b, MSX_USB);                              /* a synth's SysEx: its module's (sysex_rx.c) */
 #endif
     if (b >= 0xF8u)
         return;                                        /* realtime may occur anywhere in SysEx */
@@ -688,8 +707,8 @@ static void midi_in_event(uint32_t pkt)
         return;
     }
     if (st >= 0x80u && st < 0xF8u) {
-#ifdef FM6_RX
-        fm6_sx_byte((uint8_t)st);                       /* abort DX7 assembly across USB packets too */
+#ifdef MSX_ROUTES
+        msx_byte(st, MSX_USB);                         /* (a synth's SysEx ends across USB packets too) */
 #endif
         usb.sx_on = 0;                                 /* channel/system common also ends SysEx */
 #if MELODEE_OTA
@@ -974,8 +993,8 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         mo_r = mo_w;                                    /* nothing stale for the next host */
         rt_r = rt_w;
         usb.sx_on = 0;
-#ifdef FM6_RX
-        fm6_rx_on = 0;
+#ifdef MSX_ROUTES
+        msx_link_gone(MSX_USB);
 #endif
 #if MELODEE_OTA
         so_r = so_w;

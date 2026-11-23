@@ -59,6 +59,7 @@ SECTIONS
     _cpu1_ustack_top = _cpu1_stacks_lo + 3072;
     _cpu1_sstack_top = _cpu1_stacks_lo + 4096;
     _resource_end = ORIGIN(POOL) + LENGTH(POOL);
+    _guard_code_end = _resource_end;   /* synth modules run in the arena: the PC window reaches its end (hal/fm1_guard.h) */
     /* Complete resident interrupt/input graph trades arena capacity for code.
      * Four largest engine states must fit 48 KiB (ram_audio_test); effect
      * delay memory has its own admission/allocation limits. */
@@ -73,6 +74,8 @@ SECTIONS
     /* Never part of .bss or startup zeroing: use only after HAL self-test. */
     _resource_cache_start = ORIGIN(CACHE);
     _resource_cache_end = ORIGIN(CACHE) + LENGTH(CACHE);
+    ASSERT(_audio_start - _pool_start >= SIZEOF(.dsp_tables) + SIZEOF(.data) + SIZEOF(.ram_text) + SIZEOF(.dsp_text),
+           "the boot images unpack through the tail of .pool (main.c boot_images)")
     ASSERT(_resource_low_start <= _resource_low_end, "RAM code overlaps startup STATUS")
     ASSERT(_resource_data_start <= _resource_data_end, "data overlaps resource pool")
     ASSERT(_resource_retained_start <= _resource_retained_end, "retained state overlaps boot records")

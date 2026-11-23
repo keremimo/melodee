@@ -22,7 +22,8 @@ typedef struct {
                                                                                                 * 17 OFF; lights: 0 MID,
                                                                                                 * else level + 1 */
 } persist_t;
-#define PERSIST_MAGIC 0x50455235u
+#define PERSIST_MAGIC 0x50455236u                  /* "PER6": Melodee 2.0 (the stars by synth ID: favorites.c) */
+#define PERSIST_MAGIC_1X 0x50455235u               /* "PER5": 1.x's, never read here (the web installer converts it) */
 _Static_assert(sizeof(((persist_t *)0)->ext) == 32u, "ext: 8 words, new fields take spare ones");
 _Static_assert(sizeof(persist_t) == 604u, "the record's layout: new settings take spare bytes (favorites.c)");
 
@@ -50,6 +51,10 @@ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KE
  * Untagged records take UA_VOLUME_DEFAULT. */
 #define USB_VOLUME_ROW 8u
 #define USB_VOLUME_BYTE 4u
+/* SMK-37 VELOCITY (smk_input.h smk_vel_curve): row 8 byte 26 = 0xB4 | curve; 0 / unknown: NORMAL */
+#define SMK_VEL_ROW 8u
+#define SMK_VEL_BYTE 26u
+#define SMK_VEL_TAG 0xB4u
 /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
  * Melodee builds along with the other favorites; no layout or magic change. */
 static const uint8_t SETTINGS_OWNER[4] = {'M', 'D', 'S', 1};
@@ -57,19 +62,6 @@ static int settings_owned(const persist_t *p)
 {
     return !memcmp(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
 }
-/* Legacy Melodee has no owner tag. Require its tagged palette and complete
- * schema, then check the optional template in project.c before accepting it. */
-static int settings_legacy_valid(const persist_t *p)
-{
-    uint32_t work = p->ext.usb_off, points = (work >> 8) & 255u;
-    int usb_ok = work <= 3u || ((work & 0xFFFF00FCu) == WORK_BUDGET_TAG && points >= 8u && points <= 32u);
-    return p->magic == PERSIST_MAGIC && palette_stored_ok(p->palette) &&
-        p->panel.magic == PANEL_MAGIC && p->lowcut <= 2u && (p->zoom & 0xFFu) <= 1u &&
-        (p->zoom <= 0xFFu || (p->zoom & 0xFFFF0000u) == RECORD_PREF_TAG) &&
-        hold_stored_ok(p->bold) && p->favorites.filter <= 1u && usb_ok &&
-        p->ext.boot <= PROJ_SLOTS && p->ext.drumch <= 17u && p->ext.lights <= LIGHTS_N;
-}
-
 /* Normalize in place; 1 = read, 0 = invalid. */
 static int settings_import(persist_t *p, int n)
 {
@@ -91,6 +83,10 @@ static int settings_import(persist_t *p, int n)
                              ? hz : A4_DEFAULT);
     }
     memcpy(settings_glo, p->ext.glo, sizeof settings_glo);
+#if BOARD_SMK37
+    smk_vel_curve = (uint8_t)((p->favorites.factory[SMK_VEL_ROW][SMK_VEL_BYTE] & 0xFCu) == SMK_VEL_TAG
+                              ? p->favorites.factory[SMK_VEL_ROW][SMK_VEL_BYTE] & 3u : 0u);
+#endif
 #if MELODEE_USB_AUDIO
     uint8_t tracks = p->favorites.factory[15][26] == 0xA1u;
     if (usb.up) ua_tracks_set(tracks, fm1_ms);    /* live backup restore: re-enumerate before changing stride */
@@ -118,7 +114,7 @@ static int settings_import(persist_t *p, int n)
         settings_click_level = q[0] == 'C' && q[1] == 'K' && q[2] == 1u && q[3] <= 100u ? q[3] :
                                (uint8_t)(level == 1u ? 6u : level == 2u ? 25u : CLICK_LEVEL_DEFAULT);
     }
-#if MELODEE_USB_AUDIO
+#if MELODEE_USB_VOLUME
     {
         const uint8_t *u = p->favorites.factory[USB_VOLUME_ROW] + USB_VOLUME_BYTE;
         settings_usb_volume = u[0] == 'U' && u[1] == 'V' && u[2] == 1u && u[3] <= 100u ? u[3] : (uint8_t)UA_VOLUME_DEFAULT;
@@ -133,6 +129,8 @@ static int settings_import(persist_t *p, int n)
     favorites_user_hi = p->ext.spare[0];
     favorites.filter = favorites.filter == 1u;
 #endif
+    memcpy(mlearn_row, p->favorites.factory[MLEARN_ROW], sizeof mlearn_row);
+    memcpy(mparam_row, p->favorites.factory[MPARAM_ROW0], sizeof mparam_row);
     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;
     {
         const uint8_t *w = p->favorites.factory[VOICE_PREF_ROW] + VOICE_PREF_BYTE;
@@ -160,6 +158,8 @@ static void settings_export(persist_t *p)
     memcpy(&p->favorites, &favorites, sizeof favorites);
     p->ext.spare[0] = favorites_user_hi;
 #endif
+    memcpy(p->favorites.factory[MLEARN_ROW], mlearn_row, sizeof mlearn_row);
+    memcpy(p->favorites.factory[MPARAM_ROW0], mparam_row, sizeof mparam_row);
     memcpy(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
     {
         uint8_t *m = p->favorites.factory[1] + MIDI_KNOB_PREF_BYTE;
@@ -178,6 +178,8 @@ static void settings_export(persist_t *p)
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;
     p->favorites.factory[15][26] = ua_tracks ? 0xA1u : 0u; /* tagged; old/unknown bytes default to stereo */
+#endif
+#if MELODEE_USB_VOLUME
     {
         uint8_t *u = p->favorites.factory[USB_VOLUME_ROW] + USB_VOLUME_BYTE;
         memset(u, 0, 4);
@@ -194,6 +196,9 @@ static void settings_export(persist_t *p)
     p->ext.lights = settings_lights == LIGHTS_MID ? 0u : settings_lights + 1u;
     p->ext.spare[1] = tuning_a4 == A4_DEFAULT ? 0u : A4_TAG | (uint32_t)tuning_a4;
     memcpy(p->ext.glo, settings_glo, sizeof settings_glo);
+#if BOARD_SMK37
+    p->favorites.factory[SMK_VEL_ROW][SMK_VEL_BYTE] = (uint8_t)(smk_vel_curve ? SMK_VEL_TAG | (smk_vel_curve & 3u) : 0u);
+#endif
     {
         uint8_t *w = p->favorites.factory[VOICE_PREF_ROW] + VOICE_PREF_BYTE;
         uint32_t custom = settings_safety;

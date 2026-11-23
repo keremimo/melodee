@@ -514,12 +514,13 @@ static int32_t fx_bus_sum_l[CTL],fx_bus_sum_r[CTL];
 static uint8_t fx_bus_separate;
 static int32_t fx_bus_slot_mix[FX_SLOTS];
 static uint32_t fx_bus_n;
+/* a track's send for fx_scale on the bus (Q15 << MIX_FRAC, mix.c): its Q16 amount / MIX_ONE, so the sends are Q15 */
 static inline __attribute__((always_inline)) uint32_t fx_send_gain(const track_t *t)
 {
 #if defined(MELODEE_FX_PROFILE) && MELODEE_FX_PROFILE && defined(FM1_IRQ_TARGET)
-    if(fx_profile_control>>30u && fx_profile_track((uint32_t)(t-trk)))return 65536u;
+    if(fx_profile_control>>30u && fx_profile_track((uint32_t)(t-trk)))return 65536u>>MIX_FRAC;
 #endif
-    return (uint32_t)(t->p[P_FXSEND]+(t->p[P_FXSEND]==127))*512u;
+    return (uint32_t)(t->p[P_FXSEND]+(t->p[P_FXSEND]==127))*(512u>>MIX_FRAC);
 }
 static int fx_bus_result,fx_bus_pending;
 #if MELODEE_AUDIO_PROFILE

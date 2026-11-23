@@ -4,7 +4,8 @@
 /* Melodee update loader (device side). Runs from RAM, started by the SPL from
  * an update record, with interrupts off: USB is polled from the main loop.
  * It is a USB-MIDI device "Melodee Update" (1209:0002) that answers the
- * M-UPGRADE update protocol as "ota-FM-1_900" (hosts look for "ota-"), and
+ * M-UPGRADE update protocol as "ota-FM-1_900" (SMK: "ota-SMK-37 Pro_900", or the
+ * SMK_MODEL build's name; hosts look for "ota-"), and
  * writes the app area and the resource region (ldr_core.c). The UBOOT soft
  * key works here too.
  * Single compilation unit. */
@@ -14,15 +15,28 @@
 #define MELODEE_OTA 1
 #define MELODEE_OTA_DRYRUN 0
 #define MELODEE_USB_PID 0x0002
+#include "fm1_cc.h"                             /* BOARD_SMK37, SMK_MODEL */
+#if BOARD_SMK37
+#define MELODEE_ID "ota-" SMK_MODEL "_900"
+#else
 #define MELODEE_ID "ota-FM-1_900"
+#endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 #include "fm1_time.h"
 #include "fm1_sys.h"
 /* the loader writes the app area and the resource region, and erases update records; never the head */
+#if BOARD_SMK37
+/* SMK: app area 0x4000..0x9CFFF, records and the resource region in the VM 0x9D000..0xBFFFF only: never BTIF /
+ * USRTRIM 0xC0000..0xC1FFF, USR 0xF4000.., key_mac 0xFF000 (FL_LDR_RANGE_OK, asserted in fm1_flash_map.h; the
+ * RAM driver also refuses every protected range on its own, FL_GUARD) */
+#define FL_RANGE_OK(off, n) FL_LDR_RANGE_OK(off, n)
+#else
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, 0x4000u, 0x93000u) || FL_IN(off, n, 0x93000u, 0xFC000u))
+#endif
 #include "fm1_flash.h"
 #include "../src/libc.c"
 #include "../src/usb.c"
+#include "ldr_screen.c"                         /* "UPDATING", the bar and its percentage (felucca-bsp's) */
 
 static uint32_t ldr_ms(void)   /* monotonic ms; survives the TIMER4 wrap (178.9 s) */
 {
@@ -35,7 +49,7 @@ static uint32_t ldr_ms(void)   /* monotonic ms; survives the TIMER4 wrap (178.9 
     return ms;
 }
 
-static void ldr_poll(void)                          /* USB at ~2 kHz, watchdog */
+static void ldr_poll(void)                          /* USB at ~2 kHz, watchdog; the screen counts silent polls */
 {
     static uint32_t last;
     uint32_t now = fm1_ticks();
@@ -43,6 +57,10 @@ static void ldr_poll(void)                          /* USB at ~2 kHz, watchdog *
     if (now - last >= 500u * FM1_TICKS_PER_US) {
         last = now;
         usb_poll();
+        if (sx_ready || usb.ota_req)                /* (a frame waits in usb.c) */
+            ldr_screen_heard();
+        else
+            ldr_screen_tick();
     }
 }
 
@@ -67,7 +85,7 @@ static int ldr_erase(uint32_t off)
 static int ldr_prog(uint32_t off, const void *p, uint32_t n)
 {
     uint32_t took;
-    if (!FL_IN(off, n, 0x4000u, 0x93000u) && !FL_IN(off, n, 0xCB000u, 0xE0000u))   /* (LDR_RES_LO..HI) */
+    if (!FL_IN(off, n, FL_APP_LO, FL_APP_HI) && !FL_IN(off, n, FL_RES_LO, FL_RES_HI))   /* (LDR_RES_LO..HI) */
         return -1;
     return fl_prog_ram(off, p, n, &took);
 }
@@ -75,7 +93,7 @@ static void ldr_record_clear(void)
 {
     fm1_updata_parm_clear();                        /* CRC 0: the SPL ignores it on a warm reset */
 }
-static void ldr_progress(uint32_t done, uint32_t total) { (void)done; (void)total; ldr_poll(); }
+static void ldr_progress(uint32_t done, uint32_t total) { ldr_screen_progress(done, total); ldr_poll(); }
 #include "ldr_core.c"
 
 extern uint32_t _bss_start[], _bss_end[];
@@ -84,6 +102,7 @@ void ldr_main(void)
 {
     fm1_wdt_arm(0x0D);                              /* ~8 s, fed by ldr_poll */
     fm1_time_init();
+    ldr_screen_init();                              /* "UPDATING", "DO NOT UNPLUG", the bar, "0%" (~0.4 s) */
     usb_start();
     for (;;) {
         ldr_poll();
@@ -96,7 +115,9 @@ void ldr_main(void)
         ota_service();                              /* handshake */
         if (usb.ota_req) {
             usb.ota_req = 0;
+            ldr_screen_progress(0, 1);              /* an install: from here a silent host is a lost cable */
             if (ldr_session() == 0) {
+                ldr_screen_done();                  /* "DONE", "RESTARTING" */
                 fm1_delay_ms(200);                  /* the "success" reply leaves */
                 usb_detach();
                 fm1_delay_ms(30);

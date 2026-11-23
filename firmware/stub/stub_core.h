@@ -48,7 +48,19 @@
 #define STUB_MARK_LEN 20u
 #define STUB_MARK_MAGIC 0x4D425243u      /* "CRBM" */
 #define STUB_MARK_FORMAT 1u
+#if BOARD_SMK37
+/* SMK-37 (BOARD_SMK37 from build.py; SMK_MODEL as hal/fm1_cc.h): the same app area layout as the FM-1's, the update
+ * staging in the stock VM's last sectors (ota.c), and the model's name in the record */
+#ifndef SMK_MODEL
+#define SMK_MODEL "SMK-37 Pro"
+#endif
+#define STUB_LDR_OFF 0xBB000u            /* the staged loader (ota.c OTA_AREA, OTA_AREA_LEN) */
+#define STUB_PARM_ID "ota-" SMK_MODEL "_016"   /* ota.c OTA_PARM_ID */
+#define STUB_PLAIN_LO 0x9D000u           /* hal/fm1_flash_map.h FL_PLAIN_LO */
+#else
 #define STUB_LDR_OFF 0xE0000u            /* the staged loader (ota.c OTA_AREA, OTA_AREA_LEN) */
+#define STUB_PLAIN_LO 0x93000u           /* hal/fm1_flash_map.h FL_PLAIN_LO */
+#endif
 #define STUB_LDR_LEN 0x5000u
 #define STUB_PARM_LEN 112u               /* the UPDATA_PARM record (hal/fm1_sys.h FM1_UPDATA_PARM_LEN) */
 
@@ -189,14 +201,22 @@ static uint32_t stub_loader_check(const uint8_t *ld)
 /* the UPDATA_PARM record, byte for byte ota.c ota_session's */
 static void stub_record(uint8_t *parm)
 {
+#if BOARD_SMK37
+    static const char ID[] = STUB_PARM_ID;
+#else
     static const char ID[12] = {'o', 't', 'a', '-', 'F', 'M', '-', '1', '_', '0', '1', '5'};
+#endif
     uint32_t i;
     for (i = 0; i < STUB_PARM_LEN; i++)
         parm[i] = 0;
     stub_wr16(parm + 2, 0x5A0Du);
     stub_wr16(parm + 4, 0x5A01u);
     stub_wr16(parm + 6, 0x5441u);
+#if BOARD_SMK37
+    for (i = 0; i < sizeof ID - 1u; i++)
+#else
     for (i = 0; i < 12u; i++)
+#endif
         parm[8 + i] = (uint8_t)ID[i];
     stub_wr16(parm + 72, STUB_LDR_OFF & 0xFFFFu);
     stub_wr16(parm + 74, STUB_LDR_OFF >> 16);

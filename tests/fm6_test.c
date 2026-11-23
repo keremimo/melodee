@@ -205,26 +205,26 @@ static double centroid(const double *y, uint32_t a)       /* the spectral centro
 }
 
 /* -------------------------------------------------------------- SysEx --- */
-static void sysex_pending(void)
+static void sysex_pending(void)                  /* (sysex_rx.c: the synths' SysEx collector) */
 {
     static const uint8_t voice[] = {0xF0, 0x43, 0, 0, 1, 0x1B, 42, 0xF7};
     static const uint8_t ping[] = {0xF0, 0x7D, 0x46, 0x4C, 25, 0xF7};
     uint32_t i;
-    fm6_rx_ready = fm6_rx_on = 0;
-    fm6_rx_n = 0;
-    for (i = 0; i < sizeof voice; i++) fm6_sx_byte(voice[i]);
-    check("SysEx: a DX7 frame waits for the main loop", fm6_rx_ready && fm6_rx_n == sizeof voice);
-    for (i = 0; i < sizeof ping; i++) fm6_sx_byte(ping[i]);
+    msx_routes_sync();
+    msx.ready = msx.on = 0; msx.eng = 0xFFu; msx.n = 0;
+    for (i = 0; i < sizeof voice; i++) msx_byte(voice[i], MSX_USB);
+    check("SysEx: a DX7 frame waits for the main loop", msx.ready && msx.eng == ENGI_FM6 && msx.n == sizeof voice);
+    for (i = 0; i < sizeof ping; i++) msx_byte(ping[i], MSX_USB);
     check("SysEx: editor traffic does not discard a pending DX7 frame",
-          fm6_rx_ready && fm6_rx_n == sizeof voice && !memcmp(fm6_rx, voice, sizeof voice));
-    fm6_sx_byte(0xF0); fm6_sx_byte(0x43); fm6_sx_byte(0xF7);
+          msx.ready && msx.n == sizeof voice && !memcmp(proj_wire_u.raw, voice, sizeof voice));
+    msx_byte(0xF0, MSX_USB); msx_byte(0x43, MSX_USB); msx_byte(0xF7, MSX_USB);
     check("SysEx: a second Yamaha frame does not discard the pending frame",
-          fm6_rx_ready && fm6_rx_n == sizeof voice && !memcmp(fm6_rx, voice, sizeof voice));
-    fm6_rx_ready = 0;                                    /* main loop consumed it */
-    fm6_sx_byte(0xF0); fm6_sx_byte(0x43); fm6_sx_byte(0xF8); fm6_sx_byte(0xF7);
+          msx.ready && msx.n == sizeof voice && !memcmp(proj_wire_u.raw, voice, sizeof voice));
+    msx.ready = 0; msx.eng = 0xFFu; msx.n = 0;           /* main loop consumed it */
+    msx_byte(0xF0, MSX_USB); msx_byte(0x43, MSX_USB); msx_byte(0xF8, MSX_USB); msx_byte(0xF7, MSX_USB);
     check("SysEx: the next frame after it (a clock byte inside is not part of it)",
-          fm6_rx_ready && fm6_rx_n == 3 && fm6_rx[2] == 0xF7);
-    fm6_rx_ready = 0;
+          msx.ready && msx.n == 3 && proj_wire_u.raw[2] == 0xF7);
+    msx.ready = 0; msx.eng = 0xFFu; msx.n = 0;
 }
 
 /* --------------------------------------------------------- algorithms --- */
@@ -857,14 +857,14 @@ static double mix_cost(const uint8_t *v, uint32_t notes, uint32_t eng)
     uint32_t i, nb = FS * 2u / CTL;
     uint64_t i0;
     setup(v, 0);
-    fm6_fn[0][FN_ENGINE] = (uint8_t)eng;
+    fm6_fn_set(0, FN_ENGINE, (int32_t)eng);
     for (i = 0; i < notes; i++)
         trk_note_on(T, 48 + 3 * i, 100);
     for (i = 0; i < 64u; i++)
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
     i0 = instr_now();
     for (i = 0; i < nb; i++)
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
     return (double)(instr_now() - i0) / (nb * CTL);
 }
 
@@ -942,7 +942,7 @@ static void demo(const char *dir, uint32_t pi)
         }
         for (i = 0; i < step; i += CTL) {
             uint32_t j;
-            mix_block(o, CTL);
+            mix_block_q15(o, CTL);
             for (j = 0; j < CTL; j++)
                 wav_put(w, o[2 * j], o[2 * j + 1]);
             frames += CTL;
@@ -952,7 +952,7 @@ static void demo(const char *dir, uint32_t pi)
         trk_note_off(T, held);
     for (i = 0; i < FS * 2u; i += CTL) {
         uint32_t j;
-        mix_block(o, CTL);
+        mix_block_q15(o, CTL);
         for (j = 0; j < CTL; j++)
             wav_put(w, o[2 * j], o[2 * j + 1]);
         frames += CTL;

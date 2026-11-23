@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Original Melodee SID renderer retained from 8e5ce97, including its
- * reSID model/curve provenance documented in firmware/src/eng_sid.c. */
+ * reSID model/curve provenance documented in firmware/modules/sid/eng_sid.c. */
 #define MELODEE_SID_FAST 1
 #define main hostsim_main
 #include "hostsim.c"
@@ -151,7 +151,7 @@ static void sid_render_reference(track_t *t,voice_t *v,int32_t *out,uint32_t n,c
 static uint32_t seed=0x5288173u;
 static uint32_t random_u(void){seed=seed*1664525u+1013904223u;return seed;}
 static track_t *setup(void) {
- memset(trk,0,sizeof trk);trk_voices_bind();host_tracks_init();host_preset(&trk[0],3,0);
+ memset(trk,0,sizeof trk);trk_voices_bind();host_tracks_init();host_preset(&trk[0], ENGI_SID, 0);
  track_t *t=&trk[0];voice_t *v=&t->v[0];v->vel=110;v->note=60;v->gate=1;voice_was=0;sid_note_on(t,v);return t;
 }
 static void parity(void) {
