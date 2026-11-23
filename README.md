@@ -60,6 +60,8 @@ build provenance; hardware validation is a separate check.
 
 ## In development since 1.6.1
 
+**[Melodee 2.0.0-beta.1](https://github.com/keremimo/melodee/releases/tag/v2.0.0-beta.1)** is a pre-release of this work ([release notes](docs/RELEASE_2.0.0-beta.1.md)), on the installer's Pre-release channel. Every synth is a module the installer writes beside the firmware, named by its ID; DRUM is split into kit synths and a 16-pad SAMPLER; and the web installer converts a Melodee 1.x FM-1's projects and sounds during the update, since 2.0 does not read 1.x's records.
+
 On the nightly channel, not yet in a stable release. Everything here but the SMK-37 builds themselves is covered by automated tests and has not yet run on hardware, apart from the one read-only recovery run described below.
 
 - **SMK-37 family (beta):** builds for the SMK-37 Pro, SMK-37 Elite and MKE-P37, with pad modes, knob and fader banks, velocity, sustain pedal and TRS MIDI out. See [SMK37.md](SMK37.md).
