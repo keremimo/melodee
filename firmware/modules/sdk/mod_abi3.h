@@ -21,7 +21,8 @@
  * File: the head (mod_file3_t, 60 bytes), the image (code, constants, initialised data; linked at 0, the descriptor
  * first), `nrel` u32 offsets into the image (each an unaligned little-endian word the loader adds the block's address
  * to), then chunks if flags says so (the factory presets PRST, the schema SCHM, who it is IDNT, its signature SIGN
- * last). `bss` zero bytes follow the image in
+ * last; a plug-in host's file then the module built for AArch64, AA64, and that code's signature NSIG). `bss` zero
+ * bytes follow the image in
  * RAM. crc = CRC-32 of every byte after the head. Little endian, 32-bit pointers (the host tests' own builds: 64-bit).
  * A packed image (flags MOD3_FILE_PACKED, mod_build.py when it is smaller): `image` is its bytes in the file, `unpacked`
  * the image's own (what the loader unpacks into SRAM): one byte lc + 9 lp + 45 pb (lc + lp <= MOD3_PACK_LCLP, pb <=
@@ -432,6 +433,14 @@ typedef struct mod_ident_v3 {                    /* the IDNT chunk's payload, 96
 #define MOD3_SIGN_TAG 0x4E474953u                /* "SIGN": an Ed25519 signature (64 bytes) of every byte from the head's
                                                   * end to this chunk's start, the file's last chunk: a signed module's
                                                   * (MOD3_IDNT_SIGNED), by its key */
+#define MOD3_AA64_TAG 0x34364141u                /* "AA64": the module built for AArch64 (mod_build.py --native), after
+                                                  * SIGN: the plug-in hosts' code; a device's file has none */
+#define MOD3_NSIG_TAG 0x4749534Eu                /* "NSIG": right after AA64, a signed module's: an Ed25519 signature (64
+                                                  * bytes) by its key of MOD3_NSIG_PREFIX, the head but its crc (bytes
+                                                  * 0..27, 32..59) and every byte from the head's end to this chunk's
+                                                  * start (SIGN and AA64 with them). A plug-in host runs a signed
+                                                  * module's AArch64 code only when it checks */
+#define MOD3_NSIG_PREFIX "melodee/native/1"      /* (without its 0) */
 
 typedef struct mod_file3_t {                     /* the file's head (60 bytes) */
     uint32_t magic;                              /* MOD3_FILE_MAGIC */

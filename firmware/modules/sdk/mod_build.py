@@ -9,7 +9,8 @@ an SDK module (mod_sdk.h), anywhere; in Melodee's tree it builds Melodee's engin
     mod_build.py --wasm FILE.mmod [--src SRC.c] [-o OUT.mmod]   (the file with its module built for WebAssembly, a WASM
                                        chunk; SRC.c: its source, outside Melodee's tree)
     mod_build.py --native FILE.mmod [--src SRC.c] [-o OUT.mmod] (the file with its module built for AArch64, an AA64
-                                       chunk: the plug-in hosts' code, melodee-modules)
+                                       chunk: the plug-in hosts' code, melodee-modules; a signed module's signed
+                                       again with it by the same key, an NSIG chunk)
 
 Needs: Python 3, a host C compiler (cc, or HOST_CC: a module's schema is written by its own source, built natively),
 and the JieLi pi32v2 toolchain (JIELI_TOOLCHAIN, else ~/.jieli/toolchain; off Linux x86-64 it runs in Docker,
@@ -110,14 +111,15 @@ def key_file(var, default):
     return mod_sign.load(path) if path and Path(path).is_file() else None
 
 
-def author_seed():
-    """the author's key: MELODEE_AUTHOR_KEY ("" none: unsigned), else ~/.config/melodee/author.key, made if missing"""
+def author_seed(make=True):
+    """the author's key: MELODEE_AUTHOR_KEY ("" none: unsigned), else ~/.config/melodee/author.key, made if missing
+    (make)"""
     path = os.environ.get("MELODEE_AUTHOR_KEY", str(Path.home() / ".config" / "melodee" / "author.key"))
     if not path:
         return None
     if "MELODEE_AUTHOR_KEY" in os.environ and not Path(path).is_file():
         raise SystemExit(f"mod_build: MELODEE_AUTHOR_KEY={path}: no such key file (\"\" builds unsigned)")
-    if not Path(path).is_file() and "MELODEE_AUTHOR_KEY" not in os.environ:
+    if make and not Path(path).is_file() and "MELODEE_AUTHOR_KEY" not in os.environ:
         seed = os.urandom(32)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -219,7 +221,7 @@ def unpack_image(b, size):
 def toolchain():
     tc = Path(os.environ.get("JIELI_TOOLCHAIN", Path.home() / ".jieli" / "toolchain")).resolve()
     if not (tc / "pi32v2" / "bin" / "clang").exists():
-        raise SystemExit(f"mod_build: no JieLi toolchain in {tc} (tools/get_toolchain.sh)")
+        raise SystemExit(f"mod_build: no JieLi toolchain in {tc} (sh {SDK / 'get_toolchain.sh'})")
     return tc
 
 
@@ -617,6 +619,9 @@ def check(path):
     if e != engine or n.encode()[:16] != name.rstrip(b"\0") or k != npre or kk != key or hh != host:
         raise SystemExit(f"{path}: head and descriptor differ")
     chunks = mod_presets.chunks(b, end) if flags & FILE_CHUNKS else {}
+    tags = [t for t, _ in chunk_places(b, end)] if flags & FILE_CHUNKS else []
+    if len(set(tags)) != len(tags):
+        raise SystemExit(f"{path}: a chunk twice")
     if npre or mod_presets.TAG in chunks:
         if mod_presets.TAG not in chunks:
             raise SystemExit(f"{path}: {npre} presets, no PRST chunk")
@@ -657,11 +662,16 @@ def check(path):
             w = struct.unpack_from("<I", nat, NATIVE_HEAD.size + ncode + ndat + 4 * k)[0]
             if not (w + 8 <= ncode or ndat_at <= w and w + 8 <= ndat_at + ndat):
                 raise SystemExit(f"{path}: its AA64 chunk lists a word outside its code and data")
+        at = dict((t, a) for t, a in chunk_places(b, end))
+        if signed and not native_signed(b, at.get(NATIVE_TAG), at.get(NSIG_TAG),
+                                        MELODEE_SIGNERS if key == MELODEE_KEY else (key,)):
+            raise SystemExit(f"{path}: its AArch64 code is not signed by the key its IDNT chunk names (NSIG)")
     signer = ("Melodee's key" if key == MELODEE_KEY else f"key {key.hex()}") if signed else "unsigned"
     print(f"{path}: {vendor}/{slug} ({n}) ID {mid[::-1].hex()}, {signer}, engine {engine}, ABI {abi} host {host}" +
           f", image {len(img)} B" + (f" (packed {image} B)" if flags & FILE_PACKED else "") +
           f", bss {bss} B, {nrel} address words, {npre} presets, schema {len(schm)} B, version {version}" +
-          (f", AArch64 {len(nat)} B" if nat else "") + (", WebAssembly" if WASM_TAG in chunks else "") + ": ok")
+          (f", AArch64 {len(nat)} B" + (" signed" if signed else "") if nat else "") +
+          (", WebAssembly" if WASM_TAG in chunks else "") + ": ok")
 
 
 WASM_TAG = 0x4D534157                          # "WASM": the module as a WebAssembly side module (Studio's core)
@@ -716,6 +726,14 @@ NATIVE_TAG = 0x34364141                        # "AA64": the module built for AA
 NATIVE_HEAD = struct.Struct("<IIIIII")         # version, code bytes, data's place, data bytes, bss, address words
 NATIVE_VERSION = 1
 NATIVE_PAGE = 0x4000                           # (module_a64.ld: the data's alignment)
+NSIG_TAG = 0x4749534E                          # "NSIG": a signed module's AArch64 code signed by its key (mod_abi3.h)
+NSIG_PREFIX = b"melodee/native/1"              # (MOD3_NSIG_PREFIX: the signed bytes' first)
+HEAD_CRC = 28                                  # (the head's crc: the one head field NSIG does not cover)
+
+
+def nsig_message(head, body):
+    """what NSIG signs: MOD3_NSIG_PREFIX, the head without its crc and the body up to the NSIG chunk"""
+    return NSIG_PREFIX + bytes(head[:HEAD_CRC]) + bytes(head[HEAD_CRC + 4: HEAD.size]) + bytes(body)
 R_AARCH64_ABS64 = 257
 NATIVE_CFLAGS = ["--target=aarch64-none-elf", "-mcpu=cortex-a55", "-O2", "-ffp-contract=off", "-ffreestanding",
                  "-fno-builtin", "-fno-pic", "-mcmodel=small", "-ffixed-x18", "-fno-stack-protector",
@@ -766,6 +784,50 @@ def native_image(elf, base):
     return code, data_at, dat, nbss, sorted(words)
 
 
+def chunk_places(b, at):
+    """a module file's chunks after its address words (at): [(tag, the place of its 8-byte head), ...]"""
+    out = []
+    while at + 8 <= len(b):
+        tag, n = struct.unpack_from("<II", b, at)
+        out.append((tag, at))
+        at += 8 + ((n + 3) & ~3)
+    return out
+
+
+def native_signed(b, aa64_at, nsig_at, keys):
+    """1: the NSIG chunk at nsig_at, after the AA64 chunk at aa64_at, is one of keys' signature of the file before it
+    (nsig_message)"""
+    if aa64_at is None or nsig_at is None or nsig_at < aa64_at or u32(b, nsig_at + 4) != 64:
+        return 0
+    sig = bytes(b[nsig_at + 8: nsig_at + 72])
+    return any(mod_sign.verify(k, nsig_message(b[:HEAD.size], b[HEAD.size: nsig_at]), sig) for k in keys)
+
+
+def native_seed(path, b, end):
+    """the key that signs a module's AArch64 code: its IDNT chunk's (the author's, else Melodee's for Melodee's synths),
+    once the file's own signature checks; None: an unsigned module"""
+    at = dict((t, a) for t, a in chunk_places(b, end))
+    if IDNT_TAG not in at or u32(b, at[IDNT_TAG] + 4) != IDNT.size:
+        raise SystemExit(f"{path}: no IDNT chunk (who it is): build it again with this SDK")
+    _, _, iflags, _, _, _, _, key = IDNT.unpack_from(b, at[IDNT_TAG] + 8)
+    if not iflags & IDNT_SIGNED:
+        return None
+    keys = MELODEE_SIGNERS if key == MELODEE_KEY else (key,)
+    sig = bytes(b[at[SIGN_TAG] + 8: at[SIGN_TAG] + 72]) if SIGN_TAG in at else b""
+    if len(sig) != 64 or not any(mod_sign.verify(k, bytes(b[HEAD.size: at[SIGN_TAG]]), sig) for k in keys):
+        raise SystemExit(f"{path}: not signed by the key its IDNT chunk names")
+    if key == MELODEE_KEY:
+        seed = melodee_seed(SRC is not None)
+        if seed is None:
+            raise SystemExit("mod_build: a Melodee synth's AArch64 code is signed with Melodee's key (MELODEE_SIGN_KEY)")
+        return seed
+    seed = author_seed(make=False)
+    if seed is None or mod_sign.public(seed) != key:
+        raise SystemExit(f"mod_build: {path.name} is signed by key {key.hex()[:16]}; its AArch64 code is signed with "
+                         "the same key (MELODEE_AUTHOR_KEY, else ~/.config/melodee/author.key)")
+    return seed
+
+
 def native(path, out, src=None):
     """path (a built .mmod) again with its source (src; Melodee's tree: firmware/modules/<name>/<name>.c) built for
     AArch64 in an AA64 chunk, last"""
@@ -776,6 +838,7 @@ def native(path, out, src=None):
     end = HEAD.size + image + 4 * nrel
     if flags & FILE_CHUNKS and NATIVE_TAG in mod_presets.chunks(bytes(b), end):
         raise SystemExit(f"{path}: has an AA64 chunk already")
+    seed = native_seed(path, b, end) if flags & FILE_CHUNKS else None
     stem = path.stem
     src = src or (SRC / "firmware" / "modules" / stem / (stem + ".c") if SRC else None)
     if not src or not src.exists():
@@ -826,12 +889,18 @@ def native(path, out, src=None):
     payload = NATIVE_HEAD.pack(NATIVE_VERSION, len(code), data_at, len(dat), nbss, len(words)) + code + dat + \
         b"".join(struct.pack("<I", w) for w in words)
     body = bytes(b[HEAD.size:]) + mod_presets.chunk(NATIVE_TAG, payload)
+    if seed:                                         # (the code signed with the file, its head but the crc: NSIG, last)
+        total = HEAD.size + len(body) + 8 + 64
+        signed = HEAD.pack(magic, abi, engine, flags | FILE_CHUNKS, total, image, bss, nrel, desc, 0, name, version,
+                           npre, r0, key, host, r1)
+        body += mod_presets.chunk(NSIG_TAG, mod_sign.sign(seed, nsig_message(signed, body)))
     head = HEAD.pack(magic, abi, engine, flags | FILE_CHUNKS, HEAD.size + len(body), image, bss, nrel, desc,
                      zlib.crc32(body), name, version, npre, r0, key, host, r1)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(head + body)
     print(f"module {name.rstrip(bytes(1)).decode()}: AArch64 code {len(code)} B, data {len(dat)} B, bss {nbss} B, "
-          f"{len(words)} address words, file {len(head) + len(body)} B -> {out}")
+          f"{len(words)} address words, " + ("signed" if seed else "unsigned") +
+          f", file {len(head) + len(body)} B -> {out}")
 
 
 def main():

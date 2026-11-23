@@ -7,25 +7,36 @@ Melodee's source tree. A module built once keeps working across firmware updates
     mod_sdk.h     the helpers a module uses (sine, soft clip, SVF, the voice's level), MOD3_EXPORT / IDENT / PRESETS
     mod_schema.h  optional: parameters and pages (MOD3_SCHEMA)
     module.ld, module_a64.ld, mod_rt.c, mod_dump.c, mod_build.py, mod_presets.py, mod_sign.py   the builder
+    get_toolchain.sh  the JieLi toolchain the builder compiles with
     example/drone.c   a complete module
+
+The SDK lives in Melodee's source tree (`firmware/modules/sdk`), beside the firmware that keeps its contract, and is
+published from there on its own.
 
 ## Build
 
 Needs Python 3, a host C compiler (`cc`) and the JieLi pi32v2 toolchain (`JIELI_TOOLCHAIN`, else
-`~/.jieli/toolchain`; off Linux x86-64 it runs in Docker):
+`~/.jieli/toolchain`; off Linux x86-64 it runs in Docker). Get the toolchain once:
+
+    sh get_toolchain.sh
+
+Then:
 
     python3 mod_build.py example/drone.c -o drone.mmod
     python3 mod_build.py --check drone.mmod
 
-Install it with Melodee's web installer (Settings > Synth modules) or `tools/fm1_modules.py`.
+Install it with Melodee's web installer (Settings > Synth modules).
 
 For the plug-in hosts (melodee-modules: the Melodee Modules CLAP on the MPC Sample and on a Mac), add the module built
 for AArch64 with LLVM's `clang` and `ld.lld` (`module_a64.ld`):
 
     python3 mod_build.py --native drone.mmod --src example/drone.c -o native/drone.mmod
 
-The AA64 chunk follows SIGN, as a WASM chunk does: the signature does not cover it, and a file sent to the FM-1 leaves
-it out.
+The AA64 chunk follows SIGN, and a signed module's code is signed too: an NSIG chunk after it, by the same key, over
+the whole file before it (the head too, but its CRC). The plug-in hosts run a signed module's AArch64 code only when NSIG checks, so `--native`
+needs the key that signed the file (yours; Melodee's for Melodee's synths). An unsigned module's code runs unsigned,
+as an unsigned module installs on the FM-1 with its warning. The FM-1 takes the file without AA64: keep the two apart
+(`-o native/...`).
 
 ## Who it is
 
