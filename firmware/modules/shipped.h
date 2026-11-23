@@ -30,7 +30,7 @@
     X(0x62DC75AA6ADC0530ULL, "CZ-1", "CZ-1", 2u, 2u, USER_NATIVE_CZ, SHIP_F_MODS)                                    \
     X(0x8757CDD57F9158D4ULL, "SID", "SID", 4u, 0u, 0u, SHIP_F_MODS)                                                   \
     X(0x153965FA94BE8E69ULL, "808", "808", 5u, 4u, 0u, SHIP_F_MODS)                                                   \
-    X(0x98357802396AB4EEULL, "909", "909", 5u, 4u, 0u, SHIP_F_MODS)                                                   \
+    X(0x98357802396AB4EEULL, "909", "909", 5u, 4u, 0u, 0u)                                                            \
     X(0xAE957CEEE32C014EULL, "SID KIT", "SIDK", 5u, 4u, 0u, 0u)                                                       \
     X(0x023E195C232B0352ULL, "CR78", "CR78", 5u, 4u, 0u, 0u)                                                          \
     X(0x30F273CD0F5E6077ULL, "FM KIT", "FMK", 5u, 4u, 0u, 0u)                                                         \

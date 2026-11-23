@@ -132,9 +132,9 @@ def main():
     real = ROOT / "build/melodee-mods.bin"
     if real.exists():
         files = M.bundle(real.read_bytes())
-        check("build/melodee-mods.bin: the default install, 808, 909, SAMPLER, CZ-1, SID, FM6 and PROPHET, no DRUM and none "
-              "of SID KIT, CR78 and FM KIT (the hub's; no layout key: the kits' pads by schema)",
-              sorted(f["name"] for f in files) == sorted(["808", "909", "SAMPLER", "CZ-1", "FM6", "PROPHET", "SID"]) and
+        check("build/melodee-mods.bin: the default install, 808, SAMPLER, CZ-1, SID, FM6 and PROPHET, no DRUM and none "
+              "of 909, SID KIT, CR78 and FM KIT (the hub's; no layout key: the kits' pads by schema)",
+              sorted(f["name"] for f in files) == sorted(["808", "SAMPLER", "CZ-1", "FM6", "PROPHET", "SID"]) and
               all(f["abi"] == 3 for f in files) and not any(f["key"] for f in files) and
               not any(f["id"] in M.RETIRED for f in files))
     print("fm1_modules tests", "FAILED" if bad else "passed")
