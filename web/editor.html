@@ -1817,7 +1817,7 @@ function makeMockDevice(opt = {}) {
     ...Array.from({length:8},()=>D("",F.INT,0,127,0)),
     E("MIDI", ["USB", "TRS", "BLE"], 0), E("DRUM", ["OFF", ...Array.from({ length: 16 }, (_, i) => String(i + 1))], 10), E("ROUT", ["CH1-4", "SEL", "CH5-8", "CH9-12", "CH13-16"], 0), D("CPU", F.INT, 0, 0, 0),
     D("SLOT", F.INT, 1, 33, 1), E("BOOT", ["OFF", ...Array.from({ length: 32 }, (_, i) => String(i + 1))], 0), E("LOAD", NGO, 0), E("SAVE", NGO, 0),
-    E("ENG", ["-", "MIDI Track", "PROPHET", "FM6", "CZ-1", "SID", "808", "909", "SID KIT", "CR78", "FM KIT", "SAMPLER", ...Array(18).fill("-")], 0), D("A4", F.INT, 400, 480, 440, null, "Hz"),
+    E("ENG", ["-", "MIDI Track", "PROPHET", "FM6", "CZ-1", "SID", "808", "-", "-", "-", "-", "SAMPLER", ...Array(18).fill("-")], 0), D("A4", F.INT, 400, 480, 440, null, "Hz"),
     E("CLRSQ", NGO, 0), E("INIT", NGO, 0),
     ...Array.from({length:3},()=>D("",F.INT,0,127,0)),
   ];

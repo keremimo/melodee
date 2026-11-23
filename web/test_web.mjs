@@ -430,7 +430,12 @@ function mockTables() {
   const m2 = E.makeMockDevice({ auto: false });   /* the mock's power-on sounds: its parts 1..4 */
   cmp("power-on sounds", m2.state.tracks.map((t) => [t.engine, t.preset]), fw.TRK_DEF);
   m2.stop();
-  cmp("firmware: G_ENGSEL names == engine names", fw.GP[fw.G_ENGSEL].names, fw.ENG.map((e) => e.name));
+  /* a synth outside the default install (firmware/modules/shipped.h, no SHIP_F_MODS: 909 and the hub's kits) is "-" in
+     G_ENGSEL's names until its file is installed (params.c SHIP_NAME; its schema names it then) */
+  const shipRows = [...readFileSync(new URL("../firmware/modules/shipped.h", import.meta.url), "utf8")
+    .matchAll(/X\((0x[0-9A-Fa-f]+)ULL,\s*"[^"]*",[^)]*?,\s*([A-Z_| 0-9u]+)\)/g)].map((r) => r[2].includes("SHIP_F_MODS"));
+  cmp("firmware: G_ENGSEL names == engine names", fw.GP[fw.G_ENGSEL].names,
+      fw.ENG.map((e, h) => (h >= 2 && h - 2 < shipRows.length && !shipRows[h - 2] ? "-" : e.name)));
   cmp("DRUM grid: the lanes' GM notes", [...E.LANE_NOTE], fw.LANE_NOTE);
   cmp("DRUM grid: the lane of GM 35..81", E.LANE_OF, fw.LANE_OF);
   diffs.slice(0, 20).forEach((d) => console.log("  " + d));
