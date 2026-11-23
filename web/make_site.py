@@ -239,8 +239,8 @@ def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=
         rc = published(out, "rc")
     rc_files, rc_meta = {}, None
     if rc:
-        if not re.fullmatch(r"\d\.\d{1,2}\.\d-rc\.\d+", rc["version"]):
-            raise SystemExit("Release candidate version must be X.Y.Z-rc.N")
+        if not re.fullmatch(r"\d\.\d{1,2}\.\d-(rc|beta)\.\d+", rc["version"]):
+            raise SystemExit("Release candidate version must be X.Y.Z-rc.N or X.Y.Z-beta.N")
         rc_files, rc_meta = channel(rc, "release candidate", f"melodee-{rc['version']}", "next")
     html = (HERE / "index_pkg.html").read_text(encoding="utf-8")
     lib = installer_libraries()

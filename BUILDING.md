@@ -711,7 +711,7 @@ release tails before adopting it in a release.
 
 ## Nightly builds from `nightly`
 
-The installer offers dual-core firmware for the stable, **Release candidate**
+The installer offers dual-core firmware for the stable, **Pre-release** (a release candidate or beta)
 and nightly channels. `web/publish_rc.py <pages checkout> <release assets
 directory>` checks the candidate's package hashes and build metadata before
 adding it. Stable and nightly updates preserve the RC channel.

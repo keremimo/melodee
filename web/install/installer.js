@@ -1152,8 +1152,8 @@ const leaving = setupLeaving({
   setBusy:on=>{st.running=on;render();},log
 });
 const releaseText = {
- en:{releaseTitle:"Stable version",dual:"Standard",advancedTitle:"Advanced installs (RC · Nightly)",rcTitle:"Release candidate","rc-dual":"Release candidate",rcWhy:"A test build of the next release.",nightlyTitle:"Nightly","nightly-dual":"Nightly",nightlyWhy:"The current development build. Back up before updating."},
- ja:{releaseTitle:"安定版のバージョン",dual:"標準",advancedTitle:"詳細（RC・Nightly）",rcTitle:"リリース候補","rc-dual":"リリース候補",rcWhy:"次のリリースのテスト版です。",nightlyTitle:"Nightly","nightly-dual":"Nightly",nightlyWhy:"現在の開発版です。先にバックアップしてください。"}
+ en:{releaseTitle:"Stable version",dual:"Standard",advancedTitle:"Advanced installs (pre-release · Nightly)",rcTitle:"Pre-release","rc-dual":"Pre-release",rcWhy:"A test build of the next release.",nightlyTitle:"Nightly","nightly-dual":"Nightly",nightlyWhy:"The current development build. Back up before updating."},
+ ja:{releaseTitle:"安定版のバージョン",dual:"標準",advancedTitle:"詳細（プレリリース・Nightly）",rcTitle:"プレリリース","rc-dual":"プレリリース",rcWhy:"次のリリースのテスト版です。",nightlyTitle:"Nightly","nightly-dual":"Nightly",nightlyWhy:"現在の開発版です。先にバックアップしてください。"}
 };
 /* ---- start ---- */
 (async () => {
