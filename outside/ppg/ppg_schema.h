@@ -3,8 +3,8 @@
 /* The PPG's schema (mod_schema.h): its program (ppg_patch.h, 115 bytes), every panel value by the id Saadet's pages
  * gave it (ppg_patch.h PG_*, PGX_*; each a MOD3_SK_CALL parameter: a group's fields are the group GROUP selects), its
  * pages as Saadet's (docs/ppg/mocks.html: PROGRAM, WAVES, TUNE, FILTER, ENV 1, LOUD, ENV 3, LFO, PLAY), roles, the
- * sound designer's recipes, the checks of a stored program and Motion's bytes. The builder writes the file's SCHM chunk
- * from it (the module's source built for the host: MOD_HOSTED). */
+ * sound designer's recipes, the SysEx it answers (a V8 OS bank), the checks of a stored program and Motion's bytes.
+ * The builder writes the file's SCHM chunk from it (the module's source built for the host: MOD_HOSTED). */
 static const char *const PGS_TABLE[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27",
                                         "28", "29", "UPPER", "SAMPLE"};
@@ -141,6 +141,7 @@ static const uint8_t PGS_CHECK[] = {
 };
 #undef PGS_CK
 #undef PGS_CK1
+static const uint8_t PGS_SYSEX[] = {3, 0x29, 0x01, 0x0D};   /* (a V8 OS bank: F0 29 01 0D ..; ppg.c ppg_sysex) */
 static const mod_sch_src PPG_SCHEMA = {
     .patch = PPG_BLOB, .def_make = ppg_sch_def, .store = MOD_SCH_STORE_NONE, .utag = 'W', .mtag = 22,
     .flags = MOD_SCH_F_MBYTES | MOD_SCH_F_SNAME | MOD_SCH_F_NOEDIT, .abbr = "PPG", .wdef = MOD_SCH_NONE, .mmap = 0,
@@ -151,5 +152,6 @@ static const mod_sch_src PPG_SCHEMA = {
     .wid = PPG_SCH_WID, .nwid = sizeof PPG_SCH_WID,
     .rec = PGS_REC, .nrec = sizeof PGS_REC / sizeof *PGS_REC,
     .strip = PGS_STRIP,
+    .sysex = PGS_SYSEX, .nsysex = 1,
     .check = PGS_CHECK, .ncheck = sizeof PGS_CHECK / MOD_SCH_CREC,
 };

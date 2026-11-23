@@ -30,6 +30,12 @@
 #include "mod_schema.h"
 #include "ppg_math.h"
 #include "ppg_patch.h"
+#if defined(MOD_HOSTED) || defined(MOD_IN_CORE)
+#include <string.h>                               /* (libc: the host's builds, WebAssembly) */
+#else
+void *memcpy(void *d, const void *s, __SIZE_TYPE__ n);   /* (mod_rt.c: the module carries them) */
+void *memset(void *d, int c, __SIZE_TYPE__ n);
+#endif
 #if !__has_include("ppg_rom.h")
 #error "PPG needs the PPG Wave 2.2's waves: run gen_ppg_data.py beside ppg.c (local images, never committed)"
 #endif
@@ -818,6 +824,96 @@ static int ppg_pactive(const mod_part_v3 *t, const uint8_t *patch, uint32_t id)
     }
 }
 
+/* ----------------------------------------------------------------- SysEx --- */
+/* A bank of the V8 OS (the 2.2's and the 2.3's): F0 29 01 0D, the RAM's 100 programs of 51 bytes as nibbles, the high
+ * one first, then (the 2.2's) 20 bytes more, F7. Each program is read as gen_ppg_data.py reads the factory bank, so the
+ * factory bank sent gives the presets' programs back, and offered for a user slot (count 1 each: a whole bank is 11 KB
+ * as patches). A bank is 10 KB, more than the FM-1 collects (MOD3_SX_MAX): a host that reads .syx files whole has it */
+#define PPG_SX_PROGS 100u
+#define PPG_SX_REC 51u
+#define PPG_SX_F1 0xF1u                    /* (the flag bytes' fields, not a group's byte) */
+#define PPG_SX_F2 0xF2u
+#define PPG_SX_SEMIT 0xF8u                 /* .. SEMIT of voice 1..8: 0xF8 + voice */
+static uint32_t ppg_eng;                   /* the number this device gave the module (bind) */
+/* a group's fields in the OS's order: where each goes, its bits, its scale (gen_ppg_data.py GROUP) */
+static const uint8_t PPG_SX_GROUP[][3] = {
+    {PG_RATE, 5, 4}, {PG_OSC, 6, 2}, {PG_CUT, 6, 2}, {PG_E1F, 5, 4}, {PG_E1W, 5, 4}, {PG_EMPH, 4, 9},
+    {PG_LOUD, 5, 4}, {PG_A1, 4, 8}, {PG_A2, 4, 8}, {PG_D1, 5, 4}, {PG_D2, 5, 4}, {PG_S1, 6, 2}, {PG_S2, 6, 2},
+    {PG_R1, 5, 4}, {PG_R2, 5, 4}, {PG_DELAY, 4, 8}, {PG_A3, 4, 8}, {PG_SHAPE, 2, 0}, {PG_D3, 5, 4},
+    {PG_WHEEL, 5, 4}, {PG_E3AMT, 5, 4}, {PG_SUB, 6, 2}, {PPG_SX_F1, 8, 0}, {PPG_SX_F2, 8, 0}, {PG_KF, 3, 0},
+    {PG_KL, 3, 0}, {PG_KW, 3, 0}, {PG_DETU, 3, 0}, {PG_SW, 2, 0}, {PG_BD, 3, 0}, {PG_BI, 2, 0},
+    {PPG_SX_SEMIT + 0, 6, 0}, {PPG_SX_SEMIT + 1, 6, 0}, {PPG_SX_SEMIT + 2, 6, 0}, {PPG_SX_SEMIT + 3, 6, 0},
+    {PPG_SX_SEMIT + 4, 6, 0}, {PPG_SX_SEMIT + 5, 6, 0}, {PPG_SX_SEMIT + 6, 6, 0}, {PPG_SX_SEMIT + 7, 6, 0},
+};
+static const uint16_t PPG_SX_AT[2] = {15, 211};   /* group A's first bit in the program, group B's */
+/* n bits of a program from bit at, the lowest first (the program a little-endian number) */
+static uint32_t ppg_sx_bits(const uint8_t *rec, uint32_t at, uint32_t n)
+{
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < n; i++, at++)
+        v |= (uint32_t)(rec[at >> 3] >> (at & 7u) & 1u) << i;
+    return v;
+}
+static void ppg_sx_group(uint8_t *g, const uint8_t *rec, uint32_t at)
+{
+    uint32_t f1 = 0, f2 = 0;
+    for (uint32_t i = 0; i < MOD_NELEM(PPG_SX_GROUP); i++) {
+        uint32_t id = PPG_SX_GROUP[i][0], sc = PPG_SX_GROUP[i][2], x = ppg_sx_bits(rec, at, PPG_SX_GROUP[i][1]);
+        at += PPG_SX_GROUP[i][1];
+        if (id == PG_EMPH) x = x * 9u / 2u > 63u ? 63u : x * 9u / 2u;
+        else if (sc) x = ((x * sc) & 0x7Fu) >> 1;
+        if (id == PPG_SX_F1) f1 = x;
+        else if (id == PPG_SX_F2) f2 = x;
+        else if (id >= PPG_SX_SEMIT)
+            g[pg_semi_id(id - PPG_SX_SEMIT)] = (uint8_t)(md_clamp((int32_t)x - 12, -24, 24) + PG_SEMI0);
+        else g[id] = (uint8_t)x;
+    }
+    /* the flags: (VL VF TF MW TW UW - MS), (MO MF ML - TL TM EO ES), bit 0 first */
+    g[PG_UW] = f1 >> 5 & 1u;
+    g[PG_E3TO] = (uint8_t)((f2 >> 6 & 1u) | (f2 >> 7 & 1u) << 1);
+    g[PG_MP] = (uint8_t)((f2 & 1u) | (f1 >> 7 & 1u) << 1);
+    g[PG_MW] = f1 >> 3 & 1u, g[PG_MF] = f2 >> 1 & 1u, g[PG_ML] = f2 >> 2 & 1u;
+    g[PG_TW] = f1 >> 4 & 1u, g[PG_TF] = f1 >> 2 & 1u, g[PG_TL] = f2 >> 4 & 1u, g[PG_TM] = f2 >> 5 & 1u;
+    g[PG_VF] = f1 >> 1 & 1u, g[PG_VL] = f1 & 1u;
+}
+static uint32_t ppg_sysex(const uint8_t *f, uint32_t n, uint32_t ev)
+{
+    uint32_t i, k;
+    if (ev != MOD3_SX_END)
+        return ev == MOD3_SX_ABORT ? MOD3_SXR_DONE : MOD3_SXR_MORE;
+    if (n < 5u || (n - 5u != 2u * PPG_SX_PROGS * PPG_SX_REC && n - 5u != 2u * PPG_SX_PROGS * PPG_SX_REC + 40u) ||
+        f[1] != 0x29u || f[2] != 0x01u || f[3] != 0x0Du || f[n - 1u] != 0xF7u) {
+        mh->message("INVALID PPG BANK");
+        return MOD3_SXR_DONE;
+    }
+    for (i = 4; i < n - 1u; i++)
+        if (f[i] > 15u) {
+            mh->message("INVALID PPG BANK");
+            return MOD3_SXR_DONE;
+        }
+    for (k = 0; k < PPG_SX_PROGS; k++) {
+        const uint8_t *q = f + 4u + 2u * PPG_SX_REC * k;
+        uint8_t rec[PPG_SX_REC];
+        ppg_patch_t p;
+        uint32_t bits, keyb, split;
+        for (i = 0; i < PPG_SX_REC; i++)
+            rec[i] = (uint8_t)(q[2u * i] << 4 | q[2u * i + 1u]);
+        memset(&p, 0, sizeof p);
+        ppg_sx_group(p.raw, rec, PPG_SX_AT[0]);
+        ppg_sx_group(p.rawb, rec, PPG_SX_AT[1]);
+        bits = ppg_sx_bits(rec, 0, 15);
+        p.raw[PG_TABLE] = p.rawb[PG_TABLE] = (uint8_t)(bits & 31u);
+        keyb = bits >> 5 & 15u, split = bits >> 9 & 63u;
+        p.keyb = (uint8_t)(keyb > 8u ? 0u : keyb);   /* (a 2.3's KEYB 9..11, the 2.2 bank's 90: no 2.2 mode, 0) */
+        p.split = (uint8_t)(split > 60u ? 60u : split);
+        memcpy(p.name, "PROGRAM     ", PG_NAME_LEN);
+        p.name[8] = (char)('0' + k / 10u), p.name[9] = (char)('0' + k % 10u);
+        (void)mh->sx_stage(ppg_eng, (const uint8_t *)&p, 1, PPG_BLOB);
+    }
+    mh->message("PPG BANK");
+    return MOD3_SXR_DONE;
+}
+
 /* ---------------------------------------------------------------- engine --- */
 static const mod_engine_v3 ENG_PPG = {
     .name = "PPG", .page_title = {"WAVES", "FILTER"},
@@ -830,7 +926,14 @@ static const mod_engine_v3 ENG_PPG = {
     .note_on = ppg_note_on, .render = ppg_render, .done = ppg_done, .block = ppg_block, .alloc = ppg_alloc,
     .units = ppg_units, .cap = ppg_cap, .state = ppg_state, .bend_range = ppg_bend_range,
     .pget = ppg_pget, .pput = ppg_pput, .pactive = ppg_pactive,
+    .sysex = ppg_sysex,
 };
+/* the host table, and the number this device gave the module (its SysEx's offers name it) */
+static int ppg_bind(const mod_host_v3 *h, uint32_t self)
+{
+    ppg_eng = MOD3_SELF_ENGINE(self);
+    return md_bind(h, self);
+}
 
 #if defined(MOD_HOSTED) && !defined(MOD_IN_CORE)  /* (the schema: the builder's host build writes the SCHM chunk) */
 #include "ppg_schema.h"
@@ -838,7 +941,8 @@ MOD3_SCHEMA(PPG_SCHEMA);
 #endif
 MOD3_IDENT("Saadet", "ppg-wave", "PPG");          /* its ID: its author key and "ppg-wave" (mod_abi3.h) */
 MOD3_EXPORT(mod_ppg) = {
-    MOD3_SDK_HEAD,
+    .magic = MOD3_MAGIC, .abi = MOD3_ABI, .size = sizeof(mod_desc_v3), .host = MOD3_SDK_HOST,
+    .eng_size = sizeof(mod_engine_v3), .key = 0, .bind = ppg_bind,   /* (MOD3_SDK_HEAD, its own bind) */
     .engine = 24,                                 /* the number it asks for (a device gives the first free one if taken) */
     .name = "PPG",
     .npresets = PPG_NPRESETS,

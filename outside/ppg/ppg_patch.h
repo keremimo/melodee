@@ -3,7 +3,7 @@
 /* PPG: a part's sound, a PPG Wave 2.2 program (Saadet's ppg_patch.h byte for byte: 115 bytes). One byte a control, in
  * the 2.2's own numbers: its knobs 0..63 (the engine steps them as the 2.2 quantises them), its DIGITAL codes (UW, SW,
  * KW, KF, KL, MW/MF/ML, BD, TW/TF/TL/TM, VF/VL) and its TUNING codes (DETU, MO/MS, EO/ES, BI). The order is the pages',
- * not the 2.2's memory: no 2.2 program is read or written. Bytes stored offset: SEMI and SEMI2..8 (24 = none) and
+ * not the 2.2's memory: a V8 OS bank is read into it (ppg.c ppg_sysex), none is written. Bytes stored offset: SEMI and SEMI2..8 (24 = none) and
  * ENV 3's AMOUNT (32 = none, as the 2.2's ENV 3 ATT knob). SEMI is the 2.2's SEMIT of voice 1, SEMI2..8 of voices 2..8:
  * each of its eight voices transposes by its own (a voice playing this group; KEYB 2 and 3 stack them into chords). */
 #pragma once
