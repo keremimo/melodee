@@ -32,8 +32,11 @@ for AArch64 with LLVM's `clang` and `ld.lld` (`module_a64.ld`):
 
     python3 mod_build.py --native drone.mmod --src example/drone.c -o native/drone.mmod
 
-The AA64 chunk follows SIGN, as a WASM chunk does: the signature does not cover it, and a file sent to the FM-1 leaves
-it out.
+The AA64 chunk follows SIGN, and a signed module's code is signed too: an NSIG chunk after it, by the same key, over
+the whole file before it (the head too, but its CRC). The plug-in hosts run a signed module's AArch64 code only when NSIG checks, so `--native`
+needs the key that signed the file (yours; Melodee's for Melodee's synths). An unsigned module's code runs unsigned,
+as an unsigned module installs on the FM-1 with its warning. The FM-1 takes the file without AA64: keep the two apart
+(`-o native/...`).
 
 ## Who it is
 
