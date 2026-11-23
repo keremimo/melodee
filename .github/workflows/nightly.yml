@@ -60,7 +60,8 @@ jobs:
         run: |
           ref=$(tr -d ' \n' < web/convert/LEGACY_REF)
           git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch --depth=1 origin "$ref"
-          sh web/convert/build.sh
+          # (the frozen tree's mod_build.py builds its host tool at -O0, which gcc cannot: clang)
+          HOST_CC=$(command -v clang || echo cc) sh web/convert/build.sh
       - name: Build dual core and run host/web checks
         env:
           MELODEE_DUAL_CORE: '1'
