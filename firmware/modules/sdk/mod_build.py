@@ -468,7 +468,8 @@ def host_tool(out):
     built in)"""
     cc = os.environ.get("HOST_CC", os.environ.get("CC", "cc")).split()
     out.parent.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run([*cc, "-O0", "-w", "-ffp-contract=off", "-Ibuild/gen", "-Ifirmware/src", "-Itests",
+    # (-O1, as the host tests build: gcc at -O0 emits the hal's always-inline functions, the FM-1's csync with them)
+    r = subprocess.run([*cc, "-O1", "-w", "-ffp-contract=off", "-Ibuild/gen", "-Ifirmware/src", "-Itests",
                         str(SRC / "tools" / "mod_presets.c"), "-o", str(out), "-lm"], cwd=SRC, capture_output=True,
                        text=True)
     if r.returncode:

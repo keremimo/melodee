@@ -98,7 +98,9 @@ jobs:
         ref=$(tr -d ' \n' < web/convert/LEGACY_REF)
         git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch --depth=1 origin "$ref"
         (unset MELODEE_DUAL_CORE MELODEE_CORE1_FALLBACK MELODEE_RAM_AUDIO MELODEE_CACHE_RAM MELODEE_ADMISSION \
-               MELODEE_AUDIO_PROFILE MELODEE_AUDIO_BENCH; sh web/convert/build.sh)
+               MELODEE_AUDIO_PROFILE MELODEE_AUDIO_BENCH
+         # (the frozen tree's mod_build.py builds its host tool at -O0, which gcc cannot: clang)
+         HOST_CC=$(command -v clang || echo cc) sh web/convert/build.sh)
         cp build/melodee-convert.bin "build/release-assets/melodee-$version-convert.bin"
       test: |
         set -euo pipefail

@@ -17,7 +17,8 @@ L=build/legacy/$REF/src
 if [ ! -f "$L/build/modules/drum.mmod" ]; then              # (the 1.x tree, once per ref)
     rm -rf "$L" && mkdir -p "$L"
     git archive "$REF" | tar -x -C "$L"
-    (cd "$L" && PYTHON="$PY" ./build.sh > ../build.log 2>&1) || { echo "convert: the 1.x build failed (build/legacy/$REF/build.log)"; exit 1; }
+    (cd "$L" && PYTHON="$PY" ./build.sh > ../build.log 2>&1) ||
+        { echo "convert: the 1.x build failed (build/legacy/$REF/build.log):"; tail -n 40 "build/legacy/$REF/build.log"; exit 1; }
 fi
 VERSION=$(sed -n 's/^#define MELODEE_VERSION "\([^"]*\)".*/\1/p' "$L/firmware/src/melodee.c" | head -n 1)
 MODS="sid drum cz fm6 prophet"
