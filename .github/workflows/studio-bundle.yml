@@ -15,7 +15,11 @@ permissions:
 jobs:
   bundle:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      JIELI_TOOLCHAIN: ${{ github.workspace }}/.nightly-deps/jieli/toolchain
+      AC79_SDK: ${{ github.workspace }}/.nightly-deps/sdk
+      PARALLEL: '2'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,12 +29,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libharfbuzz-dev libfribidi-dev libraqm-dev
-          python -m pip install -r tools/requirements-build.txt
+          python -m pip install -r tools/requirements-build.txt mido
       - uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.74
-      - name: Generated headers
-        run: python tools/generate_assets.py
+      - uses: actions/cache@v4
+        with:
+          path: .nightly-deps
+          key: jieli-linux-sdk-d179b448-v1
+      - name: Fetch pinned SDK and toolchain
+        run: |
+          if [ ! -x "$JIELI_TOOLCHAIN/pi32v2/bin/clang" ]; then
+            tools/get_toolchain.sh "$GITHUB_WORKSPACE/.nightly-deps/jieli"
+          fi
+          if [ ! -d "$AC79_SDK/.git" ]; then
+            git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK"
+          fi
+          test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
+      - name: Firmware build (the generated headers and the synths' module files the core links)
+        run: ./build.sh
       - name: WebAssembly core and kit encoder (when the tree has their builds)
         run: |
           if [ -f web/core/build.sh ]; then PYTHON=python sh web/core/build.sh; fi
