@@ -153,6 +153,19 @@ def generate():
 
 # ---- update loader
 
+def mod_file_id(b):
+    """a .mmod file's ID from its IDNT chunk (version 2), None without one (tools/fm1_modules.py file_id)"""
+    if not b[7] & 1:
+        return None
+    at = 60 + struct.unpack_from("<I", b, 12)[0] + 4 * struct.unpack_from("<I", b, 20)[0]
+    while at + 8 <= len(b):
+        tag, n = struct.unpack_from("<II", b, at)
+        if tag == 0x544E4449 and n == 96 and b[at + 16] == 2:
+            return struct.unpack_from("<Q", b, at + 8)[0]
+        at += 8 + ((n + 3) & ~3)
+    return None
+
+
 def ldr_head(dcrc, a, b, attr, name):
     body = struct.pack("<HIIBBH16s", dcrc, a, b, attr, 0, 0, name)
     return struct.pack("<H", fm1pkg_make.crc16(body)) + body
@@ -734,12 +747,20 @@ def main():
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
     # the synth modules beside it (firmware/modules/<name>/<name>.c -> build/modules/<name>.mmod: tools/mod_build.py);
     # (ABI 3; the engine-source ones, SID DRUM CZ-1 FM6 and the Prophet, with the image's options: per board)
+    # Only the rows firmware/modules/shipped.h flags SHIP_F_MODS go into melodee-mods.bin, matched by the ID in each
+    # file's IDNT chunk; the others are built all the same (build/modules), installed on their own from the hub.
+    rows = re.findall(r"X\((0x[0-9A-Fa-f]+)ULL,\s*\"[^\"]*\",[^)]*?,\s*([A-Z_| 0-9u]+)\)",
+                      (FW / "modules" / "shipped.h").read_text())
+    default = {int(uid, 16) for uid, flags in rows if "SHIP_F_MODS" in flags}
+    if not default:
+        raise SystemExit("build.py: no SHIP_F_MODS row read from firmware/modules/shipped.h")
     shipped = []
     for src in sorted((FW / "modules").glob("*/*.c")):
         if src.parent.name != "sdk" and src.stem == src.parent.name:
             subprocess.run([sys.executable, SRC / "tools" / "mod_build.py", src, *APP_DEFS], check=True)
-            if 'mod_engine.h"' in src.read_text():   # (the engines the image left to modules)
-                shipped.append(OUT / "modules" / (src.stem + ".mmod"))
+            mmod = OUT / "modules" / (src.stem + ".mmod")
+            if 'mod_engine.h"' in src.read_text() and mod_file_id(mmod.read_bytes()) in default:
+                shipped.append(mmod)            # (the engines the image left to modules, in the default install)
     # the engines the image left to modules, as the installers write them after it (web/fm1mods.js): one file, the
     # .mmod files one after another (build/melodee-mods.bin; web/make_site.py publishes it as <package>-mods.bin)
     mods = b"".join(p.read_bytes() for p in shipped)

@@ -17,8 +17,11 @@
  * The rows' order is the order the PRESETS browser and the editor list the engines in (the MIDI Track after them, any
  * other module after it). */
 #pragma once
-#define SHIP_F_MODS 1u                           /* in melodee-mods.bin: the web installer writes it, the start asks for
-                                                  * setup while it is missing (eng_module_main.c mod_shipped_ok) */
+#define SHIP_F_MODS 1u                           /* in melodee-mods.bin (tools/build.py packs these rows' files only): the
+                                                  * installers write it, the start asks for setup while it is missing
+                                                  * (eng_module_main.c mod_shipped_ok). A row without it is Melodee's
+                                                  * synth all the same, its .mmod built beside the others for the hub
+                                                  * (build/modules): installed on its own, never asked for */
 #define SHIP_F_RECS 4u                           /* the synth whose data records a record written with no module running
                                                   * is (a backup's: rec_store.c, eng_map.c rec_owner_uid) */
 #define SHIP_ROWS(X)                                                                                                   \
@@ -28,9 +31,9 @@
     X(0x8757CDD57F9158D4ULL, "SID", "SID", 4u, 0u, 0u, SHIP_F_MODS)                                                   \
     X(0x153965FA94BE8E69ULL, "808", "808", 5u, 4u, 0u, SHIP_F_MODS)                                                   \
     X(0x98357802396AB4EEULL, "909", "909", 5u, 4u, 0u, SHIP_F_MODS)                                                   \
-    X(0xAE957CEEE32C014EULL, "SID KIT", "SIDK", 5u, 4u, 0u, SHIP_F_MODS)                                              \
-    X(0x023E195C232B0352ULL, "CR78", "CR78", 5u, 4u, 0u, SHIP_F_MODS)                                                 \
-    X(0x30F273CD0F5E6077ULL, "FM KIT", "FMK", 5u, 4u, 0u, SHIP_F_MODS)                                                \
+    X(0xAE957CEEE32C014EULL, "SID KIT", "SIDK", 5u, 4u, 0u, 0u)                                                       \
+    X(0x023E195C232B0352ULL, "CR78", "CR78", 5u, 4u, 0u, 0u)                                                          \
+    X(0x30F273CD0F5E6077ULL, "FM KIT", "FMK", 5u, 4u, 0u, 0u)                                                         \
     X(0xA7C6C5DCAB17D386ULL, "SAMPLER", "SMPL", 5u, 4u, 0u, SHIP_F_MODS | SHIP_F_RECS)
 /* Melodee's synths a later build no longer ships, by ID: kept where they are, never played (module_store.c MS_STALE),
  * their slots emptied by the installers (web/fm1mods.js MOD_RETIRED, tools/fm1_modules.py RETIRED) */
