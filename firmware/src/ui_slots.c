@@ -359,7 +359,9 @@ static void slot_right_draw(int32_t y, const char *b, uint32_t parts, uint16_t c
         return;
     }
     int32_t x = 228 - text_w(lf, b);                    /* the tracks' digits, each in its colour */
-    for (uint32_t i = 0; b[i]; i += 2u) {
+    for (uint32_t i = 0; b[i]; i++) {                   /* ("1 2 3": a step of 2 ran past the last digit's end) */
+        if (b[i] == ' ')
+            continue;
         char d[2] = {b[i], 0};
         cv_text_on(x, ty_y(y, lf), lf, d, T_TRK((uint32_t)(b[i] - '1')), bg);
         x += text_w(lf, d) + text_w(lf, " ");
