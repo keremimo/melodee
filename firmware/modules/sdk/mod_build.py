@@ -43,7 +43,8 @@ IDNT (who it is), SIGN (the signature, last).
 table and installs the file without the chunk: the device's file, byte for byte. emcc: a local one, else the emsdk
 Docker image web/core/build.sh uses (EMSDK_IMAGE). Written to build/modules/wasm/<name>.mmod.
 
---native: the same file with an AA64 chunk last, an SDK module's source built for AArch64 (Linux on the MPC Sample's A55,
+--native: the same file with an AA64 chunk last, its source built for AArch64 (an SDK module's anywhere; an engine-source
+module's in Melodee's tree, with the firmware's headers and -DMOD_NATIVE: mod_engine.h; Linux on the MPC Sample's A55,
 macOS on Apple silicon: x18 left alone, the platform register there) with clang and ld.lld (NATIVE_CC, NATIVE_LD),
 freestanding as on the device (mod_rt.c, no library). It links twice as the device's image does (module_a64.ld: the
 descriptor first, the data on 16 KB pages of its own) and keeps the 64-bit absolute words (R_AARCH64_ABS64) as its
@@ -814,9 +815,10 @@ def native_seed(path, b, end):
     return seed
 
 
-def native(path, out, src=None):
+def native(path, out, src=None, defs=()):
     """path (a built .mmod) again with its source (src; Melodee's tree: firmware/modules/<name>/<name>.c) built for
-    AArch64 in an AA64 chunk, last"""
+    AArch64 in an AA64 chunk, last; an engine-source module (Melodee's tree only) with the firmware's headers and the
+    image's options (defs: -D flags, as tools/build.py gives the device's build)"""
     b = bytearray(path.read_bytes())
     magic, abi, engine, flags, total, image, bss, nrel, desc, crc, name, version, npre, r0, key, host, r1 = HEAD.unpack_from(b)
     if magic != FILE_MAGIC or abi != ABI or total != len(b) or zlib.crc32(b[HEAD.size:]) != crc:
@@ -829,9 +831,9 @@ def native(path, out, src=None):
     src = src or (SRC / "firmware" / "modules" / stem / (stem + ".c") if SRC else None)
     if not src or not src.exists():
         raise SystemExit(f"mod_build: no source for {path.name} (--src)")
-    if is_engine(src):
-        raise SystemExit("mod_build: --native builds SDK modules (mod_sdk.h); an engine-source module needs the "
-                         "firmware's headers and tables")
+    engine_src = is_engine(src)
+    if engine_src and not SRC:
+        raise SystemExit("mod_build: an engine-source module (mod_engine.h) builds in Melodee's tree only")
     cc, ld = os.environ.get("NATIVE_CC", "clang"), os.environ.get("NATIVE_LD", "ld.lld")
     for tool in (cc, ld):
         if not shutil.which(tool):
@@ -841,6 +843,11 @@ def native(path, out, src=None):
     obj, rt = work / (stem + ".o"), work / "mod_rt.o"
     e0, e1 = work / (stem + ".elf"), work / (stem + ".b2.elf")
     inc = ["-I" + str(SDK)]
+    if engine_src:                                   # (freestanding as on the device: mod_engine.h MOD_NATIVE; the
+        # firmware's tables come through the host table, its math is inline: nothing of the firmware's links)
+        inc = ["-DMOD_NATIVE=1", *defs, "-Wno-unused-variable", "-Wno-unused-const-variable",
+               "-Wno-unused-but-set-variable", *("-I" + str(SRC / d) for d in
+                                                 ("firmware/src", "firmware/hal", "build/gen", "firmware/modules/sdk"))]
 
     def run(cmd):
         r = subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
@@ -911,7 +918,9 @@ def main():
         if not SRC and not a.src_c:
             raise SystemExit("mod_build: --native outside Melodee's tree needs the module's source (--src SRC.c)")
         out = a.out or (SRC / "build" / "modules" / "native" if SRC else a.src.parent / "native") / a.src.name
-        return native(a.src.resolve(), out.resolve(), a.src_c.resolve() if a.src_c else None)
+        if any(not d.startswith("-D") for d in rest):
+            raise SystemExit(f"mod_build: unknown arguments {rest}")
+        return native(a.src.resolve(), out.resolve(), a.src_c.resolve() if a.src_c else None, rest)
     src = a.src.resolve()
     out = (a.out or (SRC / "build" / "modules" if SRC else src.parent) / (src.stem + ".mmod")).resolve()
     if any(not d.startswith("-D") for d in rest):

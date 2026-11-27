@@ -28,8 +28,10 @@
 #endif
 #include <stdint.h>
 #include <stddef.h>
+#if defined(FM1_IRQ_TARGET) || defined(MOD_NATIVE)   /* (MOD_NATIVE: mod_build.py --native, freestanding AArch64) */
 #ifdef FM1_IRQ_TARGET
 #include "fm1_time.h"                            /* (MELODEE_AUDIO_PROFILE: the spans' clock) */
+#endif
 void *memset(void *d, int c, size_t n);          /* (modules/sdk/mod_rt.c: the module carries its own) */
 void *memcpy(void *d, const void *s, size_t n);
 int memcmp(const void *a, const void *b, size_t n);
@@ -112,7 +114,7 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
     mod_imp_rec_list = h->version >= 6u && h->size >= MOD3_HOST_SIZE(6u) ? h->rec_list : 0;
     return 0;
 }
-#ifdef FM1_IRQ_TARGET
+#if defined(FM1_IRQ_TARGET) || defined(MOD_NATIVE)
 #define MOD3_ENGINE_EXPORT(sym) __attribute__((used, section(".mod_desc"))) const mod_desc_v3 sym
 #else
 #define MOD3_ENGINE_EXPORT(sym) const mod_desc_v3 sym      /* (host tests: the descriptor by its name) */

@@ -32,6 +32,9 @@ for AArch64 with LLVM's `clang` and `ld.lld` (`module_a64.ld`):
 
     python3 mod_build.py --native drone.mmod --src example/drone.c -o native/drone.mmod
 
+In Melodee's tree it builds Melodee's engine-source synths too (SID, CZ-1, FM6, the Prophet: the firmware's headers,
+`MOD_NATIVE` in `mod_engine.h`), from their device files: `--native build/modules/sid.mmod`.
+
 The AA64 chunk follows SIGN, and a signed module's code is signed too: an NSIG chunk after it, by the same key, over
 the whole file before it (the head too, but its CRC). The plug-in hosts run a signed module's AArch64 code only when NSIG checks, so `--native`
 needs the key that signed the file (yours; Melodee's for Melodee's synths). An unsigned module's code runs unsigned,
