@@ -5,6 +5,8 @@
  * F1..F24 and INIT VOICE are this file's presets (its PRST chunk, module_presets.h); its queue for CPU1 and CPU1's
  * pairing are the firmware's (imported).
  * tools/mod_build.py */
+#define MOD3_ENGINE_TABLES (MOD3_ENGINE_T(MOD3_T_FM6_SIN) | MOD3_ENGINE_T(MOD3_T_FM6_MKI_LOG) | MOD3_ENGINE_T(MOD3_T_FM6_MKI_EXP) | \
+                            MOD3_ENGINE_T(MOD3_T_FM6_OPL_LOG) | MOD3_ENGINE_T(MOD3_T_FM6_OPL_EXP))   /* (fm6_core.c's) */
 #include "../mod_engine.h"
 #include "eng_fm6.c"
 

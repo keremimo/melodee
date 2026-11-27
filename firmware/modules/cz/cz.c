@@ -4,6 +4,7 @@
  * built in. The parts' tones stay the firmware's (cz_parts.h); INIT TONE and Casio's 64 tones are this file's presets
  * (its PRST chunk: tools/mod_build.py writes them as the firmware made them, module_presets.h).
  * tools/mod_build.py */
+#define MOD3_ENGINE_TABLES MOD3_ENGINE_T(MOD3_T_FM6_SIN)   /* (cz_native.c's sine) */
 #include "../mod_engine.h"
 #include "eng_phase.c"
 #include "eng_cz.c"

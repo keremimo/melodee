@@ -9,6 +9,9 @@
  * See docs/CZ1_SYSEX.md for sources and remaining calibration limits. */
 #include "performance_options.h"
 #include "x0x/fastmath.h"
+#if MOD_SIDE                                     /* (FM6's sine: the module asks the host for it, mod_engine.h) */
+_Static_assert(MOD3_ENGINE_TABLES & MOD3_ENGINE_T(MOD3_T_FM6_SIN), "cz_native.c reads FM6_SIN: MOD3_ENGINE_TABLES");
+#endif
 
 static const uint16_t CZ_AMP[128] = {
     0,4,5,5,5,6,6,7,7,8,8,9,9,10,11,12,

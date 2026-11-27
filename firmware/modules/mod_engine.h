@@ -68,6 +68,15 @@ static const uint8_t *mod_imp_rec_base;
 #define mod_part_mem(part, bytes) mod_imp_part_mem(part, bytes)
 #define MOD3_CALL_PATCH(f) ((uint8_t *(*)(const track_t *))(void (*)(void))(f))   /* (track_t: the part's view) */
 #define MOD3_TAB(name, id, T) ((name = (T)(uintptr_t)h->table(id)) != 0)
+/* The tables after dsp.c's (P5_TANH, FM6's) are bound when the host has them and wanted only by a module that reads
+ * them, which says so first, as it says its host: #define MOD3_ENGINE_TABLES (MOD3_ENGINE_T(MOD3_T_FM6_SIN) | ...).
+ * A host without one (a player of module files that came before it) still runs every other synth; the files that
+ * read one check that their module asked for it (_Static_assert under MOD_SIDE) */
+#ifndef MOD3_ENGINE_TABLES
+#define MOD3_ENGINE_TABLES 0u
+#endif
+#define MOD3_ENGINE_T(id) (1u << (id))
+#define MOD3_TAB_IF(name, id, T) (MOD3_TAB(name, id, T) || !(MOD3_ENGINE_TABLES & MOD3_ENGINE_T(id)))
 /* the host table into the pointers: 0, or why not (a table or the pads data this firmware does not have) */
 static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 {
@@ -99,12 +108,14 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
     if (!MOD3_TAB(mod_imp_SINE, MOD3_T_SINE, const int16_t *) || !MOD3_TAB(mod_imp_TANH_Q15, MOD3_T_TANH_Q15, const int16_t *) ||
         !MOD3_TAB(mod_imp_PITCH_OCT, MOD3_T_PITCH_OCT, const uint32_t *) ||
         !MOD3_TAB(mod_imp_A4_RATIO, MOD3_T_A4_RATIO, const uint32_t *) ||
-        !MOD3_TAB(mod_imp_A4_LOG, MOD3_T_A4_LOG, const int32_t *) || !MOD3_TAB(mod_imp_P5_TANH, MOD3_T_P5_TANH, const float *) ||
-        !MOD3_TAB(mod_imp_FM6_SIN, MOD3_T_FM6_SIN, float *) ||
-        !MOD3_TAB(mod_imp_FM6_MKI_LOG, MOD3_T_FM6_MKI_LOG, uint16_t *) ||
-        !MOD3_TAB(mod_imp_FM6_MKI_EXP, MOD3_T_FM6_MKI_EXP, uint16_t *) ||
-        !MOD3_TAB(mod_imp_FM6_OPL_LOG, MOD3_T_FM6_OPL_LOG, uint16_t *) ||
-        !MOD3_TAB(mod_imp_FM6_OPL_EXP, MOD3_T_FM6_OPL_EXP, uint16_t *))
+        !MOD3_TAB(mod_imp_A4_LOG, MOD3_T_A4_LOG, const int32_t *))   /* (dsp.c's: every engine's) */
+        return 2;
+    if (!MOD3_TAB_IF(mod_imp_P5_TANH, MOD3_T_P5_TANH, const float *) ||   /* (the module's own: MOD3_ENGINE_TABLES) */
+        !MOD3_TAB_IF(mod_imp_FM6_SIN, MOD3_T_FM6_SIN, float *) ||
+        !MOD3_TAB_IF(mod_imp_FM6_MKI_LOG, MOD3_T_FM6_MKI_LOG, uint16_t *) ||
+        !MOD3_TAB_IF(mod_imp_FM6_MKI_EXP, MOD3_T_FM6_MKI_EXP, uint16_t *) ||
+        !MOD3_TAB_IF(mod_imp_FM6_OPL_LOG, MOD3_T_FM6_OPL_LOG, uint16_t *) ||
+        !MOD3_TAB_IF(mod_imp_FM6_OPL_EXP, MOD3_T_FM6_OPL_EXP, uint16_t *))
         return 2;
     mod_imp_note_pitch = h->note_pitch;
     mod_imp_note_len = h->note_len;

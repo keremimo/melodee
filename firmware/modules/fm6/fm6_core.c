@@ -20,6 +20,12 @@
  * index). The patch is the 155-byte single-voice layout (FP_*: fm6_parts.h), operator 0 = the sixth operator. */
 
 #include "x0x/fastmath.h"
+#if MOD_SIDE                                     /* (FM6's tables: the module asks the host for them, mod_engine.h) */
+#define FM6_TABLES_READ (MOD3_ENGINE_T(MOD3_T_FM6_SIN) | MOD3_ENGINE_T(MOD3_T_FM6_MKI_LOG) | MOD3_ENGINE_T(MOD3_T_FM6_MKI_EXP) | \
+                         MOD3_ENGINE_T(MOD3_T_FM6_OPL_LOG) | MOD3_ENGINE_T(MOD3_T_FM6_OPL_EXP))
+_Static_assert((MOD3_ENGINE_TABLES & FM6_TABLES_READ) == FM6_TABLES_READ, "fm6_core.c reads FM6's tables: MOD3_ENGINE_TABLES");
+#undef FM6_TABLES_READ
+#endif
 
 
 /* (the patch's layout, the function settings and the 32 algorithms: fm6_parts.h, the firmware's and the engine's

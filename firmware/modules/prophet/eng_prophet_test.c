@@ -12,6 +12,9 @@
  * the voice count are the firmware's (p5_parts.h), Sequential's programs and the presets made from them too
  * (prophet_programs.c); the pitch wheel's range is the program's (p5_bend_range: voice.c sets its target) */
 #include "x0x/fastmath.h"
+#if MOD_SIDE                                     /* (P5_TANH: the module asks the host for it, mod_engine.h) */
+_Static_assert(MOD3_ENGINE_TABLES & MOD3_ENGINE_T(MOD3_T_P5_TANH), "eng_prophet_test.c reads P5_TANH: MOD3_ENGINE_TABLES");
+#endif
 typedef struct { float value; uint8_t stage; } p5_env_t;
 typedef struct {
     uint32_t phase[2];
