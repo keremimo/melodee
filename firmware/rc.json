@@ -9,5 +9,34 @@
   },
   "sha256": {
     "dual": "57d38b6e951a5ae90650864446a4230479480999573ef72e4d3ce8fbdff924a3"
+  },
+  "models": {
+    "SMK-37 Pro": {
+      "product": "SMK-37 Pro_92000",
+      "pkg": {
+        "dual": "../../firmware/melodee-smk37-2.0.0-beta.1.fwsc"
+      },
+      "sha256": {
+        "dual": "97bb29431b35e13d3a9647d3265a1c3bf48301b0a52c1fc88073bf4c42a5b025"
+      }
+    },
+    "SMK-37 Elite": {
+      "product": "SMK-37 Elite_92000",
+      "pkg": {
+        "dual": "../../firmware/melodee-smk37-elite-2.0.0-beta.1.fwsc"
+      },
+      "sha256": {
+        "dual": "7be840b434150260a186840770fa6c3bc26a541658f135c9fe71917cbd098cc9"
+      }
+    },
+    "MKE-P37": {
+      "product": "MKE-P37_92000",
+      "pkg": {
+        "dual": "../../firmware/melodee-smk37-mke-2.0.0-beta.1.fwsc"
+      },
+      "sha256": {
+        "dual": "99b36ec178755c54df0bcdb0e32fdef99eceb4e40be2c6bb9bea925196c60a7a"
+      }
+    }
   }
 }

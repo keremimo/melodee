@@ -236,7 +236,7 @@
   <section class="hero">
     <p class="kicker" data-t="kicker">Firmware for the M-VAVE FM-1</p>
     <h1><span data-t="title">Install Melodee</span> <span class="v" id="hver"></span></h1>
-    <p class="lede" data-t="lede">Synths, sequencing and effects for the FM-1, installed over USB from this page.</p>
+    <p class="lede" data-t="lede">Synths, sequencing and effects for the FM-1, installed over USB from this page. The SMK-37 Pro, SMK-37 Elite and MKE-P37 install here too, as a beta.</p>
     <ul class="facts">
       <li data-t="factBrowser">Chrome or Edge</li>
       <li data-t="factCable">A USB data cable</li>
@@ -260,7 +260,7 @@
         <p data-t="s1p">Plug it straight into this computer, without a hub, and switch it on. Close other music apps and editor tabs. When the browser asks to use MIDI devices, choose Allow.</p>
         <div class="device" id="device" hidden>
           <svg class="i"><use href="#i-fm1"/></svg>
-          <div class="what"><b>FM-1</b><span id="devwhat"></span></div>
+          <div class="what"><b id="devname">FM-1</b><span id="devwhat"></span></div>
           <span class="chip" id="devchip"></span>
         </div>
         <p class="msg" id="connmsg" role="alert"></p>
@@ -1713,7 +1713,7 @@ async function legacyConverter(wasm, modules) {
 return {legacyConverter, convertBundle, legacyIds, readBackupV1};
 })();
 
-const {progressModel, remaining, afterFailure, describeDevice, planFor} = (() => {
+const {progressModel, remaining, afterFailure, describeDevice, planFor, variantFor, modelOf, MODELS} = (() => {
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Charles Vestal
@@ -1784,11 +1784,17 @@ function releaseVersion(product, prefix = "FM-1_9") {
 //   melodee   another Melodee release; dev: a development build (FM-1_900)
 //   stock    M-VAVE's own firmware (version: "V16"); open: M-VAVE's Open firmware (must go back to stock first)
 //   other    another firmware for the FM-1; model: not an FM-1
+//   vendor   an SMK-37 in M-VAVE's own update mode ("ota-SMK-37 Elite_016"): M-VAVE's updater finishes that, never this
+//            page (an SMK-37 resumes only into Melodee's loader, "ota-SMK-37 Elite_900", whose layout check keeps the
+//            package on its model)
 //   The model is the package's (FM-1_9.. an FM-1; SMK-37 Pro_9.. an SMK-37 Pro, SMK-37 Elite, MKE-P37): a package
 //   goes only to exactly its model.
 function describeDevice(id, product) {
   if (!id) return { kind: "none" };
-  if (/^ota-/i.test(id.model)) return { kind: "loader" };
+  if (/^ota-/i.test(id.model)) {
+    const model = modelOf(id);
+    return model === "FM-1" || id.text === `ota-${model}_900` ? { kind: "loader" } : { kind: "vendor", text: id.text };
+  }
   if (id.open || /^FM1_(OFFICIAL_OPEN|COMMUNITY_\d+)$/.test(id.text)) return { kind: "open" };
   const model = (product || "FM-1_9").split("_")[0], prefix = model + "_9";
   if (id.model !== model) return { kind: "model", text: id.text };
@@ -1801,15 +1807,30 @@ function describeDevice(id, product) {
   return { kind: "other", text: id.text };
 }
 
+// The models Melodee has packages for: the FM-1, and the SMK-37 family (beta), each with a package of its own.
+const MODELS = ["FM-1", "SMK-37 Pro", "SMK-37 Elite", "MKE-P37"];
+// a connected device's model, its update loader's "ota-" aside ("ota-SMK-37 Pro" -> "SMK-37 Pro")
+const modelOf = (id) => (id && id.model ? id.model.replace(/^ota-/i, "") : "");
+// A channel's package for a model: the channel itself for its own model (the FM-1's package), its entry under
+// models for another (make_site.py: product, pkg and sha256 of that model's package of the same build), or null:
+// that version has no package for the model.
+function variantFor(chosen, model) {
+  const own = (chosen.product || "FM-1_9").split("_")[0];
+  if (!model || model === own) return chosen;
+  const v = chosen.models && Object.prototype.hasOwnProperty.call(chosen.models, model) ? chosen.models[model] : null;
+  if (!v || !v.pkg || !v.pkg.dual || String(v.product).split("_")[0] !== model) return null;
+  return { ...chosen, product: v.product, pkg: v.pkg, sha256: v.sha256 };
+}
+
 // what pressing Install does for a device: { firmware, resume, boot } or null (nothing to do)
 function planFor(kind, wantBoot) {
   if (kind === "loader") return { firmware: true, resume: true, boot: wantBoot };
   if (kind === "this") return wantBoot ? { firmware: false, resume: false, boot: true } : { firmware: true, resume: false, boot: false };
-  if (kind === "open" || kind === "model" || kind === "none") return null;
+  if (kind === "open" || kind === "model" || kind === "vendor" || kind === "none") return null;
   return { firmware: true, resume: false, boot: wantBoot };
 }
 
-return {progressModel, remaining, afterFailure, describeDevice, planFor};
+return {progressModel, remaining, afterFailure, describeDevice, planFor, variantFor, modelOf, MODELS};
 })();
 
 const {hold, busyElsewhere} = (() => {
@@ -2824,7 +2845,7 @@ function fakeAccess(options = {}) {
 return {fakeAccess};
 })();
 
-const meta = {"version": "1.6.1", "product": "FM-1_91061", "pkg": {"dual": "../../firmware/melodee-1.6.1.fwsc"}, "sha256": {"dual": "8555dc54670a9e39b352e228cf5fb5ecc877fc2b702f19631f155dd85e58ba66"}, "nightly": {"version": "next-5513ed4", "product": "FM-1_900", "branch": "nightly", "commit": "5513ed4438a365c2b53a6124e0e33c5f454ecf3d", "builtAt": "2026-11-24T00:46:43Z", "pkg": {"dual": "../../firmware/melodee-nightly.fwsc"}, "sha256": {"dual": "de9e9260967d38df66d3d0cdbc603ee69eab77a9dce19f44e6f9a945175c3431"}}, "rc": {"version": "2.0.0-beta.1", "product": "FM-1_92000", "branch": "next", "commit": "089fa15cda38b31c99d5134c027e24e0a8fe0c07", "builtAt": "2026-11-24T00:23:37.688670+00:00", "pkg": {"dual": "../../firmware/melodee-2.0.0-beta.1.fwsc"}, "sha256": {"dual": "57d38b6e951a5ae90650864446a4230479480999573ef72e4d3ce8fbdff924a3"}}, "releases": [{"version": "1.6.1", "product": "FM-1_91061", "pkg": {"dual": "../../firmware/melodee-1.6.1.fwsc"}, "sha256": {"dual": "8555dc54670a9e39b352e228cf5fb5ecc877fc2b702f19631f155dd85e58ba66"}}, {"version": "1.6.0", "product": "FM-1_91060", "pkg": {"dual": "../../firmware/melodee-1.6.0.fwsc"}, "sha256": {"dual": "f51bfc75654129874ea5b7d033335127c7112d7d8a3df056806fef38774eaf44"}}, {"version": "1.5.1", "product": "FM-1_91051", "pkg": {"dual": "../../firmware/melodee-1.5.1.fwsc"}, "sha256": {"dual": "172afb5b000f093bbe060922e76e11cd9334b12895a7e659bd20da515fb2d640"}}, {"version": "1.5.0", "product": "FM-1_91050", "pkg": {"dual": "../../firmware/melodee-1.5.0.fwsc"}, "sha256": {"dual": "2bde63b60767bd98ca1688f58a9b200c81e1aab4e6b2ca8de57ed41a6f705e4d"}}, {"version": "1.4.5", "product": "FM-1_91045", "pkg": {"dual": "../../firmware/melodee-1.4.5.fwsc"}, "sha256": {"dual": "a18f40d6f8c8087b25f115ab11286f85c7f04383de836227c463c6ce4745ce20"}}, {"version": "1.4.4", "product": "FM-1_91044", "pkg": {"dual": "../../firmware/melodee-1.4.4.fwsc"}, "sha256": {"dual": "d349a44dc5c29c2af2ad14b6fc76071fc9e218ad4a83dcd25948bd8479aa3607"}}, {"version": "1.4.3", "product": "FM-1_91043", "pkg": {"dual": "../../firmware/melodee-1.4.3.fwsc"}, "sha256": {"dual": "efa44743be492278e25261f012b02425f373b8f31e9e396ef5e47b240a79be80"}}, {"version": "1.4.1", "product": "FM-1_91041", "pkg": {"dual": "../../firmware/melodee-1.4.1.fwsc"}, "sha256": {"dual": "fe14e72f231fea45d3b10519846db3c733d7f175a88993a1f12853c3f5ba3c3d"}}, {"version": "1.4.0", "product": "FM-1_91040", "pkg": {"dual": "../../firmware/melodee-1.4.0.fwsc"}, "sha256": {"dual": "fc3a06a8e65b8a0a473e24229540fd43d2b666a9312cd5584264fc06f007b7f3"}}, {"version": "1.3.6", "product": "FM-1_91036", "pkg": {"dual": "../../firmware/melodee-1.3.6.fwsc"}, "sha256": {"dual": "abfb786611e1bbdf2b00952b0f65a0009682853544ab94450a5c0d6bccad8d5f"}}, {"version": "1.3.5", "product": "FM-1_91035", "pkg": {"dual": "../../firmware/melodee-1.3.5.fwsc"}, "sha256": {"dual": "5c49547826806445f6b72c6ad88a6bcff1a9d348dcd3794ec917363f4322e6b7"}}, {"version": "1.3.4", "product": "FM-1_91034", "pkg": {"dual": "../../firmware/melodee-1.3.4.fwsc"}, "sha256": {"dual": "8018b967aeffcd648b9c2b9fd114108a1fe8f1884097310bc9357031c753bb1b"}}, {"version": "1.3.3", "product": "FM-1_91033", "pkg": {"dual": "../../firmware/melodee-1.3.3.fwsc"}, "sha256": {"dual": "1cc2d5562c7c44717c4f1e468157089f5672a528d94be85e06b03bdaa75e65e5"}}, {"version": "1.3.2", "product": "FM-1_91032", "pkg": {"dual": "../../firmware/melodee-1.3.2.fwsc"}, "sha256": {"dual": "41b51d38724d89d286c6af327c93b4bdad0dcba243b9df92b9bd1d6e150b60e1"}}, {"version": "1.3.1", "product": "FM-1_91031", "pkg": {"dual": "../../firmware/melodee-1.3.1.fwsc"}, "sha256": {"dual": "65d1c5dcd76b40560b8495a9974f391dcbc32d07471e9391568519fd57e56680"}}, {"version": "1.3.0", "product": "FM-1_91030", "pkg": {"dual": "../../firmware/melodee-1.3.0.fwsc"}, "sha256": {"dual": "b4f13d418c5e408e26a2af0ea7fbda2c3dfadf56f7a07624262196718a6924ad"}}, {"version": "1.2.1", "product": "FM-1_91021", "pkg": {"dual": "../../firmware/melodee-1.2.1.fwsc"}, "sha256": {"dual": "1ba8116a44485ddc62741b13553bc01fa021bbfea4c5df22aa8c358ed23c1515"}}, {"version": "1.1.0", "product": "FM-1_91010", "pkg": {"dual": "../../firmware/melodee-1.1.0.fwsc"}, "sha256": {"dual": "105269153b2aa1e20f633d302ba028d505462f1521a3348867e09b39bd69b5e8"}}, {"version": "1.0.2", "product": "FM-1_91002", "pkg": {"dual": "../../firmware/melodee-1.0.2.fwsc"}, "sha256": {"dual": "6f1a6077f5620f97e4e7e821536244284b5b508dd5df94ef70b1e9a4866c0627"}}, {"version": "1.0.1", "product": "FM-1_91001", "pkg": {"dual": "../../firmware/melodee-1.0.1.fwsc"}, "sha256": {"dual": "db7e0c8f4a4e245ea7ad58f14d4d5d9387dc86eb9f3a780d61982c0544af2c18"}}, {"version": "1.0.0", "product": "FM-1_91000", "pkg": {"dual": "../../firmware/melodee-1.0.0.fwsc"}, "sha256": {"dual": "4b8421127fa9101897e4fccdf5f3004990efc4984d5753bf896f2c1c55bda65b"}}], "boot": {"version": "1.2", "pkg": "../../firmware/m-bootloader-1.2.fwsc", "sha256": "0e89141f52d1f2d62198d4f69147a2c15c8360806e64d48002990a6fdab6d6dd", "license": "MIT", "source": "https://github.com/jvitkauskas/m-bootloader/releases/tag/v1.2", "commit": "22e2559906f9fc4e077f2d6aee20bf332300439e"}};
+const meta = {"version": "1.6.1", "product": "FM-1_91061", "pkg": {"dual": "../../firmware/melodee-1.6.1.fwsc"}, "sha256": {"dual": "8555dc54670a9e39b352e228cf5fb5ecc877fc2b702f19631f155dd85e58ba66"}, "nightly": {"version": "next-5513ed4", "product": "FM-1_900", "branch": "nightly", "commit": "5513ed4438a365c2b53a6124e0e33c5f454ecf3d", "builtAt": "2026-11-24T00:46:43Z", "pkg": {"dual": "../../firmware/melodee-nightly.fwsc"}, "sha256": {"dual": "de9e9260967d38df66d3d0cdbc603ee69eab77a9dce19f44e6f9a945175c3431"}}, "rc": {"version": "2.0.0-beta.1", "product": "FM-1_92000", "branch": "next", "commit": "089fa15cda38b31c99d5134c027e24e0a8fe0c07", "builtAt": "2026-11-24T00:23:37.688670+00:00", "pkg": {"dual": "../../firmware/melodee-2.0.0-beta.1.fwsc"}, "sha256": {"dual": "57d38b6e951a5ae90650864446a4230479480999573ef72e4d3ce8fbdff924a3"}, "models": {"SMK-37 Pro": {"product": "SMK-37 Pro_92000", "pkg": {"dual": "../../firmware/melodee-smk37-2.0.0-beta.1.fwsc"}, "sha256": {"dual": "97bb29431b35e13d3a9647d3265a1c3bf48301b0a52c1fc88073bf4c42a5b025"}}, "SMK-37 Elite": {"product": "SMK-37 Elite_92000", "pkg": {"dual": "../../firmware/melodee-smk37-elite-2.0.0-beta.1.fwsc"}, "sha256": {"dual": "7be840b434150260a186840770fa6c3bc26a541658f135c9fe71917cbd098cc9"}}, "MKE-P37": {"product": "MKE-P37_92000", "pkg": {"dual": "../../firmware/melodee-smk37-mke-2.0.0-beta.1.fwsc"}, "sha256": {"dual": "99b36ec178755c54df0bcdb0e32fdef99eceb4e40be2c6bb9bea925196c60a7a"}}}}, "releases": [{"version": "1.6.1", "product": "FM-1_91061", "pkg": {"dual": "../../firmware/melodee-1.6.1.fwsc"}, "sha256": {"dual": "8555dc54670a9e39b352e228cf5fb5ecc877fc2b702f19631f155dd85e58ba66"}}, {"version": "1.6.0", "product": "FM-1_91060", "pkg": {"dual": "../../firmware/melodee-1.6.0.fwsc"}, "sha256": {"dual": "f51bfc75654129874ea5b7d033335127c7112d7d8a3df056806fef38774eaf44"}}, {"version": "1.5.1", "product": "FM-1_91051", "pkg": {"dual": "../../firmware/melodee-1.5.1.fwsc"}, "sha256": {"dual": "172afb5b000f093bbe060922e76e11cd9334b12895a7e659bd20da515fb2d640"}}, {"version": "1.5.0", "product": "FM-1_91050", "pkg": {"dual": "../../firmware/melodee-1.5.0.fwsc"}, "sha256": {"dual": "2bde63b60767bd98ca1688f58a9b200c81e1aab4e6b2ca8de57ed41a6f705e4d"}}, {"version": "1.4.5", "product": "FM-1_91045", "pkg": {"dual": "../../firmware/melodee-1.4.5.fwsc"}, "sha256": {"dual": "a18f40d6f8c8087b25f115ab11286f85c7f04383de836227c463c6ce4745ce20"}}, {"version": "1.4.4", "product": "FM-1_91044", "pkg": {"dual": "../../firmware/melodee-1.4.4.fwsc"}, "sha256": {"dual": "d349a44dc5c29c2af2ad14b6fc76071fc9e218ad4a83dcd25948bd8479aa3607"}}, {"version": "1.4.3", "product": "FM-1_91043", "pkg": {"dual": "../../firmware/melodee-1.4.3.fwsc"}, "sha256": {"dual": "efa44743be492278e25261f012b02425f373b8f31e9e396ef5e47b240a79be80"}}, {"version": "1.4.1", "product": "FM-1_91041", "pkg": {"dual": "../../firmware/melodee-1.4.1.fwsc"}, "sha256": {"dual": "fe14e72f231fea45d3b10519846db3c733d7f175a88993a1f12853c3f5ba3c3d"}}, {"version": "1.4.0", "product": "FM-1_91040", "pkg": {"dual": "../../firmware/melodee-1.4.0.fwsc"}, "sha256": {"dual": "fc3a06a8e65b8a0a473e24229540fd43d2b666a9312cd5584264fc06f007b7f3"}}, {"version": "1.3.6", "product": "FM-1_91036", "pkg": {"dual": "../../firmware/melodee-1.3.6.fwsc"}, "sha256": {"dual": "abfb786611e1bbdf2b00952b0f65a0009682853544ab94450a5c0d6bccad8d5f"}}, {"version": "1.3.5", "product": "FM-1_91035", "pkg": {"dual": "../../firmware/melodee-1.3.5.fwsc"}, "sha256": {"dual": "5c49547826806445f6b72c6ad88a6bcff1a9d348dcd3794ec917363f4322e6b7"}}, {"version": "1.3.4", "product": "FM-1_91034", "pkg": {"dual": "../../firmware/melodee-1.3.4.fwsc"}, "sha256": {"dual": "8018b967aeffcd648b9c2b9fd114108a1fe8f1884097310bc9357031c753bb1b"}}, {"version": "1.3.3", "product": "FM-1_91033", "pkg": {"dual": "../../firmware/melodee-1.3.3.fwsc"}, "sha256": {"dual": "1cc2d5562c7c44717c4f1e468157089f5672a528d94be85e06b03bdaa75e65e5"}}, {"version": "1.3.2", "product": "FM-1_91032", "pkg": {"dual": "../../firmware/melodee-1.3.2.fwsc"}, "sha256": {"dual": "41b51d38724d89d286c6af327c93b4bdad0dcba243b9df92b9bd1d6e150b60e1"}}, {"version": "1.3.1", "product": "FM-1_91031", "pkg": {"dual": "../../firmware/melodee-1.3.1.fwsc"}, "sha256": {"dual": "65d1c5dcd76b40560b8495a9974f391dcbc32d07471e9391568519fd57e56680"}}, {"version": "1.3.0", "product": "FM-1_91030", "pkg": {"dual": "../../firmware/melodee-1.3.0.fwsc"}, "sha256": {"dual": "b4f13d418c5e408e26a2af0ea7fbda2c3dfadf56f7a07624262196718a6924ad"}}, {"version": "1.2.1", "product": "FM-1_91021", "pkg": {"dual": "../../firmware/melodee-1.2.1.fwsc"}, "sha256": {"dual": "1ba8116a44485ddc62741b13553bc01fa021bbfea4c5df22aa8c358ed23c1515"}}, {"version": "1.1.0", "product": "FM-1_91010", "pkg": {"dual": "../../firmware/melodee-1.1.0.fwsc"}, "sha256": {"dual": "105269153b2aa1e20f633d302ba028d505462f1521a3348867e09b39bd69b5e8"}}, {"version": "1.0.2", "product": "FM-1_91002", "pkg": {"dual": "../../firmware/melodee-1.0.2.fwsc"}, "sha256": {"dual": "6f1a6077f5620f97e4e7e821536244284b5b508dd5df94ef70b1e9a4866c0627"}}, {"version": "1.0.1", "product": "FM-1_91001", "pkg": {"dual": "../../firmware/melodee-1.0.1.fwsc"}, "sha256": {"dual": "db7e0c8f4a4e245ea7ad58f14d4d5d9387dc86eb9f3a780d61982c0544af2c18"}}, {"version": "1.0.0", "product": "FM-1_91000", "pkg": {"dual": "../../firmware/melodee-1.0.0.fwsc"}, "sha256": {"dual": "4b8421127fa9101897e4fccdf5f3004990efc4984d5753bf896f2c1c55bda65b"}}], "boot": {"version": "1.2", "pkg": "../../firmware/m-bootloader-1.2.fwsc", "sha256": "0e89141f52d1f2d62198d4f69147a2c15c8360806e64d48002990a6fdab6d6dd", "license": "MIT", "source": "https://github.com/jvitkauskas/m-bootloader/releases/tag/v1.2", "commit": "22e2559906f9fc4e077f2d6aee20bf332300439e"}};
 (() => {
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
@@ -2854,7 +2875,7 @@ const TEXT = {
     navEditor: "Editor", navInstall: "Install", navManual: "Manual", other: "日本語",
     demo: "Demo: a simulated FM-1. Nothing is written.", demoleave: "Leave the demo",
     kicker: "Firmware for the M-VAVE FM-1", title: "Install Melodee",
-    lede: "Synths, sequencing and effects for the FM-1, installed over USB from this page.",
+    lede: "Synths, sequencing and effects for the FM-1, installed over USB from this page. The SMK-37 Pro, SMK-37 Elite and MKE-P37 install here too, as a beta.",
     factBrowser: "Chrome or Edge", factCable: "A USB data cable", factTime: "About 3 minutes",
     resumeBannerH: "An installation didn't finish.",
     resumeBanner: "Your FM-1 is waiting in update mode. Connect it and press Find FM-1 to finish.",
@@ -2878,10 +2899,16 @@ const TEXT = {
     planThis: "Melodee {v} is already on this FM-1. Reinstalling is safe and keeps your sounds.",
     planBoot: "Melodee {v} is already on this FM-1, so only m-bootloader is written.",
     planOpen: "This FM-1 runs M-VAVE's Open firmware. Go back to M-VAVE's firmware first (below), then install Melodee.",
-    planModel: "This is not an FM-1 ({id}). Melodee runs only on the M-VAVE FM-1.",
+    planModel: "This is not an FM-1 or an SMK-37 ({id}). Melodee runs on the M-VAVE FM-1 and, as a beta, on the SMK-37 Pro, SMK-37 Elite and MKE-P37.",
+    planNoPkg: "Melodee {v} has no package for the {m} yet.",
+    planNoPkgLatest: "Melodee {v} has no package for the {m}. Choose the latest release.",
+    planNoPkgRc: "Melodee {v} has no package for the {m}. The pre-release has one: choose it under Advanced installs.",
+    planNoPkgNightly: "Melodee {v} has no package for the {m}. The nightly build has one: choose it under Advanced installs.",
+    planVendor: "This {m} is waiting in M-VAVE's update mode ({id}). Finish that update with M-VAVE's updater for your model first, then install Melodee.",
+    planBeta: "Melodee on the {m} is a beta. Read SMK37.md first, and keep your model's M-VAVE package and updater at hand for the way back.",
     devLoader: "In update mode: an installation is waiting to finish", devThis: "Melodee {v}", devMelodee: "Melodee {v}",
     devDev: "FM-1 development firmware (FM-1_900)", devStock: "M-VAVE firmware {v}", devOpen: "M-VAVE Open firmware",
-    devOther: "Another firmware ({id})", devModel: "Not an FM-1 ({id})",
+    devOther: "Another firmware ({id})", devModel: "No package for it here ({id})", devVendor: "In M-VAVE's update mode ({id})",
     chipReady: "Ready", chipResume: "Update mode", chipCurrent: "Up to date", chipBlocked: "Can't install",
     chipSetup: "Setup unfinished", goSetup: "Finish setup",
     planSetup: "Melodee {v} is on this FM-1, but its fonts and factory sounds aren't. Finish setup writes only them and keeps your sounds.",
@@ -3003,7 +3030,7 @@ const TEXT = {
     navEditor: "エディター", navInstall: "インストール", navManual: "マニュアル", other: "English",
     demo: "デモ：FM-1 をシミュレートしています。何も書き込まれません。", demoleave: "デモを終了",
     kicker: "M-VAVE FM-1 用ファームウェア", title: "Melodee をインストール",
-    lede: "FM-1 用シンセサイザー、シーケンサー、エフェクト。このページから USB でインストールできます。",
+    lede: "FM-1 用シンセサイザー、シーケンサー、エフェクト。このページから USB でインストールできます。SMK-37 Pro、SMK-37 Elite、MKE-P37 にもベータ版としてインストールできます。",
     factBrowser: "Chrome または Edge", factCable: "USB データケーブル", factTime: "約 3 分",
     resumeBannerH: "前回のインストールが完了していません。",
     resumeBanner: "FM-1 はアップデートモードで待機しています。接続して「FM-1 を探す」を押すと、続きから完了できます。",
@@ -3027,10 +3054,16 @@ const TEXT = {
     planThis: "この FM-1 には Melodee {v} がすでに入っています。再インストールしても安全で、サウンドは残ります。",
     planBoot: "この FM-1 には Melodee {v} がすでに入っているため、m-bootloader だけを書き込みます。",
     planOpen: "この FM-1 は M-VAVE の Open ファームウェアで動いています。先に下の手順で M-VAVE のファームウェアに戻してから、Melodee をインストールしてください。",
-    planModel: "これは FM-1 ではありません（{id}）。Melodee は M-VAVE FM-1 専用です。",
+    planModel: "これは FM-1 でも SMK-37 でもありません（{id}）。Melodee は M-VAVE FM-1 用です。SMK-37 Pro、SMK-37 Elite、MKE-P37 にはベータ版があります。",
+    planNoPkg: "Melodee {v} には {m} 用のパッケージがまだありません。",
+    planNoPkgLatest: "Melodee {v} には {m} 用のパッケージがありません。最新のリリースを選んでください。",
+    planNoPkgRc: "Melodee {v} には {m} 用のパッケージがありません。プレリリースにはあります。「詳細（プレリリース・Nightly）」から選んでください。",
+    planNoPkgNightly: "Melodee {v} には {m} 用のパッケージがありません。Nightly にはあります。「詳細（プレリリース・Nightly）」から選んでください。",
+    planVendor: "この {m} は M-VAVE のアップデートモードで待機しています（{id}）。先にお使いの機種用の M-VAVE アップデーターでそのアップデートを完了してから、Melodee をインストールしてください。",
+    planBeta: "{m} 用の Melodee はベータ版です。先に SMK37.md を読み、元に戻すためにお使いの機種の M-VAVE 純正パッケージとアップデーターを手元に用意してください。",
     devLoader: "アップデートモード：インストールの完了待ち", devThis: "Melodee {v}", devMelodee: "Melodee {v}",
     devDev: "FM-1 開発版（FM-1_900）", devStock: "M-VAVE ファームウェア {v}", devOpen: "M-VAVE Open ファームウェア",
-    devOther: "別のファームウェア（{id}）", devModel: "FM-1 ではありません（{id}）",
+    devOther: "別のファームウェア（{id}）", devModel: "ここには対応するパッケージがありません（{id}）", devVendor: "M-VAVE のアップデートモード（{id}）",
     chipReady: "準備完了", chipResume: "アップデートモード", chipCurrent: "最新", chipBlocked: "インストール不可",
     chipSetup: "セットアップ未完了", goSetup: "セットアップを完了",
     planSetup: "この FM-1 には Melodee {v} が入っていますが、フォントとファクトリーサウンドがまだです。「セットアップを完了」はそれだけを書き込み、サウンドは残ります。",
@@ -3193,10 +3226,32 @@ async function fetchBytes(url) {
 }
 const buildIds = ["dual", "rc-dual", "nightly-dual"];
 const build = () => buildIds.find(k => $("build-" + k).checked) || "dual";
-const selection = () => {
+const channelPicked = () => {
   const kind = build(), dash = kind.indexOf("-");
   return dash < 0 ? (meta.releases || []).find(r => r.version === $("release").value) || meta : meta[kind.slice(0,dash)];
 };
+/* The package is the connected model's (progress.js variantFor): the FM-1's until an SMK-37 Pro, SMK-37 Elite or
+   MKE-P37 is found, then that model's in every build that has one. A build without one keeps the FM-1's, which the
+   device is then refused (describeDevice: "model"); the model is kept, so choosing another build (the pre-release,
+   the nightly) that has its package turns to it. */
+let wantModel = "FM-1";
+const selection = () => { const chosen = channelPicked(); return variantFor(chosen, wantModel) || chosen; };
+/* where else a model the chosen build has no package for finds one: the latest stable release, the pre-release, the
+   nightly (the text that says so, planNoPkg* ), or nowhere on this page (planNoPkg) */
+function otherBuildFor(model) {
+  const kind = build();
+  if (kind === "dual" && $("release").value !== meta.version && variantFor(meta, model)) return "planNoPkgLatest";
+  if (meta.rc && kind !== "rc-dual" && variantFor(meta.rc, model)) return "planNoPkgRc";
+  if (meta.nightly && kind !== "nightly-dual" && variantFor(meta.nightly, model)) return "planNoPkgNightly";
+  return "planNoPkg";
+}
+async function useModel(model) {
+  const before = selection();
+  wantModel = MODELS.includes(model) ? model : "FM-1";
+  const now = selection();
+  if (now.product === before.product && now.pkg.dual === before.pkg.dual) return;
+  await loadRelease();
+}
 let buildEpoch = 0;
 const images = new Map();
 /* the build's resource region (fm1res.js), <package>-res.bin beside its package, fetched as the package is (the
@@ -3286,7 +3341,7 @@ async function loadRelease() {
   st.meta = {...chosen,boot:meta.boot};render();
   $("pagefail").hidden = true;
   try {
-    const key = [build(),chosen.version,chosen.commit || "",chosen.sha256?.dual || ""].join(":");
+    const key = [build(),chosen.version,chosen.commit || "",chosen.product,chosen.sha256?.dual || ""].join(":");
     if (!images.has(key)) {
       const raw = await fetchBytes(chosen.pkg.dual + (chosen.commit ? "?commit=" + chosen.commit : ""));
       if ((chosen.sha256?.dual && await sha256(raw) !== chosen.sha256.dual) || productOf(raw) !== chosen.product) throw fail("badpkg",t("badpkg"));
@@ -3298,7 +3353,7 @@ async function loadRelease() {
     st.hasConvert = false;
     convertAvailable().then((on) => { if (epoch === buildEpoch) { st.hasConvert = on; render(); } }).catch(() => { /* asked again on Install */ });
     if (st.dev) { st.dev = {id:st.dev.id,res:st.dev.res,...describeDevice(st.dev.id,st.meta.product)};offerSetup(); }
-    if (meta.boot) {
+    if (meta.boot && chosen.product.split("_")[0] === "FM-1") {   /* m-bootloader is the FM-1's alone */
       try {
         const raw = await fetchBytes(meta.boot.pkg);
         if (await sha256(raw) === meta.boot.sha256 && productOf(raw) === "FM-1_099" && epoch === buildEpoch) st.boot = {image:logicalImage(raw),version:meta.boot.version};
@@ -3374,6 +3429,7 @@ async function connect() {
       st.access = await midi();dev = await new SteadyUpdater(st.access).find();
       if (dev) {
         dev.link.close();
+        await useModel(modelOf(dev.id));              /* its model's package, before anything is said about it */
         if (["this", "dev"].includes(describeDevice(dev.id, st.meta.product).kind)) {
           if (await resRegion().catch(() => null)) res = await probeRes(dev);
           const bundle = await modBundleFile().catch(() => null);
@@ -3384,6 +3440,9 @@ async function connect() {
     finally { release(); }
     if (!dev) { st.dev = null; throw fail("notfound", "not found"); }
     st.dev = { id: dev.id, res, ...describeDevice(dev.id, st.meta.product) };
+    /* a model this build has none for, that a pre-release or nightly has: their choice opened */
+    if (st.dev.kind === "model" && ["planNoPkgRc", "planNoPkgNightly"].includes(otherBuildFor(modelOf(dev.id))))
+      $("advanced-installs").open = true;
   } catch (e) {
     st.dev = null;st.connErr = ["nomidi", "denied", "notfound", "busy", "pending"].includes(e.code) ? e.code : "notfound";
   }
@@ -3436,7 +3495,8 @@ function render() {
   $("device").hidden = !dev;
   if (dev) {
     const words = { loader: "devLoader", this: "devThis", melodee: "devMelodee", dev: "devDev", stock: "devStock",
-                    open: "devOpen", other: "devOther", model: "devModel" }[dev.kind];
+                    open: "devOpen", other: "devOther", model: "devModel", vendor: "devVendor" }[dev.kind];
+    $("devname").textContent = MODELS.includes(modelOf(dev.id)) ? modelOf(dev.id) : "FM-1";
     $("devwhat").textContent = t(words, { v: dev.version, id: dev.text || dev.id.text });
     const chip = dev.kind === "loader" ? ["chipResume", "warn"] : dev.setup ? ["chipSetup", "warn"]
       : dev.kind === "this" ? ["chipCurrent", "ok"] : plan ? ["chipReady", "ok"] : ["chipBlocked", "bad"];
@@ -3451,8 +3511,10 @@ function render() {
     go.textContent = t(dev?.kind === "loader" ? "goResume" : "goInstall", { v: ver() });
     go.disabled = true;
     $("gohint").hidden = !!dev;
+    const known = dev && MODELS.includes(modelOf(dev.id));
     $("plantext").textContent = !dev ? t(st.hasConvert ? "s3pConvert" : "s3p", { v: ver() })
-      : t(dev.kind === "open" ? "planOpen" : "planModel", { id: dev.id.text });
+      : t(dev.kind === "open" ? "planOpen" : dev.kind === "vendor" ? "planVendor" : known ? otherBuildFor(modelOf(dev.id)) : "planModel",
+          { id: dev.id.text, v: ver(), m: modelOf(dev.id) });
   } else {
     const label = plan.resume ? "goResume" : !plan.firmware ? "goBoot" : dev.kind === "this" ? "goReinstall"
       : ["melodee", "dev"].includes(dev.kind) ? "goUpdate" : "goInstall";
@@ -3461,7 +3523,8 @@ function render() {
     $("gohint").hidden = true;
     const words = dev.setup ? "planSetup" : plan.resume ? "planResume" : !plan.firmware ? "planBoot"
       : dev.kind === "this" ? "planThis" : ["melodee", "dev"].includes(dev.kind) ? (st.hasConvert ? "planConvert" : "planUpdate") : "planInstall";
-    $("plantext").textContent = t(words, { v: ver() });
+    const beta = st.meta.product.split("_")[0] !== "FM-1";
+    $("plantext").textContent = t(words, { v: ver() }) + (beta ? " " + t("planBeta", { m: st.meta.product.split("_")[0] }) : "");
   }
   /* Finish setup: the region alone, the install button second */
   $("finish").hidden = !dev?.setup;
@@ -3684,7 +3747,8 @@ function endRun(state, err) {
   } else if (state === "paused") {
     title = t("endPausedH"); text = t("endPaused");
     tips.push(reason, t("tipCable"), t("tipApps"), t("tipResume"));
-    st.dev = { id: { text: "ota-FM-1", model: "ota-FM-1" }, kind: "loader" };
+    const model = st.meta.product.split("_")[0];        /* (waits in its model's Melodee loader) */
+    st.dev = { id: { text: melodeeLoader(st.meta.product), model: "ota-" + model }, kind: "loader" };
     button("btnResume", true, () => { closeRun(); start(); });
     button("btnClose", false, closeRun);
   } else if (state === "restart") {
