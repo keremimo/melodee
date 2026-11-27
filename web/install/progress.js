@@ -68,11 +68,17 @@ export function releaseVersion(product, prefix = "FM-1_9") {
 //   melodee   another Melodee release; dev: a development build (FM-1_900)
 //   stock    M-VAVE's own firmware (version: "V16"); open: M-VAVE's Open firmware (must go back to stock first)
 //   other    another firmware for the FM-1; model: not an FM-1
+//   vendor   an SMK-37 in M-VAVE's own update mode ("ota-SMK-37 Elite_016"): M-VAVE's updater finishes that, never this
+//            page (an SMK-37 resumes only into Melodee's loader, "ota-SMK-37 Elite_900", whose layout check keeps the
+//            package on its model)
 //   The model is the package's (FM-1_9.. an FM-1; SMK-37 Pro_9.. an SMK-37 Pro, SMK-37 Elite, MKE-P37): a package
 //   goes only to exactly its model.
 export function describeDevice(id, product) {
   if (!id) return { kind: "none" };
-  if (/^ota-/i.test(id.model)) return { kind: "loader" };
+  if (/^ota-/i.test(id.model)) {
+    const model = modelOf(id);
+    return model === "FM-1" || id.text === `ota-${model}_900` ? { kind: "loader" } : { kind: "vendor", text: id.text };
+  }
   if (id.open || /^FM1_(OFFICIAL_OPEN|COMMUNITY_\d+)$/.test(id.text)) return { kind: "open" };
   const model = (product || "FM-1_9").split("_")[0], prefix = model + "_9";
   if (id.model !== model) return { kind: "model", text: id.text };
@@ -85,10 +91,25 @@ export function describeDevice(id, product) {
   return { kind: "other", text: id.text };
 }
 
+// The models Melodee has packages for: the FM-1, and the SMK-37 family (beta), each with a package of its own.
+export const MODELS = ["FM-1", "SMK-37 Pro", "SMK-37 Elite", "MKE-P37"];
+// a connected device's model, its update loader's "ota-" aside ("ota-SMK-37 Pro" -> "SMK-37 Pro")
+export const modelOf = (id) => (id && id.model ? id.model.replace(/^ota-/i, "") : "");
+// A channel's package for a model: the channel itself for its own model (the FM-1's package), its entry under
+// models for another (make_site.py: product, pkg and sha256 of that model's package of the same build), or null:
+// that version has no package for the model.
+export function variantFor(chosen, model) {
+  const own = (chosen.product || "FM-1_9").split("_")[0];
+  if (!model || model === own) return chosen;
+  const v = chosen.models && Object.prototype.hasOwnProperty.call(chosen.models, model) ? chosen.models[model] : null;
+  if (!v || !v.pkg || !v.pkg.dual || String(v.product).split("_")[0] !== model) return null;
+  return { ...chosen, product: v.product, pkg: v.pkg, sha256: v.sha256 };
+}
+
 // what pressing Install does for a device: { firmware, resume, boot } or null (nothing to do)
 export function planFor(kind, wantBoot) {
   if (kind === "loader") return { firmware: true, resume: true, boot: wantBoot };
   if (kind === "this") return wantBoot ? { firmware: false, resume: false, boot: true } : { firmware: true, resume: false, boot: false };
-  if (kind === "open" || kind === "model" || kind === "none") return null;
+  if (kind === "open" || kind === "model" || kind === "vendor" || kind === "none") return null;
   return { firmware: true, resume: false, boot: wantBoot };
 }

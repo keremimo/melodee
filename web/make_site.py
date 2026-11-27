@@ -7,8 +7,14 @@
   index.html                        redirect to the installer (the old URL keeps working)
   firmware/melodee-VER.fwsc         the package, both cores (+ LICENSE, LICENSING.md, LICENSES/: the
                                     packages hold JieLi SDK files under Apache-2.0, see LICENSING.md)
+  firmware/melodee-smk37[-elite|-mke]-VER.fwsc   the same release for the SMK-37 Pro, SMK-37 Elite and MKE-P37, when
+                                    they lie beside the FM-1's package (release.json "models"): the installer
+                                    offers a connected SMK-37 its own model's package
   firmware/melodee-nightly*.fwsc    next's development builds (nightly.json; publish_nightly.py), kept as published
   firmware/melodee-*-rc.*.fwsc      published release candidate (rc.json; publish_rc.py), kept as published
+                                    (both with their SMK-37 packages beside them, melodee-smk37[-elite|-mke]-nightly.fwsc
+                                    and -X.Y.Z-rc.N: "models" in nightly.json and rc.json)
+  firmware/<package>-mods.bin       a package's synth modules; an SMK-37 package's only its own (never melodee-mods.bin)
   webapp/installer/index.html       index_pkg.html, self-contained (fm1pkg.js, fm1ota.js, metadata inlined)
   webapp/editor/index.html          editor.html (+ fukiai.ttf, FUKIAI-LICENSE.txt)
   webapp/manual/                    web/manual/ on a full publish (the stable manual: HTML and screenshots).
@@ -68,7 +74,8 @@ def installer_libraries():
                     for name in ("fm1pkg.js", "fm1ota.js", "fm1backup.js", "fm1res.js", "fm1mods.js"))
     lib += converter_module()
     for source, exports in (
-        ("progress.js", ["progressModel", "remaining", "afterFailure", "describeDevice", "planFor"]),
+        ("progress.js", ["progressModel", "remaining", "afterFailure", "describeDevice", "planFor", "variantFor", "modelOf",
+                         "MODELS"]),
         ("keepalive.js", ["hold", "busyElsewhere"]),
         ("transfer.js", ["SteadyUpdater"]),
         ("session.js", ["createInstallSession"]),
@@ -96,6 +103,45 @@ def check_package(pkg):
         raise SystemExit(f"{pkg}: no Melodee loader in it; the site ships only fm1pkg_make.py packages "
                          "(a package patched from an official one carries vendor files)")
     return raw, product
+
+
+# The SMK-37 family (SMK37.md): a package per model, named as tools/build.py names them, beside the FM-1's.
+MODEL_STEMS = {"SMK-37 Pro": "melodee-smk37", "SMK-37 Elite": "melodee-smk37-elite", "MKE-P37": "melodee-smk37-mke"}
+
+
+def model_packages(pkg, product):
+    """The other models' packages of the same build beside the FM-1's package pkg (melodee.fwsc: melodee-smk37.fwsc;
+    melodee-X.Y.Z.fwsc: melodee-smk37-X.Y.Z.fwsc, -elite-, -mke-): model -> (path, bytes, identity). One that is not
+    its model's package of this very version stops the publish: the installer hands it to that model."""
+    pkg, found = Path(pkg), {}
+    if not pkg.name.startswith("melodee") or "_" not in product:
+        return found
+    rest, version = pkg.name[len("melodee"):], product[product.index("_"):]
+    for model, stem in MODEL_STEMS.items():
+        path = pkg.with_name(stem + rest)
+        if not path.is_file():
+            continue
+        raw, identity = check_package(path)
+        if identity != model + version:
+            raise SystemExit(f"{path}: identity {identity!r} is not this release's {model} package ({model + version})")
+        found[model] = (path, raw, identity)
+    return found
+
+
+def model_files(pkg, product, stem):
+    """model_packages beside pkg, each with the name it is published under beside the site's STEM.fwsc (melodee-X:
+    melodee-smk37-X, -elite-, -mke-; melodee-nightly: melodee-smk37-nightly, ...): model -> (path, bytes, identity,
+    name), as a channel's files"""
+    rest = stem[len("melodee"):]
+    return {model: (path, raw, identity, f"{MODEL_STEMS[model]}{rest}.fwsc")
+            for model, (path, raw, identity) in model_packages(pkg, product).items()}
+
+
+def models_meta(found, names):
+    """release.json's "models": each model's identity, package and checksum (install/progress.js variantFor)"""
+    return {model: {"product": identity, "pkg": {"dual": "../../firmware/" + names[model]},
+                    "sha256": {"dual": hashlib.sha256(raw).hexdigest()}}
+            for model, (path, raw, identity) in found.items()}
 
 
 def release_packages(out):
@@ -136,9 +182,15 @@ def channel(spec, label, stem, branch):
     if branch == "nightly" and identity != "FM-1_900":
         raise SystemExit("Nightly firmware must use development identity FM-1_900")
     files = {"dual": (path, data, identity, f"{stem}.fwsc")}
-    return files, {"version": spec["version"], "product": identity, "branch": branch, "commit": spec["commit"],
-                   "builtAt": spec["builtAt"], "pkg": {"dual": "../../firmware/" + f"{stem}.fwsc"},
-                   "sha256": {"dual": hashlib.sha256(data).hexdigest()}}
+    meta = {"version": spec["version"], "product": identity, "branch": branch, "commit": spec["commit"],
+            "builtAt": spec["builtAt"], "pkg": {"dual": "../../firmware/" + f"{stem}.fwsc"},
+            "sha256": {"dual": hashlib.sha256(data).hexdigest()}}
+    # the SMK-37 packages of the same build beside it (a nightly's are MODEL_900 too): offered to their models
+    others = model_files(path, identity, stem)
+    if others:
+        meta["models"] = models_meta({m: f[:3] for m, f in others.items()}, {m: f[3] for m, f in others.items()})
+    files.update(others)
+    return files, meta
 
 
 def release_history(out, current):
@@ -154,6 +206,9 @@ def release_history(out, current):
         releases[version] = {"version": version, "product": product,
                              "pkg": {"dual": "../../firmware/" + dual.name},
                              "sha256": {"dual": hashlib.sha256(raw).hexdigest()}}
+        others = model_packages(dual, product)      # (a release staged with its SMK-37 packages keeps offering them)
+        if others:
+            releases[version]["models"] = models_meta(others, {m: p.name for m, (p, _, _) in others.items()})
     return [current] + [releases[v] for v in sorted(releases, key=lambda v: tuple(map(int, v.split("."))), reverse=True)
                         if v != current["version"]]
 
@@ -224,6 +279,16 @@ def publish_resources(source, published):
                 break
 
 
+def publish_model_resources(source, published):
+    """an SMK-37 package's own files beside it (<package>-res.bin, -mods.bin, -convert.bin) as publish_resources
+    publishes the FM-1's, never build/melodee-*.bin: those are whichever board was built last"""
+    source = Path(source)
+    for kind in ("res", "mods", "convert"):
+        own, target = source.with_name(f"{source.stem}-{kind}.bin"), published.with_name(f"{published.stem}-{kind}.bin")
+        if own.is_file() and own.resolve() != target.resolve():
+            shutil.copy(own, target)
+
+
 def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=None):
     pkg, out = Path(pkg), Path(out)
     raw, product = check_package(pkg)
@@ -249,6 +314,9 @@ def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=
     release_meta = {"version": version, "product": product,
                     "pkg": {"dual": "../../firmware/" + name},
                     "sha256": {"dual": hashlib.sha256(raw).hexdigest()}}
+    others = model_files(pkg, product, f"melodee-{v}")
+    if others:
+        release_meta["models"] = models_meta({m: f[:3] for m, f in others.items()}, {m: f[3] for m, f in others.items()})
     releases = release_history(out, release_meta)
     boot_files = mboot.checked_files()
     meta = json.dumps({**release_meta, "nightly": nightly_meta, "rc": rc_meta, "releases": releases, "boot": mboot.metadata()})
@@ -268,8 +336,10 @@ def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=
     (fw / "m-bootloader-1.2.boot").write_bytes(boot_files["fm1-uboot.boot"])
     (fw / "m-bootloader-LICENSE.txt").write_bytes(boot_files["LICENSE"])
     keep = {name, "melodee-nightly.fwsc"}
+    keep.update(file[3] for file in nightly_files.values())
     keep.update(file[3] for file in rc_files.values())
     keep.update(Path(path).name for release in releases for path in release["pkg"].values())
+    keep.update(Path(m["pkg"]["dual"]).name for release in releases for m in release.get("models", {}).values())
     for old in fw.glob("melodee-*.fwsc"):
         if old.name not in keep:
             old.unlink()
@@ -281,17 +351,21 @@ def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=
     if pkg.resolve() != (fw / name).resolve():
         shutil.copy(pkg, fw / name)
     publish_resources(pkg, fw / name)
+    for model, (path, data, identity, filename) in others.items():
+        if path.resolve() != (fw / filename).resolve():
+            (fw / filename).write_bytes(data)
+        publish_model_resources(path, fw / filename)
     (fw / "release.json").write_text(json.dumps(release_meta, indent=2) + "\n")
     (fw / "releases.json").write_text(json.dumps(releases, indent=2) + "\n")
     if nightly_meta:
-        for path, data, identity, filename in nightly_files.values():
+        for key, (path, data, identity, filename) in nightly_files.items():
             (fw / filename).write_bytes(data)
-            publish_resources(Path(path), fw / filename)
+            (publish_resources if key == "dual" else publish_model_resources)(Path(path), fw / filename)
         (fw / "nightly.json").write_text(json.dumps(nightly_meta, indent=2) + "\n")
     if rc_meta:
-        for path, data, identity, filename in rc_files.values():
+        for key, (path, data, identity, filename) in rc_files.items():
             (fw / filename).write_bytes(data)
-            publish_resources(Path(path), fw / filename)
+            (publish_resources if key == "dual" else publish_model_resources)(Path(path), fw / filename)
         (fw / "rc.json").write_text(json.dumps(rc_meta, indent=2) + "\n")
     lic = HERE.parent / "LICENSES"                  # the packages hold JieLi SDK files (Apache-2.0): their
     (fw / "LICENSES").mkdir(exist_ok=True)          # licence travels next to it, with Melodee's own
@@ -329,7 +403,8 @@ def main(pkg, version, out, nightly=None, installer_only=False, rc=None, manual=
             '<!doctype html><meta charset="utf-8"><title>Melodee</title>'
             '<meta http-equiv="refresh" content="0; url=webapp/installer/">'
             '<a href="webapp/installer/">Melodee installer</a>\n', encoding="utf-8")
-    print(f"site: {out}: webapp/installer ({len(html)} B), webapp/editor, firmware/{name} ({len(raw)} B), {product}")
+    print(f"site: {out}: webapp/installer ({len(html)} B), webapp/editor, firmware/{name} ({len(raw)} B), {product}"
+          + "".join(f", {identity}" for _, _, identity, _ in others.values()))
 
 
 if __name__ == "__main__":

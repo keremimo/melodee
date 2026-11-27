@@ -75,12 +75,21 @@ BOARD=smk37 MODEL=mke ./build.sh       # build/melodee-smk37-mke.fwsc
 
 ## Install
 
-A release carries one package per model; take the one for yours from the
+Open the [web installer](https://keremimo.github.io/melodee/) in Chrome or Edge, connect the keyboard by USB and
+press Find. The page reads the keyboard's model from the identity it answers (never from its MIDI port name) and
+installs that model's package of the build you chose: a stable release, the pre-release or the nightly, each from
+2.0.0-beta.1 on. A build without a package for your model is refused, and the page says which other build has one
+(Advanced installs). A keyboard waiting in M-VAVE's own update mode is refused too: finish that update with M-VAVE's
+updater first. m-bootloader is the FM-1's only. The page's SMK-37 packages are covered by host tests and have not
+been tried on a keyboard yet.
+
+A release carries one package per model, also on the
 [releases page](https://github.com/keremimo/melodee/releases): `melodee-smk37-X.Y.Z.fwsc` (SMK-37 Pro),
 `melodee-smk37-elite-X.Y.Z.fwsc` (SMK-37 Elite) or `melodee-smk37-mke-X.Y.Z.fwsc` (MKE-P37). A package you built
-yourself is in `build/`, as above. The web installer's Melodee channels carry the FM-1's package only.
+yourself is in `build/`, as above.
 
-Connect the keyboard by USB and run, from a checkout of this repository, with the package for your model:
+To install a package file from a terminal instead, connect the keyboard by USB and run, from a checkout of this
+repository, with the package for your model:
 
 ```sh
 python3 tools/fm1_install.py melodee-smk37-X.Y.Z.fwsc

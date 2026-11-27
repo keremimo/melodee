@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-from make_site import check_package, main, release_packages
+from make_site import MODEL_STEMS, check_package, main, release_packages
 
 
 def publish(out, release_dir):
@@ -25,6 +25,16 @@ def publish(out, release_dir):
             checksums.get(name) != build["sha256"] or product != info["product"] or
             build["MELODEE_DUAL_CORE"] != 1):
         raise SystemExit(f"Release candidate package failed provenance/checksum checks: {name}")
+    # the SMK-37 packages beside it (make_site.py model_packages offers them to their models): each one this
+    # release's, as BUILD_INFO and SHA256SUMS name it, or the publish stops
+    smk = info.get("smk_builds", {})
+    for stem in MODEL_STEMS.values():
+        path = release_dir / f"{stem}-{version}.fwsc"
+        if not path.is_file():
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if path.name not in smk or digest != checksums.get(path.name) or digest != smk[path.name]["sha256"]:
+            raise SystemExit(f"Release candidate package failed provenance/checksum checks: {path.name}")
     stable, stable_packages = release_packages(out)
     main(stable_packages["dual"], stable, out,
          rc={"pkg": {"dual": package}, "version": version, "commit": info["commit"],
