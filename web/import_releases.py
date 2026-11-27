@@ -15,15 +15,20 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from make_site import check_package
+from make_site import MODEL_STEMS, check_package
 
 
 def gh(*args):
     return subprocess.check_output(["gh", *args], text=True)
 
 
+def model_names(version):
+    """a release's SMK-37 packages (make_site.py MODEL_STEMS): offered beside the FM-1's from 1.7.0 on"""
+    return [f"{stem}-{version}.fwsc" for stem in MODEL_STEMS.values()]
+
+
 def verify_release(folder, version):
-    names = [f"melodee-{version}.fwsc"]
+    names = [f"melodee-{version}.fwsc"] + [n for n in model_names(version) if (folder / n).is_file()]
     sums = {}
     for line in (folder / "SHA256SUMS").read_text().splitlines():
         fields = line.split(maxsplit=1)
@@ -49,14 +54,19 @@ def import_releases(out, repo):
             continue
         version = tag[1:]
         names = [f"melodee-{version}.fwsc"]
-        if all((fw / name).is_file() for name in names):
+        models = model_names(version) if tuple(map(int, version.split("."))) >= (1, 7, 0) else []
+        if all((fw / name).is_file() for name in names + models):
             continue
         assets = json.loads(gh("release", "view", tag, "--repo", repo, "--json", "assets"))["assets"]
-        if not set(names + ["SHA256SUMS"]).issubset({a["name"] for a in assets}):
+        offered = {a["name"] for a in assets}
+        if not set(names + ["SHA256SUMS"]).issubset(offered):
             continue                         # releases without checksum-verified firmware are not staged
+        models = [name for name in models if name in offered]
+        if all((fw / name).is_file() for name in names + models):
+            continue
         with tempfile.TemporaryDirectory(prefix="melodee-releases-") as tmp:
             args = ["release", "download", tag, "--repo", repo, "--dir", tmp]
-            for name in names + ["SHA256SUMS"]:
+            for name in names + models + ["SHA256SUMS"]:
                 args.extend(["--pattern", name])
             gh(*args)
             for name in verify_release(Path(tmp), version):

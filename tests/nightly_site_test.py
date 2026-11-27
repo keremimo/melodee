@@ -86,6 +86,63 @@ class NightlySite(unittest.TestCase):
         self.assertEqual(json.loads((self.site / "firmware/releases.json").read_text()), releases)
         self.assertEqual(old.read_bytes(), original)
 
+    def test_smk37_packages_are_published_per_model_and_kept(self):
+        folder = self.root / "assets"
+        folder.mkdir()
+        fm1 = package(folder / "melodee-1.7.0.fwsc", "FM-1_91070", 1)
+        pro = package(folder / "melodee-smk37-1.7.0.fwsc", "SMK-37 Pro_91070", 2)
+        elite = package(folder / "melodee-smk37-elite-1.7.0.fwsc", "SMK-37 Elite_91070", 3)
+        (folder / "melodee-res.bin").write_bytes(b"the FM-1 build's region")
+        self.build_site(fm1, "1.7.0", self.site)
+        release = json.loads((self.site / "firmware/release.json").read_text())
+        self.assertEqual(release["product"], "FM-1_91070")
+        self.assertEqual(set(release["models"]), {"SMK-37 Pro", "SMK-37 Elite"})
+        for model, source, name in (("SMK-37 Pro", pro, "melodee-smk37-1.7.0.fwsc"),
+                                    ("SMK-37 Elite", elite, "melodee-smk37-elite-1.7.0.fwsc")):
+            entry = release["models"][model]
+            self.assertEqual(entry["product"], model + "_91070")
+            self.assertEqual(entry["pkg"], {"dual": "../../firmware/" + name})
+            self.assertEqual(entry["sha256"]["dual"], hashlib.sha256(source.read_bytes()).hexdigest())
+            self.assertEqual((self.site / "firmware" / name).read_bytes(), source.read_bytes())
+            self.assertFalse((self.site / "firmware" / name).with_name(Path(name).stem + "-res.bin").exists())
+        page = (self.site / "webapp/installer/index.html").read_text()
+        self.assertIn('"SMK-37 Elite_91070"', page)
+        self.assertIn("variantFor", page)
+        # a nightly publish, then a later release: 1.7.0 stays in the history with its SMK-37 packages
+        self.nightly()
+        self.assertEqual(json.loads((self.site / "firmware/release.json").read_text()), release)
+        later = package(self.root / "melodee-1.7.1.fwsc", "FM-1_91071", 4)
+        self.build_site(later, "1.7.1", self.site)
+        releases = json.loads((self.site / "firmware/releases.json").read_text())
+        self.assertEqual([r["version"] for r in releases][:2], ["1.7.1", "1.7.0"])
+        self.assertNotIn("models", releases[0])
+        self.assertEqual(releases[1]["models"], release["models"])
+        self.assertTrue((self.site / "firmware/melodee-smk37-elite-1.7.0.fwsc").is_file())
+
+    def test_smk37_package_of_another_version_or_model_stops_the_publish(self):
+        folder = self.root / "assets"
+        folder.mkdir()
+        fm1 = package(folder / "melodee-1.7.0.fwsc", "FM-1_91070", 1)
+        before = (self.site / "webapp/installer/index.html").read_text()
+        for name, identity in (("melodee-smk37-1.7.0.fwsc", "SMK-37 Pro_91061"),
+                               ("melodee-smk37-elite-1.7.0.fwsc", "SMK-37 Pro_91070"),
+                               ("melodee-smk37-mke-1.7.0.fwsc", "FM-1_91070")):
+            wrong = package(folder / name, identity, 5)
+            with self.assertRaisesRegex(SystemExit, "is not this release's"):
+                self.build_site(fm1, "1.7.0", self.site)
+            wrong.unlink()
+        self.assertEqual((self.site / "webapp/installer/index.html").read_text(), before)
+
+    def test_history_stages_a_release_with_its_smk37_packages(self):
+        dual = package(self.root / "melodee-1.7.0.fwsc", "FM-1_91070", 1)
+        pro = package(self.root / "melodee-smk37-1.7.0.fwsc", "SMK-37 Pro_91070", 2)
+        sums = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in (dual, pro)]
+        (self.root / "SHA256SUMS").write_text("\n".join(sums) + "\n")
+        self.assertEqual(verify_release(self.root, "1.7.0"), [dual.name, pro.name])
+        pro.write_bytes(pro.read_bytes() + b"corrupted")
+        with self.assertRaisesRegex(ValueError, "melodee-smk37-1.7.0.fwsc: published checksum"):
+            verify_release(self.root, "1.7.0")
+
     def test_history_checksums_before_staging(self):
         dual = package(self.root / "melodee-1.2.1.fwsc", "FM-1_91021", 1)
         (self.root / "SHA256SUMS").write_text(f"{hashlib.sha256(dual.read_bytes()).hexdigest()}  {dual.name}\n")
@@ -137,6 +194,73 @@ class NightlySite(unittest.TestCase):
         with self.assertRaises(SystemExit):
             publish_rc(self.site, assets)
         self.assertEqual(installer.read_bytes(), before)
+
+    def test_smk37_packages_on_nightly_and_release_candidate(self):
+        # the nightly: the SMK-37 builds beside build/melodee-nightly.fwsc (MODEL_900), each with its own synth modules;
+        # build/melodee-mods.bin is the FM-1's (built last) and never goes to an SMK-37 package
+        build = self.root / "build"
+        build.mkdir()
+        fm1 = package(build / "melodee-nightly.fwsc", "FM-1_900", 3)
+        (build / "melodee-mods.bin").write_bytes(b"FM-1 modules")
+        elite = package(build / "melodee-smk37-elite-nightly.fwsc", "SMK-37 Elite_900", 6)
+        (build / "melodee-smk37-elite-nightly-mods.bin").write_bytes(b"Elite modules")
+        mke = package(build / "melodee-smk37-mke-nightly.fwsc", "MKE-P37_900", 7)
+        publish(self.site, fm1, "next-abcdef0", "b" * 40, "2026-10-15T16:00:00Z")
+        fw = self.site / "firmware"
+        nightly = json.loads((fw / "nightly.json").read_text())
+        self.assertEqual(set(nightly["models"]), {"SMK-37 Elite", "MKE-P37"})
+        self.assertEqual(nightly["models"]["SMK-37 Elite"],
+                         {"product": "SMK-37 Elite_900", "pkg": {"dual": "../../firmware/melodee-smk37-elite-nightly.fwsc"},
+                          "sha256": {"dual": hashlib.sha256(elite.read_bytes()).hexdigest()}})
+        self.assertEqual((fw / "melodee-smk37-mke-nightly.fwsc").read_bytes(), mke.read_bytes())
+        self.assertEqual((fw / "melodee-nightly-mods.bin").read_bytes(), b"FM-1 modules")
+        self.assertEqual((fw / "melodee-smk37-elite-nightly-mods.bin").read_bytes(), b"Elite modules")
+        self.assertFalse((fw / "melodee-smk37-mke-nightly-mods.bin").exists())
+        self.assertIn('"SMK-37 Elite_900"', (self.site / "webapp/installer/index.html").read_text())
+        # a release candidate with its SMK-37 packages, checked against BUILD_INFO and SHA256SUMS
+        assets = self.root / "assets"
+        assets.mkdir()
+        version = "2.0.0-beta.1"
+        candidate = package(assets / f"melodee-{version}.fwsc", "FM-1_92000", 5)
+        (assets / f"melodee-{version}-convert.bin").write_bytes(b"converter")
+        pro = package(assets / f"melodee-smk37-{version}.fwsc", "SMK-37 Pro_92000", 8)
+        (assets / f"melodee-smk37-{version}-mods.bin").write_bytes(b"Pro modules")
+        digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+        info = {"version": version, "product": "FM-1_92000", "commit": "a" * 40, "builtAt": "2026-11-24T00:00:00Z",
+                "core_builds": {candidate.name: {"MELODEE_DUAL_CORE": 1, "sha256": digest(candidate)}},
+                "smk_builds": {pro.name: {"MELODEE_DUAL_CORE": 1, "sha256": digest(pro)}}}
+        (assets / "BUILD_INFO.json").write_text(json.dumps(info))
+        sums = lambda: (assets / "SHA256SUMS").write_text(
+            "".join(f"{digest(p)}  {p.name}\n" for p in (candidate, pro)))
+        sums()
+        publish_rc(self.site, assets)
+        rc = json.loads((fw / "rc.json").read_text())
+        self.assertEqual(rc["models"], {"SMK-37 Pro": {"product": "SMK-37 Pro_92000",
+                                                       "pkg": {"dual": f"../../firmware/melodee-smk37-{version}.fwsc"},
+                                                       "sha256": {"dual": digest(pro)}}})
+        self.assertEqual((fw / f"melodee-smk37-{version}-mods.bin").read_bytes(), b"Pro modules")
+        self.assertFalse((fw / f"melodee-smk37-{version}-convert.bin").exists())   # (the FM-1's 1.x converter only)
+        # a later nightly and a stable publish re-read both channels from the site and keep every model
+        self.nightly()
+        self.build_site(self.dual, "1.3.2", self.site, installer_only=True)
+        self.assertEqual(json.loads((fw / "rc.json").read_text()), rc)
+        self.assertTrue((fw / f"melodee-smk37-{version}.fwsc").is_file())
+        self.assertNotIn("models", json.loads((fw / "nightly.json").read_text()))   # (this nightly had none)
+        self.assertFalse((fw / "melodee-smk37-elite-nightly.fwsc").exists())
+        page = (self.site / "webapp/installer/index.html").read_text()
+        self.assertIn('"SMK-37 Pro_92000"', page)
+        # an SMK-37 package that is not this candidate's, or not the one BUILD_INFO names, stops the publish
+        installer = (self.site / "webapp/installer/index.html").read_bytes()
+        pro.write_bytes(pro.read_bytes() + b"corrupted")
+        with self.assertRaisesRegex(SystemExit, "melodee-smk37-2.0.0-beta.1.fwsc"):
+            publish_rc(self.site, assets)
+        package(pro, "SMK-37 Pro_92001", 8)
+        info["smk_builds"][pro.name]["sha256"] = digest(pro)
+        (assets / "BUILD_INFO.json").write_text(json.dumps(info))
+        sums()
+        with self.assertRaisesRegex(SystemExit, "is not this release's SMK-37 Pro package"):
+            publish_rc(self.site, assets)
+        self.assertEqual((self.site / "webapp/installer/index.html").read_bytes(), installer)
 
     def test_legacy_metadata_migrates_to_dual_only_and_preserves_editor(self):
         editor = self.site / "webapp/editor/index.html"

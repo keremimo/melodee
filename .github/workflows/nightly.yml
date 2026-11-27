@@ -85,6 +85,13 @@ jobs:
           MELODEE_SID_FAST: '1'
           MELODEE_CAPTURE_FAST: '1'
         run: |
+          # The SMK-37 beta, one package per model, before the FM-1's (the tests and build/melodee-*.bin are the
+          # FM-1's): each with its own synth modules beside it, which web/make_site.py publishes to that model alone
+          for model in pro elite mke; do
+            BOARD=smk37 MODEL="$model" ./build.sh --nightly
+            stem=melodee-smk37; [ "$model" = pro ] || stem="$stem-$model"
+            cp build/melodee-mods.bin "build/$stem-nightly-mods.bin"
+          done
           ./build.sh --nightly
           cp build/melodee-nightly.fwsc build/melodee.fwsc
           # Host compilation must exercise the same twelve candidates.
@@ -102,12 +109,13 @@ jobs:
           git rev-parse HEAD > build/nightly-commit.txt
           date -u +%Y-%m-%dT%H:%M:%SZ > build/nightly-built-at.txt
           cd build
-          sha256sum melodee-nightly.fwsc > SHA256SUMS-nightly
+          sha256sum melodee-nightly.fwsc melodee-smk37*-nightly.fwsc > SHA256SUMS-nightly
       - uses: actions/upload-artifact@v4
         with:
           name: melodee-nightly-${{ github.run_number }}
           path: |
             build/melodee-nightly.fwsc
+            build/melodee-smk37*-nightly.fwsc
             build/nightly-*.txt
             build/SHA256SUMS-nightly
             LICENSE

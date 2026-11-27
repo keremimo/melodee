@@ -13,7 +13,7 @@
 import { productOf, logicalImage } from "../fm1pkg.js";
 import { SteadyUpdater } from "./transfer.js";
 import { hold, busyElsewhere } from "./keepalive.js";
-import { describeDevice, planFor, progressModel, remaining, afterFailure } from "./progress.js";
+import { describeDevice, planFor, progressModel, remaining, afterFailure, variantFor, modelOf, MODELS } from "./progress.js";
 import { MELODEE_LOADER, STOCK_LOADER, melodeeLoader } from "../fm1ota.js";
 import { BackupConnection } from "../fm1backup.js";
 import { installResources, resHeader, resStatus, RES_COMMAND } from "../fm1res.js";
@@ -36,7 +36,7 @@ const TEXT = {
     navEditor: "Editor", navInstall: "Install", navManual: "Manual", other: "日本語",
     demo: "Demo: a simulated FM-1. Nothing is written.", demoleave: "Leave the demo",
     kicker: "Firmware for the M-VAVE FM-1", title: "Install Melodee",
-    lede: "Synths, sequencing and effects for the FM-1, installed over USB from this page.",
+    lede: "Synths, sequencing and effects for the FM-1, installed over USB from this page. The SMK-37 Pro, SMK-37 Elite and MKE-P37 install here too, as a beta.",
     factBrowser: "Chrome or Edge", factCable: "A USB data cable", factTime: "About 3 minutes",
     resumeBannerH: "An installation didn't finish.",
     resumeBanner: "Your FM-1 is waiting in update mode. Connect it and press Find FM-1 to finish.",
@@ -60,10 +60,16 @@ const TEXT = {
     planThis: "Melodee {v} is already on this FM-1. Reinstalling is safe and keeps your sounds.",
     planBoot: "Melodee {v} is already on this FM-1, so only m-bootloader is written.",
     planOpen: "This FM-1 runs M-VAVE's Open firmware. Go back to M-VAVE's firmware first (below), then install Melodee.",
-    planModel: "This is not an FM-1 ({id}). Melodee runs only on the M-VAVE FM-1.",
+    planModel: "This is not an FM-1 or an SMK-37 ({id}). Melodee runs on the M-VAVE FM-1 and, as a beta, on the SMK-37 Pro, SMK-37 Elite and MKE-P37.",
+    planNoPkg: "Melodee {v} has no package for the {m} yet.",
+    planNoPkgLatest: "Melodee {v} has no package for the {m}. Choose the latest release.",
+    planNoPkgRc: "Melodee {v} has no package for the {m}. The pre-release has one: choose it under Advanced installs.",
+    planNoPkgNightly: "Melodee {v} has no package for the {m}. The nightly build has one: choose it under Advanced installs.",
+    planVendor: "This {m} is waiting in M-VAVE's update mode ({id}). Finish that update with M-VAVE's updater for your model first, then install Melodee.",
+    planBeta: "Melodee on the {m} is a beta. Read SMK37.md first, and keep your model's M-VAVE package and updater at hand for the way back.",
     devLoader: "In update mode: an installation is waiting to finish", devThis: "Melodee {v}", devMelodee: "Melodee {v}",
     devDev: "FM-1 development firmware (FM-1_900)", devStock: "M-VAVE firmware {v}", devOpen: "M-VAVE Open firmware",
-    devOther: "Another firmware ({id})", devModel: "Not an FM-1 ({id})",
+    devOther: "Another firmware ({id})", devModel: "No package for it here ({id})", devVendor: "In M-VAVE's update mode ({id})",
     chipReady: "Ready", chipResume: "Update mode", chipCurrent: "Up to date", chipBlocked: "Can't install",
     chipSetup: "Setup unfinished", goSetup: "Finish setup",
     planSetup: "Melodee {v} is on this FM-1, but its fonts and factory sounds aren't. Finish setup writes only them and keeps your sounds.",
@@ -185,7 +191,7 @@ const TEXT = {
     navEditor: "エディター", navInstall: "インストール", navManual: "マニュアル", other: "English",
     demo: "デモ：FM-1 をシミュレートしています。何も書き込まれません。", demoleave: "デモを終了",
     kicker: "M-VAVE FM-1 用ファームウェア", title: "Melodee をインストール",
-    lede: "FM-1 用シンセサイザー、シーケンサー、エフェクト。このページから USB でインストールできます。",
+    lede: "FM-1 用シンセサイザー、シーケンサー、エフェクト。このページから USB でインストールできます。SMK-37 Pro、SMK-37 Elite、MKE-P37 にもベータ版としてインストールできます。",
     factBrowser: "Chrome または Edge", factCable: "USB データケーブル", factTime: "約 3 分",
     resumeBannerH: "前回のインストールが完了していません。",
     resumeBanner: "FM-1 はアップデートモードで待機しています。接続して「FM-1 を探す」を押すと、続きから完了できます。",
@@ -209,10 +215,16 @@ const TEXT = {
     planThis: "この FM-1 には Melodee {v} がすでに入っています。再インストールしても安全で、サウンドは残ります。",
     planBoot: "この FM-1 には Melodee {v} がすでに入っているため、m-bootloader だけを書き込みます。",
     planOpen: "この FM-1 は M-VAVE の Open ファームウェアで動いています。先に下の手順で M-VAVE のファームウェアに戻してから、Melodee をインストールしてください。",
-    planModel: "これは FM-1 ではありません（{id}）。Melodee は M-VAVE FM-1 専用です。",
+    planModel: "これは FM-1 でも SMK-37 でもありません（{id}）。Melodee は M-VAVE FM-1 用です。SMK-37 Pro、SMK-37 Elite、MKE-P37 にはベータ版があります。",
+    planNoPkg: "Melodee {v} には {m} 用のパッケージがまだありません。",
+    planNoPkgLatest: "Melodee {v} には {m} 用のパッケージがありません。最新のリリースを選んでください。",
+    planNoPkgRc: "Melodee {v} には {m} 用のパッケージがありません。プレリリースにはあります。「詳細（プレリリース・Nightly）」から選んでください。",
+    planNoPkgNightly: "Melodee {v} には {m} 用のパッケージがありません。Nightly にはあります。「詳細（プレリリース・Nightly）」から選んでください。",
+    planVendor: "この {m} は M-VAVE のアップデートモードで待機しています（{id}）。先にお使いの機種用の M-VAVE アップデーターでそのアップデートを完了してから、Melodee をインストールしてください。",
+    planBeta: "{m} 用の Melodee はベータ版です。先に SMK37.md を読み、元に戻すためにお使いの機種の M-VAVE 純正パッケージとアップデーターを手元に用意してください。",
     devLoader: "アップデートモード：インストールの完了待ち", devThis: "Melodee {v}", devMelodee: "Melodee {v}",
     devDev: "FM-1 開発版（FM-1_900）", devStock: "M-VAVE ファームウェア {v}", devOpen: "M-VAVE Open ファームウェア",
-    devOther: "別のファームウェア（{id}）", devModel: "FM-1 ではありません（{id}）",
+    devOther: "別のファームウェア（{id}）", devModel: "ここには対応するパッケージがありません（{id}）", devVendor: "M-VAVE のアップデートモード（{id}）",
     chipReady: "準備完了", chipResume: "アップデートモード", chipCurrent: "最新", chipBlocked: "インストール不可",
     chipSetup: "セットアップ未完了", goSetup: "セットアップを完了",
     planSetup: "この FM-1 には Melodee {v} が入っていますが、フォントとファクトリーサウンドがまだです。「セットアップを完了」はそれだけを書き込み、サウンドは残ります。",
@@ -375,10 +387,32 @@ async function fetchBytes(url) {
 }
 const buildIds = ["dual", "rc-dual", "nightly-dual"];
 const build = () => buildIds.find(k => $("build-" + k).checked) || "dual";
-const selection = () => {
+const channelPicked = () => {
   const kind = build(), dash = kind.indexOf("-");
   return dash < 0 ? (meta.releases || []).find(r => r.version === $("release").value) || meta : meta[kind.slice(0,dash)];
 };
+/* The package is the connected model's (progress.js variantFor): the FM-1's until an SMK-37 Pro, SMK-37 Elite or
+   MKE-P37 is found, then that model's in every build that has one. A build without one keeps the FM-1's, which the
+   device is then refused (describeDevice: "model"); the model is kept, so choosing another build (the pre-release,
+   the nightly) that has its package turns to it. */
+let wantModel = "FM-1";
+const selection = () => { const chosen = channelPicked(); return variantFor(chosen, wantModel) || chosen; };
+/* where else a model the chosen build has no package for finds one: the latest stable release, the pre-release, the
+   nightly (the text that says so, planNoPkg* ), or nowhere on this page (planNoPkg) */
+function otherBuildFor(model) {
+  const kind = build();
+  if (kind === "dual" && $("release").value !== meta.version && variantFor(meta, model)) return "planNoPkgLatest";
+  if (meta.rc && kind !== "rc-dual" && variantFor(meta.rc, model)) return "planNoPkgRc";
+  if (meta.nightly && kind !== "nightly-dual" && variantFor(meta.nightly, model)) return "planNoPkgNightly";
+  return "planNoPkg";
+}
+async function useModel(model) {
+  const before = selection();
+  wantModel = MODELS.includes(model) ? model : "FM-1";
+  const now = selection();
+  if (now.product === before.product && now.pkg.dual === before.pkg.dual) return;
+  await loadRelease();
+}
 let buildEpoch = 0;
 const images = new Map();
 /* the build's resource region (fm1res.js), <package>-res.bin beside its package, fetched as the package is (the
@@ -468,7 +502,7 @@ async function loadRelease() {
   st.meta = {...chosen,boot:meta.boot};render();
   $("pagefail").hidden = true;
   try {
-    const key = [build(),chosen.version,chosen.commit || "",chosen.sha256?.dual || ""].join(":");
+    const key = [build(),chosen.version,chosen.commit || "",chosen.product,chosen.sha256?.dual || ""].join(":");
     if (!images.has(key)) {
       const raw = await fetchBytes(chosen.pkg.dual + (chosen.commit ? "?commit=" + chosen.commit : ""));
       if ((chosen.sha256?.dual && await sha256(raw) !== chosen.sha256.dual) || productOf(raw) !== chosen.product) throw fail("badpkg",t("badpkg"));
@@ -480,7 +514,7 @@ async function loadRelease() {
     st.hasConvert = false;
     convertAvailable().then((on) => { if (epoch === buildEpoch) { st.hasConvert = on; render(); } }).catch(() => { /* asked again on Install */ });
     if (st.dev) { st.dev = {id:st.dev.id,res:st.dev.res,...describeDevice(st.dev.id,st.meta.product)};offerSetup(); }
-    if (meta.boot) {
+    if (meta.boot && chosen.product.split("_")[0] === "FM-1") {   /* m-bootloader is the FM-1's alone */
       try {
         const raw = await fetchBytes(meta.boot.pkg);
         if (await sha256(raw) === meta.boot.sha256 && productOf(raw) === "FM-1_099" && epoch === buildEpoch) st.boot = {image:logicalImage(raw),version:meta.boot.version};
@@ -556,6 +590,7 @@ async function connect() {
       st.access = await midi();dev = await new SteadyUpdater(st.access).find();
       if (dev) {
         dev.link.close();
+        await useModel(modelOf(dev.id));              /* its model's package, before anything is said about it */
         if (["this", "dev"].includes(describeDevice(dev.id, st.meta.product).kind)) {
           if (await resRegion().catch(() => null)) res = await probeRes(dev);
           const bundle = await modBundleFile().catch(() => null);
@@ -566,6 +601,9 @@ async function connect() {
     finally { release(); }
     if (!dev) { st.dev = null; throw fail("notfound", "not found"); }
     st.dev = { id: dev.id, res, ...describeDevice(dev.id, st.meta.product) };
+    /* a model this build has none for, that a pre-release or nightly has: their choice opened */
+    if (st.dev.kind === "model" && ["planNoPkgRc", "planNoPkgNightly"].includes(otherBuildFor(modelOf(dev.id))))
+      $("advanced-installs").open = true;
   } catch (e) {
     st.dev = null;st.connErr = ["nomidi", "denied", "notfound", "busy", "pending"].includes(e.code) ? e.code : "notfound";
   }
@@ -618,7 +656,8 @@ function render() {
   $("device").hidden = !dev;
   if (dev) {
     const words = { loader: "devLoader", this: "devThis", melodee: "devMelodee", dev: "devDev", stock: "devStock",
-                    open: "devOpen", other: "devOther", model: "devModel" }[dev.kind];
+                    open: "devOpen", other: "devOther", model: "devModel", vendor: "devVendor" }[dev.kind];
+    $("devname").textContent = MODELS.includes(modelOf(dev.id)) ? modelOf(dev.id) : "FM-1";
     $("devwhat").textContent = t(words, { v: dev.version, id: dev.text || dev.id.text });
     const chip = dev.kind === "loader" ? ["chipResume", "warn"] : dev.setup ? ["chipSetup", "warn"]
       : dev.kind === "this" ? ["chipCurrent", "ok"] : plan ? ["chipReady", "ok"] : ["chipBlocked", "bad"];
@@ -633,8 +672,10 @@ function render() {
     go.textContent = t(dev?.kind === "loader" ? "goResume" : "goInstall", { v: ver() });
     go.disabled = true;
     $("gohint").hidden = !!dev;
+    const known = dev && MODELS.includes(modelOf(dev.id));
     $("plantext").textContent = !dev ? t(st.hasConvert ? "s3pConvert" : "s3p", { v: ver() })
-      : t(dev.kind === "open" ? "planOpen" : "planModel", { id: dev.id.text });
+      : t(dev.kind === "open" ? "planOpen" : dev.kind === "vendor" ? "planVendor" : known ? otherBuildFor(modelOf(dev.id)) : "planModel",
+          { id: dev.id.text, v: ver(), m: modelOf(dev.id) });
   } else {
     const label = plan.resume ? "goResume" : !plan.firmware ? "goBoot" : dev.kind === "this" ? "goReinstall"
       : ["melodee", "dev"].includes(dev.kind) ? "goUpdate" : "goInstall";
@@ -643,7 +684,8 @@ function render() {
     $("gohint").hidden = true;
     const words = dev.setup ? "planSetup" : plan.resume ? "planResume" : !plan.firmware ? "planBoot"
       : dev.kind === "this" ? "planThis" : ["melodee", "dev"].includes(dev.kind) ? (st.hasConvert ? "planConvert" : "planUpdate") : "planInstall";
-    $("plantext").textContent = t(words, { v: ver() });
+    const beta = st.meta.product.split("_")[0] !== "FM-1";
+    $("plantext").textContent = t(words, { v: ver() }) + (beta ? " " + t("planBeta", { m: st.meta.product.split("_")[0] }) : "");
   }
   /* Finish setup: the region alone, the install button second */
   $("finish").hidden = !dev?.setup;
@@ -866,7 +908,8 @@ function endRun(state, err) {
   } else if (state === "paused") {
     title = t("endPausedH"); text = t("endPaused");
     tips.push(reason, t("tipCable"), t("tipApps"), t("tipResume"));
-    st.dev = { id: { text: "ota-FM-1", model: "ota-FM-1" }, kind: "loader" };
+    const model = st.meta.product.split("_")[0];        /* (waits in its model's Melodee loader) */
+    st.dev = { id: { text: melodeeLoader(st.meta.product), model: "ota-" + model }, kind: "loader" };
     button("btnResume", true, () => { closeRun(); start(); });
     button("btnClose", false, closeRun);
   } else if (state === "restart") {
