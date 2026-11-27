@@ -5,7 +5,8 @@
  * frozen views (core.h under MOD_SIDE), so the module never sees how the firmware lays out its own structs; what it
  * reaches of the firmware it reaches through the host table, taken once in bind() below (the data and tables as
  * pointers the headers declare under MOD_SIDE: `voice_was`, `dith`, `SINE`...; the firmware's calls as pointers an
- * engine's own declaration of one, `static void voice_scale_pitch(...);`, redeclares).
+ * engine's own declaration of one, `static void voice_scale_pitch(...);`, redeclares). Its AArch64 code (MOD_NATIVE)
+ * takes the tables from copies of its own instead, so a host of module files needs none of the firmware's.
  *     #include "../mod_engine.h"
  *     #include "eng_x.c"
  *     static x_part_t *x_part(uint32_t part) { return mod_part_mem(part, sizeof(x_part_t)); }
@@ -71,11 +72,14 @@ static const uint8_t *mod_imp_rec_base;
 /* The tables after dsp.c's (P5_TANH, FM6's) are bound when the host has them and wanted only by a module that reads
  * them, which says so first, as it says its host: #define MOD3_ENGINE_TABLES (MOD3_ENGINE_T(MOD3_T_FM6_SIN) | ...).
  * A host without one (a player of module files that came before it) still runs every other synth; the files that
- * read one check that their module asked for it (_Static_assert under MOD_SIDE) */
+ * read one check that their module asked for it (_Static_assert under MOD_SIDE). A module's AArch64 code
+ * (mod_build.py --native, MOD_NATIVE) asks the host for none: it binds copies of its own, the same list */
 #ifndef MOD3_ENGINE_TABLES
 #define MOD3_ENGINE_TABLES 0u
 #endif
 #define MOD3_ENGINE_T(id) (1u << (id))
+#define MOD3_ENGINE_FM6 (MOD3_ENGINE_T(MOD3_T_FM6_SIN) | MOD3_ENGINE_T(MOD3_T_FM6_MKI_LOG) | MOD3_ENGINE_T(MOD3_T_FM6_MKI_EXP) | \
+                         MOD3_ENGINE_T(MOD3_T_FM6_OPL_LOG) | MOD3_ENGINE_T(MOD3_T_FM6_OPL_EXP))   /* (dsp_tables_init's) */
 #define MOD3_TAB_IF(name, id, T) (MOD3_TAB(name, id, T) || !(MOD3_ENGINE_TABLES & MOD3_ENGINE_T(id)))
 /* the host table into the pointers: 0, or why not (a table or the pads data this firmware does not have) */
 static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
@@ -105,6 +109,19 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
 #if MELODEE_AUDIO_PROFILE
     mod_imp_audio_profile_add = h->profile_add;
 #endif
+#if defined(MOD_NATIVE) && MOD_NATIVE
+    /* its AArch64 code carries its own tables (melodee_tables.h mod_own_*): a host runs it whatever tables it has */
+    mod_imp_SINE = mod_own_SINE, mod_imp_TANH_Q15 = mod_own_TANH_Q15, mod_imp_PITCH_OCT = mod_own_PITCH_OCT;
+    mod_imp_A4_RATIO = mod_own_A4_RATIO, mod_imp_A4_LOG = mod_own_A4_LOG;
+    if (MOD3_ENGINE_TABLES & MOD3_ENGINE_T(MOD3_T_P5_TANH))
+        mod_imp_P5_TANH = mod_own_P5_TANH;
+    if (MOD3_ENGINE_TABLES & MOD3_ENGINE_FM6) {  /* (FM6's five, filled as the firmware fills its own at power-on) */
+        mod_imp_FM6_SIN = mod_own_FM6_SIN, mod_imp_FM6_MKI_LOG = mod_own_FM6_MKI_LOG;
+        mod_imp_FM6_MKI_EXP = mod_own_FM6_MKI_EXP, mod_imp_FM6_OPL_LOG = mod_own_FM6_OPL_LOG;
+        mod_imp_FM6_OPL_EXP = mod_own_FM6_OPL_EXP;
+        dsp_tables_init();
+    }
+#else
     if (!MOD3_TAB(mod_imp_SINE, MOD3_T_SINE, const int16_t *) || !MOD3_TAB(mod_imp_TANH_Q15, MOD3_T_TANH_Q15, const int16_t *) ||
         !MOD3_TAB(mod_imp_PITCH_OCT, MOD3_T_PITCH_OCT, const uint32_t *) ||
         !MOD3_TAB(mod_imp_A4_RATIO, MOD3_T_A4_RATIO, const uint32_t *) ||
@@ -117,6 +134,7 @@ static int mod_engine_bind(const mod_host_v3 *h, uint32_t self)
         !MOD3_TAB_IF(mod_imp_FM6_OPL_LOG, MOD3_T_FM6_OPL_LOG, uint16_t *) ||
         !MOD3_TAB_IF(mod_imp_FM6_OPL_EXP, MOD3_T_FM6_OPL_EXP, uint16_t *))
         return 2;
+#endif
     mod_imp_note_pitch = h->note_pitch;
     mod_imp_note_len = h->note_len;
     mod_imp_rec = h->rec;

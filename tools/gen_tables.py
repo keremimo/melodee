@@ -25,11 +25,20 @@ def arr(name, ctype, vals, per=12, ram=False):
     return out
 
 
+def own(name, lines):
+    """the module's own copy of a shared table, for its AArch64 code (mod_build.py --native: MOD_NATIVE), which
+    binds it in place of the host's (mod_engine.h): named mod_own_<name>, in no section of the firmware's"""
+    first = lines[0].replace(f" {name}[", f" mod_own_{name}[").replace(' __attribute__((section(".dsp_tables")))', "")
+    assert first != lines[0] and "section" not in first
+    return ["#if defined(MOD_NATIVE) && MOD_NATIVE   /* (its AArch64 code: its own copy) */", first, *lines[1:], "#endif"]
+
+
 def shared(name, ctype, lines):
     """a table the firmware keeps and a synth module reads in place (mod_abi3.h host table: the module's
-    compile sees a pointer the loader sets, not a copy)"""
+    compile sees a pointer the loader sets, not a copy; its AArch64 code a copy of its own)"""
     return ["#if defined(MOD_SIDE) && MOD_SIDE   /* (a synth module: the firmware's) */",
-            f"static const {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", *lines, "#endif"]
+            f"static const {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", *own(name, lines), "#else",
+            *lines, "#endif"]
 
 
 def nibbles(steps, first):
@@ -385,9 +394,11 @@ def sid_kit_tables():
 
 def shared_ram(name, ctype, line):
     """a table the firmware fills at power-on (dsp_tables_init) that a synth module reads in place: a pointer
-    the loader sets in the module's compile (dsp_tables_init's writes there compile, never run)"""
+    the loader sets in the module's compile (dsp_tables_init's writes there compile, and run only in its AArch64
+    code, into a copy of its own: mod_engine.h)"""
     return ["#if defined(MOD_SIDE) && MOD_SIDE   /* (a synth module: the firmware's) */",
-            f"static {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", "#else", line, "#endif"]
+            f"static {ctype} *mod_imp_{name};", f"#define {name} mod_imp_{name}", *own(name, [line]), "#else", line,
+            "#endif"]
 
 
 def fm6_tables():
