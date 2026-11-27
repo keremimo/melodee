@@ -1,0 +1,3 @@
+[submodule "firmware/modules/sdk"]
+	path = firmware/modules/sdk
+	url = ../melodee-module-sdk.git

@@ -32,6 +32,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true          # (firmware/modules/sdk: melodee-module-sdk)
       - name: Validate version and prepare a draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,6 +139,8 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true          # (firmware/modules/sdk: melodee-module-sdk)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -165,6 +169,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true          # (firmware/modules/sdk: melodee-module-sdk)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

@@ -13,6 +13,11 @@ cd "$(dirname "$0")"
 export JIELI_TOOLCHAIN="${JIELI_TOOLCHAIN:-$HOME/.jieli/toolchain}"
 export AC79_SDK="${AC79_SDK:-$HOME/fw-AC79_AIoT_SDK}"
 PY="${PYTHON:-python3}"
+# the synth module SDK, a submodule (firmware/modules/sdk: melodee-module-sdk): fetched once when a clone left it empty
+if [ ! -f firmware/modules/sdk/mod_abi3.h ] && [ -f .gitmodules ] && git rev-parse --git-dir >/dev/null 2>&1; then
+    git submodule update --init firmware/modules/sdk
+fi
+[ -f firmware/modules/sdk/mod_abi3.h ] || { echo "build.sh: no synth module SDK in firmware/modules/sdk (git submodule update --init)"; exit 1; }
 # Pillow loads Raqm's FriBidi at run time; macOS strips DYLD_* from the environment of /bin/sh, so it is set here
 [ "$(uname -s)" = Darwin ] && export DYLD_FALLBACK_LIBRARY_PATH="${DYLD_FALLBACK_LIBRARY_PATH:-/opt/homebrew/lib:/usr/local/lib:/usr/lib}"
 

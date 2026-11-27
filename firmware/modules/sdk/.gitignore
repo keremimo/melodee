@@ -1,8 +1,0 @@
-# what mod_build.py writes beside a module's source outside Melodee's tree
-*.mmod
-*.wasm
-.mod_build/
-.mod_native/
-native/
-wasm/
-__pycache__/

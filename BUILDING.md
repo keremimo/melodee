@@ -10,6 +10,9 @@ The build makes three files in `build/`:
 
 ## Prerequisites (macOS)
 
+- The synth module SDK, a git submodule at `firmware/modules/sdk` (melodee-module-sdk): clone with
+  `git clone --recurse-submodules`, or in a checkout `git submodule update --init` (build.sh runs it when the
+  folder is empty). A change to the SDK is made in its own repository; the firmware then moves its pin.
 - Python 3 with the build dependencies: `pip3 install -r tools/requirements-build.txt`.
   The UI font and icons are rasterised at build time; Python's `lzma` compresses what boot copies to SRAM.
   Pillow's Raqm layout needs FriBidi: `brew install fribidi` (build.sh and

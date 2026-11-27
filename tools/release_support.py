@@ -19,13 +19,24 @@ def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args])
 
 
+def submodules(root):
+    """the checkout's submodules' paths (firmware/modules/sdk: melodee-module-sdk), [] without .gitmodules"""
+    if not (root / ".gitmodules").is_file():
+        return []
+    r = subprocess.run(["git", "-C", str(root), "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
+                       capture_output=True, text=True)
+    return [line.split(None, 1)[1] for line in r.stdout.splitlines() if line.strip()]
+
+
 def source_state(root):
     checkout = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
                               capture_output=True, text=True)
     in_git = checkout.returncode == 0 and Path(checkout.stdout.strip()).resolve() == root.resolve()
     archived = None
     if in_git:
-        names = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").decode().split("\0")
+        # (the submodules' files too: --recurse-submodules lists them in place of their gitlinks)
+        names = (git(root, "ls-files", "--cached", "--recurse-submodules", "-z").decode().split("\0") +
+                 git(root, "ls-files", "--others", "--exclude-standard", "-z").decode().split("\0"))
     else:
         metadata = root / "SOURCE_INFO.json"
         if not metadata.is_file():
@@ -109,10 +120,16 @@ def make_source_archive(root, version, output, receipt, base):
     for name, repo in (("fm1-base", base), ("felucca-bsp", base / "bsp")):
         if git(repo, "rev-parse", "HEAD").decode().strip() != receipt["dependencies"][name] or git(repo, "status", "--porcelain"):
             raise SystemExit(f"Pinned {name} source changed; cannot archive a matching dependency.")
+    for sub in submodules(root):                     # (each at the commit HEAD pins, clean: its files are the source)
+        pin = git(root, "rev-parse", f"HEAD:{sub}").decode().strip()
+        if git(root / sub, "rev-parse", "HEAD").decode().strip() != pin or git(root / sub, "status", "--porcelain"):
+            raise SystemExit(f"Submodule {sub} is not clean at the commit HEAD pins; cannot archive matching source.")
     prefix = f"melodee-{version}-source/"
     timestamp = time.gmtime(int(git(root, "show", "-s", "--format=%ct", "HEAD")))[:6]
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         _archive_repository(archive, root, prefix, timestamp)
+        for sub in submodules(root):                 # (git archive leaves a submodule out: its own, in its place)
+            _archive_repository(archive, root / sub, prefix + sub + "/", timestamp)
         _archive_repository(archive, base, prefix + "dependencies/fm1-base/", timestamp)
         _archive_repository(archive, base / "bsp", prefix + "dependencies/fm1-base/bsp/", timestamp)
         archive.writestr(prefix + "SOURCE_INFO.json", json.dumps(receipt, indent=2) + "\n")

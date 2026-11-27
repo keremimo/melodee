@@ -21,6 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          submodules: true          # (firmware/modules/sdk: melodee-module-sdk)
           ref: nightly
       - uses: actions/setup-python@v5
         with:
